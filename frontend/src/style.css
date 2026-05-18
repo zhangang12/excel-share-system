@@ -1,0 +1,234 @@
+:root {
+  --font-base: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "PingFang SC",
+               "Helvetica Neue", Arial, "Segoe UI", sans-serif;
+
+  /* 色彩系统 */
+  --bg-page: #f3f5f9;
+  --bg-card: #ffffff;
+  --text-1: #1f2937;
+  --text-2: #4b5563;
+  --text-3: #9ca3af;
+  --text-4: #d1d5db;
+  --border: #e5e7eb;
+  --border-light: #f3f4f6;
+
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --primary-light: #eff6ff;
+  --primary-soft: rgba(37, 99, 235, .08);
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --info: #6b7280;
+
+  /* 侧边栏 */
+  --sidebar-w: 232px;
+  --sidebar-w-collapsed: 64px;
+  --sidebar-bg: #1e293b;
+  --sidebar-bg-hover: #334155;
+  --sidebar-bg-active: #2563eb;
+  --sidebar-text: #cbd5e1;
+  --sidebar-text-light: #94a3b8;
+  --sidebar-text-active: #ffffff;
+
+  /* 圆角 / 阴影 */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.04);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  --shadow: 0 4px 12px rgba(0,0,0,.06), 0 2px 4px rgba(0,0,0,.04);
+  --shadow-md: 0 8px 24px rgba(0,0,0,.08);
+  --shadow-lg: 0 20px 50px rgba(0,0,0,.12);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  font-family: var(--font-base);
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--text-1);
+  background: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: none; opacity: .85; }
+
+/* ===== Element Plus 整体打磨 ===== */
+.el-card {
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow-sm) !important;
+  border: 1px solid var(--border-light);
+  transition: box-shadow .2s, transform .2s;
+}
+.el-card:hover { box-shadow: var(--shadow); }
+.el-card__header {
+  padding: 18px 22px !important;
+  font-weight: 600;
+  font-size: 15px;
+  border-bottom: 1px solid var(--border-light) !important;
+}
+.el-card__body { padding: 22px !important; }
+
+.el-button {
+  border-radius: var(--radius-sm) !important;
+  font-size: 13.5px !important;
+  padding: 8px 16px !important;
+  height: auto !important;
+  transition: all .15s;
+  font-weight: 500;
+}
+.el-button--small { padding: 6px 12px !important; font-size: 12.5px !important; }
+.el-button--large { padding: 10px 20px !important; font-size: 14.5px !important; }
+.el-button--primary {
+  box-shadow: 0 2px 8px rgba(37, 99, 235, .25);
+}
+.el-button--primary:hover {
+  box-shadow: 0 4px 14px rgba(37, 99, 235, .35);
+  transform: translateY(-1px);
+}
+.el-button--primary:active { transform: translateY(0); }
+.el-button--danger { box-shadow: 0 2px 8px rgba(239, 68, 68, .2); }
+
+.el-input__wrapper { border-radius: var(--radius-sm) !important; box-shadow: 0 0 0 1px var(--border) inset !important; }
+.el-input__wrapper:hover { box-shadow: 0 0 0 1px var(--text-3) inset !important; }
+.el-input.is-focus .el-input__wrapper { box-shadow: 0 0 0 1px var(--primary) inset !important; }
+.el-input__inner { font-size: 13.5px !important; }
+
+.el-form-item__label {
+  font-size: 13px !important;
+  color: var(--text-2) !important;
+  font-weight: 500 !important;
+  padding: 0 0 6px !important;
+}
+
+.el-table {
+  font-size: 13.5px !important;
+  --el-table-border-color: var(--border-light);
+}
+.el-table th.el-table__cell {
+  background: #fafbfc !important;
+  color: var(--text-2) !important;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.el-table td.el-table__cell { padding: 11px 0 !important; }
+.el-table--striped .el-table__row.el-table__row--striped {
+  background: #fafbfc;
+}
+.el-table--enable-row-hover .el-table__row:hover > td {
+  background: var(--primary-soft) !important;
+}
+
+.el-tag {
+  border-radius: 6px !important;
+  padding: 0 8px !important;
+  height: 22px !important;
+  line-height: 22px !important;
+  font-size: 11.5px !important;
+  font-weight: 500;
+}
+
+.el-dialog {
+  border-radius: var(--radius-lg) !important;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg) !important;
+}
+.el-dialog__header {
+  padding: 20px 24px 12px !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+}
+.el-dialog__body { padding: 12px 24px 8px !important; }
+.el-dialog__footer { padding: 16px 24px 22px !important; border-top: 1px solid var(--border-light); }
+
+.el-message {
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow-md) !important;
+  font-weight: 500;
+}
+
+.el-switch__core { border-radius: 12px !important; }
+
+.el-pagination {
+  --el-pagination-button-bg-color: white !important;
+  font-size: 13px !important;
+}
+
+/* ===== 通用页面头部 ===== */
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 6px 4px 0;
+}
+.page-header h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: .3px;
+}
+.page-header .desc {
+  color: var(--text-3);
+  font-size: 12.5px;
+  margin-top: 2px;
+}
+.page-header .spacer { flex: 1; }
+
+/* ===== 全局动画 ===== */
+@keyframes fadein {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.el-card, .el-dialog { animation: fadein .25s ease-out; }
+
+/* ===== 滚动条（更粗、更明显，方便拖动）===== */
+::-webkit-scrollbar {
+  width: 13px;
+  height: 13px;
+}
+::-webkit-scrollbar-track {
+  background: #eef1f5;
+}
+::-webkit-scrollbar-thumb {
+  background: #b4bcc8;
+  border-radius: 8px;
+  border: 2px solid #eef1f5;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #8b94a3;
+}
+::-webkit-scrollbar-thumb:active {
+  background: #6b7585;
+}
+::-webkit-scrollbar-corner {
+  background: #eef1f5;
+}
+/* Firefox */
+* {
+  scrollbar-color: #b4bcc8 #eef1f5;
+}
+
+/* ===== 小屏笔记本 / 平板适配 ===== */
+/* 矮屏（1366×768 笔记本、平板横屏）：压缩垂直占用，给表格腾高度 */
+@media (max-height: 800px) {
+  .page-header { margin-bottom: 10px; padding: 0 2px; }
+  .page-header h1 { font-size: 18px; }
+  .page-header .desc { font-size: 11.5px; }
+  .el-table { font-size: 12.5px !important; }
+  .el-table td.el-table__cell { padding: 6px 0 !important; }
+  .el-card__body { padding: 12px !important; }
+  .el-card__header { padding: 12px 16px !important; }
+  .el-tabs__header { margin-bottom: 8px !important; }
+}
+/* 窄屏（平板竖屏 / 横屏）：压缩水平边距、页头允许换行 */
+@media (max-width: 1024px) {
+  .page-header { gap: 10px; flex-wrap: wrap; }
+  .page-header h1 { font-size: 18px; }
+}

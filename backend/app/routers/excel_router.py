@@ -1,0 +1,377 @@
+"""Excel 导入导出"""
+import json
+import re
+import tempfile
+from datetime import datetime, date
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from openpyxl import load_workbook, Workbook
+
+from ..database import get_db
+from .. import models, schemas
+from ..deps import (
+    get_current_user, require_not_viewer,
+    user_can_view_project, user_can_edit_project,
+)
+
+router = APIRouter(prefix="/api", tags=["Excel 导入导出"])
+
+
+# ============== 类型推断 ==============
+DATE_PATTERN = re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$")
+NUMBER_PATTERN = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _infer_field_type(samples: list[Any]) -> str:
+    """推断字段类型。只保留 text / number / date 三种（不做 select，全部可自由输入）。"""
+    non_null = [s for s in samples if s is not None and s != ""]
+    if not non_null:
+        return "text"
+    # 全是 datetime / date
+    if all(isinstance(s, (datetime, date)) for s in non_null):
+        return "date"
+    # 全是 number
+    if all(isinstance(s, (int, float)) and not isinstance(s, bool) for s in non_null):
+        return "number"
+    strs = [str(s).strip() for s in non_null]
+    if all(DATE_PATTERN.match(s) for s in strs):
+        return "date"
+    if all(NUMBER_PATTERN.match(s) for s in strs):
+        return "number"
+    # 其它一律 text（可输入编辑）
+    return "text"
+
+
+def _normalize_value(v: Any, ftype: str) -> Any:
+    """根据字段类型规范化值，用于入库。"""
+    if v is None or v == "":
+        return None
+    if ftype == "number":
+        try:
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return v
+            return float(v) if "." in str(v) else int(v)
+        except Exception:
+            return str(v)
+    if ftype == "date":
+        if isinstance(v, datetime):
+            return v.strftime("%Y-%m-%d")
+        if isinstance(v, date):
+            return v.strftime("%Y-%m-%d")
+        s = str(v).replace("/", "-")
+        if DATE_PATTERN.match(s):
+            return s
+        return s
+    if ftype in ("select", "multi_select"):
+        return str(v).strip()
+    return str(v).strip()
+
+
+def _fmt_preamble_cell(v: Any, is_date: bool = False, datemode: int = 0) -> str:
+    """格式化 preamble 单元格：日期序列号转日期、整数浮点去 .0"""
+    if v is None or v == "":
+        return ""
+    if is_date:
+        try:
+            from xlrd.xldate import xldate_as_datetime
+            dt = xldate_as_datetime(v, datemode)
+            if dt.hour or dt.minute:
+                return dt.strftime("%Y-%m-%d %H:%M")
+            return dt.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    if isinstance(v, datetime):
+        if v.hour or v.minute:
+            return v.strftime("%Y-%m-%d %H:%M")
+        return v.strftime("%Y-%m-%d")
+    if isinstance(v, date):
+        return v.strftime("%Y-%m-%d")
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
+
+
+# 固定格式：第 5 行（index=4）是数据列名，第 6 行（index=5）起是数据
+# 第 1-4 行是公司标题 / 项目信息区，导入时保留但不作为数据
+HEADER_ROW_INDEX = 3   # 0-indexed；第 4 行是数据表列头，前 3 行是公司标题/项目信息
+
+
+def _find_data_header_row(rows: list) -> int:
+    """固定返回 HEADER_ROW_INDEX。如果不足 5 行则用第 1 行兜底。"""
+    if len(rows) > HEADER_ROW_INDEX:
+        return HEADER_ROW_INDEX
+    return 0
+
+
+# ============== 导入 ==============
+@router.post("/projects/{pid}/import-excel", response_model=schemas.Msg)
+async def import_excel(
+    pid: int, file: UploadFile = File(...),
+    current: models.User = Depends(require_not_viewer),
+    db: AsyncSession = Depends(get_db),
+):
+    """上传 Excel：每个 sheet → 一个 datasheet。自动识别表头 + 字段类型。"""
+    res = await db.execute(
+        select(models.Project).where(models.Project.id == pid, models.Project.is_deleted == False)
+    )
+    p = res.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "项目不存在")
+    if not await user_can_edit_project(db, current, p):
+        raise HTTPException(403, "无权导入")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in (".xlsx", ".xlsm", ".xls"):
+        raise HTTPException(400, "仅支持 .xlsx/.xlsm/.xls")
+    content = await file.read()
+    tmp = Path(tempfile.gettempdir()) / f"_imp_{pid}_{file.filename}"
+    tmp.write_bytes(content)
+
+    try:
+        sheets_meta: list[tuple[str, list[str], list[list[Any]]]] = []
+        if suffix == ".xls":
+            import xlrd
+            # 老 .xls 多为 cp936/GBK；先尝试 cp936，失败则用默认
+            try:
+                wb = xlrd.open_workbook(str(tmp), formatting_info=False, encoding_override="cp936")
+            except Exception:
+                wb = xlrd.open_workbook(str(tmp), formatting_info=False)
+            for si in range(wb.nsheets):
+                ws = wb.sheet_by_index(si)
+                if ws.nrows < 1:
+                    continue
+                # 取前 10 行用于识别表头
+                preview = [[ws.cell_value(r, c) for c in range(ws.ncols)]
+                           for r in range(min(10, ws.nrows))]
+                header_idx = _find_data_header_row(preview)
+                # 保留 preamble（前几行），日期序列号转成日期文字
+                preamble = []
+                for ri in range(header_idx):
+                    line = []
+                    for c in range(ws.ncols):
+                        v = ws.cell_value(ri, c)
+                        ct = ws.cell_type(ri, c)
+                        line.append(_fmt_preamble_cell(v, is_date=(ct == 3), datemode=wb.datemode))
+                    preamble.append(line)
+                headers = [str(ws.cell_value(header_idx, c)).strip() or f"列{c+1}"
+                           for c in range(ws.ncols)]
+                rows = []
+                for r in range(header_idx + 1, ws.nrows):
+                    row = []
+                    for c in range(ws.ncols):
+                        v = ws.cell_value(r, c)
+                        ct = ws.cell_type(r, c)
+                        if ct == 3:
+                            try:
+                                from xlrd.xldate import xldate_as_datetime
+                                v = xldate_as_datetime(v, wb.datemode)
+                            except Exception:
+                                pass
+                        row.append(v)
+                    if any(v not in (None, "") for v in row):
+                        rows.append(row)
+                sheets_meta.append((ws.name, headers, rows, preamble))
+        else:
+            wb = load_workbook(tmp, data_only=True)
+            for sn in wb.sheetnames:
+                ws = wb[sn]
+                rows_iter = list(ws.iter_rows(values_only=True))
+                if not rows_iter:
+                    continue
+                header_idx = _find_data_header_row(rows_iter[:10])
+                # 保留 header_idx 之前所有行作为 preamble（前 4 行）
+                preamble = []
+                for r in rows_iter[:header_idx]:
+                    preamble.append([_fmt_preamble_cell(c) for c in r])
+                hdr_row = rows_iter[header_idx]
+                headers = [str(h).strip() if h is not None else f"列{i+1}" for i, h in enumerate(hdr_row)]
+                rows = []
+                for r in rows_iter[header_idx + 1:]:
+                    row = list(r)
+                    if any(v not in (None, "") for v in row):
+                        rows.append(row)
+                sheets_meta.append((sn, headers, rows, preamble))
+    except Exception as e:
+        raise HTTPException(400, f"解析失败：{e}")
+
+    if not sheets_meta:
+        raise HTTPException(400, "Excel 中没有可识别的数据")
+
+    # ===== 全量替换：先删本项目所有现有数据表（级联删除字段、记录、字段权限） =====
+    from sqlalchemy import delete as _del
+    # 先查出所有相关 field id（要删字段权限）
+    fres = await db.execute(
+        select(models.Field.id).join(models.Datasheet, models.Field.datasheet_id == models.Datasheet.id)
+        .where(models.Datasheet.project_id == pid)
+    )
+    field_ids = [r[0] for r in fres.all()]
+    if field_ids:
+        await db.execute(_del(models.FieldPermission).where(models.FieldPermission.field_id.in_(field_ids)))
+    # 然后删数据表（外键级联会带走 fields + records）
+    await db.execute(_del(models.Datasheet).where(models.Datasheet.project_id == pid))
+    await db.flush()
+    # =====================================================================
+
+    # 入库：每个 sheet 一个 datasheet
+    total_records = 0
+    res = await db.execute(
+        select(func.max(models.Datasheet.sort_order)).where(models.Datasheet.project_id == pid)
+    )
+    base_order = (res.scalar() or -1) + 1
+    for idx, (sname, headers, rows, preamble) in enumerate(sheets_meta):
+        d = models.Datasheet(
+            project_id=pid, name=sname, sort_order=base_order + idx,
+            header_lines=json.dumps(preamble, ensure_ascii=False) if preamble else None,
+        )
+        db.add(d)
+        await db.flush()  # 拿到 d.id
+
+        # 推断各列类型
+        col_count = len(headers)
+        fields: list[models.Field] = []
+        for ci, hname in enumerate(headers):
+            col_samples = [r[ci] if ci < len(r) else None for r in rows[:50]]
+            ftype = _infer_field_type(col_samples)
+            f = models.Field(
+                datasheet_id=d.id, name=hname, type=ftype, sort_order=ci,
+            )
+            db.add(f)
+            fields.append(f)
+        await db.flush()
+
+        # 行入库
+        for ri, row in enumerate(rows):
+            values: dict[str, Any] = {}
+            for ci, f in enumerate(fields):
+                if ci < len(row):
+                    nv = _normalize_value(row[ci], f.type)
+                    if nv is not None:
+                        values[str(f.id)] = nv
+            r = models.Record(
+                datasheet_id=d.id, sort_order=ri, values=values,
+                created_by=current.id, updated_by=current.id,
+            )
+            db.add(r)
+            total_records += 1
+
+    await db.commit()
+    return schemas.Msg(message=f"导入完成：{len(sheets_meta)} 个数据表，共 {total_records} 行")
+
+
+# ============== 导出 ==============
+@router.get("/datasheets/{did}/export")
+async def export_datasheet(
+    did: int,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """导出单个数据表为 .xlsx"""
+    res = await db.execute(select(models.Datasheet).where(models.Datasheet.id == did))
+    d = res.scalar_one_or_none()
+    if not d:
+        raise HTTPException(404, "数据表不存在")
+    pres = await db.execute(select(models.Project).where(models.Project.id == d.project_id))
+    p = pres.scalar_one_or_none()
+    if not p or not await user_can_view_project(db, current, p):
+        raise HTTPException(403, "无权下载")
+
+    fres = await db.execute(
+        select(models.Field).where(models.Field.datasheet_id == did)
+        .order_by(models.Field.sort_order, models.Field.id)
+    )
+    fields = fres.scalars().all()
+    rres = await db.execute(
+        select(models.Record).where(models.Record.datasheet_id == did)
+        .order_by(models.Record.sort_order, models.Record.id)
+    )
+    records = rres.scalars().all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = d.name[:31] or "Sheet1"
+    # 表头
+    ws.append([f.name for f in fields])
+    # 数据
+    for r in records:
+        row = []
+        for f in fields:
+            v = (r.values or {}).get(str(f.id))
+            if isinstance(v, list):
+                v = "、".join(str(x) for x in v)
+            row.append(v)
+        ws.append(row)
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = f"{p.code}_{d.name}.xlsx"
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
+@router.get("/projects/{pid}/export")
+async def export_project(
+    pid: int,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """导出整个项目所有数据表为一个 .xlsx 多 sheet 文件"""
+    res = await db.execute(
+        select(models.Project).where(models.Project.id == pid, models.Project.is_deleted == False)
+    )
+    p = res.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "项目不存在")
+    if not await user_can_view_project(db, current, p):
+        raise HTTPException(403, "无权下载")
+
+    dres = await db.execute(
+        select(models.Datasheet).where(models.Datasheet.project_id == pid)
+        .order_by(models.Datasheet.sort_order, models.Datasheet.id)
+    )
+    sheets = dres.scalars().all()
+    if not sheets:
+        raise HTTPException(404, "项目没有数据表")
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    for d in sheets:
+        ws = wb.create_sheet(title=d.name[:31] or "Sheet")
+        fres = await db.execute(
+            select(models.Field).where(models.Field.datasheet_id == d.id)
+            .order_by(models.Field.sort_order, models.Field.id)
+        )
+        fields = fres.scalars().all()
+        rres = await db.execute(
+            select(models.Record).where(models.Record.datasheet_id == d.id)
+            .order_by(models.Record.sort_order, models.Record.id)
+        )
+        records = rres.scalars().all()
+        ws.append([f.name for f in fields])
+        for r in records:
+            row = []
+            for f in fields:
+                v = (r.values or {}).get(str(f.id))
+                if isinstance(v, list):
+                    v = "、".join(str(x) for x in v)
+                row.append(v)
+            ws.append(row)
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = f"{p.code}_{p.name}.xlsx"
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
