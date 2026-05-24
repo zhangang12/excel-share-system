@@ -33,6 +33,14 @@ export interface PermMatrix {
   datasheets: MatrixDatasheet[]
 }
 
+export interface ClonePermsResult {
+  cloned_field_count: number
+  matched_datasheets: string[]
+  unmatched_target_datasheets: string[]
+  skipped_target_fields: string[]
+  message: string
+}
+
 export const permApi = {
   getMatrix: () => http.get<PermMatrix>('/permissions/matrix').then(r => r.data),
   // 数据表字段
@@ -52,4 +60,9 @@ export const permApi = {
     http.get<Record<string, { can_view: boolean; can_edit: boolean }>>(`/permissions/me/datasheet/${did}`).then(r => r.data),
   myOverviewPerms: () =>
     http.get<Record<string, { can_view: boolean; can_edit: boolean }>>('/permissions/me/overview').then(r => r.data),
+
+  // 项目权限克隆（仅 manager）
+  cloneProjectPerms: (targetPid: number, sourcePid: number) =>
+    http.post<ClonePermsResult>(`/permissions/clone-project/${targetPid}`,
+      { source_project_id: sourcePid }).then(r => r.data),
 }

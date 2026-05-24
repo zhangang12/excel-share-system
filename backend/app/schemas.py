@@ -254,6 +254,20 @@ class FieldPermissionSetIn(BaseModel):
     permissions: list[FieldPermissionItem]
 
 
+class ClonePermsIn(BaseModel):
+    """从某个源项目克隆字段级权限到当前项目"""
+    source_project_id: int
+
+
+class ClonePermsResult(BaseModel):
+    """权限克隆结果汇总"""
+    cloned_field_count: int = 0
+    matched_datasheets: list[str] = Field(default_factory=list)
+    unmatched_target_datasheets: list[str] = Field(default_factory=list)
+    skipped_target_fields: list[str] = Field(default_factory=list)
+    message: str = "克隆成功"
+
+
 # ---------- 审计 ----------
 class AuditOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

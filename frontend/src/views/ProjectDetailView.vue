@@ -2,13 +2,14 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Plus, Delete, User as UserIcon, Edit, Document, Upload, Download } from '@element-plus/icons-vue'
+import { ArrowLeft, Plus, Delete, User as UserIcon, Edit, Document, Upload, Download, CopyDocument } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { projectsApi } from '@/api/projects'
 import { datasheetsApi } from '@/api/datasheets'
 import { adminApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 import DatasheetGrid from '@/components/DatasheetGrid.vue'
+import ClonePermissionsDialog from '@/components/ClonePermissionsDialog.vue'
 import type { Project, ProjectMember, User, Datasheet } from '@/types'
 
 const route = useRoute()
@@ -36,6 +37,12 @@ const canEdit = computed(() => {
 const canManage = computed(() =>
   auth.user?.role_code === 'admin' || auth.user?.role_code === 'manager'
 )
+
+// 权限克隆：admin 或 manager 可见（与后端 require_admin_or_manager 对齐）
+const canClonePerm = computed(() =>
+  auth.user?.role_code === 'admin' || auth.user?.role_code === 'manager'
+)
+const cloneDialogVisible = ref(false)
 
 async function loadProject() {
   try { project.value = await projectsApi.get(pid.value) }
@@ -202,6 +209,9 @@ onMounted(async () => {
         </div>
       </div>
       <div class="spacer"></div>
+      <el-tooltip v-if="canClonePerm" content="把其他项目的字段权限配置克隆到当前项目">
+        <el-button :icon="CopyDocument" @click="cloneDialogVisible = true">克隆权限</el-button>
+      </el-tooltip>
       <label class="el-button" :class="canEdit ? 'el-button--primary' : ''" v-if="canEdit" style="margin: 0">
         <el-icon style="margin-right:6px"><Upload /></el-icon>
         <span>导入 Excel</span>
@@ -286,6 +296,14 @@ onMounted(async () => {
         </el-card>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 克隆权限对话框（仅 manager） -->
+    <ClonePermissionsDialog
+      v-if="canClonePerm && project"
+      v-model="cloneDialogVisible"
+      :target-project-id="project.id"
+      :target-project-name="`${project.code} · ${project.name}`"
+    />
 
     <!-- 添加成员对话框 -->
     <el-dialog v-model="memberDialogVisible" title="添加项目成员" width="440px">

@@ -354,7 +354,9 @@ onMounted(load)
           <template #header>
             <span class="field-header">
               <span class="field-type-dot" :style="{ background: FIELD_TYPE_META[f.type].color }"></span>
-              <span class="field-name">{{ f.name }}</span>
+              <el-tooltip :content="f.name" placement="top" :show-after="300" :hide-after="0">
+                <span class="field-name">{{ f.name }}</span>
+              </el-tooltip>
               <span v-if="canManagePerm" class="field-actions" @click.stop>
                 <button class="perm-btn" @click="openPermDialog(f)" title="配置该列的角色权限">
                   <el-icon><Lock /></el-icon>

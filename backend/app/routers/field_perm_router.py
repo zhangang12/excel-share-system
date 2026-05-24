@@ -6,7 +6,11 @@ from sqlalchemy import select, delete as sql_delete
 
 from ..database import get_db
 from .. import models, schemas
-from ..deps import require_admin, require_admin_or_manager, get_current_user
+from ..deps import (
+    require_admin, require_admin_or_manager,
+    get_current_user,
+)
+from ..utils import write_audit
 
 router = APIRouter(prefix="/api/permissions", tags=["字段权限"])
 
@@ -243,3 +247,141 @@ async def permission_matrix(
         "overview": overview_matrix,
         "datasheets": datasheet_matrix,
     }
+
+
+# ============== 项目权限克隆（admin / manager） ==============
+@router.post("/clone-project/{target_pid}", response_model=schemas.ClonePermsResult)
+async def clone_project_permissions(
+    target_pid: int,
+    data: schemas.ClonePermsIn,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """把源项目的字段级权限克隆到目标项目，按 (数据表名, 字段名) 匹配。
+
+    - admin 或 manager 角色可调用。
+    - 不修改源项目，不删除/新增任何字段；只覆盖目标项目"已匹配字段"的权限记录。
+    - 未匹配的字段保留原权限不变（向后兼容存量数据）。
+    """
+    if data.source_project_id == target_pid:
+        raise HTTPException(400, "源项目与目标项目不能相同")
+
+    # 取两个项目
+    res = await db.execute(
+        select(models.Project).where(
+            models.Project.id.in_([data.source_project_id, target_pid]),
+            models.Project.is_deleted == False,
+        )
+    )
+    projects = {p.id: p for p in res.scalars().all()}
+    src = projects.get(data.source_project_id)
+    tgt = projects.get(target_pid)
+    if not src:
+        raise HTTPException(404, "源项目不存在或已被删除")
+    if not tgt:
+        raise HTTPException(404, "目标项目不存在或已被删除")
+
+    # 取两个项目的数据表
+    res = await db.execute(
+        select(models.Datasheet).where(
+            models.Datasheet.project_id.in_([src.id, tgt.id])
+        )
+    )
+    all_ds = res.scalars().all()
+    src_ds = [d for d in all_ds if d.project_id == src.id]
+    tgt_ds = [d for d in all_ds if d.project_id == tgt.id]
+
+    if not src_ds:
+        raise HTTPException(400, "源项目没有数据表，无可克隆的权限")
+    if not tgt_ds:
+        raise HTTPException(400, "目标项目没有数据表，无法克隆")
+
+    # 取所有相关字段（一次性查回，避免 N+1）
+    all_ds_ids = [d.id for d in src_ds] + [d.id for d in tgt_ds]
+    res = await db.execute(
+        select(models.Field).where(models.Field.datasheet_id.in_(all_ds_ids))
+    )
+    all_fields = res.scalars().all()
+    fields_by_ds: dict[int, list[models.Field]] = {}
+    for f in all_fields:
+        fields_by_ds.setdefault(f.datasheet_id, []).append(f)
+
+    # 取源项目所有字段权限（注意：仅源项目的字段范围）
+    src_field_ids = [f.id for d in src_ds for f in fields_by_ds.get(d.id, [])]
+    src_perms_by_field: dict[int, list[models.FieldPermission]] = {}
+    if src_field_ids:
+        res = await db.execute(
+            select(models.FieldPermission).where(
+                models.FieldPermission.field_id.in_(src_field_ids)
+            )
+        )
+        for p in res.scalars().all():
+            src_perms_by_field.setdefault(p.field_id, []).append(p)
+
+    # 数据表名 -> 字段名 -> field（源 / 目标）
+    def build_index(ds_list):
+        idx: dict[str, dict[str, models.Field]] = {}
+        for d in ds_list:
+            # 同名数据表只取第一个
+            if d.name in idx:
+                continue
+            idx[d.name] = {f.name: f for f in fields_by_ds.get(d.id, [])}
+        return idx
+
+    src_index = build_index(src_ds)
+    tgt_index = build_index(tgt_ds)
+
+    matched_datasheets: list[str] = []
+    unmatched_target_datasheets: list[str] = []
+    skipped_target_fields: list[str] = []
+    cloned_count = 0
+
+    # 按目标项目的数据表逐个匹配
+    for ds_name, tgt_fields in tgt_index.items():
+        if ds_name not in src_index:
+            unmatched_target_datasheets.append(ds_name)
+            continue
+        src_fields = src_index[ds_name]
+        ds_has_clone = False
+        for fname, tgt_field in tgt_fields.items():
+            src_field = src_fields.get(fname)
+            if not src_field:
+                skipped_target_fields.append(f"{ds_name} / {fname}")
+                continue
+            # 覆盖目标字段的权限：先删后插
+            await db.execute(
+                sql_delete(models.FieldPermission).where(
+                    models.FieldPermission.field_id == tgt_field.id
+                )
+            )
+            for p in src_perms_by_field.get(src_field.id, []):
+                db.add(models.FieldPermission(
+                    field_id=tgt_field.id,
+                    role_id=p.role_id,
+                    can_view=p.can_view,
+                    can_edit=p.can_edit,
+                ))
+            cloned_count += 1
+            ds_has_clone = True
+        if ds_has_clone and ds_name not in matched_datasheets:
+            matched_datasheets.append(ds_name)
+
+    await db.commit()
+
+    await write_audit(
+        db, user=current,
+        action="clone_project_permissions",
+        target_type="project", target_id=target_pid,
+        detail=f"from project#{src.id}({src.code}) -> {target_pid}({tgt.code}) · {cloned_count} fields"
+    )
+
+    return schemas.ClonePermsResult(
+        cloned_field_count=cloned_count,
+        matched_datasheets=matched_datasheets,
+        unmatched_target_datasheets=unmatched_target_datasheets,
+        skipped_target_fields=skipped_target_fields,
+        message=(
+            f"已克隆 {cloned_count} 个字段的权限配置" if cloned_count
+            else "没有匹配到可克隆的字段（数据表名 / 字段名都需一致）"
+        ),
+    )
