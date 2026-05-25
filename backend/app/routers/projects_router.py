@@ -2,7 +2,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, delete as sql_delete
 
 from ..database import get_db
 from .. import models, schemas
@@ -11,6 +11,127 @@ from ..deps import (
     get_current_user, require_admin, require_not_viewer,
     user_can_view_project, user_can_edit_project,
 )
+
+
+async def _purge_project_derived_data(db: AsyncSession, project_ids: list[int]) -> dict:
+    """显式删除若干项目挂着的所有派生数据：
+    project_members / records / field_permissions / fields / datasheets。
+
+    显式删整条链而不是依赖外键 CASCADE：因为
+    - SQLite 默认不开外键约束
+    - ORM-aware delete 在某些场景下行为不一致
+    显式删更可控，且更易在审计日志里说明"清理了多少东西"。
+
+    project 本身不动（保留 is_deleted=true 的墓碑记录）。
+    """
+    if not project_ids:
+        return {"datasheets": 0, "fields": 0, "field_perms": 0, "records": 0, "members": 0}
+
+    # 找出所有相关 datasheet_id / field_id
+    res = await db.execute(
+        select(models.Datasheet.id).where(models.Datasheet.project_id.in_(project_ids))
+    )
+    ds_ids = [r[0] for r in res.all()]
+    field_ids: list[int] = []
+    if ds_ids:
+        res = await db.execute(
+            select(models.Field.id).where(models.Field.datasheet_id.in_(ds_ids))
+        )
+        field_ids = [r[0] for r in res.all()]
+
+    counts = {
+        "datasheets": len(ds_ids),
+        "fields": len(field_ids),
+        "field_perms": 0,
+        "records": 0,
+        "members": 0,
+    }
+
+    # 1. field_permissions
+    if field_ids:
+        res = await db.execute(
+            select(func.count(models.FieldPermission.id)).where(
+                models.FieldPermission.field_id.in_(field_ids)
+            )
+        )
+        counts["field_perms"] = res.scalar() or 0
+        await db.execute(sql_delete(models.FieldPermission).where(
+            models.FieldPermission.field_id.in_(field_ids)
+        ))
+
+    # 2. records
+    if ds_ids:
+        res = await db.execute(
+            select(func.count(models.Record.id)).where(
+                models.Record.datasheet_id.in_(ds_ids)
+            )
+        )
+        counts["records"] = res.scalar() or 0
+        await db.execute(sql_delete(models.Record).where(
+            models.Record.datasheet_id.in_(ds_ids)
+        ))
+
+    # 3. fields
+    if field_ids:
+        await db.execute(sql_delete(models.Field).where(
+            models.Field.id.in_(field_ids)
+        ))
+
+    # 4. datasheets
+    if ds_ids:
+        await db.execute(sql_delete(models.Datasheet).where(
+            models.Datasheet.id.in_(ds_ids)
+        ))
+
+    # 5. project_members
+    res = await db.execute(
+        select(func.count(models.ProjectMember.id)).where(
+            models.ProjectMember.project_id.in_(project_ids)
+        )
+    )
+    counts["members"] = res.scalar() or 0
+    await db.execute(sql_delete(models.ProjectMember).where(
+        models.ProjectMember.project_id.in_(project_ids)
+    ))
+
+    return counts
+
+
+async def _add_all_active_users_as_members(
+    db: AsyncSession, project_id: int, permission: str = "edit"
+) -> int:
+    """把所有 active 的非 admin/manager 用户加为某项目的成员。
+    已经是成员的跳过。返回新增条数。
+
+    admin/manager 不加：他们在 deps 层自动获得所有项目的访问权，加进
+    member 列表只会让"成员"视图看起来有冗余。
+    """
+    # 取所有可加成员
+    res = await db.execute(
+        select(models.User).join(models.Role).where(
+            models.User.is_active == True,
+            models.Role.code.notin_(("admin", "manager")),
+        )
+    )
+    candidates = res.scalars().all()
+    if not candidates:
+        return 0
+    # 已存在的成员
+    res = await db.execute(
+        select(models.ProjectMember.user_id).where(
+            models.ProjectMember.project_id == project_id
+        )
+    )
+    existing_ids = {r[0] for r in res.all()}
+    added = 0
+    for u in candidates:
+        if u.id in existing_ids:
+            continue
+        db.add(models.ProjectMember(
+            project_id=project_id, user_id=u.id, permission=permission
+        ))
+        added += 1
+    return added
 
 router = APIRouter(prefix="/api/projects", tags=["项目"])
 
@@ -82,11 +203,18 @@ async def create_project(
         manager_id=data.manager_id,
     )
     db.add(p)
+    await db.flush()  # 拿到 p.id 用于添加默认成员
+    # 默认把所有 active 的非 admin/manager 用户加为 edit 成员
+    added_count = await _add_all_active_users_as_members(db, p.id, permission="edit")
     await db.commit()
     await db.refresh(p)
     res = await db.execute(select(models.Project).where(models.Project.id == p.id))
     p = res.scalar_one()
-    await write_audit(db, user=current, action="create_project", target_type="project", target_id=p.id, detail=f"{p.code} {p.name}")
+    await write_audit(
+        db, user=current, action="create_project",
+        target_type="project", target_id=p.id,
+        detail=f"{p.code} {p.name} · 默认添加 {added_count} 个成员"
+    )
     return await _project_to_out(p, db)
 
 
@@ -142,12 +270,24 @@ async def delete_project(
     if not p:
         raise HTTPException(404, "项目不存在")
     orig_code = p.code
+
+    # 清理所有派生数据（datasheets / fields / records / field_perms / members）
+    counts = await _purge_project_derived_data(db, [pid])
+
+    # project 本身软删（保留 audit 追溯），把 code 加前缀腾出 unique 约束
     p.is_deleted = True
-    # 把 code 加前缀腾出 unique 约束，方便用同 code 重建项目
     if not p.code.startswith("_deleted_"):
         p.code = f"_deleted_{pid}_{p.code}"[:64]
     await db.commit()
-    await write_audit(db, user=_, action="delete_project", target_type="project", target_id=pid, detail=orig_code)
+    await write_audit(
+        db, user=_, action="delete_project",
+        target_type="project", target_id=pid,
+        detail=(
+            f"{orig_code} · 清理 {counts['datasheets']} 数据表 / "
+            f"{counts['fields']} 字段 / {counts['field_perms']} 权限 / "
+            f"{counts['records']} 行 / {counts['members']} 成员"
+        )
+    )
     return schemas.Msg(message="已删除")
 
 
@@ -213,6 +353,70 @@ async def add_member(
     res = await db.execute(select(models.ProjectMember).where(models.ProjectMember.id == m.id))
     m = res.scalar_one()
     return _member_to_out(m)
+
+
+@router.post("/{pid}/members/batch", response_model=List[schemas.ProjectMemberOut])
+async def add_members_batch(
+    pid: int, data: schemas.ProjectMemberBatchIn,
+    current: models.User = Depends(require_not_viewer),
+    db: AsyncSession = Depends(get_db),
+):
+    """一次添加多个成员；已经是成员的跳过；返回本次新加进来的列表。"""
+    res = await db.execute(select(models.Project).where(models.Project.id == pid))
+    p = res.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "项目不存在")
+    if not await _can_manage_members(db, current, p):
+        raise HTTPException(403, "无权添加成员")
+    if data.permission not in ("edit", "view"):
+        raise HTTPException(400, "权限取值必须是 edit 或 view")
+    if not data.user_ids:
+        return []
+
+    # 去重 + 过滤已存在成员
+    user_ids = list(dict.fromkeys(data.user_ids))  # 保序去重
+    res = await db.execute(
+        select(models.ProjectMember.user_id).where(
+            models.ProjectMember.project_id == pid,
+            models.ProjectMember.user_id.in_(user_ids),
+        )
+    )
+    existing = {r[0] for r in res.all()}
+    new_ids = [uid for uid in user_ids if uid not in existing]
+    if not new_ids:
+        return []
+
+    # 校验候选用户存在
+    res = await db.execute(
+        select(models.User).where(
+            models.User.id.in_(new_ids), models.User.is_active == True
+        )
+    )
+    valid_users = {u.id: u for u in res.scalars().all()}
+
+    created: List[models.ProjectMember] = []
+    for uid in new_ids:
+        if uid not in valid_users:
+            continue
+        m = models.ProjectMember(project_id=pid, user_id=uid, permission=data.permission)
+        db.add(m)
+        created.append(m)
+    await db.commit()
+
+    # 回查带 user/role 信息
+    if created:
+        res = await db.execute(
+            select(models.ProjectMember).where(
+                models.ProjectMember.id.in_([m.id for m in created])
+            )
+        )
+        created = list(res.scalars().all())
+    await write_audit(
+        db, user=current, action="add_members_batch",
+        target_type="project", target_id=pid,
+        detail=f"+{len(created)} members (skipped {len(existing)} existed)"
+    )
+    return [_member_to_out(m) for m in created]
 
 
 @router.put("/{pid}/members/{mid}", response_model=schemas.ProjectMemberOut)

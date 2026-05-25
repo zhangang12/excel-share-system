@@ -21,6 +21,9 @@ export const projectsApi = {
     http.get<ProjectMember[]>(`/projects/${id}/members`).then(r => r.data),
   addMember: (id: number, user_id: number, permission: 'edit'|'view') =>
     http.post<ProjectMember>(`/projects/${id}/members`, { user_id, permission }).then(r => r.data),
+  addMembersBatch: (id: number, user_ids: number[], permission: 'edit'|'view') =>
+    http.post<ProjectMember[]>(`/projects/${id}/members/batch`,
+      { user_ids, permission }).then(r => r.data),
   updateMember: (id: number, mid: number, permission: 'edit'|'view') =>
     http.put<ProjectMember>(`/projects/${id}/members/${mid}`, { user_id: 0, permission }).then(r => r.data),
   removeMember: (id: number, mid: number) =>

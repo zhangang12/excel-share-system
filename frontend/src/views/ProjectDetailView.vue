@@ -83,15 +83,19 @@ async function deleteDatasheet(d: Datasheet) {
   })
 }
 
-// 成员管理
+// 成员管理（批量添加）
 const memberDialogVisible = ref(false)
 const allUsers = ref<User[]>([])
-const newMember = ref({ user_id: 0, permission: 'edit' as 'edit'|'view' })
+const newMember = ref({
+  user_ids: [] as number[],
+  permission: 'edit' as 'edit'|'view',
+})
+const adding = ref(false)
 
 async function openAddMember() {
   try {
     allUsers.value = await adminApi.listUsers()
-    newMember.value = { user_id: 0, permission: 'edit' }
+    newMember.value = { user_ids: [], permission: 'edit' }
     memberDialogVisible.value = true
   } catch {
     ElMessage.warning('需要管理员权限加载用户列表')
@@ -103,12 +107,29 @@ const availableUsers = computed(() => {
   return allUsers.value.filter(u => !ids.has(u.id) && u.is_active)
 })
 
+function selectAllAvailable() {
+  newMember.value.user_ids = availableUsers.value.map(u => u.id)
+}
+function clearSelection() {
+  newMember.value.user_ids = []
+}
+
 async function submitAddMember() {
-  if (!newMember.value.user_id) { ElMessage.warning('请选择用户'); return }
-  await projectsApi.addMember(pid.value, newMember.value.user_id, newMember.value.permission)
-  memberDialogVisible.value = false
-  ElMessage.success('已添加')
-  await loadMembers()
+  if (!newMember.value.user_ids.length) {
+    ElMessage.warning('请至少选择一个用户')
+    return
+  }
+  adding.value = true
+  try {
+    const created = await projectsApi.addMembersBatch(
+      pid.value, newMember.value.user_ids, newMember.value.permission,
+    )
+    memberDialogVisible.value = false
+    ElMessage.success(`已添加 ${created.length} 个成员`)
+    await loadMembers()
+  } finally {
+    adding.value = false
+  }
 }
 
 async function changePermission(m: ProjectMember, perm: 'edit'|'view') {
@@ -305,11 +326,24 @@ onMounted(async () => {
       :target-project-name="`${project.code} · ${project.name}`"
     />
 
-    <!-- 添加成员对话框 -->
-    <el-dialog v-model="memberDialogVisible" title="添加项目成员" width="440px">
+    <!-- 添加成员对话框（多选） -->
+    <el-dialog v-model="memberDialogVisible" title="添加项目成员" width="520px">
       <el-form label-position="top">
-        <el-form-item label="选择用户">
-          <el-select v-model="newMember.user_id" filterable size="large" style="width: 100%">
+        <el-form-item>
+          <template #label>
+            <span>选择用户</span>
+            <span class="muted small" style="margin-left:8px">
+              已选 {{ newMember.user_ids.length }} / 可选 {{ availableUsers.length }}
+            </span>
+            <el-link type="primary" :underline="false" style="margin-left:12px"
+                     @click="selectAllAvailable" v-if="availableUsers.length">全选</el-link>
+            <el-link type="info" :underline="false" style="margin-left:8px"
+                     @click="clearSelection" v-if="newMember.user_ids.length">清空</el-link>
+          </template>
+          <el-select v-model="newMember.user_ids" multiple filterable
+                     collapse-tags collapse-tags-tooltip
+                     size="large" style="width: 100%"
+                     placeholder="搜索用户名 / 姓名，可多选">
             <el-option v-for="u in availableUsers" :key="u.id" :value="u.id"
                        :label="`${u.full_name || u.username} (${u.username})`" />
           </el-select>
@@ -323,7 +357,10 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="memberDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitAddMember">添加</el-button>
+        <el-button type="primary" @click="submitAddMember" :loading="adding"
+                   :disabled="!newMember.user_ids.length">
+          添加 {{ newMember.user_ids.length || '' }} 个成员
+        </el-button>
       </template>
     </el-dialog>
   </div>

@@ -12,6 +12,7 @@ from .config import settings
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401
 from .seed import seed
+from .data_migration import run_all as run_data_migrations
 from .routers import (
     auth_router, admin_router, projects_router, datasheets_router,
     excel_router, overview_router, field_perm_router, ws_router,
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     async with SessionLocal() as db:
         await seed(db)
+        await run_data_migrations(db)
     log.info("启动完成 · DB=%s", settings.database_url.split("@")[-1])
     yield
     await engine.dispose()

@@ -106,6 +106,12 @@ class ProjectMemberIn(BaseModel):
     permission: str = "edit"  # edit / view
 
 
+class ProjectMemberBatchIn(BaseModel):
+    """批量添加成员：一次加多个用户"""
+    user_ids: list[int] = Field(default_factory=list)
+    permission: str = "edit"  # edit / view
+
+
 class ProjectMemberOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
