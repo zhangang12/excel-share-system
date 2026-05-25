@@ -41,3 +41,9 @@ data/
 # ===== OS =====
 .DS_Store
 Thumbs.db
+
+# ===== 打包 / 临时压缩包 =====
+*.zip
+*.tar.gz
+*.7z
+*.rar

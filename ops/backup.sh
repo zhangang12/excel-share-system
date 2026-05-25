@@ -5,7 +5,8 @@
 #   bash backup.sh                        # 备份到 /backup/
 #   BACKUP_DIR=/data/bak bash backup.sh   # 自定义目录
 #   KEEP_DAYS=14 bash backup.sh           # 保留天数（默认 30）
-#   bash backup.sh --upload-cos           # 备份并上传腾讯云 COS
+#   bash backup.sh --upload-cos           # 备份并上传腾讯云 COS（需 coscli）
+#   bash backup.sh --upload-oss           # 备份并上传阿里云 OSS（需 ossutil）
 #
 # 退出码: 0=成功 1=备份失败 2=上传失败
 
@@ -20,9 +21,14 @@ KEEP_DAYS="${KEEP_DAYS:-30}"
 COMPOSE_FILE="docker-compose.prod.yml"
 ENV_FILE=".env.prod"
 COS_BUCKET="${COS_BUCKET:-}"          # e.g. cos://pms-backup-xxx/db/
+OSS_BUCKET="${OSS_BUCKET:-}"          # e.g. oss://pms-backup-xxx/db/
 UPLOAD_COS=0
+UPLOAD_OSS=0
 
-[[ "$1" == "--upload-cos" ]] && UPLOAD_COS=1
+case "$1" in
+    --upload-cos) UPLOAD_COS=1 ;;
+    --upload-oss) UPLOAD_OSS=1 ;;
+esac
 
 # === 准备 ===
 mkdir -p "$BACKUP_DIR"
@@ -76,6 +82,22 @@ if [[ "$UPLOAD_COS" == "1" ]]; then
     echo "[$(date '+%F %T')] upload to $COS_BUCKET"
     coscli cp "$FILE_DB" "$COS_BUCKET" || { echo "ERROR: cos upload failed"; exit 2; }
     [[ -f "$FILE_UPLOADS" ]] && coscli cp "$FILE_UPLOADS" "$COS_BUCKET" || true
+    echo "  → uploaded"
+fi
+
+# === 5. (可选) 上传阿里云 OSS ===
+if [[ "$UPLOAD_OSS" == "1" ]]; then
+    if [[ -z "$OSS_BUCKET" ]]; then
+        echo "ERROR: --upload-oss 需要设 OSS_BUCKET 环境变量" >&2
+        exit 2
+    fi
+    if ! command -v ossutil >/dev/null; then
+        echo "ERROR: ossutil 未安装。装法: curl https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash" >&2
+        exit 2
+    fi
+    echo "[$(date '+%F %T')] upload to $OSS_BUCKET"
+    ossutil cp -f "$FILE_DB" "$OSS_BUCKET" || { echo "ERROR: oss upload failed"; exit 2; }
+    [[ -f "$FILE_UPLOADS" ]] && ossutil cp -f "$FILE_UPLOADS" "$OSS_BUCKET" || true
     echo "  → uploaded"
 fi
 

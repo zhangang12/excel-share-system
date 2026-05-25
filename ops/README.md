@@ -38,5 +38,6 @@ sudo bash ops/setup-cron.sh        # 装好每日备份 + 5 分钟健康检查
 
 ```bash
 BACKUP_DIR=/data/backup KEEP_DAYS=14 bash ops/backup.sh
-COS_BUCKET=cos://pms-backup-xxx/db/ bash ops/backup.sh --upload-cos
+COS_BUCKET=cos://pms-backup-xxx/db/ bash ops/backup.sh --upload-cos   # 腾讯云
+OSS_BUCKET=oss://pms-backup-xxx/db/ bash ops/backup.sh --upload-oss   # 阿里云
 ```
