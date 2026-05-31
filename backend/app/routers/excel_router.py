@@ -110,6 +110,42 @@ def _find_data_header_row(rows: list) -> int:
     return 0
 
 
+# 表格自带 # 行号列，这些字段名导入时会跳过（避免视觉冗余）
+ROWNUM_FIELD_NAMES = {"序号", "#", "no", "no.", "序", "行号", "index"}
+
+
+def is_rownum_field_name(name: str) -> bool:
+    """判断字段名是否明显是"行号"性质（表格 # 列已经有了，重复）"""
+    if not name:
+        return False
+    return name.strip().lower() in ROWNUM_FIELD_NAMES
+
+
+def _is_rownum_column(values: list[Any]) -> bool:
+    """判断一列的所有值是否是连续整数 1, 2, 3, ...（允许空）。"""
+    non_null = [v for v in values if v not in (None, "")]
+    if not non_null:
+        return False
+    seq = []
+    for v in non_null:
+        try:
+            if isinstance(v, bool):
+                return False
+            if isinstance(v, (int, float)):
+                if isinstance(v, float) and not v.is_integer():
+                    return False
+                seq.append(int(v))
+            else:
+                s = str(v).strip()
+                if not s.isdigit():
+                    return False
+                seq.append(int(s))
+        except Exception:
+            return False
+    # 全是 1,2,3,...,n
+    return seq == list(range(1, len(seq) + 1))
+
+
 # ============== 导入 ==============
 @router.post("/projects/{pid}/import-excel", response_model=schemas.Msg)
 async def import_excel(
@@ -232,11 +268,16 @@ async def import_excel(
         db.add(d)
         await db.flush()  # 拿到 d.id
 
-        # 推断各列类型
+        # 推断各列类型 + 识别需要跳过的"序号"列（避免和表格 # 列重复）
         col_count = len(headers)
         fields: list[models.Field] = []
+        skipped_cols: set[int] = set()
         for ci, hname in enumerate(headers):
             col_samples = [r[ci] if ci < len(r) else None for r in rows[:50]]
+            # 字段名明确是"序号"且内容是连续整数 → 跳过
+            if is_rownum_field_name(hname) and _is_rownum_column(col_samples):
+                skipped_cols.add(ci)
+                continue
             ftype = _infer_field_type(col_samples)
             f = models.Field(
                 datasheet_id=d.id, name=hname, type=ftype, sort_order=ci,
@@ -245,10 +286,16 @@ async def import_excel(
             fields.append(f)
         await db.flush()
 
-        # 行入库
+        # 行入库（跳过被忽略的列）
         for ri, row in enumerate(rows):
             values: dict[str, Any] = {}
-            for ci, f in enumerate(fields):
+            # 按 field 的源列序号去 row 里取值
+            field_idx = 0
+            for ci in range(col_count):
+                if ci in skipped_cols:
+                    continue
+                f = fields[field_idx]
+                field_idx += 1
                 if ci < len(row):
                     nv = _normalize_value(row[ci], f.type)
                     if nv is not None:

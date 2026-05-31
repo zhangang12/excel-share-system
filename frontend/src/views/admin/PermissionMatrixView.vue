@@ -20,6 +20,15 @@ onMounted(load)
 
 const roles = computed(() => matrix.value?.roles || [])
 
+// 表格自带 # 行号列，名为"序号" / "#" / "No" 的字段视为冗余，矩阵中也隐藏
+const ROWNUM_FIELD_NAMES = new Set(['序号', '#', 'no', 'no.', '序', '行号', 'index'])
+function isRownumField(name: string): boolean {
+  return ROWNUM_FIELD_NAMES.has((name || '').trim().toLowerCase())
+}
+function visibleFields(fields: MatrixField[]) {
+  return fields.filter(f => !isRownumField(f.field_name))
+}
+
 function openConfig(field: MatrixField, scope: 'overview' | 'datasheet') {
   dialogField.value = { id: field.field_id, name: field.field_name, scope }
   dialogVisible.value = true
@@ -81,7 +90,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="f in matrix.overview" :key="f.field_id">
+            <tr v-for="f in visibleFields(matrix.overview)" :key="f.field_id">
               <td class="td-field">
                 <b>{{ f.field_name }}</b>
                 <span class="ftype">{{ f.field_type }}</span>
@@ -114,7 +123,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="f in ds.fields" :key="f.field_id">
+              <tr v-for="f in visibleFields(ds.fields)" :key="f.field_id">
                 <td class="td-field">
                   <b>{{ f.field_name }}</b>
                   <span class="ftype">{{ f.field_type }}</span>

@@ -90,6 +90,65 @@ async def cleanup_deleted_project_data(db: AsyncSession) -> dict:
     return {"projects": len(deleted_pids), **counts}
 
 
+async def cleanup_rownum_fields(db: AsyncSession) -> dict:
+    """清理存量数据中"序号"字段（与表格自带 # 列重复）。
+
+    严格条件 —— 同时满足才删，避免误伤业务数据：
+    1. 字段名 ∈ {"序号", "#", "No", "No.", "序", "行号", "Index"}（大小写不敏感）
+    2. 该字段在所有 records 里的值是 1, 2, 3, ..., n 连续整数（允许空）
+
+    删除字段时连带 field_permissions 一起清掉；records.values 里的对应 key
+    保留（前端按 field.id 取值，字段已不存在就不显示，无害）。
+    """
+    from .routers.excel_router import ROWNUM_FIELD_NAMES, _is_rownum_column
+
+    res = await db.execute(select(models.Field))
+    all_fields = res.scalars().all()
+    candidates = [
+        f for f in all_fields
+        if (f.name or "").strip().lower() in ROWNUM_FIELD_NAMES
+    ]
+    if not candidates:
+        return {"deleted": 0, "kept": 0}
+
+    # 拉所有相关 record 的 values，判断各 candidate 的列值
+    from sqlalchemy import delete as sql_delete
+    ds_ids = list({f.datasheet_id for f in candidates})
+    res = await db.execute(
+        select(models.Record).where(models.Record.datasheet_id.in_(ds_ids))
+    )
+    records_by_ds: dict[int, list[models.Record]] = {}
+    for r in res.scalars().all():
+        records_by_ds.setdefault(r.datasheet_id, []).append(r)
+    for rs in records_by_ds.values():
+        rs.sort(key=lambda r: (r.sort_order, r.id))
+
+    to_delete_field_ids: list[int] = []
+    kept = 0
+    for f in candidates:
+        rs = records_by_ds.get(f.datasheet_id, [])
+        col_values = [(r.values or {}).get(str(f.id)) for r in rs]
+        if _is_rownum_column(col_values):
+            to_delete_field_ids.append(f.id)
+        else:
+            kept += 1
+
+    if to_delete_field_ids:
+        await db.execute(sql_delete(models.FieldPermission).where(
+            models.FieldPermission.field_id.in_(to_delete_field_ids)
+        ))
+        await db.execute(sql_delete(models.Field).where(
+            models.Field.id.in_(to_delete_field_ids)
+        ))
+        await db.commit()
+        log.info(
+            "[cleanup_rownum_fields] 删除 %d 个冗余的'序号'字段（%d 个保留为业务数据）",
+            len(to_delete_field_ids), kept,
+        )
+
+    return {"deleted": len(to_delete_field_ids), "kept": kept}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -100,3 +159,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_empty_project_members(db)
     except Exception as e:
         log.warning("backfill_empty_project_members failed: %s", e)
+    try:
+        await cleanup_rownum_fields(db)
+    except Exception as e:
+        log.warning("cleanup_rownum_fields failed: %s", e)

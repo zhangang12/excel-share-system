@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import FieldPermissionDialog from '@/components/FieldPermissionDialog.vue'
 import { useRealtime } from '@/composables/useRealtime'
 import { useTableHeight } from '@/composables/useTableHeight'
+import { isFormula, evalCellFormula } from '@/utils/formula'
 import type { DataField, DataRecord, FieldType } from '@/types'
 
 const props = defineProps<{
@@ -41,8 +42,16 @@ function openPermDialog(f: DataField) {
   permDialogVisible.value = true
 }
 
+// 表格自带 # 行号列，名为"序号" / "#" / "No" 的字段视为冗余，自动隐藏
+const ROWNUM_FIELD_NAMES = new Set(['序号', '#', 'no', 'no.', '序', '行号', 'index'])
+function isRownumField(f: DataField): boolean {
+  return ROWNUM_FIELD_NAMES.has((f.name || '').trim().toLowerCase())
+}
+
 const visibleFields = computed(() =>
-  fields.value.filter(f => myPerms.value[String(f.id)]?.can_view !== false)
+  fields.value.filter(f =>
+    myPerms.value[String(f.id)]?.can_view !== false && !isRownumField(f),
+  )
 )
 function fieldEditable(f: DataField): boolean {
   if (!props.canEdit) return false
@@ -108,20 +117,147 @@ const pagedRecords = computed(() => {
   return filteredRecords.value.slice(start, start + pageSize.value)
 })
 
+// ===== Preamble（项目信息行）自动计算 =====
+// 识别"货期 / 已过时间 / 倒计时"等列，按"下单日期" + "交货日期" + TODAY 实时算
+const DATE_DERIVED_COLS = new Set(['货期', '已过时间', '已经过时间', '倒计时', '剩余天数', '剩余'])
+const DATE_KEYS = {
+  order: ['下单日期', '下单时间', '下单'],
+  deliver: ['交货日期', '交付日期', '交期', '交货时间'],
+}
+
+function parseLooseDate(s: unknown): Date | null {
+  if (!s && s !== 0) return null
+  const str = String(s).trim()
+  const m = /^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/.exec(str)
+  if (!m) return null
+  const d = new Date(+m[1], +m[2] - 1, +m[3])
+  return isNaN(d.getTime()) ? null : d
+}
+
+function daysBetween(a: Date, b: Date): number {
+  const a0 = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())
+  const b0 = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate())
+  return Math.round((a0 - b0) / 86400000)
+}
+
+// 在 header 行（idx=1）中按候选名找列索引
+function findHeaderIdx(headerRow: string[], candidates: string[]): number {
+  for (let i = 0; i < headerRow.length; i++) {
+    const k = String(headerRow[i] || '').trim()
+    if (candidates.includes(k)) return i
+  }
+  return -1
+}
+
+function preambleCell(rowIdx: number, colIdx: number): string {
+  const lines = props.headerLines || []
+  const raw = lines[rowIdx]?.[colIdx]
+  const rawStr = raw == null ? '' : String(raw)
+  // 只对"值行"（idx=2）做自动计算；其他行原样返回
+  if (rowIdx !== 2) return rawStr
+
+  const headerRow = (lines[1] || []).map(c => String(c ?? ''))
+  const valueRow = (lines[2] || []).map(c => String(c ?? ''))
+  const header = (headerRow[colIdx] || '').trim()
+  if (!DATE_DERIVED_COLS.has(header)) return rawStr
+
+  const orderIdx = findHeaderIdx(headerRow, DATE_KEYS.order)
+  const deliverIdx = findHeaderIdx(headerRow, DATE_KEYS.deliver)
+  const orderDate = orderIdx >= 0 ? parseLooseDate(valueRow[orderIdx]) : null
+  const deliverDate = deliverIdx >= 0 ? parseLooseDate(valueRow[deliverIdx]) : null
+  const today = new Date()
+
+  if (header === '货期') {
+    if (orderDate && deliverDate) return String(daysBetween(deliverDate, orderDate))
+    return rawStr
+  }
+  if (header === '已过时间' || header === '已经过时间') {
+    if (orderDate) return String(daysBetween(today, orderDate))
+    return rawStr
+  }
+  if (header === '倒计时' || header === '剩余天数' || header === '剩余') {
+    if (deliverDate) return String(daysBetween(deliverDate, today))
+    return rawStr
+  }
+  return rawStr
+}
+
+function preambleCellClass(rowIdx: number, colIdx: number): string {
+  if (rowIdx !== 2) return ''
+  const headerRow = ((props.headerLines || [])[1] || []).map(c => String(c ?? ''))
+  const header = (headerRow[colIdx] || '').trim()
+  if (header === '倒计时' || header === '剩余天数' || header === '剩余') {
+    const v = parseInt(preambleCell(rowIdx, colIdx))
+    if (!isNaN(v)) {
+      if (v < 0) return 'preamble-overdue'   // 已逾期
+      if (v <= 3) return 'preamble-urgent'   // 紧迫
+      if (v <= 7) return 'preamble-warning'  // 警告
+    }
+  }
+  return ''
+}
+
 function getCellValue(record: DataRecord, f: DataField) {
   return record.values?.[String(f.id)]
 }
 
-// 列宽自适应
+// ===== 公式：可见列字母（A,B,C...） → field =====
+// 列字母按"可见列"分配：A 是表格第 1 个数据列（不含 #）
+const fieldByColLetter = computed(() => {
+  const m = new Map<string, DataField>()
+  visibleFields.value.forEach((f, idx) => {
+    let n = idx + 1, s = ''
+    while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) }
+    m.set(s, f)
+  })
+  return m
+})
+
+// 公式查找当前数据集：用过滤后的行（与界面展示对齐；如果你期望按全量行号引用，
+// 把这里换成 records.value 即可）
+function lookupForFormula(col: string, row: number): unknown {
+  const targetField = fieldByColLetter.value.get(col)
+  if (!targetField) return ''
+  const rowIdx = row - 1
+  if (rowIdx < 0 || rowIdx >= filteredRecords.value.length) return ''
+  return getCellValue(filteredRecords.value[rowIdx], targetField)
+}
+
+/** 单元格显示值：是公式则求值显示结果，否则原样 */
+function displayCellValue(record: DataRecord, f: DataField): {
+  text: string; isError: boolean; isEmpty: boolean
+} {
+  const raw = getCellValue(record, f)
+  if (Array.isArray(raw)) {
+    return raw.length
+      ? { text: raw.join('、'), isError: false, isEmpty: false }
+      : { text: '-', isError: false, isEmpty: true }
+  }
+  if (isFormula(raw)) {
+    const r = evalCellFormula(raw as string, lookupForFormula)
+    if (!r.ok) return { text: `#ERR: ${r.error}`, isError: true, isEmpty: false }
+    const v = r.value
+    if (v == null || v === '') return { text: '-', isError: false, isEmpty: true }
+    return { text: typeof v === 'number'
+      ? (Number.isInteger(v) ? String(v) : String(parseFloat(v.toFixed(10))))
+      : String(v), isError: false, isEmpty: false }
+  }
+  if (raw == null || raw === '') return { text: '-', isError: false, isEmpty: true }
+  return { text: String(raw), isError: false, isEmpty: false }
+}
+
+// 暴露给模板用的判断（避免在 template 里重复 isFormula）
+function cellIsFormula(record: DataRecord, f: DataField): boolean {
+  return isFormula(getCellValue(record, f))
+}
+
+// 列宽自适应（公式列以计算结果的长度估算）
 function colWidth(f: DataField): number {
   const headerLen = (f.name || '').length
   let maxLen = headerLen
   for (const r of pagedRecords.value) {
-    const v = getCellValue(r, f)
-    let s = ''
-    if (v == null) s = ''
-    else if (Array.isArray(v)) s = v.join('、')
-    else s = String(v)
+    const d = displayCellValue(r, f)
+    const s = d.text || ''
     if (s.length > maxLen) maxLen = s.length
   }
   let w = Math.max(maxLen * 13, headerLen * 13) + 40
@@ -233,6 +369,25 @@ async function deleteRow(rowId: number) {
 <el-button v-if="canEdit" type="primary" :icon="Plus" @click="addRow">添加行</el-button>
       
       <span style="flex: 1"></span>
+      <el-popover placement="bottom" :width="380" trigger="click">
+        <template #reference>
+          <el-button size="small" plain>fx 公式帮助</el-button>
+        </template>
+        <div class="formula-help">
+          <div class="fh-title">单元格公式（= 开头）</div>
+          <div class="fh-row"><code>=A2+B2</code><span>同行 A 列 + B 列</span></div>
+          <div class="fh-row"><code>=A2*B2*0.95</code><span>四则运算</span></div>
+          <div class="fh-row"><code>=IF(C2&gt;100, "大", "小")</code><span>条件判断</span></div>
+          <div class="fh-row"><code>=ROUND(A2/B2, 2)</code><span>保留 2 位小数</span></div>
+          <div class="fh-row"><code>=SUM(A2,B2,C2)</code><span>多列求和</span></div>
+          <div class="fh-row"><code>=CONCAT(A2,"-",B2)</code><span>拼接字符串</span></div>
+          <div class="fh-tip">
+            列字母按"当前可见列顺序"分配（A=第 1 列…），行号 1 起。
+            支持函数：IF / AND / OR / NOT / SUM / MIN / MAX / AVG /
+            ROUND / ABS / CONCAT / LEN / LEFT / RIGHT
+          </div>
+        </div>
+      </el-popover>
       <el-tooltip :content="connected ? '实时同步已连接 · ' + onlineCount + ' 人在线' : '实时同步已断开（5 秒后自动重连）'">
         <span class="rt-status" :class="connected ? 'on' : 'off'">
           <span class="dot"></span>{{ connected ? '实时' : '离线' }}
@@ -247,7 +402,7 @@ async function deleteRow(rowId: number) {
       <span class="muted small">{{ filteredRecords.length }} / {{ records.length }} 行</span>
     </div>
 
-    <!-- 来自 Excel 的前几行标题区（只读） -->
+    <!-- 来自 Excel 的前几行标题区（只读；货期/已过时间/倒计时 实时计算） -->
     <div v-if="props.headerLines && props.headerLines.length" class="preamble">
       <table>
         <tr v-for="(line, idx) in props.headerLines" :key="idx"
@@ -259,7 +414,9 @@ async function deleteRow(rowId: number) {
           <td v-if="idx === 0" :colspan="line.length" class="preamble-title">
             {{ line.filter(c => c).join(' ') }}
           </td>
-          <td v-else v-for="(cell, ci) in line" :key="ci">{{ cell }}</td>
+          <td v-else v-for="(_cell, ci) in line" :key="ci" :class="preambleCellClass(idx, ci)">
+            {{ preambleCell(idx, ci) }}
+          </td>
         </tr>
       </table>
     </div>
@@ -292,14 +449,19 @@ async function deleteRow(rowId: number) {
                       @blur="saveEdit(row, f)" @keyup.enter="saveEdit(row, f)" @keyup.escape="cancelEdit" />
           </template>
           <template v-else>
-            <span class="cell" :class="{ editable: fieldEditable(f) }" @click="startEdit(row, f)">
-              <template v-if="Array.isArray(getCellValue(row, f))">
-                <span v-if="(getCellValue(row, f) as unknown[]).length">{{ (getCellValue(row, f) as unknown[]).join('、') }}</span>
-                <span v-else class="muted">-</span>
+            <span class="cell"
+                  :class="{
+                    editable: fieldEditable(f),
+                    formula: cellIsFormula(row, f),
+                    'formula-error': displayCellValue(row, f).isError,
+                  }"
+                  :title="cellIsFormula(row, f) ? String(getCellValue(row, f)) : undefined"
+                  @click="startEdit(row, f)">
+              <template v-if="displayCellValue(row, f).isEmpty">
+                <span class="muted">-</span>
               </template>
               <template v-else>
-                <span v-if="getCellValue(row, f) != null && getCellValue(row, f) !== ''">{{ getCellValue(row, f) }}</span>
-                <span v-else class="muted">-</span>
+                {{ displayCellValue(row, f).text }}
               </template>
             </span>
           </template>
@@ -415,6 +577,58 @@ async function deleteRow(rowId: number) {
   background: rgba(37,99,235,.08);
   outline: 1px dashed var(--primary);
 }
+/* 公式单元格：浅紫色 + 等宽字体提示 */
+.cell.formula {
+  color: #6d28d9;
+  background: rgba(167, 139, 250, .08);
+  font-variant-numeric: tabular-nums;
+}
+.cell.formula::before {
+  content: 'fx ';
+  font-size: 10px;
+  color: #a78bfa;
+  margin-right: 2px;
+  font-weight: 600;
+}
+.cell.formula-error {
+  color: #b91c1c !important;
+  background: rgba(239, 68, 68, .08) !important;
+}
+.cell.formula-error::before { color: #ef4444; }
+
+/* 公式帮助 popover 内部 */
+.formula-help { font-size: 13px; }
+.fh-title {
+  font-weight: 600;
+  color: #6d28d9;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-light);
+}
+.fh-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 0;
+}
+.fh-row code {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  background: #f3e8ff;
+  color: #6d28d9;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.fh-row span { color: var(--text-2); font-size: 12px; }
+.fh-tip {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: #fffbeb;
+  color: #92400e;
+  border-radius: 4px;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
 
 /* ===== 表格底色 + 加粗边框 + 圆角 ===== */
 :deep(.el-table) {
@@ -508,6 +722,22 @@ async function deleteRow(rowId: number) {
   font-weight: 400;
   color: var(--text-1);
   background: white;
+}
+/* 倒计时按紧迫程度着色 */
+.preamble td.preamble-warning {
+  color: #b45309 !important;
+  background: #fffbeb !important;
+  font-weight: 600 !important;
+}
+.preamble td.preamble-urgent {
+  color: #b91c1c !important;
+  background: #fee2e2 !important;
+  font-weight: 700 !important;
+}
+.preamble td.preamble-overdue {
+  color: #ffffff !important;
+  background: #dc2626 !important;
+  font-weight: 700 !important;
 }
 
 /* 小屏笔记本 / 平板：压缩工具栏、标签条、Excel 标题区，给表格腾高度 */
