@@ -8,7 +8,9 @@ import { useAuthStore } from '@/stores/auth'
 import FieldPermissionDialog from '@/components/FieldPermissionDialog.vue'
 import { useRealtime } from '@/composables/useRealtime'
 import { useTableHeight } from '@/composables/useTableHeight'
-import { isFormula, evalCellFormula } from '@/utils/formula'
+// 单元格手动公式（=A2+B2）功能已禁用；保留 utils/formula.ts 文件以便后续重启。
+// 系统自动公式（preamble 的"货期/已过时间/倒计时"）走 preambleCell/preambleFormula，
+// 与单元格公式无关，继续工作。
 import type { DataField, DataRecord, FieldType } from '@/types'
 
 const props = defineProps<{
@@ -232,57 +234,21 @@ function getCellValue(record: DataRecord, f: DataField) {
   return record.values?.[String(f.id)]
 }
 
-// ===== 公式：可见列字母（A,B,C...） → field =====
-// 列字母按"可见列"分配：A 是表格第 1 个数据列（不含 #）
-const fieldByColLetter = computed(() => {
-  const m = new Map<string, DataField>()
-  visibleFields.value.forEach((f, idx) => {
-    let n = idx + 1, s = ''
-    while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) }
-    m.set(s, f)
-  })
-  return m
-})
-
-// 公式查找当前数据集：用过滤后的行（与界面展示对齐；如果你期望按全量行号引用，
-// 把这里换成 records.value 即可）
-function lookupForFormula(col: string, row: number): unknown {
-  const targetField = fieldByColLetter.value.get(col)
-  if (!targetField) return ''
-  const rowIdx = row - 1
-  if (rowIdx < 0 || rowIdx >= filteredRecords.value.length) return ''
-  return getCellValue(filteredRecords.value[rowIdx], targetField)
-}
-
-/** 单元格显示值：是公式则求值显示结果，否则原样 */
-function displayCellValue(record: DataRecord, f: DataField): {
+/** 单元格显示值（纯文本 / 数组），不再做公式求值 */
+function displayCellValue(_record: DataRecord, f: DataField): {
   text: string; isError: boolean; isEmpty: boolean
 } {
-  const raw = getCellValue(record, f)
+  const raw = getCellValue(_record, f)
   if (Array.isArray(raw)) {
     return raw.length
       ? { text: raw.join('、'), isError: false, isEmpty: false }
       : { text: '-', isError: false, isEmpty: true }
   }
-  if (isFormula(raw)) {
-    const r = evalCellFormula(raw as string, lookupForFormula)
-    if (!r.ok) return { text: `#ERR: ${r.error}`, isError: true, isEmpty: false }
-    const v = r.value
-    if (v == null || v === '') return { text: '-', isError: false, isEmpty: true }
-    return { text: typeof v === 'number'
-      ? (Number.isInteger(v) ? String(v) : String(parseFloat(v.toFixed(10))))
-      : String(v), isError: false, isEmpty: false }
-  }
   if (raw == null || raw === '') return { text: '-', isError: false, isEmpty: true }
   return { text: String(raw), isError: false, isEmpty: false }
 }
 
-// 暴露给模板用的判断（避免在 template 里重复 isFormula）
-function cellIsFormula(record: DataRecord, f: DataField): boolean {
-  return isFormula(getCellValue(record, f))
-}
-
-// 列宽自适应（公式列以计算结果的长度估算）
+// 列宽自适应
 function colWidth(f: DataField): number {
   const headerLen = (f.name || '').length
   let maxLen = headerLen
@@ -400,25 +366,6 @@ async function deleteRow(rowId: number) {
 <el-button v-if="canEdit" type="primary" :icon="Plus" @click="addRow">添加行</el-button>
       
       <span style="flex: 1"></span>
-      <el-popover placement="bottom" :width="380" trigger="click">
-        <template #reference>
-          <el-button size="small" plain>fx 公式帮助</el-button>
-        </template>
-        <div class="formula-help">
-          <div class="fh-title">单元格公式（= 开头）</div>
-          <div class="fh-row"><code>=A2+B2</code><span>同行 A 列 + B 列</span></div>
-          <div class="fh-row"><code>=A2*B2*0.95</code><span>四则运算</span></div>
-          <div class="fh-row"><code>=IF(C2&gt;100, "大", "小")</code><span>条件判断</span></div>
-          <div class="fh-row"><code>=ROUND(A2/B2, 2)</code><span>保留 2 位小数</span></div>
-          <div class="fh-row"><code>=SUM(A2,B2,C2)</code><span>多列求和</span></div>
-          <div class="fh-row"><code>=CONCAT(A2,"-",B2)</code><span>拼接字符串</span></div>
-          <div class="fh-tip">
-            列字母按"当前可见列顺序"分配（A=第 1 列…），行号 1 起。
-            支持函数：IF / AND / OR / NOT / SUM / MIN / MAX / AVG /
-            ROUND / ABS / CONCAT / LEN / LEFT / RIGHT
-          </div>
-        </div>
-      </el-popover>
       <el-tooltip :content="connected ? '实时同步已连接 · ' + onlineCount + ' 人在线' : '实时同步已断开（5 秒后自动重连）'">
         <span class="rt-status" :class="connected ? 'on' : 'off'">
           <span class="dot"></span>{{ connected ? '实时' : '离线' }}
@@ -504,12 +451,7 @@ async function deleteRow(rowId: number) {
           </template>
           <template v-else>
             <span class="cell"
-                  :class="{
-                    editable: fieldEditable(f),
-                    formula: cellIsFormula(row, f),
-                    'formula-error': displayCellValue(row, f).isError,
-                  }"
-                  :title="cellIsFormula(row, f) ? String(getCellValue(row, f)) : undefined"
+                  :class="{ editable: fieldEditable(f) }"
                   @click="startEdit(row, f)">
               <template v-if="displayCellValue(row, f).isEmpty">
                 <span class="muted">-</span>
@@ -631,58 +573,7 @@ async function deleteRow(rowId: number) {
   background: rgba(37,99,235,.08);
   outline: 1px dashed var(--primary);
 }
-/* 公式单元格：浅紫色 + 等宽字体提示 */
-.cell.formula {
-  color: #6d28d9;
-  background: rgba(167, 139, 250, .08);
-  font-variant-numeric: tabular-nums;
-}
-.cell.formula::before {
-  content: 'fx ';
-  font-size: 10px;
-  color: #a78bfa;
-  margin-right: 2px;
-  font-weight: 600;
-}
-.cell.formula-error {
-  color: #b91c1c !important;
-  background: rgba(239, 68, 68, .08) !important;
-}
-.cell.formula-error::before { color: #ef4444; }
-
-/* 公式帮助 popover 内部 */
-.formula-help { font-size: 13px; }
-.fh-title {
-  font-weight: 600;
-  color: #6d28d9;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-light);
-}
-.fh-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 4px 0;
-}
-.fh-row code {
-  flex: 0 0 auto;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
-  background: #f3e8ff;
-  color: #6d28d9;
-  padding: 2px 6px;
-  border-radius: 4px;
-  white-space: nowrap;
-}
-.fh-row span { color: var(--text-2); font-size: 12px; }
-.fh-tip {
-  margin-top: 10px;
-  padding: 8px 10px;
-  background: #fffbeb;
-  color: #92400e;
-  border-radius: 4px;
-  font-size: 11.5px;
-  line-height: 1.6;
-}
+/* 单元格手动公式相关样式（.cell.formula / .formula-help）已随功能下线移除 */
 
 /* ===== 表格底色 + 加粗边框 + 圆角 ===== */
 :deep(.el-table) {
