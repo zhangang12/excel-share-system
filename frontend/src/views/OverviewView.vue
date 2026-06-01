@@ -2,12 +2,12 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Edit, Delete, Upload, Setting, Lock, Search, Download } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete, Upload, Setting, Search, Download } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { overviewApi } from '@/api/overview'
 import { projectsApi } from '@/api/projects'
 import { permApi } from '@/api/permissions'
-import FieldPermissionDialog from '@/components/FieldPermissionDialog.vue'
+// 字段权限统一在「权限管理 → 权限矩阵」页配置，不再挂在表头
 import { useRealtime } from '@/composables/useRealtime'
 import { useTableHeight } from '@/composables/useTableHeight'
 import { useAuthStore } from '@/stores/auth'
@@ -30,19 +30,11 @@ const pageSize = ref(20)
 const currentPage = ref(1)
 
 const isAdmin = computed(() => ['admin', 'manager'].includes(auth.user?.role_code || ''))
-const canManagePerm = computed(() => ['admin', 'manager'].includes(auth.user?.role_code || ''))
 const visibleFields = computed(() =>
   fields.value.filter(f => myPerms.value[String(f.id)]?.can_view !== false)
 )
 function fieldEditable(f: OverviewField): boolean {
   return myPerms.value[String(f.id)]?.can_edit !== false
-}
-
-const permDialogVisible = ref(false)
-const permDialogField = ref<OverviewField | null>(null)
-function openPermDialog(f: OverviewField) {
-  permDialogField.value = f
-  permDialogVisible.value = true
 }
 
 const FIELD_TYPE_META: Record<FieldType, { label: string; color: string }> = {
@@ -357,11 +349,6 @@ onMounted(load)
               <el-tooltip :content="f.name" placement="top" :show-after="300" :hide-after="0">
                 <span class="field-name">{{ f.name }}</span>
               </el-tooltip>
-              <span v-if="canManagePerm" class="field-actions" @click.stop>
-                <button class="perm-btn" @click="openPermDialog(f)" title="配置该列的角色权限">
-                  <el-icon><Lock /></el-icon>
-                </button>
-              </span>
             </span>
           </template>
           <template #default="{ row }">
@@ -412,14 +399,6 @@ onMounted(load)
         <el-button type="primary" @click="submitField">保存</el-button>
       </template>
     </el-dialog>
-
-    <FieldPermissionDialog
-      v-if="permDialogField"
-      v-model="permDialogVisible"
-      :field-id="permDialogField.id"
-      :field-name="permDialogField.name"
-      scope="overview"
-    />
   </div>
 </template>
 
@@ -452,32 +431,6 @@ onMounted(load)
   flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.field-actions {
-  display: inline-flex;
-  flex-shrink: 0;
-  margin-left: 2px;
-}
-
-.perm-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 4px;
-  color: #b45309;
-  background: #fef3c7;
-  border: 1px solid #fcd34d;
-  border-radius: 5px;
-  cursor: pointer;
-  transition: all .15s;
-}
-.perm-btn:hover {
-  background: #f59e0b;
-  color: white;
-  border-color: #f59e0b;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(245, 158, 11, .3);
-}
-.perm-btn .el-icon { font-size: 14px; }
 
 .cell {
   display: inline-block; min-width: 60px; min-height: 32px;

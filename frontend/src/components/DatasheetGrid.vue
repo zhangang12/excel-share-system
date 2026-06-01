@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Setting, Edit, Lock, Search } from '@element-plus/icons-vue'
+import { Plus, Delete, Setting, Edit, Search } from '@element-plus/icons-vue'
 import { datasheetsApi } from '@/api/datasheets'
 import { permApi } from '@/api/permissions'
 import { useAuthStore } from '@/stores/auth'
-import FieldPermissionDialog from '@/components/FieldPermissionDialog.vue'
+// 字段权限统一在「权限管理 → 权限矩阵」页配置，不再挂在表头
 import { useRealtime } from '@/composables/useRealtime'
 import { useTableHeight } from '@/composables/useTableHeight'
 // 单元格手动公式（=A2+B2）功能已禁用；保留 utils/formula.ts 文件以便后续重启。
@@ -26,7 +26,6 @@ const loading = ref(false)
 const auth = useAuthStore()
 const myPerms = ref<Record<string, { can_view: boolean; can_edit: boolean }>>({})
 const isAdmin = computed(() => ['admin', 'manager'].includes(auth.user?.role_code || ''))
-const canManagePerm = computed(() => ['admin', 'manager'].includes(auth.user?.role_code || ''))
 
 // 分页 + 适应屏幕
 const pageSize = ref(20)
@@ -34,14 +33,6 @@ const currentPage = ref(1)
 const fitScreen = ref(localStorage.getItem('pms_datasheet_fit') !== '0')
 function onFitScreenChange(v: boolean) {
   localStorage.setItem('pms_datasheet_fit', v ? '1' : '0')
-}
-
-// 权限管理对话框
-const permDialogVisible = ref(false)
-const permDialogField = ref<DataField | null>(null)
-function openPermDialog(f: DataField) {
-  permDialogField.value = f
-  permDialogVisible.value = true
 }
 
 // 表格自带 # 行号列，名为"序号" / "#" / "No" 的字段视为冗余，自动隐藏
@@ -437,11 +428,6 @@ async function deleteRow(rowId: number) {
             <el-tooltip :content="f.name" placement="top" :show-after="300" :hide-after="0">
               <span class="field-name">{{ f.name }}</span>
             </el-tooltip>
-            <span v-if="canManagePerm" class="field-actions" @click.stop>
-              <button class="perm-btn" @click="openPermDialog(f)" title="配置该列的角色权限">
-                <el-icon><Lock /></el-icon>
-              </button>
-            </span>
           </span>
         </template>
         <template #default="{ row }">
@@ -494,14 +480,6 @@ async function deleteRow(rowId: number) {
         <el-button type="primary" @click="submitField">保存</el-button>
       </template>
     </el-dialog>
-
-    <FieldPermissionDialog
-      v-if="permDialogField"
-      v-model="permDialogVisible"
-      :field-id="permDialogField.id"
-      :field-name="permDialogField.name"
-      scope="datasheet"
-    />
   </div>
 </template>
 
@@ -533,33 +511,6 @@ async function deleteRow(rowId: number) {
   flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.field-actions {
-  display: inline-flex;
-  flex-shrink: 0;
-  margin-left: 2px;
-}
-.perm-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 4px;
-  color: #b45309;
-  background: #fef3c7;
-  border: 1px solid #fcd34d;
-  border-radius: 5px;
-  cursor: pointer;
-  transition: all .15s;
-}
-.perm-btn:hover {
-  background: #f59e0b;
-  color: white;
-  border-color: #f59e0b;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(245, 158, 11, .3);
-}
-.perm-btn .el-icon { font-size: 14px; }
-.action-icon:hover { color: var(--primary); }
-.action-icon.danger:hover { color: var(--danger); }
 
 .cell {
   display: inline-block; min-width: 60px; min-height: 32px;
@@ -627,8 +578,6 @@ async function deleteRow(rowId: number) {
 
 .pager { padding: 12px 14px; text-align: right; }
 
-.action-icon.perm { color: var(--primary); }
-.action-icon.perm:hover { background: var(--primary); color: white; }
 .action-icon.danger:hover { background: var(--danger); color: white; }
 
 .preamble {
