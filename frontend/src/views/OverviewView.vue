@@ -494,39 +494,41 @@ onMounted(load)
 
 .pager { padding: 16px 0; text-align: right; }
 
-/* ===== 表格底色 + 加粗边框 + 圆角 ===== */
+/* ===== 表格底色 + 加粗边框 + 圆角（v2: 加重视觉分量） ===== */
 :deep(.el-table) {
-  --el-table-border-color: #d0d5dd;
-  --el-table-border: 2px solid #d0d5dd;
-  --el-table-header-bg-color: #f4f6fb;
+  --el-table-border-color: #94a3b8;
+  --el-table-border: 2px solid #94a3b8;
+  --el-table-header-bg-color: #cbd5e1;
   border-radius: 10px;
+  border: 2px solid #64748b;
 }
 :deep(.el-table .el-table__inner-wrapper) {
   border-radius: 10px;
   overflow: hidden;
 }
 :deep(.el-table th.el-table__cell) {
-  background: #f4f6fb !important;
-  color: #1f2d3d;
-  font-weight: 600;
+  background: linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%) !important;
+  color: #0f172a;
+  font-weight: 700;
 }
 :deep(.el-table td.el-table__cell),
 :deep(.el-table th.el-table__cell) {
-  border-right: 2px solid #d0d5dd !important;
-  border-bottom: 2px solid #d0d5dd !important;
+  border-right: 2px solid #94a3b8 !important;
+  border-bottom: 2px solid #94a3b8 !important;
 }
 :deep(.el-table--border),
 :deep(.el-table--border .el-table__inner-wrapper) {
-  border-color: #d0d5dd !important;
+  border-color: #64748b !important;
 }
 :deep(.el-table tbody tr td.el-table__cell) {
   background: #ffffff;
+  color: #1e293b;
 }
 :deep(.el-table .el-table__row--striped td.el-table__cell) {
-  background: #f8fafc !important;
+  background: #e2e8f0 !important;
 }
 :deep(.el-table tbody tr:hover td.el-table__cell) {
-  background: #eef4ff !important;
+  background: #dbeafe !important;
 }
 
 /* ===== 编辑框加大 ===== */

@@ -159,25 +159,25 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
   font-size: 13px;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 2px solid #64748b;
 }
 .matrix th, .matrix td {
   padding: 10px 12px;
   text-align: center;
-  border-right: 1px solid var(--border-light);
+  border-right: 2px solid #94a3b8;
 }
 .matrix th:last-child, .matrix td:last-child { border-right: none; }
 .matrix thead th {
-  background: #f9fafb;
-  color: var(--text-2);
-  font-weight: 600;
-  font-size: 12px;
+  background: linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%);
+  color: #0f172a;
+  font-weight: 700;
+  font-size: 12.5px;
 }
 .th-field { width: 200px; text-align: left !important; }
 .th-role { min-width: 80px; }
 .th-action { width: 88px; }
-.matrix tbody tr:not(:last-child) { border-bottom: 1px solid var(--border-light); }
-.matrix tbody tr:hover { background: #fafbfc; }
+.matrix tbody tr:not(:last-child) { border-bottom: 2px solid #94a3b8; }
+.matrix tbody tr:hover { background: #dbeafe; }
 
 .td-field { text-align: left !important; }
 .td-field b { font-weight: 600; color: var(--text-1); }

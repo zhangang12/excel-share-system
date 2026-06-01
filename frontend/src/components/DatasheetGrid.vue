@@ -575,39 +575,41 @@ async function deleteRow(rowId: number) {
 }
 /* 单元格手动公式相关样式（.cell.formula / .formula-help）已随功能下线移除 */
 
-/* ===== 表格底色 + 加粗边框 + 圆角 ===== */
+/* ===== 表格底色 + 加粗边框 + 圆角（v2: 加重视觉分量） ===== */
 :deep(.el-table) {
-  --el-table-border-color: #d0d5dd;
-  --el-table-border: 2px solid #d0d5dd;
-  --el-table-header-bg-color: #f4f6fb;
+  --el-table-border-color: #94a3b8;
+  --el-table-border: 2px solid #94a3b8;
+  --el-table-header-bg-color: #cbd5e1;
   border-radius: 10px;
+  border: 2px solid #64748b;
 }
 :deep(.el-table .el-table__inner-wrapper) {
   border-radius: 10px;
   overflow: hidden;
 }
 :deep(.el-table th.el-table__cell) {
-  background: #f4f6fb !important;
-  color: #1f2d3d;
-  font-weight: 600;
+  background: linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%) !important;
+  color: #0f172a;
+  font-weight: 700;
 }
 :deep(.el-table td.el-table__cell),
 :deep(.el-table th.el-table__cell) {
-  border-right: 2px solid #d0d5dd !important;
-  border-bottom: 2px solid #d0d5dd !important;
+  border-right: 2px solid #94a3b8 !important;
+  border-bottom: 2px solid #94a3b8 !important;
 }
 :deep(.el-table--border),
 :deep(.el-table--border .el-table__inner-wrapper) {
-  border-color: #d0d5dd !important;
+  border-color: #64748b !important;
 }
 :deep(.el-table tbody tr td.el-table__cell) {
   background: #ffffff;
+  color: #1e293b;
 }
 :deep(.el-table .el-table__row--striped td.el-table__cell) {
-  background: #f8fafc !important;
+  background: #e2e8f0 !important;
 }
 :deep(.el-table tbody tr:hover td.el-table__cell) {
-  background: #eef4ff !important;
+  background: #dbeafe !important;
 }
 
 /* ===== 编辑框加大 ===== */
@@ -630,43 +632,50 @@ async function deleteRow(rowId: number) {
 .action-icon.danger:hover { background: var(--danger); color: white; }
 
 .preamble {
-  background: #f8fafc;
-  border-bottom: 2px solid var(--primary);
+  background: #e2e8f0;
+  border: 2px solid #64748b;
+  border-bottom: 3px solid var(--primary);
+  border-radius: 8px 8px 0 0;
   padding: 0;
   overflow-x: auto;
+  margin-bottom: -1px;
 }
 .preamble table { border-collapse: collapse; width: 100%; }
 .preamble td {
   padding: 9px 12px;
-  border: 2px solid #d0d5dd;
-  color: var(--text-1);
+  border: 2px solid #94a3b8;
+  color: #1e293b;
   white-space: nowrap;
   background: #ffffff;
-  font-size: 12.5px;
+  font-size: 13px;
   text-align: center;
 }
 /* 行 1：公司标题大字 + 横跨所有列（用 first-child td 单独样式） */
 .preamble-title {
-  padding: 10px 14px !important;
-  font-size: 15px;
-  font-weight: 600;
+  padding: 12px 14px !important;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--primary);
-  background: linear-gradient(90deg, #eff6ff 0%, white 100%) !important;
+  background: linear-gradient(90deg, #dbeafe 0%, #eff6ff 50%, #dbeafe 100%) !important;
   text-align: center !important;
   border-left: none !important;
   border-right: none !important;
+  border-bottom: 3px solid var(--primary) !important;
+  letter-spacing: 0.5px;
 }
 /* 项目信息表头行（第 2 行） */
 .preamble tr.preamble-info-head td {
-  background: #f1f5f9 !important;
-  color: var(--text-2);
-  font-weight: 500;
+  background: linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%) !important;
+  color: #0f172a;
+  font-weight: 700;
+  border-color: #64748b !important;
 }
 /* 项目信息值行（第 3 行） */
 .preamble tr.preamble-info-value td {
-  font-weight: 400;
-  color: var(--text-1);
-  background: white;
+  font-weight: 500;
+  color: #0f172a;
+  background: #f8fafc;
+  border-color: #94a3b8 !important;
 }
 /* 倒计时按紧迫程度着色 */
 .preamble td.preamble-warning {
