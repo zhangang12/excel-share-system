@@ -197,6 +197,16 @@ function preambleCellClass(rowIdx: number, colIdx: number): string {
   return ''
 }
 
+// 返回某列的"公式定义"文本；非公式列返回 ''
+function preambleFormula(colIdx: number): string {
+  const headerRow = ((props.headerLines || [])[1] || []).map(c => String(c ?? ''))
+  const header = (headerRow[colIdx] || '').trim()
+  if (header === '货期') return '= 交货日期 - 下单日期'
+  if (header === '已过时间' || header === '已经过时间') return '= TODAY() - 下单日期'
+  if (header === '倒计时' || header === '剩余天数' || header === '剩余') return '= 交货日期 - TODAY()'
+  return ''
+}
+
 function getCellValue(record: DataRecord, f: DataField) {
   return record.values?.[String(f.id)]
 }
@@ -402,7 +412,7 @@ async function deleteRow(rowId: number) {
       <span class="muted small">{{ filteredRecords.length }} / {{ records.length }} 行</span>
     </div>
 
-    <!-- 来自 Excel 的前几行标题区（只读；货期/已过时间/倒计时 实时计算） -->
+    <!-- 来自 Excel 的前几行标题区（只读；货期/已过时间/倒计时 用公式实时算） -->
     <div v-if="props.headerLines && props.headerLines.length" class="preamble">
       <table>
         <tr v-for="(line, idx) in props.headerLines" :key="idx"
@@ -414,8 +424,25 @@ async function deleteRow(rowId: number) {
           <td v-if="idx === 0" :colspan="line.length" class="preamble-title">
             {{ line.filter(c => c).join(' ') }}
           </td>
+          <!-- 表头行（idx=1）：公式列在表头后挂 fx 紫色徽标 -->
+          <td v-else-if="idx === 1" v-for="(_cell, ci) in line" :key="ci">
+            <span>{{ preambleCell(idx, ci) }}</span>
+            <el-tooltip v-if="preambleFormula(ci)" :content="preambleFormula(ci)" placement="top">
+              <span class="preamble-fx-badge">fx</span>
+            </el-tooltip>
+          </td>
+          <!-- 值行（idx=2）：公式列结果用紫色 + 虚线下划线 + tooltip 显示公式 -->
           <td v-else v-for="(_cell, ci) in line" :key="ci" :class="preambleCellClass(idx, ci)">
-            {{ preambleCell(idx, ci) }}
+            <el-tooltip v-if="preambleFormula(ci)" placement="top">
+              <template #content>
+                <div style="line-height:1.7">
+                  <div style="font-weight:600">{{ preambleFormula(ci) }}</div>
+                  <div style="font-size:11px;opacity:.7">基于"下单日期"、"交货日期"、今天实时计算</div>
+                </div>
+              </template>
+              <span class="preamble-fx-value">{{ preambleCell(idx, ci) }}</span>
+            </el-tooltip>
+            <template v-else>{{ preambleCell(idx, ci) }}</template>
           </td>
         </tr>
       </table>
@@ -738,6 +765,28 @@ async function deleteRow(rowId: number) {
   color: #ffffff !important;
   background: #dc2626 !important;
   font-weight: 700 !important;
+}
+/* fx 公式列：表头紫色徽标 */
+.preamble-fx-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  font-style: italic;
+  vertical-align: middle;
+  letter-spacing: 0.5px;
+  cursor: help;
+  box-shadow: 0 1px 2px rgba(109, 40, 217, .3);
+}
+/* fx 公式列：值用紫色虚线下划线提示"可悬停看公式" */
+.preamble-fx-value {
+  cursor: help;
+  border-bottom: 1px dashed currentColor;
+  padding-bottom: 1px;
 }
 
 /* 小屏笔记本 / 平板：压缩工具栏、标签条、Excel 标题区，给表格腾高度 */
