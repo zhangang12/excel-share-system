@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Setting, Edit, Lock, Search } from '@element-plus/icons-vue'
 import { datasheetsApi } from '@/api/datasheets'
@@ -125,6 +125,24 @@ const DATE_KEYS = {
   deliver: ['交货日期', '交付日期', '交期', '交货时间'],
 }
 
+// 用一个响应式 key 表示"今天是哪一天"。每分钟轮询一次系统时间，
+// 如果日期串变了（跨过 0 点）就更新这个 key，触发所有依赖它的
+// 公式列重新渲染。这样浏览器开整天不动也会自动跳天。
+const todayKey = ref(new Date().toDateString())
+let _todayTimer: number | null = null
+onMounted(() => {
+  _todayTimer = window.setInterval(() => {
+    const k = new Date().toDateString()
+    if (k !== todayKey.value) todayKey.value = k
+  }, 60_000)  // 60 秒检查一次足够，跨天最坏延迟 1 分钟
+})
+onBeforeUnmount(() => {
+  if (_todayTimer !== null) {
+    window.clearInterval(_todayTimer)
+    _todayTimer = null
+  }
+})
+
 function parseLooseDate(s: unknown): Date | null {
   if (!s && s !== 0) return null
   const str = String(s).trim()
@@ -165,6 +183,9 @@ function preambleCell(rowIdx: number, colIdx: number): string {
   const deliverIdx = findHeaderIdx(headerRow, DATE_KEYS.deliver)
   const orderDate = orderIdx >= 0 ? parseLooseDate(valueRow[orderIdx]) : null
   const deliverDate = deliverIdx >= 0 ? parseLooseDate(valueRow[deliverIdx]) : null
+  // 关键：读 todayKey 建立 Vue 响应式依赖
+  // 即使浏览器开着不动，每 60 秒定时器跨天后会更新 todayKey，触发本函数重算
+  void todayKey.value
   const today = new Date()
 
   if (header === '货期') {
