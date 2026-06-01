@@ -421,29 +421,35 @@ async function deleteRow(rowId: number) {
               'preamble-info-value': idx === 2,
             }">
           <!-- 第一行（公司标题）：跨所有列居中 -->
-          <td v-if="idx === 0" :colspan="line.length" class="preamble-title">
-            {{ line.filter(c => c).join(' ') }}
-          </td>
+          <template v-if="idx === 0">
+            <td :colspan="line.length" class="preamble-title">
+              {{ line.filter(c => c).join(' ') }}
+            </td>
+          </template>
           <!-- 表头行（idx=1）：公式列在表头后挂 fx 紫色徽标 -->
-          <td v-else-if="idx === 1" v-for="(_cell, ci) in line" :key="ci">
-            <span>{{ preambleCell(idx, ci) }}</span>
-            <el-tooltip v-if="preambleFormula(ci)" :content="preambleFormula(ci)" placement="top">
-              <span class="preamble-fx-badge">fx</span>
-            </el-tooltip>
-          </td>
+          <template v-else-if="idx === 1">
+            <td v-for="(_cell, ci) in line" :key="ci">
+              <span>{{ preambleCell(idx, ci) }}</span>
+              <el-tooltip v-if="preambleFormula(ci)" :content="preambleFormula(ci)" placement="top">
+                <span class="preamble-fx-badge">fx</span>
+              </el-tooltip>
+            </td>
+          </template>
           <!-- 值行（idx=2）：公式列结果用紫色 + 虚线下划线 + tooltip 显示公式 -->
-          <td v-else v-for="(_cell, ci) in line" :key="ci" :class="preambleCellClass(idx, ci)">
-            <el-tooltip v-if="preambleFormula(ci)" placement="top">
-              <template #content>
-                <div style="line-height:1.7">
-                  <div style="font-weight:600">{{ preambleFormula(ci) }}</div>
-                  <div style="font-size:11px;opacity:.7">基于"下单日期"、"交货日期"、今天实时计算</div>
-                </div>
-              </template>
-              <span class="preamble-fx-value">{{ preambleCell(idx, ci) }}</span>
-            </el-tooltip>
-            <template v-else>{{ preambleCell(idx, ci) }}</template>
-          </td>
+          <template v-else>
+            <td v-for="(_cell, ci) in line" :key="ci" :class="preambleCellClass(idx, ci)">
+              <el-tooltip v-if="preambleFormula(ci)" placement="top">
+                <template #content>
+                  <div style="line-height:1.7">
+                    <div style="font-weight:600">{{ preambleFormula(ci) }}</div>
+                    <div style="font-size:11px;opacity:.7">基于"下单日期"、"交货日期"、今天实时计算</div>
+                  </div>
+                </template>
+                <span class="preamble-fx-value">{{ preambleCell(idx, ci) }}</span>
+              </el-tooltip>
+              <template v-else>{{ preambleCell(idx, ci) }}</template>
+            </td>
+          </template>
         </tr>
       </table>
     </div>
