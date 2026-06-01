@@ -5,7 +5,7 @@ import tempfile
 from datetime import datetime, date
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -311,6 +311,97 @@ async def import_excel(
     return schemas.Msg(message=f"导入完成：{len(sheets_meta)} 个数据表，共 {total_records} 行")
 
 
+# ============== 导出公共工具：preamble 公式列实时计算 ==============
+# 与前端 DatasheetGrid.vue 的 DATE_DERIVED_COLS / DATE_KEYS 保持一致
+_PREAMBLE_DERIVED = {"货期", "已过时间", "已经过时间", "倒计时", "剩余天数", "剩余"}
+_PREAMBLE_ORDER_KEYS = {"下单日期", "下单时间", "下单"}
+_PREAMBLE_DELIVER_KEYS = {"交货日期", "交付日期", "交期", "交货时间"}
+_DATE_HEAD_RE = re.compile(r"^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})")
+
+
+def _parse_loose_date(s: Any) -> Optional[date]:
+    """松散解析日期字符串：识别 YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD / YYYY年MM月DD日"""
+    if s is None or s == "":
+        return None
+    if isinstance(s, datetime):
+        return s.date()
+    if isinstance(s, date):
+        return s
+    text = str(s).strip()
+    m = _DATE_HEAD_RE.match(text)
+    if not m:
+        return None
+    try:
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+
+def _find_header_idx(header_row: list[Any], candidates: set[str]) -> int:
+    for i, h in enumerate(header_row):
+        k = str(h or "").strip()
+        if k in candidates:
+            return i
+    return -1
+
+
+def _compute_preamble_value(header_row: list[Any], value_row: list[Any], col_idx: int) -> Any:
+    """对值行的某列：是公式列就实时计算，否则原样返回。
+
+    与 DatasheetGrid.preambleCell 行为对齐：
+      货期         = 交货日期 - 下单日期
+      已过时间     = TODAY() - 下单日期
+      倒计时       = 交货日期 - TODAY()
+    """
+    raw = value_row[col_idx] if col_idx < len(value_row) else ""
+    header = str(header_row[col_idx] if col_idx < len(header_row) else "").strip()
+    if header not in _PREAMBLE_DERIVED:
+        return raw
+
+    order_idx = _find_header_idx(header_row, _PREAMBLE_ORDER_KEYS)
+    deliver_idx = _find_header_idx(header_row, _PREAMBLE_DELIVER_KEYS)
+    order_date = _parse_loose_date(value_row[order_idx]) if 0 <= order_idx < len(value_row) else None
+    deliver_date = _parse_loose_date(value_row[deliver_idx]) if 0 <= deliver_idx < len(value_row) else None
+    today = date.today()
+
+    if header == "货期":
+        if order_date and deliver_date:
+            return (deliver_date - order_date).days
+        return raw
+    if header in ("已过时间", "已经过时间"):
+        if order_date:
+            return (today - order_date).days
+        return raw
+    if header in ("倒计时", "剩余天数", "剩余"):
+        if deliver_date:
+            return (deliver_date - today).days
+        return raw
+    return raw
+
+
+def _write_preamble_to_sheet(ws, header_lines_json: Optional[str]) -> None:
+    """把 datasheet.header_lines（JSON 字符串）写到工作表顶部，
+    其中值行（idx=2）的公式列按 TODAY 实时计算。"""
+    if not header_lines_json:
+        return
+    try:
+        lines = json.loads(header_lines_json)
+    except Exception:
+        return
+    if not lines:
+        return
+    header_row = lines[1] if len(lines) > 1 else []
+    for idx, line in enumerate(lines):
+        if idx == 2 and header_row:
+            row = [
+                _compute_preamble_value(header_row, line, i)
+                for i in range(len(line))
+            ]
+            ws.append(row)
+        else:
+            ws.append(list(line))
+
+
 # ============== 导出 ==============
 @router.get("/datasheets/{did}/export")
 async def export_datasheet(
@@ -342,9 +433,11 @@ async def export_datasheet(
     wb = Workbook()
     ws = wb.active
     ws.title = d.name[:31] or "Sheet1"
-    # 表头
+    # 1. 项目信息行（preamble）—— 公式列按 TODAY 实时算，与网页一致
+    _write_preamble_to_sheet(ws, d.header_lines)
+    # 2. 数据表头
     ws.append([f.name for f in fields])
-    # 数据
+    # 3. 数据
     for r in records:
         row = []
         for f in fields:
@@ -403,7 +496,11 @@ async def export_project(
             .order_by(models.Record.sort_order, models.Record.id)
         )
         records = rres.scalars().all()
+        # 1. 项目信息行（preamble）—— 公式列按 TODAY 实时算
+        _write_preamble_to_sheet(ws, d.header_lines)
+        # 2. 数据表头
         ws.append([f.name for f in fields])
+        # 3. 数据
         for r in records:
             row = []
             for f in fields:
