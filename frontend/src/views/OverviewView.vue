@@ -221,6 +221,38 @@ async function submitField() {
   await load()
 }
 
+// 添加项目（admin / manager 可见，与项目列表的"新建项目"等价）
+const createProjectDialogVisible = ref(false)
+const createProjectSubmitting = ref(false)
+const createProjectForm = ref({
+  code: '', name: '', description: '', status: '进行中',
+})
+function openAddProject() {
+  createProjectForm.value = { code: '', name: '', description: '', status: '进行中' }
+  createProjectDialogVisible.value = true
+}
+async function submitAddProject() {
+  const f = createProjectForm.value
+  if (!f.code.trim()) { ElMessage.warning('请填写项目编号'); return }
+  if (!f.name.trim()) { ElMessage.warning('请填写项目名称'); return }
+  createProjectSubmitting.value = true
+  try {
+    const p = await projectsApi.create({
+      code: f.code.trim(), name: f.name.trim(),
+      description: f.description.trim() || undefined,
+      status: f.status,
+    })
+    createProjectDialogVisible.value = false
+    ElMessage.success(`已添加项目 ${p.code} · ${p.name}`)
+    await load()
+  } catch (e: any) {
+    // 后端 400 提示（如"项目编号已存在"）由全局拦截器弹 message；此处兜底
+    if (!e?.handled) ElMessage.error(e?.response?.data?.detail || e?.message || '添加失败')
+  } finally {
+    createProjectSubmitting.value = false
+  }
+}
+
 async function deleteField(f: OverviewField) {
   await ElMessageBox.confirm(`删除列「${f.name}」？所有项目的该列数据都会清空。`, '确认', {
     type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
@@ -296,9 +328,12 @@ onMounted(load)
       </el-tooltip>
       <el-input v-model="keyword" placeholder="搜索任意列..." style="width: 240px"
                 size="large" clearable :prefix-icon="Search" @input="currentPage = 1" />
-<el-button v-if="isAdmin" :icon="Setting" size="large" @click="openAddField">添加列</el-button>
+      <el-button v-if="isAdmin" type="primary" :icon="Plus" size="large" @click="openAddProject">
+        添加项目
+      </el-button>
+      <el-button v-if="isAdmin" :icon="Setting" size="large" @click="openAddField">添加列</el-button>
       <el-button :icon="Download" size="large" @click="onExport">导出</el-button>
-      <label v-if="isAdmin" class="el-button el-button--primary el-button--large" style="margin: 0">
+      <label v-if="isAdmin" class="el-button el-button--large" style="margin: 0">
         <el-icon style="margin-right:6px"><Upload /></el-icon>
         <span>导入汇总表</span>
         <input type="file" accept=".xlsx,.xlsm,.xls" hidden @change="onImportFile" />
@@ -310,7 +345,7 @@ onMounted(load)
                 style="width: 100%" :height="tableHeight"
                 :empty-text="loading ? '加载中…' : '无数据'"
                 :default-sort="{ prop: 'code', order: 'ascending' }">
-        <el-table-column type="index" label="#" width="55" align="center"
+        <el-table-column type="index" label="#" width="55" align="center" fixed="left"
                          :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
         <el-table-column prop="code" label="项目编号" :width="fitScreen ? 110 : 140" fixed="left" sortable>
           <template #default="{ row }">
@@ -397,6 +432,40 @@ onMounted(load)
       <template #footer>
         <el-button @click="fieldDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submitField">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 添加项目对话框（与"项目列表"页的新建项目等价） -->
+    <el-dialog v-model="createProjectDialogVisible" title="添加项目" width="500px"
+               :close-on-click-modal="false">
+      <el-form label-position="top">
+        <el-form-item label="项目编号 *">
+          <el-input v-model="createProjectForm.code" size="large" placeholder="如 2026-040"
+                    @keyup.enter="submitAddProject" />
+        </el-form-item>
+        <el-form-item label="项目名称 *">
+          <el-input v-model="createProjectForm.name" size="large"
+                    placeholder="如 200T 液压机"
+                    @keyup.enter="submitAddProject" />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="createProjectForm.status" size="large" style="width:100%">
+            <el-option label="进行中" value="进行中" />
+            <el-option label="已完成" value="已完成" />
+            <el-option label="已归档" value="已归档" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="createProjectForm.description" type="textarea" :rows="3"
+                    placeholder="选填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createProjectDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitAddProject"
+                   :loading="createProjectSubmitting">
+          添加
+        </el-button>
       </template>
     </el-dialog>
   </div>
