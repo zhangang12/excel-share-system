@@ -422,6 +422,10 @@ onMounted(load)
 .field-name {
   flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 12.5px;
+  letter-spacing: 0.2px;
 }
 
 .cell {

@@ -565,10 +565,17 @@ async function addRow() {
 .rt-status.off { background: #fef2f2; color: var(--danger); }
 @keyframes ds-pulse { 0%,100%{opacity:1;} 50%{opacity:.35;} }
 
-.field-header { display: inline-flex; align-items: center; gap: 5px; width: 100%; }
+.field-header {
+  display: inline-flex; align-items: center; gap: 5px; width: 100%;
+}
 .field-name {
   flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* 字段表头：粗体 + 深色，与 preamble 表头风格一致 */
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 12.5px;
+  letter-spacing: 0.2px;
 }
 
 .cell {
