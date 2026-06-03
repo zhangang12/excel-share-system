@@ -311,30 +311,9 @@ function displayCellValue(_record: DataRecord, f: DataField): {
   return { text: smartFormatValue(raw), isError: false, isEmpty: false }
 }
 
-/** 按单元格值识别状态色：
- *  - "完成 / 已完成 / 完工" → 绿
- *  - 其他已知状态词（进行中 / 未开始 / 延期 / 暂停等）→ 红
- *  - 普通文本（人名、日期、编号等）不染色，避免误伤
- */
-function cellStatusClass(text: string): string {
-  const t = (text || '').trim()
-  if (!t || t === '-') return ''
-  // 绿色：完成系
-  if (t === '完成' || t === '已完成' || t === '完工' || t === '已结束') {
-    return 'status-done'
-  }
-  // 红色：所有其他已知状态词
-  const RED_STATES = new Set([
-    '进行中', '正在做', '处理中', '在做',
-    '未开始', '待开始', '待处理', '未开工',
-    '延期', '逾期', '超期',
-    '暂停', '搁置', '挂起',
-    '取消', '作废',
-    '待审核', '审核中',
-  ])
-  if (RED_STATES.has(t)) return 'status-doing'
-  return ''
-}
+// cellStatusClass 已下线 —— 之前按"值"识别会误染其他字段（如"仓库签字"
+// 字段值是"完成"也会变绿）。现在统一由 datasheetCellClass 按"字段名 +
+// 白名单值"严格判断，只对"进度"等列整格着色。
 
 // 判断字段是否是"进度"列（编辑时显示下拉，限定选项）
 const PROGRESS_FIELD_NAMES = new Set([
@@ -601,11 +580,11 @@ async function addRow() {
                       @blur="saveEdit(row, f)" @keyup.enter="saveEdit(row, f)" @keyup.escape="cancelEdit" />
           </template>
           <template v-else>
+            <!-- 不再用 cellStatusClass 给 span 着色（避免误染"仓库签字"等
+                 字段中文值是"完成"的情况）；整格着色由 :cell-class-name
+                 +datasheetCellClass 完成，仅对"进度"列生效 -->
             <span class="cell"
-                  :class="[
-                    { editable: fieldEditable(f) },
-                    cellStatusClass(displayCellValue(row, f).text),
-                  ]"
+                  :class="{ editable: fieldEditable(f) }"
                   @click="startEdit(row, f)">
               <template v-if="displayCellValue(row, f).isEmpty">
                 <span class="muted">-</span>
@@ -700,19 +679,7 @@ async function addRow() {
   outline: 1px dashed var(--primary);
 }
 
-/* 状态值着色：按内容识别，不限定字段名（仅对单元格内文字）*/
-.cell.status-done {
-  color: #065f46 !important;
-  background: #d1fae5 !important;
-  font-weight: 800 !important;
-  border-radius: 3px;
-}
-.cell.status-doing {
-  color: #991b1b !important;
-  background: #fee2e2 !important;
-  font-weight: 800 !important;
-  border-radius: 3px;
-}
+/* .cell.status-done / status-doing 已下线，避免按值染色误染其他字段 */
 
 /* 进度列整格着色：覆盖斑马纹和 hover */
 :deep(.el-table td.el-table__cell.cell-row-done),
