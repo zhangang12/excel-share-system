@@ -149,6 +149,15 @@ function getCellValue(row: OverviewRow, f: OverviewField) {
   return row.extra?.[String(f.id)]
 }
 
+/** 显示用：把字符串的"整数.0"后缀去掉，保留"2.5米"等 */
+function smartFormatValue(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'number') return String(v)
+  const s = String(v)
+  const m = /^(-?\d+)\.0+$/.exec(s)
+  return m ? m[1] : s
+}
+
 // 单元格编辑
 const editingCell = ref<{ rowId: number; fieldId: number } | null>(null)
 const editingValue = ref<any>(null)
@@ -373,11 +382,11 @@ onMounted(load)
             <template v-else>
               <span class="cell" :class="{ editable: fieldEditable(f) }" @click="startEdit(row, f)">
                 <template v-if="Array.isArray(getCellValue(row, f))">
-                  <span v-if="(getCellValue(row, f) as unknown[]).length">{{ (getCellValue(row, f) as unknown[]).join('、') }}</span>
+                  <span v-if="(getCellValue(row, f) as unknown[]).length">{{ (getCellValue(row, f) as unknown[]).map(x => smartFormatValue(x)).join('、') }}</span>
                   <span v-else class="muted">-</span>
                 </template>
                 <template v-else>
-                  <span v-if="getCellValue(row, f) != null && getCellValue(row, f) !== ''">{{ getCellValue(row, f) }}</span>
+                  <span v-if="getCellValue(row, f) != null && getCellValue(row, f) !== ''">{{ smartFormatValue(getCellValue(row, f)) }}</span>
                   <span v-else class="muted">-</span>
                 </template>
               </span>

@@ -179,7 +179,7 @@ function projectHeaderValue(col: HeaderColumn, rowSeq = 1): string {
   if (col.source === 'code') return p.code || ''
   if (col.source === 'name') return p.name || ''
   if (col.source === 'meta' && col.metaKey) {
-    return String(p.header_meta?.[col.metaKey] || '')
+    return smartFormatValue(p.header_meta?.[col.metaKey])
   }
   if (col.source === 'derived') {
     void todayKey.value  // 响应式依赖：跨天自动重算
@@ -279,6 +279,21 @@ function getCellValue(record: DataRecord, f: DataField) {
   return record.values?.[String(f.id)]
 }
 
+/** 把"整数.0"格式的字符串去掉尾部 .0，保留带单位的 ("2.5米") 或
+ *  其他字符的 ("1+4 (备)") 等。数字类型由 JS 的 String() 已经处理。
+ */
+function smartFormatValue(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'number') {
+    // JS 里 6.0 === 6，String(6.0) 已经是 "6"。但 6.7 仍保留小数
+    return String(v)
+  }
+  const s = String(v)
+  // 严格匹配：开头到结尾，符号 + 整数 + . + 至少一个 0
+  const m = /^(-?\d+)\.0+$/.exec(s)
+  return m ? m[1] : s
+}
+
 /** 单元格显示值（纯文本 / 数组），不再做公式求值 */
 function displayCellValue(_record: DataRecord, f: DataField): {
   text: string; isError: boolean; isEmpty: boolean
@@ -286,11 +301,11 @@ function displayCellValue(_record: DataRecord, f: DataField): {
   const raw = getCellValue(_record, f)
   if (Array.isArray(raw)) {
     return raw.length
-      ? { text: raw.join('、'), isError: false, isEmpty: false }
+      ? { text: raw.map(x => smartFormatValue(x)).join('、'), isError: false, isEmpty: false }
       : { text: '-', isError: false, isEmpty: true }
   }
   if (raw == null || raw === '') return { text: '-', isError: false, isEmpty: true }
-  return { text: String(raw), isError: false, isEmpty: false }
+  return { text: smartFormatValue(raw), isError: false, isEmpty: false }
 }
 
 /** 按单元格值识别状态色：
