@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Setting, Edit, Search } from '@element-plus/icons-vue'
+import { Plus, Setting, Edit, Search } from '@element-plus/icons-vue'
 import { datasheetsApi } from '@/api/datasheets'
 import { permApi } from '@/api/permissions'
 import { useAuthStore } from '@/stores/auth'
@@ -11,7 +11,7 @@ import { useTableHeight } from '@/composables/useTableHeight'
 // 单元格手动公式（=A2+B2）功能已禁用；保留 utils/formula.ts 文件以便后续重启。
 // 系统自动公式（preamble 的"货期/已过时间/倒计时"）走 preambleCell/preambleFormula，
 // 与单元格公式无关，继续工作。
-import type { DataField, DataRecord, FieldType } from '@/types'
+import type { DataField, DataRecord } from '@/types'
 
 const props = defineProps<{
   datasheetId: number
@@ -49,15 +49,6 @@ const visibleFields = computed(() =>
 function fieldEditable(f: DataField): boolean {
   if (!props.canEdit) return false
   return myPerms.value[String(f.id)]?.can_edit !== false
-}
-
-const FIELD_TYPE_META: Record<FieldType, { label: string; color: string }> = {
-  text: { label: '文本', color: '#6b7280' },
-  number: { label: '数字', color: '#10b981' },
-  date: { label: '日期', color: '#f59e0b' },
-  select: { label: '单选', color: '#8b5cf6' },
-  multi_select: { label: '多选', color: '#ec4899' },
-  person: { label: '人员', color: '#0ea5e9' },
 }
 
 async function load() {
@@ -239,7 +230,7 @@ function displayCellValue(_record: DataRecord, f: DataField): {
   return { text: String(raw), isError: false, isEmpty: false }
 }
 
-// 列宽自适应
+// 列宽自适应（紧凑版：每字符 ~10px，14 寸笔记本全屏可显）
 function colWidth(f: DataField): number {
   const headerLen = (f.name || '').length
   let maxLen = headerLen
@@ -248,13 +239,13 @@ function colWidth(f: DataField): number {
     const s = d.text || ''
     if (s.length > maxLen) maxLen = s.length
   }
-  let w = Math.max(maxLen * 13, headerLen * 13) + 40
+  let w = Math.max(maxLen * 10, headerLen * 10) + 16
   if (fitScreen.value) {
-    w = Math.min(w, 130)
+    w = Math.min(w, 95)   // 紧凑模式：上限 95
   } else {
-    w = Math.min(w, 260)
+    w = Math.min(w, 200)
   }
-  return Math.max(80, w)
+  return Math.max(56, w)  // 最小 56
 }
 
 // 单元格编辑
@@ -340,15 +331,7 @@ async function addRow() {
   await load()
 }
 
-async function deleteRow(rowId: number) {
-  await ElMessageBox.confirm('删除这一行？', '确认', {
-    type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
-  }).catch(() => 'cancel').then(async (r) => {
-    if (r === 'cancel') return
-    await datasheetsApi.deleteRecord(rowId)
-    await load()
-  })
-}
+// deleteRow 已下线（行删除按钮已从 UI 隐藏）
 </script>
 
 <template>
@@ -417,14 +400,13 @@ async function deleteRow(rowId: number) {
               style="width: 100%" :height="tableHeight"
               v-loading="loading"
               :empty-text="loading ? '加载中…' : (fields.length === 0 ? '请先添加字段（列）' : '暂无数据，点添加行开始录入')">
-      <el-table-column type="index" label="#" width="50" align="center"
+      <el-table-column type="index" label="#" width="38" align="center" fixed="left"
                        :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
 
       <el-table-column v-for="f in visibleFields" :key="f.id" :label="f.name"
                        :min-width="colWidth(f)" show-overflow-tooltip>
         <template #header>
           <span class="field-header">
-            <span class="field-type-dot" :style="{ background: FIELD_TYPE_META[f.type].color }"></span>
             <el-tooltip :content="f.name" placement="top" :show-after="300" :hide-after="0">
               <span class="field-name">{{ f.name }}</span>
             </el-tooltip>
@@ -450,11 +432,7 @@ async function deleteRow(rowId: number) {
         </template>
       </el-table-column>
 
-      <el-table-column v-if="canEdit" label="操作" :width="fitScreen ? 70 : 80" align="center" fixed="right">
-        <template #default="{ row }">
-          <el-button size="small" type="danger" :icon="Delete" link @click="deleteRow(row.id)" />
-        </template>
-      </el-table-column>
+      <!-- "操作"删除列已隐藏（行删除可去后台维护） -->
     </el-table>
 
     <div class="pager">
@@ -506,22 +484,26 @@ async function deleteRow(rowId: number) {
 @keyframes ds-pulse { 0%,100%{opacity:1;} 50%{opacity:.35;} }
 
 .field-header { display: inline-flex; align-items: center; gap: 5px; width: 100%; }
-.field-type-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .field-name {
   flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 .cell {
-  display: inline-block; min-width: 60px; min-height: 32px;
-  padding: 6px 8px;
-  line-height: 20px;
+  display: inline-block;
+  min-width: 40px;
+  min-height: 22px;
+  padding: 2px 4px;
+  line-height: 18px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #0f172a;
 }
 .cell.editable {
   cursor: cell; border-radius: 3px;
 }
 .cell.editable:hover {
-  background: rgba(37,99,235,.08);
+  background: rgba(37,99,235,.10);
   outline: 1px dashed var(--primary);
 }
 /* 单元格手动公式相关样式（.cell.formula / .formula-help）已随功能下线移除 */
@@ -542,6 +524,22 @@ async function deleteRow(rowId: number) {
   background: linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%) !important;
   color: #0f172a;
   font-weight: 700;
+  font-size: 12.5px;
+  padding: 3px 0 !important;
+  height: auto !important;
+}
+:deep(.el-table th.el-table__cell .cell) {
+  padding: 0 4px !important;
+  line-height: 1.3;
+  font-weight: 700;
+}
+:deep(.el-table td.el-table__cell) {
+  padding: 2px 0 !important;
+  height: auto !important;
+}
+:deep(.el-table td.el-table__cell .cell) {
+  padding: 0 4px !important;
+  line-height: 1.3;
 }
 :deep(.el-table td.el-table__cell),
 :deep(.el-table th.el-table__cell) {
@@ -591,18 +589,20 @@ async function deleteRow(rowId: number) {
 }
 .preamble table { border-collapse: collapse; width: 100%; }
 .preamble td {
-  padding: 9px 12px;
+  padding: 3px 5px;
   border: 2px solid #94a3b8;
-  color: #1e293b;
+  color: #0f172a;
   white-space: nowrap;
   background: #ffffff;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 600;
   text-align: center;
+  line-height: 1.4;
 }
 /* 行 1：公司标题大字 + 横跨所有列（用 first-child td 单独样式） */
 .preamble-title {
-  padding: 12px 14px !important;
-  font-size: 16px;
+  padding: 5px 10px !important;
+  font-size: 13.5px;
   font-weight: 700;
   color: var(--primary);
   background: linear-gradient(90deg, #dbeafe 0%, #eff6ff 50%, #dbeafe 100%) !important;
@@ -610,7 +610,7 @@ async function deleteRow(rowId: number) {
   border-left: none !important;
   border-right: none !important;
   border-bottom: 3px solid var(--primary) !important;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
 }
 /* 项目信息表头行（第 2 行） */
 .preamble tr.preamble-info-head td {
@@ -618,13 +618,15 @@ async function deleteRow(rowId: number) {
   color: #0f172a;
   font-weight: 700;
   border-color: #64748b !important;
+  padding: 3px 5px;
 }
 /* 项目信息值行（第 3 行） */
 .preamble tr.preamble-info-value td {
-  font-weight: 500;
+  font-weight: 600;
   color: #0f172a;
   background: #f8fafc;
   border-color: #94a3b8 !important;
+  padding: 3px 5px;
 }
 /* 倒计时按紧迫程度着色 */
 .preamble td.preamble-warning {
@@ -665,14 +667,12 @@ async function deleteRow(rowId: number) {
   padding-bottom: 1px;
 }
 
-/* 小屏笔记本 / 平板：压缩工具栏、标签条、Excel 标题区，给表格腾高度 */
-@media (max-height: 800px) {
-  .grid-toolbar { padding: 6px 10px; gap: 8px; }
-  .datasheet-tabs { padding: 4px 8px; }
-  .ds-tab { padding: 5px 10px; }
-  .preamble td { padding: 4px 8px; font-size: 11.5px; }
-  .preamble-title { padding: 5px 12px !important; font-size: 13px; }
-  .cell { min-height: 26px; padding: 4px 6px; }
-  .pager { padding: 8px 12px; }
+/* 小屏笔记本（14 寸常见 1366×768）：进一步紧凑 */
+@media (max-height: 800px), (max-width: 1440px) {
+  .grid-toolbar { padding: 4px 8px; gap: 6px; }
+  .preamble td { padding: 2px 4px; font-size: 11.5px; }
+  .preamble-title { padding: 3px 8px !important; font-size: 12.5px; }
+  .cell { min-height: 20px; padding: 1px 3px; font-size: 12px; }
+  .pager { padding: 4px 8px; }
 }
 </style>
