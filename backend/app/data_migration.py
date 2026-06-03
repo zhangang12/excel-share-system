@@ -3,6 +3,7 @@
 这里只处理"业务规则变更带来的存量数据修正"，
 不做 schema 改动（schema 由 Base.metadata.create_all 负责）。
 """
+import json
 import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,6 +150,91 @@ async def cleanup_rownum_fields(db: AsyncSession) -> dict:
     return {"deleted": len(to_delete_field_ids), "kept": kept}
 
 
+async def backfill_project_header_from_datasheets(db: AsyncSession) -> int:
+    """从老项目的 datasheet.header_lines 解析"项目头"字段，回填到 Project.extra。
+
+    项目头列：数量 / 制表日期 / 销售 / 设计师 / 电器 / 下单日期 / 交货日期
+    （项目编号、设备名称已经在 Project.code/name；货期/已过/倒计时是派生不存）
+
+    规则：
+    - 只处理还没有任何 __h__* key 的项目（防止覆盖手填值）
+    - 用项目的第一个 datasheet 的 header_lines（项目内各 sheet 头一致）
+    - header_lines 是 JSON 字符串 list[list[str]]：[公司标题, 表头行, 值行, ...]
+    - 按列名精确匹配（trim）；找不到的列留空
+    """
+    from .routers.projects_router import HEADER_KEY_PREFIX
+
+    HEADER_FIELDS = ['数量', '制表日期', '销售', '设计师', '电器', '下单日期', '交货日期']
+
+    res = await db.execute(
+        select(models.Project).where(models.Project.is_deleted == False)
+    )
+    projects = res.scalars().all()
+    if not projects:
+        return 0
+
+    updated_count = 0
+    cells_added = 0
+
+    for p in projects:
+        extra = dict(p.extra or {})
+        # 已有任何 __h__* key 的项目，认为已迁移过 / 用户已手填 → 跳过
+        if any(isinstance(k, str) and k.startswith(HEADER_KEY_PREFIX) for k in extra.keys()):
+            continue
+
+        # 找该项目的第一个 datasheet（按 sort_order）
+        res = await db.execute(
+            select(models.Datasheet).where(models.Datasheet.project_id == p.id)
+            .order_by(models.Datasheet.sort_order, models.Datasheet.id).limit(1)
+        )
+        d = res.scalar_one_or_none()
+        if not d or not d.header_lines:
+            continue
+
+        try:
+            lines = json.loads(d.header_lines)
+        except Exception:
+            continue
+        if not isinstance(lines, list) or len(lines) < 3:
+            continue
+        header_row = lines[1] if isinstance(lines[1], list) else []
+        value_row = lines[2] if isinstance(lines[2], list) else []
+        if not header_row or not value_row:
+            continue
+
+        # 表头列名 → 列索引
+        col_idx_by_name: dict[str, int] = {}
+        for i, h in enumerate(header_row):
+            name = str(h or '').strip()
+            if name and name not in col_idx_by_name:
+                col_idx_by_name[name] = i
+
+        added_for_this_project = 0
+        for fname in HEADER_FIELDS:
+            i = col_idx_by_name.get(fname)
+            if i is None or i >= len(value_row):
+                continue
+            v = value_row[i]
+            v_str = str(v).strip() if v is not None else ''
+            if v_str and v_str not in ('-', '/'):  # 空值或占位符跳过
+                extra[f'{HEADER_KEY_PREFIX}{fname}'] = v_str
+                added_for_this_project += 1
+
+        if added_for_this_project > 0:
+            p.extra = extra
+            updated_count += 1
+            cells_added += added_for_this_project
+
+    if updated_count:
+        await db.commit()
+        log.info(
+            "[backfill_project_header_from_datasheets] 从 datasheet.header_lines 回填了 "
+            "%d 个项目 / 共 %d 个字段",
+            updated_count, cells_added,
+        )
+    return updated_count
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -163,3 +249,7 @@ async def run_all(db: AsyncSession) -> None:
         await cleanup_rownum_fields(db)
     except Exception as e:
         log.warning("cleanup_rownum_fields failed: %s", e)
+    try:
+        await backfill_project_header_from_datasheets(db)
+    except Exception as e:
+        log.warning("backfill_project_header_from_datasheets failed: %s", e)

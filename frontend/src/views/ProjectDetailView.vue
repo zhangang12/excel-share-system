@@ -48,6 +48,19 @@ async function loadProject() {
   try { project.value = await projectsApi.get(pid.value) }
   catch { router.push({ name: 'projects' }) }
 }
+
+// 项目头表某字段被子组件保存成功 → 同步更新本地 project.header_meta
+// 这样切换 sheet / 同时打开多个 sheet 时都能看到新值（同 datasheet 内已经渲染过的也立即反应）
+function onHeaderUpdated(payload: { key: string; value: string | null }) {
+  if (!project.value) return
+  const meta = { ...(project.value.header_meta || {}) }
+  if (payload.value === null || payload.value === '') {
+    delete meta[payload.key]
+  } else {
+    meta[payload.key] = payload.value
+  }
+  project.value = { ...project.value, header_meta: meta }
+}
 async function loadMembers() { members.value = await projectsApi.listMembers(pid.value) }
 
 async function loadDatasheets() {
@@ -265,6 +278,8 @@ onMounted(async () => {
           :datasheet-id="activeSheetId"
           :can-edit="canEdit"
           :header-lines="activeSheetHeaderLines"
+          :project="project"
+          @header-updated="onHeaderUpdated"
         />
         <el-empty v-else description="还没有数据表，请上传 Excel 模版">
         </el-empty>

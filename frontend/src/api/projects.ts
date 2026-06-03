@@ -16,6 +16,11 @@ export const projectsApi = {
   remove: (id: number) =>
     http.delete<{ message: string }>(`/projects/${id}`).then(r => r.data),
 
+  // 更新项目头表单个字段（数量 / 销售 / 设计师 / 电器 / 下单日期 / 交货日期 / 制表日期）
+  updateHeaderCell: (id: number, key: string, value: string | null) =>
+    http.put<{ message: string }>(`/projects/${id}/header-cell`, { key, value })
+      .then(r => r.data),
+
   // 成员
   listMembers: (id: number) =>
     http.get<ProjectMember[]>(`/projects/${id}/members`).then(r => r.data),

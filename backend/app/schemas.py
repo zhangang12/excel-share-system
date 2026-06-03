@@ -99,6 +99,14 @@ class ProjectOut(BaseModel):
     member_count: int = 0
     created_at: datetime
     updated_at: datetime
+    # 项目级元数据（项目头表的值）：{数量, 制表日期, 销售, 设计师, 电器, 下单日期, 交货日期, ...}
+    header_meta: dict = Field(default_factory=dict)
+
+
+class HeaderCellUpdate(BaseModel):
+    """更新项目头单元格"""
+    key: str = Field(min_length=1, max_length=64)
+    value: Optional[str] = None  # None 或空串 = 清空
 
 
 class ProjectMemberIn(BaseModel):

@@ -20,6 +20,8 @@ export interface Project {
   manager_name?: string | null
   member_count: number
   created_at: string; updated_at: string
+  // 项目头表数据：{数量, 销售, 设计师, 电器, 下单日期, 交货日期, 制表日期, ...}
+  header_meta?: Record<string, string>
 }
 
 export interface ProjectMember {

@@ -11,12 +11,19 @@ import { useTableHeight } from '@/composables/useTableHeight'
 // 单元格手动公式（=A2+B2）功能已禁用；保留 utils/formula.ts 文件以便后续重启。
 // 系统自动公式（preamble 的"货期/已过时间/倒计时"）走 preambleCell/preambleFormula，
 // 与单元格公式无关，继续工作。
-import type { DataField, DataRecord } from '@/types'
+import { projectsApi } from '@/api/projects'
+import type { DataField, DataRecord, Project } from '@/types'
 
 const props = defineProps<{
   datasheetId: number
   canEdit: boolean
   headerLines?: string[][] | null
+  // 项目级元数据：项目头表的所有 sheet 共享同一份数据
+  project?: Project | null
+}>()
+const emit = defineEmits<{
+  // 项目头表某字段被更新，请父组件刷新 project 对象
+  'header-updated': [{ key: string; value: string | null }]
 }>()
 
 const keyword = ref("")
@@ -101,14 +108,7 @@ const pagedRecords = computed(() => {
   return filteredRecords.value.slice(start, start + pageSize.value)
 })
 
-// ===== Preamble（项目信息行）自动计算 =====
-// 识别"货期 / 已过时间 / 倒计时"等列，按"下单日期" + "交货日期" + TODAY 实时算
-const DATE_DERIVED_COLS = new Set(['货期', '已过时间', '已经过时间', '倒计时', '剩余天数', '剩余'])
-const DATE_KEYS = {
-  order: ['下单日期', '下单时间', '下单'],
-  deliver: ['交货日期', '交付日期', '交期', '交货时间'],
-}
-
+// ===== 项目头表的派生列依赖：跨天响应式 =====
 // 用一个响应式 key 表示"今天是哪一天"。每分钟轮询一次系统时间，
 // 如果日期串变了（跨过 0 点）就更新这个 key，触发所有依赖它的
 // 公式列重新渲染。这样浏览器开整天不动也会自动跳天。
@@ -142,74 +142,106 @@ function daysBetween(a: Date, b: Date): number {
   return Math.round((a0 - b0) / 86400000)
 }
 
-// 在 header 行（idx=1）中按候选名找列索引
-function findHeaderIdx(headerRow: string[], candidates: string[]): number {
-  for (let i = 0; i < headerRow.length; i++) {
-    const k = String(headerRow[i] || '').trim()
-    if (candidates.includes(k)) return i
-  }
-  return -1
+// ============= 项目头表（固定 13 列，所有 sheet 共享一份数据） =============
+type HeaderColumn = {
+  label: string
+  source: 'index' | 'code' | 'name' | 'meta' | 'derived'
+  metaKey?: string
+  derivedKey?: 'duration' | 'elapsed' | 'remaining'
+  editable: boolean
 }
 
-function preambleCell(rowIdx: number, colIdx: number): string {
-  const lines = props.headerLines || []
-  const raw = lines[rowIdx]?.[colIdx]
-  const rawStr = raw == null ? '' : String(raw)
-  // 只对"值行"（idx=2）做自动计算；其他行原样返回
-  if (rowIdx !== 2) return rawStr
+const COMPANY_TITLE = '同辉智能装备（无锡）有限公司   (注解：图纸编号 字母+2 位数/材料编号 2 位数/完成度 进行中/完成 填充/钣金字母 B 打头，机加工 J 打头，外购 W 打头)'
 
-  const headerRow = (lines[1] || []).map(c => String(c ?? ''))
-  const valueRow = (lines[2] || []).map(c => String(c ?? ''))
-  const header = (headerRow[colIdx] || '').trim()
-  if (!DATE_DERIVED_COLS.has(header)) return rawStr
+const HEADER_COLUMNS: HeaderColumn[] = [
+  { label: '序号',     source: 'index',   editable: false },
+  { label: '项目编号', source: 'code',    editable: false },
+  { label: '设备名称', source: 'name',    editable: false },
+  { label: '数量',     source: 'meta',    metaKey: '数量',     editable: true },
+  { label: '制表日期', source: 'meta',    metaKey: '制表日期', editable: true },
+  { label: '销售',     source: 'meta',    metaKey: '销售',     editable: true },
+  { label: '设计师',   source: 'meta',    metaKey: '设计师',   editable: true },
+  { label: '电器',     source: 'meta',    metaKey: '电器',     editable: true },
+  { label: '下单日期', source: 'meta',    metaKey: '下单日期', editable: true },
+  { label: '交货日期', source: 'meta',    metaKey: '交货日期', editable: true },
+  { label: '货期',     source: 'derived', derivedKey: 'duration',  editable: false },
+  { label: '已过时间', source: 'derived', derivedKey: 'elapsed',   editable: false },
+  { label: '倒计时',   source: 'derived', derivedKey: 'remaining', editable: false },
+]
 
-  const orderIdx = findHeaderIdx(headerRow, DATE_KEYS.order)
-  const deliverIdx = findHeaderIdx(headerRow, DATE_KEYS.deliver)
-  const orderDate = orderIdx >= 0 ? parseLooseDate(valueRow[orderIdx]) : null
-  const deliverDate = deliverIdx >= 0 ? parseLooseDate(valueRow[deliverIdx]) : null
-  // 关键：读 todayKey 建立 Vue 响应式依赖
-  // 即使浏览器开着不动，每 60 秒定时器跨天后会更新 todayKey，触发本函数重算
-  void todayKey.value
-  const today = new Date()
-
-  if (header === '货期') {
-    if (orderDate && deliverDate) return String(daysBetween(deliverDate, orderDate))
-    return rawStr
+function projectHeaderValue(col: HeaderColumn, rowSeq = 1): string {
+  const p = props.project
+  if (!p) return ''
+  if (col.source === 'index') return String(rowSeq)
+  if (col.source === 'code') return p.code || ''
+  if (col.source === 'name') return p.name || ''
+  if (col.source === 'meta' && col.metaKey) {
+    return String(p.header_meta?.[col.metaKey] || '')
   }
-  if (header === '已过时间' || header === '已经过时间') {
-    if (orderDate) return String(daysBetween(today, orderDate))
-    return rawStr
-  }
-  if (header === '倒计时' || header === '剩余天数' || header === '剩余') {
-    if (deliverDate) return String(daysBetween(deliverDate, today))
-    return rawStr
-  }
-  return rawStr
-}
-
-function preambleCellClass(rowIdx: number, colIdx: number): string {
-  if (rowIdx !== 2) return ''
-  const headerRow = ((props.headerLines || [])[1] || []).map(c => String(c ?? ''))
-  const header = (headerRow[colIdx] || '').trim()
-  if (header === '倒计时' || header === '剩余天数' || header === '剩余') {
-    const v = parseInt(preambleCell(rowIdx, colIdx))
-    if (!isNaN(v)) {
-      if (v < 0) return 'preamble-overdue'   // 已逾期
-      if (v <= 3) return 'preamble-urgent'   // 紧迫
-      if (v <= 7) return 'preamble-warning'  // 警告
+  if (col.source === 'derived') {
+    void todayKey.value  // 响应式依赖：跨天自动重算
+    const orderDate = parseLooseDate(p.header_meta?.['下单日期'])
+    const deliverDate = parseLooseDate(p.header_meta?.['交货日期'])
+    const today = new Date()
+    if (col.derivedKey === 'duration') {
+      if (orderDate && deliverDate) return String(daysBetween(deliverDate, orderDate))
+    } else if (col.derivedKey === 'elapsed') {
+      if (orderDate) return String(daysBetween(today, orderDate))
+    } else if (col.derivedKey === 'remaining') {
+      if (deliverDate) return String(daysBetween(deliverDate, today))
     }
   }
   return ''
 }
 
-// 返回某列的"公式定义"文本；非公式列返回 ''
-function preambleFormula(colIdx: number): string {
-  const headerRow = ((props.headerLines || [])[1] || []).map(c => String(c ?? ''))
-  const header = (headerRow[colIdx] || '').trim()
-  if (header === '货期') return '= 交货日期 - 下单日期'
-  if (header === '已过时间' || header === '已经过时间') return '= TODAY() - 下单日期'
-  if (header === '倒计时' || header === '剩余天数' || header === '剩余') return '= 交货日期 - TODAY()'
+function projectHeaderFormula(col: HeaderColumn): string {
+  if (col.source === 'derived') {
+    if (col.derivedKey === 'duration')  return '= 交货日期 - 下单日期'
+    if (col.derivedKey === 'elapsed')   return '= TODAY() - 下单日期'
+    if (col.derivedKey === 'remaining') return '= 交货日期 - TODAY()'
+  }
   return ''
+}
+
+function projectHeaderClass(col: HeaderColumn): string {
+  if (col.source === 'derived' && col.derivedKey === 'remaining') {
+    const v = parseInt(projectHeaderValue(col))
+    if (!isNaN(v)) {
+      if (v < 0) return 'preamble-overdue'
+      if (v <= 3) return 'preamble-urgent'
+      if (v <= 7) return 'preamble-warning'
+    }
+  }
+  return ''
+}
+
+// 项目头单元格编辑
+const editingHeader = ref<HeaderColumn | null>(null)
+const editingHeaderValue = ref<string>('')
+
+function isEditingHeader(col: HeaderColumn): boolean {
+  return editingHeader.value === col
+}
+function startEditHeader(col: HeaderColumn) {
+  if (!col.editable || !props.canEdit) return
+  editingHeader.value = col
+  editingHeaderValue.value = projectHeaderValue(col)
+}
+function cancelEditHeader() { editingHeader.value = null }
+async function saveHeader() {
+  const col = editingHeader.value
+  editingHeader.value = null
+  if (!col || !props.project || col.source !== 'meta' || !col.metaKey) return
+  const newVal = editingHeaderValue.value.trim()
+  const oldVal = projectHeaderValue(col)
+  if (newVal === oldVal) return
+  try {
+    await projectsApi.updateHeaderCell(props.project.id, col.metaKey, newVal || null)
+    emit('header-updated', { key: col.metaKey, value: newVal || null })
+    ElMessage.success('已保存')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  }
 }
 
 function getCellValue(record: DataRecord, f: DataField) {
@@ -354,44 +386,53 @@ async function addRow() {
       <span class="muted small">{{ filteredRecords.length }} / {{ records.length }} 行</span>
     </div>
 
-    <!-- 来自 Excel 的前几行标题区（只读；货期/已过时间/倒计时 用公式实时算） -->
-    <div v-if="props.headerLines && props.headerLines.length" class="preamble">
+    <!-- 项目头表：固定 13 列，所有 sheet 共享一份；数量/销售/...等可编辑 -->
+    <div v-if="props.project" class="preamble">
       <table>
-        <tr v-for="(line, idx) in props.headerLines" :key="idx"
-            :class="{
-              'preamble-info-head': idx === 1,
-              'preamble-info-value': idx === 2,
-            }">
-          <!-- 第一行（公司标题）：跨所有列居中 -->
-          <template v-if="idx === 0">
-            <td :colspan="line.length" class="preamble-title">
-              {{ line.filter(c => c).join(' ') }}
-            </td>
-          </template>
-          <!-- 表头行（idx=1）：公式列在表头后挂 fx 紫色徽标 -->
-          <template v-else-if="idx === 1">
-            <td v-for="(_cell, ci) in line" :key="ci">
-              <span>{{ preambleCell(idx, ci) }}</span>
-              <el-tooltip v-if="preambleFormula(ci)" :content="preambleFormula(ci)" placement="top">
-                <span class="preamble-fx-badge">fx</span>
-              </el-tooltip>
-            </td>
-          </template>
-          <!-- 值行（idx=2）：公式列结果用紫色 + 虚线下划线 + tooltip 显示公式 -->
-          <template v-else>
-            <td v-for="(_cell, ci) in line" :key="ci" :class="preambleCellClass(idx, ci)">
-              <el-tooltip v-if="preambleFormula(ci)" placement="top">
-                <template #content>
-                  <div style="line-height:1.7">
-                    <div style="font-weight:600">{{ preambleFormula(ci) }}</div>
-                    <div style="font-size:11px;opacity:.7">基于"下单日期"、"交货日期"、今天实时计算</div>
-                  </div>
-                </template>
-                <span class="preamble-fx-value">{{ preambleCell(idx, ci) }}</span>
-              </el-tooltip>
-              <template v-else>{{ preambleCell(idx, ci) }}</template>
-            </td>
-          </template>
+        <!-- 第 1 行：公司标题（硬编码） -->
+        <tr>
+          <td :colspan="HEADER_COLUMNS.length" class="preamble-title">
+            {{ COMPANY_TITLE }}
+          </td>
+        </tr>
+        <!-- 第 2 行：表头 -->
+        <tr class="preamble-info-head">
+          <td v-for="col in HEADER_COLUMNS" :key="'h-' + col.label">
+            <span>{{ col.label }}</span>
+            <el-tooltip v-if="projectHeaderFormula(col)" :content="projectHeaderFormula(col)" placement="top">
+              <span class="preamble-fx-badge">fx</span>
+            </el-tooltip>
+          </td>
+        </tr>
+        <!-- 第 3 行：值 -->
+        <tr class="preamble-info-value">
+          <td v-for="col in HEADER_COLUMNS" :key="'v-' + col.label"
+              :class="projectHeaderClass(col)">
+            <!-- 编辑态 -->
+            <el-input v-if="isEditingHeader(col)"
+                      v-model="editingHeaderValue" size="small" autofocus
+                      class="header-edit-input"
+                      @blur="saveHeader" @keyup.enter="saveHeader" @keyup.escape="cancelEditHeader" />
+            <!-- 显示态：派生列（带 fx 提示），不可编辑 -->
+            <el-tooltip v-else-if="projectHeaderFormula(col)" placement="top">
+              <template #content>
+                <div style="line-height:1.7">
+                  <div style="font-weight:600">{{ projectHeaderFormula(col) }}</div>
+                  <div style="font-size:11px;opacity:.7">基于"下单日期"、"交货日期"、今天实时计算</div>
+                </div>
+              </template>
+              <span class="preamble-fx-value">{{ projectHeaderValue(col) }}</span>
+            </el-tooltip>
+            <!-- 显示态：可编辑列 / 只读列 -->
+            <span v-else
+                  :class="{ 'header-cell-editable': col.editable && canEdit }"
+                  @click="startEditHeader(col)">
+              <template v-if="projectHeaderValue(col)">{{ projectHeaderValue(col) }}</template>
+              <span v-else class="header-cell-empty">
+                {{ col.editable && canEdit ? '点击填写' : '-' }}
+              </span>
+            </span>
+          </td>
         </tr>
       </table>
     </div>
@@ -665,6 +706,35 @@ async function addRow() {
   cursor: help;
   border-bottom: 1px dashed currentColor;
   padding-bottom: 1px;
+}
+/* 可编辑的项目头单元格：悬停提示 */
+.header-cell-editable {
+  cursor: cell;
+  display: inline-block;
+  min-width: 30px;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.header-cell-editable:hover {
+  background: rgba(37, 99, 235, .12);
+  outline: 1px dashed var(--primary);
+}
+.header-cell-empty {
+  color: #94a3b8;
+  font-weight: 400;
+  font-style: italic;
+}
+.header-edit-input :deep(.el-input__wrapper) {
+  padding: 0 6px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px var(--primary) inset;
+  background: #f5f9ff;
+}
+.header-edit-input :deep(.el-input__inner) {
+  height: 22px;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: center;
 }
 
 /* 小屏笔记本（14 寸常见 1366×768）：进一步紧凑 */

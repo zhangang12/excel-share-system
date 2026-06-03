@@ -136,6 +136,21 @@ async def _add_all_active_users_as_members(
 router = APIRouter(prefix="/api/projects", tags=["项目"])
 
 
+# 项目头元数据在 extra 中的 key 前缀（与项目一览自定义列的 field_id 数字 key 不冲突）
+HEADER_KEY_PREFIX = "__h__"
+
+
+def _extract_header_meta(extra: Optional[dict]) -> dict:
+    """从 project.extra 提取项目头数据（去掉 __h__ 前缀）。"""
+    if not extra:
+        return {}
+    out = {}
+    for k, v in extra.items():
+        if isinstance(k, str) and k.startswith(HEADER_KEY_PREFIX):
+            out[k[len(HEADER_KEY_PREFIX):]] = v
+    return out
+
+
 async def _project_to_out(p: models.Project, db: AsyncSession) -> schemas.ProjectOut:
     res = await db.execute(
         select(func.count(models.ProjectMember.id)).where(models.ProjectMember.project_id == p.id)
@@ -149,6 +164,7 @@ async def _project_to_out(p: models.Project, db: AsyncSession) -> schemas.Projec
         status=p.status, manager_id=p.manager_id, manager_name=manager_name,
         member_count=member_count,
         created_at=p.created_at, updated_at=p.updated_at,
+        header_meta=_extract_header_meta(p.extra),
     )
 
 
@@ -257,6 +273,45 @@ async def update_project(
     res = await db.execute(select(models.Project).where(models.Project.id == pid))
     p = res.scalar_one()
     return await _project_to_out(p, db)
+
+
+@router.put("/{pid}/header-cell", response_model=schemas.Msg)
+async def update_project_header_cell(
+    pid: int, data: schemas.HeaderCellUpdate,
+    current: models.User = Depends(require_not_viewer),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新项目头表的单个字段（数量 / 销售 / 设计师 / 电器 / 下单日期 / 交货日期 / 制表日期 等）。
+    存在 project.extra 的 __h__<key> 下，同项目所有 datasheet 共享。
+    """
+    res = await db.execute(select(models.Project).where(models.Project.id == pid))
+    p = res.scalar_one_or_none()
+    if not p or p.is_deleted:
+        raise HTTPException(404, "项目不存在")
+    if not await user_can_edit_project(db, current, p):
+        raise HTTPException(403, "无权编辑此项目")
+
+    key = data.key.strip()
+    if not key:
+        raise HTTPException(400, "key 不能为空")
+
+    # JSONB 字段必须重新赋值才会被 SQLAlchemy 识别为脏
+    extra = dict(p.extra or {})
+    storage_key = f"{HEADER_KEY_PREFIX}{key}"
+    val = data.value
+    if val is None or (isinstance(val, str) and val.strip() == ""):
+        extra.pop(storage_key, None)
+    else:
+        extra[storage_key] = val.strip() if isinstance(val, str) else val
+    p.extra = extra
+    await db.commit()
+
+    await write_audit(
+        db, user=current, action="update_project_header",
+        target_type="project", target_id=pid,
+        detail=f"{key}={val}",
+    )
+    return schemas.Msg(message="ok")
 
 
 @router.delete("/{pid}", response_model=schemas.Msg)
