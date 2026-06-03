@@ -144,6 +144,27 @@ def _find_data_header_row(rows: list) -> int:
 # 表格自带 # 行号列，这些字段名导入时会跳过（避免视觉冗余）
 ROWNUM_FIELD_NAMES = {"序号", "#", "no", "no.", "序", "行号", "index"}
 
+# 导入时若 header 为空，会 fallback 成"列{n}"。这种格式 + 整列空 = 空白尾列
+_FALLBACK_HEADER_RE = re.compile(r'^列\d+$')
+
+
+def is_empty_filler_column(hname: str, col_values: list) -> bool:
+    """判断是否是 Excel 模板的"空白填充列"。
+
+    场景：Excel 文件本身宽度大（如 35 列）但用户只填了前 16 列，
+    后面 19 列全是空。导入时这些列 header 是 ""，被 fallback 成
+    "列17/列18..."，且数据也都是空。需要跳过避免表格过宽撑爆窗口。
+
+    判定：header 是空 / "列N" 自动命名，且整列数据为空或 '-'。
+    """
+    name = (hname or '').strip()
+    if name and not _FALLBACK_HEADER_RE.match(name):
+        return False  # 用户给了真实列名，即使数据为空也保留
+    for v in col_values:
+        if v not in (None, '', '-'):
+            return False
+    return True
+
 
 def is_rownum_field_name(name: str) -> bool:
     """判断字段名是否明显是"行号"性质（表格 # 列已经有了，重复）"""
@@ -326,14 +347,22 @@ async def import_excel(
         db.add(d)
         await db.flush()  # 拿到 d.id
 
-        # 推断各列类型 + 识别需要跳过的"序号"列（避免和表格 # 列重复）
+        # 推断各列类型 + 识别需要跳过的列
+        # - "序号"列：避免和表格 # 列重复
+        # - 空白尾列：Excel 模板宽但实际未用到的尾列（"列N" + 数据全空），
+        #            否则表格被撑得很宽，窗口卡得很难缩放
         col_count = len(headers)
         fields: list[models.Field] = []
         skipped_cols: set[int] = set()
         for ci, hname in enumerate(headers):
             col_samples = [r[ci] if ci < len(r) else None for r in rows[:50]]
-            # 字段名明确是"序号"且内容是连续整数 → 跳过
+            # 1) 序号列：内容是连续整数 1,2,3...
             if is_rownum_field_name(hname) and _is_rownum_column(col_samples):
+                skipped_cols.add(ci)
+                continue
+            # 2) 空白填充列：用全量数据判断（不只是前 50 行样本，避免误判）
+            col_full = [r[ci] if ci < len(r) else None for r in rows]
+            if is_empty_filler_column(hname, col_full):
                 skipped_cols.add(ci)
                 continue
             ftype = _infer_field_type(col_samples)

@@ -235,6 +235,67 @@ async def backfill_project_header_from_datasheets(db: AsyncSession) -> int:
     return updated_count
 
 
+async def cleanup_filler_columns(db: AsyncSession) -> dict:
+    """清理存量数据中"列N"格式 + 整列空 的空白填充列。
+
+    背景：早期导入时 Excel 文件本身宽度大（如 35 列）但用户只填了前
+    N 列，后面会被 fallback 成"列N"自动命名，且数据全空。这种字段
+    撑得表格特别宽，14 寸笔记本看不下，窗口缩放也卡。
+
+    严格条件 —— 同时满足才删：
+    1. 字段名匹配 ^列\\d+$（系统自动 fallback 命名）
+    2. 该字段在所有 records 的 values 中均无值
+    """
+    import re as _re
+    from sqlalchemy import delete as sql_delete
+    FALLBACK_RE = _re.compile(r'^列\d+$')
+
+    res = await db.execute(select(models.Field))
+    all_fields = res.scalars().all()
+    candidates = [f for f in all_fields if FALLBACK_RE.match((f.name or '').strip())]
+    if not candidates:
+        return {"deleted": 0, "kept": 0}
+
+    # 拉所有相关 records 的 values，查每个 candidate 是否真的全空
+    ds_ids = list({f.datasheet_id for f in candidates})
+    res = await db.execute(
+        select(models.Record).where(models.Record.datasheet_id.in_(ds_ids))
+    )
+    records_by_ds: dict[int, list] = {}
+    for r in res.scalars().all():
+        records_by_ds.setdefault(r.datasheet_id, []).append(r)
+
+    to_delete: list[int] = []
+    kept = 0
+    for f in candidates:
+        rs = records_by_ds.get(f.datasheet_id, [])
+        has_value = False
+        fid_str = str(f.id)
+        for r in rs:
+            v = (r.values or {}).get(fid_str)
+            if v not in (None, '', '-'):
+                has_value = True
+                break
+        if has_value:
+            kept += 1
+        else:
+            to_delete.append(f.id)
+
+    if to_delete:
+        await db.execute(sql_delete(models.FieldPermission).where(
+            models.FieldPermission.field_id.in_(to_delete)
+        ))
+        await db.execute(sql_delete(models.Field).where(
+            models.Field.id.in_(to_delete)
+        ))
+        await db.commit()
+        log.info(
+            '[cleanup_filler_columns] 删除 %d 个"列N"空白填充列（保留 %d 个有数据的）',
+            len(to_delete), kept,
+        )
+    return {"deleted": len(to_delete), "kept": kept}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -253,3 +314,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_project_header_from_datasheets(db)
     except Exception as e:
         log.warning("backfill_project_header_from_datasheets failed: %s", e)
+    try:
+        await cleanup_filler_columns(db)
+    except Exception as e:
+        log.warning("cleanup_filler_columns failed: %s", e)
