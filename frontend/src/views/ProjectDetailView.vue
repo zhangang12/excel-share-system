@@ -62,8 +62,8 @@ function onHeaderUpdated(payload: { key: string; value: string | null }) {
   project.value = { ...project.value, header_meta: meta }
 }
 
-// 项目自身字段（name 等）被改 → 同步本地 project
-function onProjectFieldUpdated(payload: { field: 'name'; value: string }) {
+// 项目自身字段（name / code）被改 → 同步本地 project
+function onProjectFieldUpdated(payload: { field: 'name' | 'code'; value: string }) {
   if (!project.value) return
   project.value = { ...project.value, [payload.field]: payload.value }
 }

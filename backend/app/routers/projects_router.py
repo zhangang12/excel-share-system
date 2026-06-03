@@ -263,6 +263,22 @@ async def update_project(
         raise HTTPException(404, "项目不存在")
     if not await user_can_edit_project(db, current, p):
         raise HTTPException(403, "无权修改项目")
+    if data.code is not None:
+        new_code = data.code.strip()
+        if not new_code:
+            raise HTTPException(400, "项目编号不能为空")
+        if new_code != p.code:
+            # 唯一约束：只与活跃项目比较，已软删的占位 code 允许冲突
+            res = await db.execute(
+                select(models.Project).where(
+                    models.Project.code == new_code,
+                    models.Project.is_deleted == False,
+                    models.Project.id != p.id,
+                )
+            )
+            if res.scalar_one_or_none():
+                raise HTTPException(400, "项目编号已存在")
+            p.code = new_code
     if data.name is not None: p.name = data.name
     if data.description is not None: p.description = data.description
     if data.status is not None: p.status = data.status

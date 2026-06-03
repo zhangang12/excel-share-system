@@ -81,6 +81,7 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
+    code: Optional[str] = Field(default=None, min_length=1, max_length=64)
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None

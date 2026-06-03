@@ -25,7 +25,7 @@ const emit = defineEmits<{
   // 项目头表某字段（meta 来源）被更新
   'header-updated': [{ key: string; value: string | null }]
   // 项目自身字段（name / code 等）被更新
-  'project-field-updated': [{ field: 'name'; value: string }]
+  'project-field-updated': [{ field: 'name' | 'code'; value: string }]
 }>()
 
 const keyword = ref("")
@@ -151,24 +151,25 @@ type HeaderColumn = {
   metaKey?: string
   derivedKey?: 'duration' | 'elapsed' | 'remaining'
   editable: boolean
+  widthPct: number  // 占整张项目头表宽度的百分比，总和约 100
 }
 
 const COMPANY_TITLE = '同辉智能装备（无锡）有限公司   (注解：图纸编号 字母+2 位数/材料编号 2 位数/完成度 进行中/完成 填充/钣金字母 B 打头，机加工 J 打头，外购 W 打头)'
 
 const HEADER_COLUMNS: HeaderColumn[] = [
-  { label: '序号',     source: 'index',   editable: false },
-  { label: '项目编号', source: 'code',    editable: false },
-  { label: '设备名称', source: 'name',    editable: true },   // 改 Project.name
-  { label: '数量',     source: 'meta',    metaKey: '数量',     editable: true },
-  { label: '制表日期', source: 'meta',    metaKey: '制表日期', editable: true },
-  { label: '销售',     source: 'meta',    metaKey: '销售',     editable: true },
-  { label: '设计师',   source: 'meta',    metaKey: '设计师',   editable: true },
-  { label: '电器',     source: 'meta',    metaKey: '电器',     editable: true },
-  { label: '下单日期', source: 'meta',    metaKey: '下单日期', editable: true },
-  { label: '交货日期', source: 'meta',    metaKey: '交货日期', editable: true },
-  { label: '货期',     source: 'derived', derivedKey: 'duration',  editable: false },
-  { label: '已过时间', source: 'derived', derivedKey: 'elapsed',   editable: false },
-  { label: '倒计时',   source: 'derived', derivedKey: 'remaining', editable: false },
+  { label: '序号',     source: 'index',   editable: false, widthPct: 4 },
+  { label: '项目编号', source: 'code',    editable: true,  widthPct: 8 },   // 改 Project.code
+  { label: '设备名称', source: 'name',    editable: true,  widthPct: 18 },  // 改 Project.name
+  { label: '数量',     source: 'meta',    metaKey: '数量',     editable: true, widthPct: 5 },
+  { label: '制表日期', source: 'meta',    metaKey: '制表日期', editable: true, widthPct: 9 },
+  { label: '销售',     source: 'meta',    metaKey: '销售',     editable: true, widthPct: 6 },
+  { label: '设计师',   source: 'meta',    metaKey: '设计师',   editable: true, widthPct: 6 },
+  { label: '电器',     source: 'meta',    metaKey: '电器',     editable: true, widthPct: 6 },
+  { label: '下单日期', source: 'meta',    metaKey: '下单日期', editable: true, widthPct: 9 },
+  { label: '交货日期', source: 'meta',    metaKey: '交货日期', editable: true, widthPct: 9 },
+  { label: '货期',     source: 'derived', derivedKey: 'duration',  editable: false, widthPct: 5 },
+  { label: '已过时间', source: 'derived', derivedKey: 'elapsed',   editable: false, widthPct: 6 },
+  { label: '倒计时',   source: 'derived', derivedKey: 'remaining', editable: false, widthPct: 9 },
 ]
 
 function projectHeaderValue(col: HeaderColumn, rowSeq = 1): string {
@@ -260,6 +261,11 @@ async function saveHeader() {
       if (!newVal) { ElMessage.warning('设备名称不能为空'); return }
       await projectsApi.update(props.project.id, { name: newVal })
       emit('project-field-updated', { field: 'name', value: newVal })
+    } else if (col.source === 'code') {
+      // 写入 Project.code（后端会校验唯一性）
+      if (!newVal) { ElMessage.warning('项目编号不能为空'); return }
+      await projectsApi.update(props.project.id, { code: newVal })
+      emit('project-field-updated', { field: 'code', value: newVal })
     } else {
       return
     }
@@ -413,7 +419,11 @@ async function addRow() {
 
     <!-- 项目头表：固定 13 列，所有 sheet 共享一份；数量/销售/...等可编辑 -->
     <div v-if="props.project" class="preamble">
-      <table>
+      <table class="preamble-table">
+        <colgroup>
+          <col v-for="col in HEADER_COLUMNS" :key="'cg-' + col.label"
+               :style="{ width: col.widthPct + '%' }" />
+        </colgroup>
         <!-- 第 1 行：公司标题（硬编码） -->
         <tr>
           <td :colspan="HEADER_COLUMNS.length" class="preamble-title">
@@ -659,12 +669,19 @@ async function addRow() {
   overflow-x: auto;
   margin-bottom: -1px;
 }
-.preamble table { border-collapse: collapse; width: 100%; }
+.preamble table.preamble-table {
+  border-collapse: collapse;
+  width: 100%;
+  /* 关键：fixed 让列宽完全由 colgroup 决定，编辑时塞 el-input 也不会变宽 */
+  table-layout: fixed;
+}
 .preamble td {
   padding: 3px 5px;
   border: 2px solid #94a3b8;
   color: #0f172a;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: #ffffff;
   font-size: 12.5px;
   font-weight: 600;
@@ -753,17 +770,25 @@ async function addRow() {
   font-weight: 400;
   font-style: italic;
 }
+.header-edit-input {
+  width: 100%;
+  /* el-input 默认 width 100% 撑满 td，但因 table-layout: fixed，td 宽度不变 */
+}
 .header-edit-input :deep(.el-input__wrapper) {
-  padding: 0 6px;
+  padding: 0 4px;
   border-radius: 3px;
   box-shadow: 0 0 0 2px var(--primary) inset;
   background: #f5f9ff;
+  min-width: 0;
 }
 .header-edit-input :deep(.el-input__inner) {
   height: 22px;
   font-size: 12.5px;
   font-weight: 600;
   text-align: center;
+  /* 输入框内容超出时滚动而非撑开 */
+  width: 100%;
+  min-width: 0;
 }
 
 /* 小屏笔记本（14 寸常见 1366×768）：进一步紧凑 */
