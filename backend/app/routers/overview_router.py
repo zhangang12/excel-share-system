@@ -17,6 +17,16 @@ from ..deps import (
     get_current_user, require_admin, require_admin_or_manager, require_not_viewer,
     user_can_view_project, user_can_edit_project,
 )
+from ..sheet_templates import OVERVIEW_FIELDS
+from .projects_router import OVERVIEW_KEY_PREFIX
+
+# 一览模板中可写入 meta 的字段标签集合
+OVERVIEW_META_LABELS = {
+    f['label'] for f in OVERVIEW_FIELDS if f['source'] == 'meta'
+}
+NAME_ALIASES = {'项目名称', '设备名称', '名称'}
+CODE_ALIASES = {'项目编号', '项目代码', '编号'}
+STATUS_ALIASES = {'状态'}
 
 router = APIRouter(prefix="/api/overview", tags=["项目一览"])
 
@@ -298,15 +308,14 @@ async def import_overview(
 
     # 解析（沿用 excel_router 的逻辑）
     sheets: list[tuple[str, list[str], list[list[Any]]]] = []
-    # ===== 全量替换：先清掉旧的 overview 数据 =====
-    # 1. 删所有 overview_fields（级联 overview_field_permissions）
-    from sqlalchemy import delete as _del
-    await db.execute(_del(models.OverviewFieldPermission))
-    await db.execute(_del(models.OverviewField))
-    # 2. 清掉所有 project.extra（保留项目本身和它的 datasheets/records，那些是项目级数据，不该被一览覆盖）
+    # ===== 全量替换：清空所有项目 extra 中的 __o__ 前缀 key（仅一览数据）
+    # 不动 __h__ 前缀（项目详情头表数据）和 OverviewField 旧自定义列
     pall = await db.execute(select(models.Project))
     for _p in pall.scalars().all():
-        _p.extra = {}
+        if _p.extra:
+            cleaned = {k: v for k, v in _p.extra.items()
+                       if not (isinstance(k, str) and k.startswith(OVERVIEW_KEY_PREFIX))}
+            _p.extra = cleaned
     await db.flush()
     # ============================================
 
@@ -366,101 +375,120 @@ async def import_overview(
     except Exception as e:
         raise HTTPException(400, f"解析失败：{e}")
 
-    # 取已有的 overview fields
-    fres = await db.execute(select(models.OverviewField))
-    existing_fields: dict[str, models.OverviewField] = {f.name: f for f in fres.scalars().all()}
+    total_create = 0
+    total_update = 0
+    total_filled_cells = 0
+    touched_pids: set[int] = set()
 
-    BUILTIN = {'项目编号', '编号', '项目代码', '项目名称', '设备名称', '名称', '说明', '状态', '序号', '序'}
-
-    total_create = 0; total_update = 0; total_field = 0
-    touched_pids: set[int] = set()  # 本次导入中"首次接触"过的项目 ID（用于覆盖语义）
     for sname, headers, rows in sheets:
-        # 找关键列
-        code_col = next((i for i, h in enumerate(headers)
-                         if any(k in h for k in ('项目编号', '项目代码', '编号'))), None)
-        name_col = next((i for i, h in enumerate(headers)
-                         if any(k in h for k in ('项目名称', '设备名称', '名称'))), None)
+        # 找关键列：项目编号 / 项目名称 / 状态
+        def _find_col(aliases: set[str]) -> Optional[int]:
+            # 精确匹配优先
+            for i, h in enumerate(headers):
+                if h in aliases:
+                    return i
+            # 子串包含次之
+            for i, h in enumerate(headers):
+                for a in aliases:
+                    if a in h:
+                        return i
+            return None
+
+        code_col = _find_col(CODE_ALIASES)
+        name_col = _find_col(NAME_ALIASES)
+        status_col = _find_col(STATUS_ALIASES)
         if code_col is None:
             continue
 
-        # 创建缺失字段（自定义列）
-        sort_max = max((f.sort_order for f in existing_fields.values()), default=-1)
-        col_field_ids: dict[int, int] = {}  # col_index -> field_id
+        # 把 Excel 表头中"属于 OVERVIEW_FIELDS meta 列"的列做映射：
+        # col_index -> meta label（如 col 4 → "签订日期"）
+        col_to_meta: dict[int, str] = {}
         for ci, hname in enumerate(headers):
-            if ci == code_col or ci == name_col: continue
-            if hname in BUILTIN: continue
-            if not hname or hname.startswith('列'): continue
-            if hname in existing_fields:
-                col_field_ids[ci] = existing_fields[hname].id
+            h = (hname or '').strip()
+            if not h or h.startswith('列'):
                 continue
-            col_samples = [r[ci] if ci < len(r) else None for r in rows[:50]]
-            ftype = _infer_type(col_samples)
-            sort_max += 1
-            f = models.OverviewField(name=hname, type=ftype, sort_order=sort_max)
-            db.add(f); await db.flush()
-            existing_fields[hname] = f
-            col_field_ids[ci] = f.id
-            total_field += 1
+            if ci in (code_col, name_col, status_col):
+                continue
+            if h in OVERVIEW_META_LABELS:
+                col_to_meta[ci] = h
 
-        # 处理每行
-        # 按 sheet 名推断状态：含 完成/已完 → 已完成；含 归档 → 已归档
+        # 按 sheet 名推断默认状态
         sheet_status = '进行中'
         if any(k in sname for k in ('完成', '已完')):
             sheet_status = '已完成'
-        elif '归档' in sname:
-            sheet_status = '已归档'
 
+        import re as _re
         for row in rows:
-            code = str(row[code_col]).strip() if code_col < len(row) and row[code_col] is not None else ''
-            if not code: continue
-            # 跳过明显不是项目编号的（说明文字 / 标题 / 备注）
-            # 真正的项目编号一般是 "数字-数字"（如 2026-019）或纯数字串
-            import re as _re
-            if not _re.match(r'^[\w\-]+$', code):
-                # 含有汉字、句号、破折号、点号等说明性符号 → 跳过
+            code = ''
+            if code_col is not None and code_col < len(row) and row[code_col] is not None:
+                code = str(row[code_col]).strip()
+            if not code:
                 continue
-            if len(code) > 32:
+            # 排除明显不是项目编号的"说明"/"标题"等中文行
+            if not _re.match(r'^[\w\-]+$', code) or len(code) > 32:
                 continue
+
             pname = ''
             if name_col is not None and name_col < len(row) and row[name_col] is not None:
                 pname = str(row[name_col]).strip()
+
+            # 行级状态：优先 status_col，否则 sheet_status
+            row_status = sheet_status
+            if status_col is not None and status_col < len(row) and row[status_col] is not None:
+                rv = str(row[status_col]).strip()
+                if rv in ('进行中', '已完成', '已归档'):
+                    row_status = rv
+
             res = await db.execute(select(models.Project).where(models.Project.code == code))
             p = res.scalar_one_or_none()
             if not p:
                 p = models.Project(
                     code=code, name=pname or code,
-                    status=sheet_status,
+                    status=row_status,
                     extra={},
                 )
-                db.add(p); await db.flush()
+                db.add(p)
+                await db.flush()
                 touched_pids.add(p.id)
                 total_create += 1
             else:
-                # 首次在本次导入中遇到 → 清空 extra（覆盖语义）
+                # 首次在本次导入中遇到 → 清空 __o__* key（覆盖语义；
+                # 保留非 __o__ 的 key，比如项目详情的 __h__）
                 if p.id not in touched_pids:
-                    p.extra = {}
+                    cleaned = {k: v for k, v in (p.extra or {}).items()
+                               if not (isinstance(k, str) and k.startswith(OVERVIEW_KEY_PREFIX))}
+                    p.extra = cleaned
                     touched_pids.add(p.id)
                     total_update += 1
-                # 无条件更新名称（如果 Excel 里写了）
                 if pname:
                     p.name = pname
-                # 状态：sheet 名能识别就更新
-                if sheet_status != '进行中':
-                    p.status = sheet_status
-            # 填 extra
+                if row_status:
+                    p.status = row_status
+
+            # 按 col_to_meta 填 __o__<label>
             extra = dict(p.extra or {})
-            for ci, fid in col_field_ids.items():
-                if ci >= len(row): continue
-                f = existing_fields.get(headers[ci])
-                if not f: continue
-                nv = _normalize(row[ci], f.type)
-                if nv is None or nv == '':
-                    extra.pop(str(f.id), None)
+            for ci, meta_label in col_to_meta.items():
+                if ci >= len(row):
+                    continue
+                v = row[ci]
+                storage_key = f"{OVERVIEW_KEY_PREFIX}{meta_label}"
+                if v is None or v == '':
+                    extra.pop(storage_key, None)
                 else:
-                    extra[str(f.id)] = nv
+                    # 日期类型规范化为 YYYY-MM-DD 字符串
+                    if isinstance(v, datetime):
+                        extra[storage_key] = v.strftime('%Y-%m-%d')
+                    elif isinstance(v, date):
+                        extra[storage_key] = v.strftime('%Y-%m-%d')
+                    else:
+                        extra[storage_key] = str(v).strip()
+                    total_filled_cells += 1
             p.extra = extra
 
     await db.commit()
     return schemas.Msg(
-        message=f"导入完成：新建项目 {total_create} 个，更新 {total_update} 个，新增列 {total_field} 个"
+        message=(
+            f"导入完成：新建项目 {total_create} 个，更新 {total_update} 个，"
+            f"填入 {total_filled_cells} 个一览字段值"
+        )
     )
