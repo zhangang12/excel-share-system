@@ -87,11 +87,8 @@ async function remove(p: Project) {
 
 function open(p: Project) { router.push({ name: 'project-detail', params: { id: p.id } }) }
 
-// 卡片整体按状态着色：进行中红 / 已完成绿 / 其他灰
-function statusClass(s?: string): 'doing' | 'done' | 'other' {
-  if (s === '已完成') return 'done'
-  if (s === '进行中') return 'doing'
-  return 'other'
+const statusColors: Record<string, string> = {
+  '进行中': 'primary', '已完成': 'success', '已归档': 'info',
 }
 
 onMounted(load)
@@ -121,16 +118,12 @@ onMounted(load)
     <div v-if="loading" v-loading="loading" class="loading-box"></div>
     <el-empty v-else-if="!list.length" description="暂无可见项目" />
     <div v-else class="grid">
-      <el-card v-for="p in list" :key="p.id"
-               class="project-card" :class="`card-${statusClass(p.status)}`"
-               shadow="hover" @click="open(p)">
+      <el-card v-for="p in list" :key="p.id" class="project-card" shadow="hover" @click="open(p)">
         <div class="proj-top">
-          <div class="proj-icon" :class="`icon-${statusClass(p.status)}`">
-            <el-icon><FolderOpened /></el-icon>
-          </div>
-          <span class="status-badge" :class="`badge-${statusClass(p.status)}`">
+          <div class="proj-icon"><el-icon><FolderOpened /></el-icon></div>
+          <el-tag :type="statusColors[p.status] as any" effect="light" size="small">
             {{ p.status }}
-          </span>
+          </el-tag>
         </div>
         <div class="proj-code">{{ p.code }}</div>
         <div class="proj-name">{{ p.name }}</div>
@@ -178,31 +171,8 @@ onMounted(load)
   display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 16px;
 }
-.project-card {
-  cursor: pointer;
-  transition: transform .15s, box-shadow .15s;
-  border-left: 4px solid var(--border);
-  overflow: hidden;
-}
+.project-card { cursor: pointer; transition: transform .15s, box-shadow .15s; }
 .project-card:hover { transform: translateY(-2px); }
-
-/* 卡片按状态整体着色，与项目一览状态格视觉一致 */
-.project-card.card-doing {
-  background: #fef2f2 !important;
-  border-left-color: #ef4444;
-}
-.project-card.card-doing :deep(.el-card__body) { background: #fef2f2; }
-.project-card.card-done {
-  background: #f0fdf4 !important;
-  border-left-color: #10b981;
-}
-.project-card.card-done :deep(.el-card__body) { background: #f0fdf4; }
-.project-card.card-other {
-  background: #f8fafc !important;
-  border-left-color: #94a3b8;
-}
-.project-card.card-other :deep(.el-card__body) { background: #f8fafc; }
-
 .proj-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
 .proj-icon {
   width: 40px; height: 40px;
@@ -210,35 +180,6 @@ onMounted(load)
   border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
   font-size: 20px;
-}
-.proj-icon.icon-doing { background: #fee2e2; color: #991b1b; }
-.proj-icon.icon-done { background: #d1fae5; color: #065f46; }
-.proj-icon.icon-other { background: #e2e8f0; color: #475569; }
-
-/* 状态徽章：与项目一览状态格同色系 */
-.status-badge {
-  display: inline-block;
-  padding: 5px 12px;
-  border-radius: 4px;
-  font-size: 12.5px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  border: 1px solid transparent;
-}
-.status-badge.badge-doing {
-  background: #fee2e2;
-  color: #991b1b;
-  border-color: #fca5a5;
-}
-.status-badge.badge-done {
-  background: #d1fae5;
-  color: #065f46;
-  border-color: #6ee7b7;
-}
-.status-badge.badge-other {
-  background: #e2e8f0;
-  color: #475569;
-  border-color: #cbd5e1;
 }
 .proj-code { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
 .proj-name { font-size: 16px; font-weight: 600; color: var(--text-1); margin-bottom: 8px; }
