@@ -318,6 +318,15 @@ function cellStatusClass(text: string): string {
   return ''
 }
 
+// 判断字段是否是"进度"列（编辑时显示下拉，限定选项）
+const PROGRESS_FIELD_NAMES = new Set([
+  '进度', '进度100%', '完成度', '状态', '完工度',
+])
+function isProgressField(f: DataField): boolean {
+  return PROGRESS_FIELD_NAMES.has((f.name || '').trim())
+}
+const PROGRESS_OPTIONS = ['完成', '进行中']
+
 // 列宽自适应（紧凑版：每字符 ~10px，14 寸笔记本全屏可显）
 function colWidth(f: DataField): number {
   const headerLen = (f.name || '').length
@@ -521,7 +530,20 @@ async function addRow() {
         </template>
         <template #default="{ row }">
           <template v-if="isEditing(row, f)">
-            <el-input v-model="editingValue" autofocus class="cell-edit-input"
+            <!-- 进度列：固定下拉框（完成 / 进行中），存量旧值显示为禁用项让用户重新选 -->
+            <el-select v-if="isProgressField(f)"
+                       v-model="editingValue" size="small" autofocus
+                       class="cell-edit-select"
+                       :teleported="false"
+                       @change="saveEdit(row, f)"
+                       @blur="saveEdit(row, f)"
+                       @keyup.escape="cancelEdit">
+              <el-option v-for="opt in PROGRESS_OPTIONS" :key="opt" :label="opt" :value="opt" />
+              <el-option v-if="editingValue && !PROGRESS_OPTIONS.includes(editingValue)"
+                         :label="editingValue + ' （旧值，请重新选择）'"
+                         :value="editingValue" disabled />
+            </el-select>
+            <el-input v-else v-model="editingValue" autofocus class="cell-edit-input"
                       @blur="saveEdit(row, f)" @keyup.enter="saveEdit(row, f)" @keyup.escape="cancelEdit" />
           </template>
           <template v-else>
@@ -704,6 +726,16 @@ async function addRow() {
   height: 32px;
   font-size: 14px;
   color: #1f2d3d;
+}
+/* 进度列下拉编辑：紧凑、与单元格宽度匹配 */
+.cell-edit-select { width: 100%; }
+.cell-edit-select :deep(.el-select__wrapper) {
+  min-height: 24px;
+  padding: 0 6px;
+  box-shadow: 0 0 0 2px var(--primary) inset !important;
+  background: #f5f9ff;
+  font-size: 12.5px;
+  font-weight: 700;
 }
 
 .pager { padding: 12px 14px; text-align: right; }

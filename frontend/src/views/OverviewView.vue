@@ -85,11 +85,19 @@ async function load() {
   } finally { loading.value = false }
 }
 
-// 过滤 + 分页
+// 状态筛选（'' = 全部；'进行中' / '已完成' / '已归档'）
+const statusFilter = ref<string>('')
+function onStatusFilterChange() { currentPage.value = 1 }
+
+// 过滤 + 分页：先按状态筛 → 再按搜索词筛
 const filteredRows = computed(() => {
+  let result = rows.value
+  if (statusFilter.value) {
+    result = result.filter(r => r.status === statusFilter.value)
+  }
   const k = keyword.value.trim().toLowerCase()
-  if (!k) return rows.value
-  return rows.value.filter(r => {
+  if (!k) return result
+  return result.filter(r => {
     const hay = (r.code + ' ' + r.name + ' ' + (r.status || '') + ' ' +
       Object.values(r.extra || {}).map(v => Array.isArray(v) ? v.join(',') : String(v ?? '')).join(' ')
     ).toLowerCase()
@@ -287,6 +295,18 @@ onMounted(load)
         <el-switch v-model="fitScreen" active-text="适应屏幕"
                    @change="onFitScreenChange" />
       </el-tooltip>
+      <el-select v-model="statusFilter" placeholder="全部状态" size="large"
+                 style="width: 140px" clearable @change="onStatusFilterChange">
+        <el-option label="进行中" value="进行中">
+          <span class="status-dot status-dot-doing"></span> 进行中
+        </el-option>
+        <el-option label="已完成" value="已完成">
+          <span class="status-dot status-dot-done"></span> 已完成
+        </el-option>
+        <el-option label="已归档" value="已归档">
+          <span class="status-dot status-dot-archived"></span> 已归档
+        </el-option>
+      </el-select>
       <el-input v-model="keyword" placeholder="搜索任意列..." style="width: 240px"
                 size="large" clearable :prefix-icon="Search" @input="currentPage = 1" />
       <el-button v-if="isAdmin" :icon="Setting" size="large" @click="openAddField">添加列</el-button>
@@ -442,6 +462,18 @@ onMounted(load)
 }
 
 .pager { padding: 16px 0; text-align: right; }
+
+/* 状态筛选 dropdown 里的小圆点 */
+.status-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.status-dot-doing { background: #ef4444; }
+.status-dot-done { background: #10b981; }
+.status-dot-archived { background: #94a3b8; }
 
 /* ===== 表格底色 + 加粗边框 + 圆角（v2: 加重视觉分量） ===== */
 :deep(.el-table) {

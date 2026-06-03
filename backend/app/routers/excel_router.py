@@ -103,6 +103,37 @@ def _fmt_preamble_cell(v: Any, is_date: bool = False, datemode: int = 0) -> str:
 HEADER_ROW_INDEX = 3   # 0-indexed；第 4 行是数据表列头，前 3 行是公司标题/项目信息
 
 
+def _fill_merged_data_cells(
+    rows: list[list[Any]],
+    merged_ranges: list[tuple[int, int, int, int]],
+    header_row_idx: int,
+) -> None:
+    """填充"数据区"的合并单元格：
+    Excel 模板里常用合并表达"分类"（如"钣金装配"列跨多行），
+    导入时 openpyxl/xlrd 只在左上角返回值，其余给 None/''。
+    这里把合并范围内的所有单元格都填上左上角的值，方便每行独立可读。
+
+    - merged_ranges 统一为闭区间 [rlo, rhi] × [clo, chi]（0-indexed）
+    - 只处理 rlo >= header_row_idx 的合并（项目头 + 表头区的合并视觉用，不动）
+    - 仅当目标位置为 None / '' / '-' 时才填，避免覆盖手填值
+    """
+    for (rlo, rhi, clo, chi) in merged_ranges:
+        if rlo < header_row_idx:
+            continue  # 项目头 / 表头区合并不动
+        if rlo >= len(rows) or clo >= len(rows[rlo]):
+            continue
+        top_left = rows[rlo][clo]
+        if top_left in (None, '', '-'):
+            continue
+        for r in range(rlo, min(rhi + 1, len(rows))):
+            row_len = len(rows[r])
+            for c in range(clo, min(chi + 1, row_len)):
+                if r == rlo and c == clo:
+                    continue
+                if rows[r][c] in (None, '', '-'):
+                    rows[r][c] = top_left
+
+
 def _find_data_header_row(rows: list) -> int:
     """固定返回 HEADER_ROW_INDEX。如果不足 5 行则用第 1 行兜底。"""
     if len(rows) > HEADER_ROW_INDEX:
@@ -173,43 +204,50 @@ async def import_excel(
         sheets_meta: list[tuple[str, list[str], list[list[Any]]]] = []
         if suffix == ".xls":
             import xlrd
+            from xlrd.xldate import xldate_as_datetime
             # 老 .xls 多为 cp936/GBK；先尝试 cp936，失败则用默认
             try:
-                wb = xlrd.open_workbook(str(tmp), formatting_info=False, encoding_override="cp936")
+                wb = xlrd.open_workbook(str(tmp), formatting_info=True, encoding_override="cp936")
             except Exception:
-                wb = xlrd.open_workbook(str(tmp), formatting_info=False)
+                wb = xlrd.open_workbook(str(tmp), formatting_info=True)
             for si in range(wb.nsheets):
                 ws = wb.sheet_by_index(si)
                 if ws.nrows < 1:
                     continue
-                # 取前 10 行用于识别表头
-                preview = [[ws.cell_value(r, c) for c in range(ws.ncols)]
-                           for r in range(min(10, ws.nrows))]
-                header_idx = _find_data_header_row(preview)
-                # 保留 preamble（前几行），日期序列号转成日期文字
-                preamble = []
-                for ri in range(header_idx):
-                    line = []
-                    for c in range(ws.ncols):
-                        v = ws.cell_value(ri, c)
-                        ct = ws.cell_type(ri, c)
-                        line.append(_fmt_preamble_cell(v, is_date=(ct == 3), datemode=wb.datemode))
-                    preamble.append(line)
-                headers = [str(ws.cell_value(header_idx, c)).strip() or f"列{c+1}"
-                           for c in range(ws.ncols)]
-                rows = []
-                for r in range(header_idx + 1, ws.nrows):
+                # 1) 先把整张 sheet 读到 full_rows（含空行，保持 0-indexed 对齐）
+                full_rows: list[list[Any]] = []
+                for r in range(ws.nrows):
                     row = []
                     for c in range(ws.ncols):
                         v = ws.cell_value(r, c)
                         ct = ws.cell_type(r, c)
                         if ct == 3:
                             try:
-                                from xlrd.xldate import xldate_as_datetime
                                 v = xldate_as_datetime(v, wb.datemode)
                             except Exception:
                                 pass
                         row.append(v)
+                    full_rows.append(row)
+                # 2) 数据区合并填充：xlrd 的 (rlo, rhi, clo, chi) 中 rhi/chi 是 exclusive，
+                #    转成 inclusive 0-indexed 给统一函数处理
+                merged = [(rlo, rhi - 1, clo, chi - 1)
+                          for (rlo, rhi, clo, chi) in ws.merged_cells]
+                _fill_merged_data_cells(full_rows, merged, HEADER_ROW_INDEX)
+                # 3) 取 preamble / headers / rows
+                header_idx = _find_data_header_row(full_rows[:10])
+                preamble = []
+                for ri in range(header_idx):
+                    line = []
+                    for c in range(ws.ncols):
+                        v = full_rows[ri][c]
+                        ct = ws.cell_type(ri, c)
+                        line.append(_fmt_preamble_cell(v, is_date=(ct == 3), datemode=wb.datemode))
+                    preamble.append(line)
+                headers = [str(full_rows[header_idx][c]).strip() or f"列{c+1}"
+                           for c in range(ws.ncols)]
+                rows = []
+                for r in range(header_idx + 1, len(full_rows)):
+                    row = full_rows[r]
                     if any(v not in (None, "") for v in row):
                         rows.append(row)
                 sheets_meta.append((ws.name, headers, rows, preamble))
@@ -217,6 +255,26 @@ async def import_excel(
             wb = load_workbook(tmp, data_only=True)
             for sn in wb.sheetnames:
                 ws = wb[sn]
+                # 数据区合并：在 ws 上 unmerge + 把左上角值填充到所有单元格
+                # 之后正常 iter_rows 就能拿到填好的数据
+                for merge in list(ws.merged_cells.ranges):
+                    # openpyxl: min_row / max_row 都是 1-indexed inclusive
+                    if (merge.min_row - 1) < HEADER_ROW_INDEX:
+                        continue  # 项目头 / 表头区合并不动
+                    top_left = ws.cell(row=merge.min_row, column=merge.min_col).value
+                    if top_left in (None, "", "-"):
+                        continue
+                    min_r, max_r = merge.min_row, merge.max_row
+                    min_c, max_c = merge.min_col, merge.max_col
+                    ws.unmerge_cells(str(merge))
+                    for r in range(min_r, max_r + 1):
+                        for c in range(min_c, max_c + 1):
+                            if r == min_r and c == min_c:
+                                continue
+                            cur = ws.cell(row=r, column=c).value
+                            if cur in (None, "", "-"):
+                                ws.cell(row=r, column=c).value = top_left
+
                 rows_iter = list(ws.iter_rows(values_only=True))
                 if not rows_iter:
                     continue
