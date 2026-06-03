@@ -222,10 +222,18 @@ const editingHeaderValue = ref<string>('')
 function isEditingHeader(col: HeaderColumn): boolean {
   return editingHeader.value === col
 }
+function isHeaderCellEditable(col: HeaderColumn): boolean {
+  return !!col.editable && !!props.canEdit && !projectHeaderFormula(col)
+}
 function startEditHeader(col: HeaderColumn) {
-  if (!col.editable || !props.canEdit) return
+  if (!isHeaderCellEditable(col)) return
   editingHeader.value = col
   editingHeaderValue.value = projectHeaderValue(col)
+}
+function onHeaderCellClick(col: HeaderColumn) {
+  if (isHeaderCellEditable(col) && !isEditingHeader(col)) {
+    startEditHeader(col)
+  }
 }
 function cancelEditHeader() { editingHeader.value = null }
 async function saveHeader() {
@@ -407,12 +415,20 @@ async function addRow() {
         <!-- 第 3 行：值 -->
         <tr class="preamble-info-value">
           <td v-for="col in HEADER_COLUMNS" :key="'v-' + col.label"
-              :class="projectHeaderClass(col)">
+              :class="[
+                projectHeaderClass(col),
+                { 'preamble-cell-editable': isHeaderCellEditable(col) && !isEditingHeader(col) },
+              ]"
+              @click="onHeaderCellClick(col)"
+              @dblclick="onHeaderCellClick(col)">
             <!-- 编辑态 -->
             <el-input v-if="isEditingHeader(col)"
                       v-model="editingHeaderValue" size="small" autofocus
                       class="header-edit-input"
-                      @blur="saveHeader" @keyup.enter="saveHeader" @keyup.escape="cancelEditHeader" />
+                      @blur="saveHeader"
+                      @keyup.enter="saveHeader"
+                      @keyup.escape="cancelEditHeader"
+                      @click.stop />
             <!-- 显示态：派生列（带 fx 提示），不可编辑 -->
             <el-tooltip v-else-if="projectHeaderFormula(col)" placement="top">
               <template #content>
@@ -424,14 +440,12 @@ async function addRow() {
               <span class="preamble-fx-value">{{ projectHeaderValue(col) }}</span>
             </el-tooltip>
             <!-- 显示态：可编辑列 / 只读列 -->
-            <span v-else
-                  :class="{ 'header-cell-editable': col.editable && canEdit }"
-                  @click="startEditHeader(col)">
+            <template v-else>
               <template v-if="projectHeaderValue(col)">{{ projectHeaderValue(col) }}</template>
               <span v-else class="header-cell-empty">
-                {{ col.editable && canEdit ? '点击填写' : '-' }}
+                {{ isHeaderCellEditable(col) ? '点击填写' : '-' }}
               </span>
-            </span>
+            </template>
           </td>
         </tr>
       </table>
@@ -707,17 +721,15 @@ async function addRow() {
   border-bottom: 1px dashed currentColor;
   padding-bottom: 1px;
 }
-/* 可编辑的项目头单元格：悬停提示 */
-.header-cell-editable {
-  cursor: cell;
-  display: inline-block;
-  min-width: 30px;
-  padding: 0 2px;
-  border-radius: 2px;
+/* 可编辑的项目头单元格：整个 td 可点击 + cursor + 悬停高亮 */
+.preamble td.preamble-cell-editable {
+  cursor: cell !important;
+  transition: background-color .12s, outline-color .12s;
 }
-.header-cell-editable:hover {
-  background: rgba(37, 99, 235, .12);
-  outline: 1px dashed var(--primary);
+.preamble td.preamble-cell-editable:hover {
+  background: rgba(37, 99, 235, .14) !important;
+  outline: 1.5px dashed var(--primary);
+  outline-offset: -2px;
 }
 .header-cell-empty {
   color: #94a3b8;
