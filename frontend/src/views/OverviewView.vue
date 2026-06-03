@@ -65,6 +65,16 @@ const OVERVIEW_FIELDS: OverviewTplCol[] = [
 
 const STATUS_OPTIONS_NEW = ['进行中', '已完成']
 
+// 整列着色：状态列的 td 按 row.status 直接染色
+function cellClassName({ row, column }: any): string {
+  const label = column?.label || ''
+  if (label === '状态') {
+    if (row.status === '已完成') return 'cell-row-done'
+    if (row.status === '进行中') return 'cell-row-doing'
+  }
+  return ''
+}
+
 // 日期解析与天数差（与 DatasheetGrid 一致）
 function parseLooseDate(s: unknown): Date | null {
   if (!s && s !== 0) return null
@@ -491,7 +501,8 @@ onMounted(load)
       <el-table ref="tableRef" :data="pagedRows" border stripe :size="fitScreen ? 'small' : 'default'"
                 style="width: 100%" :height="tableHeight"
                 :empty-text="loading ? '加载中…' : '无数据'"
-                :default-sort="{ prop: 'code', order: 'ascending' }">
+                :default-sort="{ prop: 'code', order: 'ascending' }"
+                :cell-class-name="cellClassName">
         <el-table-column type="index" label="#" width="55" align="center" fixed="left"
                          :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
         <!-- 14 列固定模板（项目编号/项目名称/状态/签订日期/...）-->
@@ -622,12 +633,43 @@ onMounted(load)
 
 .pager { padding: 16px 0; text-align: right; }
 
-/* 派生列紧迫度色（剩余货期时间）*/
+/* 派生列紧迫度色（剩余制作时间）*/
 .cell.cell-warning { color: #b45309 !important; font-weight: 700; }
 .cell.cell-urgent { color: #b91c1c !important; font-weight: 700; }
 .cell.cell-overdue {
   color: #ffffff !important; background: #dc2626 !important;
   font-weight: 700; padding: 0 4px; border-radius: 3px;
+}
+
+/* 状态列：整个单元格按状态染色（强制覆盖斑马纹/hover/默认底） */
+:deep(.el-table td.el-table__cell.cell-row-done),
+:deep(.el-table tbody tr td.el-table__cell.cell-row-done),
+:deep(.el-table tbody tr:hover td.el-table__cell.cell-row-done),
+:deep(.el-table .el-table__row--striped td.el-table__cell.cell-row-done) {
+  background: #d1fae5 !important;  /* 绿 */
+}
+:deep(.el-table td.el-table__cell.cell-row-doing),
+:deep(.el-table tbody tr td.el-table__cell.cell-row-doing),
+:deep(.el-table tbody tr:hover td.el-table__cell.cell-row-doing),
+:deep(.el-table .el-table__row--striped td.el-table__cell.cell-row-doing) {
+  background: #fee2e2 !important;  /* 红 */
+}
+/* el-select 在状态格内：让 wrapper 透明，文字按状态色加深加粗 */
+:deep(.cell-row-done .el-select__wrapper),
+:deep(.cell-row-doing .el-select__wrapper) {
+  background: rgba(255, 255, 255, 0.55) !important;
+  box-shadow: none !important;
+  border: 1px solid rgba(0, 0, 0, .15) !important;
+}
+:deep(.cell-row-done .el-select__wrapper .el-select__selected-item),
+:deep(.cell-row-done .el-select__wrapper input) {
+  color: #065f46 !important;
+  font-weight: 700 !important;
+}
+:deep(.cell-row-doing .el-select__wrapper .el-select__selected-item),
+:deep(.cell-row-doing .el-select__wrapper input) {
+  color: #991b1b !important;
+  font-weight: 700 !important;
 }
 
 /* 状态筛选 dropdown 里的小圆点 */
