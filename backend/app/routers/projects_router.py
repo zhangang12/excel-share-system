@@ -291,6 +291,15 @@ async def update_project(
     return await _project_to_out(p, db)
 
 
+@router.get("/_overview/template")
+async def get_overview_template(
+    _: models.User = Depends(get_current_user),
+):
+    """返回项目一览的固定列模板（由前端渲染表头）。"""
+    from ..sheet_templates import OVERVIEW_FIELDS
+    return {"fields": OVERVIEW_FIELDS}
+
+
 @router.put("/{pid}/header-cell", response_model=schemas.Msg)
 async def update_project_header_cell(
     pid: int, data: schemas.HeaderCellUpdate,
@@ -311,9 +320,13 @@ async def update_project_header_cell(
     if not key:
         raise HTTPException(400, "key 不能为空")
 
+    # 一览字段别名映射：客户端传"签订日期"，实际写入"下单日期"
+    from ..sheet_templates import OVERVIEW_HEADER_ALIAS
+    physical_key = OVERVIEW_HEADER_ALIAS.get(key, key)
+
     # JSONB 字段必须重新赋值才会被 SQLAlchemy 识别为脏
     extra = dict(p.extra or {})
-    storage_key = f"{HEADER_KEY_PREFIX}{key}"
+    storage_key = f"{HEADER_KEY_PREFIX}{physical_key}"
     val = data.value
     if val is None or (isinstance(val, str) and val.strip() == ""):
         extra.pop(storage_key, None)

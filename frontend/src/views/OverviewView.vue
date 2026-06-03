@@ -37,6 +37,155 @@ function fieldEditable(f: OverviewField): boolean {
   return myPerms.value[String(f.id)]?.can_edit !== false
 }
 
+// ===== 项目一览固定模板列（与后端 sheet_templates.OVERVIEW_FIELDS 一致）=====
+type OverviewTplCol = {
+  label: string
+  source: 'code' | 'name' | 'meta' | 'derived'
+  alias_to?: string  // meta 别名映射到 project.extra.__h__<alias_to>
+  derived?: 'duration' | 'elapsed' | 'remaining' | 'design_days' | 'actual_days' | 'delay_days'
+  editable: boolean
+  widthPct: number
+}
+const OVERVIEW_FIELDS: OverviewTplCol[] = [
+  { label: '项目编号',     source: 'code',    editable: false, widthPct: 6 },
+  { label: '项目名称',     source: 'name',    editable: true,  widthPct: 12 },
+  { label: '签订日期',     source: 'meta', alias_to: '下单日期', editable: true,  widthPct: 6 },
+  { label: '交货日期',     source: 'meta', alias_to: '交货日期', editable: true,  widthPct: 6 },
+  { label: '销售',         source: 'meta', alias_to: '销售',     editable: true,  widthPct: 5 },
+  { label: '设计师',       source: 'meta', alias_to: '设计师',   editable: true,  widthPct: 5 },
+  { label: '设图开始',     source: 'meta', alias_to: '设图开始', editable: true,  widthPct: 6 },
+  { label: '设图结束',     source: 'meta', alias_to: '设图结束', editable: true,  widthPct: 6 },
+  { label: '设图费时',     source: 'derived', derived: 'design_days', editable: false, widthPct: 5 },
+  { label: '电工',         source: 'meta', alias_to: '电器',     editable: true,  widthPct: 5 },
+  { label: '货期',         source: 'derived', derived: 'duration',  editable: false, widthPct: 4 },
+  { label: '已过时间',     source: 'derived', derived: 'elapsed',   editable: false, widthPct: 5 },
+  { label: '剩余货期时间', source: 'derived', derived: 'remaining', editable: false, widthPct: 6 },
+  { label: '完成日期',     source: 'meta', alias_to: '完成日期', editable: true,  widthPct: 6 },
+  { label: '实际用时',     source: 'derived', derived: 'actual_days', editable: false, widthPct: 5 },
+  { label: '拖后时间',     source: 'derived', derived: 'delay_days',  editable: false, widthPct: 5 },
+  { label: '出货日期',     source: 'meta', alias_to: '出货日期', editable: true,  widthPct: 6 },
+]
+
+// 日期解析与天数差（与 DatasheetGrid 一致）
+function parseLooseDate(s: unknown): Date | null {
+  if (!s && s !== 0) return null
+  const str = String(s).trim()
+  const m = /^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/.exec(str)
+  if (!m) return null
+  const d = new Date(+m[1], +m[2] - 1, +m[3])
+  return isNaN(d.getTime()) ? null : d
+}
+function daysBetween(a: Date, b: Date): number {
+  const a0 = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())
+  const b0 = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate())
+  return Math.round((a0 - b0) / 86400000)
+}
+
+// 每分钟刷新一次响应式 today，让派生列跨天自动跳
+const todayKey = ref(new Date().toDateString())
+let _todayTimer: number | null = null
+onMounted(() => {
+  _todayTimer = window.setInterval(() => {
+    const k = new Date().toDateString()
+    if (k !== todayKey.value) todayKey.value = k
+  }, 60_000)
+})
+import { onBeforeUnmount } from 'vue'
+onBeforeUnmount(() => { if (_todayTimer !== null) window.clearInterval(_todayTimer) })
+
+// 从 row.extra 取项目头数据（通过 alias）
+function rowMetaValue(row: OverviewRow, alias: string): string {
+  return String(row.extra?.[`__h__${alias}`] ?? '')
+}
+
+// 模板列的显示值
+function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
+  if (col.source === 'code') return row.code || ''
+  if (col.source === 'name') return row.name || ''
+  if (col.source === 'meta' && col.alias_to) {
+    return smartFormatValue(rowMetaValue(row, col.alias_to))
+  }
+  if (col.source === 'derived' && col.derived) {
+    void todayKey.value
+    const signed = parseLooseDate(rowMetaValue(row, '下单日期'))
+    const deliver = parseLooseDate(rowMetaValue(row, '交货日期'))
+    const designStart = parseLooseDate(rowMetaValue(row, '设图开始'))
+    const designEnd = parseLooseDate(rowMetaValue(row, '设图结束'))
+    const done = parseLooseDate(rowMetaValue(row, '完成日期'))
+    const today = new Date()
+    switch (col.derived) {
+      case 'duration':    return signed && deliver  ? String(daysBetween(deliver, signed)) : ''
+      case 'elapsed':     return signed             ? String(daysBetween(today, signed))   : ''
+      case 'remaining':   return deliver            ? String(daysBetween(deliver, today))  : ''
+      case 'design_days': return designStart && designEnd ? String(daysBetween(designEnd, designStart)) : ''
+      case 'actual_days': return signed && done     ? String(daysBetween(done, signed))    : ''
+      case 'delay_days':  return done && deliver    ? String(daysBetween(done, deliver))   : ''
+    }
+  }
+  return ''
+}
+
+function templateCellClass(row: OverviewRow, col: OverviewTplCol): string {
+  if (col.derived === 'remaining') {
+    const v = parseInt(templateCellValue(row, col))
+    if (!isNaN(v)) {
+      if (v < 0) return 'cell-overdue'
+      if (v <= 3) return 'cell-urgent'
+      if (v <= 7) return 'cell-warning'
+    }
+  }
+  return ''
+}
+
+// 模板列编辑：用 label 比对（避开 Vue ref 对象 proxy 陷阱）
+const editingTplLabel = ref<string>('')
+const editingTplRowId = ref<number>(0)
+const editingTplValue = ref<string>('')
+function isEditingTpl(row: OverviewRow, col: OverviewTplCol): boolean {
+  return editingTplRowId.value === row.id && editingTplLabel.value === col.label
+}
+function isTplCellEditable(col: OverviewTplCol): boolean {
+  return !!col.editable && !!isAdmin.value
+}
+function startEditTpl(row: OverviewRow, col: OverviewTplCol) {
+  if (!isTplCellEditable(col)) return
+  editingTplRowId.value = row.id
+  editingTplLabel.value = col.label
+  editingTplValue.value = templateCellValue(row, col)
+}
+function cancelEditTpl() {
+  editingTplRowId.value = 0
+  editingTplLabel.value = ''
+}
+async function saveEditTpl(row: OverviewRow, col: OverviewTplCol) {
+  const newVal = (editingTplValue.value || '').trim()
+  const oldVal = templateCellValue(row, col)
+  cancelEditTpl()
+  if (newVal === oldVal) return
+  try {
+    if (col.source === 'name') {
+      if (!newVal) { ElMessage.warning('项目名称不能为空'); return }
+      await projectsApi.update(row.id, { name: newVal })
+      const idx = rows.value.findIndex(r => r.id === row.id)
+      if (idx >= 0) rows.value[idx] = { ...rows.value[idx], name: newVal }
+    } else if (col.source === 'meta') {
+      // 后端 alias 映射会把 col.label（如"签订日期"）写到 __h__下单日期
+      await projectsApi.updateHeaderCell(row.id, col.label, newVal || null)
+      const idx = rows.value.findIndex(r => r.id === row.id)
+      if (idx >= 0 && col.alias_to) {
+        const extra = { ...rows.value[idx].extra }
+        const key = `__h__${col.alias_to}`
+        if (!newVal) delete extra[key]
+        else extra[key] = newVal
+        rows.value[idx] = { ...rows.value[idx], extra }
+      }
+    }
+    ElMessage.success('已保存')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  }
+}
+
 const STATUS_COLOR: Record<string, string> = {
   '进行中': 'primary', '已完成': 'success', '已归档': 'info',
 }
@@ -318,7 +467,7 @@ onMounted(load)
       </el-select>
       <el-input v-model="keyword" placeholder="搜索任意列..." style="width: 240px"
                 size="large" clearable :prefix-icon="Search" @input="currentPage = 1" />
-      <el-button v-if="isAdmin" :icon="Setting" size="large" @click="openAddField">添加列</el-button>
+      <!-- 一览列名已固定为 Excel 模板（与"2026 项目倒计时"对齐），"添加列"已下线 -->
       <el-button :icon="Download" size="large" @click="onExport">导出</el-button>
       <label v-if="isAdmin" class="el-button el-button--primary el-button--large" style="margin: 0">
         <el-icon style="margin-right:6px"><Upload /></el-icon>
@@ -362,35 +511,30 @@ onMounted(load)
           </template>
         </el-table-column>
 
-        <!-- 自定义列 -->
-        <el-table-column v-for="f in visibleFields" :key="f.id" :label="f.name"
-                         :min-width="colWidth(f)" show-overflow-tooltip>
-          <template #header>
-            <span class="field-header">
-              <el-tooltip :content="f.name" placement="top" :show-after="300" :hide-after="0">
-                <span class="field-name">{{ f.name }}</span>
-              </el-tooltip>
-            </span>
-          </template>
+        <!-- 固定模板列（与 Excel "2026 项目倒计时"对齐） -->
+        <el-table-column v-for="col in OVERVIEW_FIELDS" :key="col.label" :label="col.label"
+                         :min-width="fitScreen ? 75 : 100" show-overflow-tooltip>
           <template #default="{ row }">
-            <!-- 编辑态：统一文本输入 -->
-            <template v-if="isEditing(row, f)">
-              <el-input v-model="editingValue" autofocus class="cell-edit-input"
-                        @blur="saveEdit(row, f)" @keyup.enter="saveEdit(row, f)" @keyup.escape="cancelEdit" />
-            </template>
-            <!-- 显示态：纯文本（兼容旧 array 数据） -->
-            <template v-else>
-              <span class="cell" :class="{ editable: fieldEditable(f) }" @click="startEdit(row, f)">
-                <template v-if="Array.isArray(getCellValue(row, f))">
-                  <span v-if="(getCellValue(row, f) as unknown[]).length">{{ (getCellValue(row, f) as unknown[]).map(x => smartFormatValue(x)).join('、') }}</span>
-                  <span v-else class="muted">-</span>
-                </template>
-                <template v-else>
-                  <span v-if="getCellValue(row, f) != null && getCellValue(row, f) !== ''">{{ smartFormatValue(getCellValue(row, f)) }}</span>
-                  <span v-else class="muted">-</span>
-                </template>
-              </span>
-            </template>
+            <!-- 编辑态 -->
+            <el-input v-if="isEditingTpl(row, col)"
+                      v-model="editingTplValue" autofocus size="small"
+                      class="cell-edit-input"
+                      @blur="saveEditTpl(row, col)"
+                      @keyup.enter="saveEditTpl(row, col)"
+                      @keyup.escape="cancelEditTpl" />
+            <!-- 项目编号链接 -->
+            <a v-else-if="col.source === 'code'" class="proj-link"
+               @click.stop="openProject(row.id)">{{ row.code }}</a>
+            <!-- 其他列：值 + 可编辑高亮 -->
+            <span v-else class="cell"
+                  :class="[
+                    templateCellClass(row, col),
+                    { editable: isTplCellEditable(col) },
+                  ]"
+                  @click="startEditTpl(row, col)">
+              <span v-if="templateCellValue(row, col)">{{ templateCellValue(row, col) }}</span>
+              <span v-else class="muted">-</span>
+            </span>
           </template>
         </el-table-column>
       </el-table>
@@ -471,6 +615,14 @@ onMounted(load)
 }
 
 .pager { padding: 16px 0; text-align: right; }
+
+/* 派生列紧迫度色（剩余货期时间）*/
+.cell.cell-warning { color: #b45309 !important; font-weight: 700; }
+.cell.cell-urgent { color: #b91c1c !important; font-weight: 700; }
+.cell.cell-overdue {
+  color: #ffffff !important; background: #dc2626 !important;
+  font-weight: 700; padding: 0 4px; border-radius: 3px;
+}
 
 /* 状态筛选 dropdown 里的小圆点 */
 .status-dot {

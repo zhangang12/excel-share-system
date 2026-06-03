@@ -296,6 +296,52 @@ async def cleanup_filler_columns(db: AsyncSession) -> dict:
     return {"deleted": len(to_delete), "kept": kept}
 
 
+async def align_known_sheet_fields_to_template(db: AsyncSession) -> dict:
+    """对已知 sheet 类型的所有 datasheet，把字段按位置重命名为模板字段名。
+
+    策略：
+    - 只处理 datasheet.name 在 SHEET_TEMPLATES 里的（钣金装配等）
+    - 按 sort_order 升序取字段
+    - 如果字段数 <= 模板字段数，按位置重命名为模板字段名
+    - 多余字段（位置超出模板长度）保留原状（避免误删用户数据）
+    - records.values 的 key 是 field.id，重命名不影响数据
+    - 幂等：如果已经叫模板名了，跳过
+    """
+    from sqlalchemy import delete as sql_delete
+    from .sheet_templates import SHEET_TEMPLATES
+
+    res = await db.execute(select(models.Datasheet))
+    datasheets = res.scalars().all()
+    targets = [d for d in datasheets if d.name in SHEET_TEMPLATES]
+    if not targets:
+        return {"datasheets": 0, "renamed_fields": 0}
+
+    renamed = 0
+    for d in targets:
+        template = SHEET_TEMPLATES[d.name]
+        res = await db.execute(
+            select(models.Field).where(models.Field.datasheet_id == d.id)
+            .order_by(models.Field.sort_order, models.Field.id)
+        )
+        fields = list(res.scalars().all())
+        # 按位置重命名（位置 i 的字段 → template[i]）
+        for i, f in enumerate(fields):
+            if i >= len(template):
+                break
+            new_name = template[i]
+            if f.name != new_name:
+                f.name = new_name
+                renamed += 1
+
+    if renamed:
+        await db.commit()
+        log.info(
+            "[align_known_sheet_fields_to_template] 重命名了 %d 个字段以对齐 %d 个已知 sheet 的模板",
+            renamed, len(targets),
+        )
+    return {"datasheets": len(targets), "renamed_fields": renamed}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -318,3 +364,7 @@ async def run_all(db: AsyncSession) -> None:
         await cleanup_filler_columns(db)
     except Exception as e:
         log.warning("cleanup_filler_columns failed: %s", e)
+    try:
+        await align_known_sheet_fields_to_template(db)
+    except Exception as e:
+        log.warning("align_known_sheet_fields_to_template failed: %s", e)

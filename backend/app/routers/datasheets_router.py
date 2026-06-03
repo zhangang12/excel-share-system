@@ -177,10 +177,13 @@ async def create_field(
     current: models.User = Depends(require_not_viewer),
     db: AsyncSession = Depends(get_db),
 ):
+    from ..sheet_templates import is_known_sheet
     d = await _get_datasheet_or_404(db, did)
     p = await _get_project_or_404(db, d.project_id)
     if not await user_can_edit_project(db, current, p):
         raise HTTPException(403, "无权创建字段")
+    if is_known_sheet(d.name):
+        raise HTTPException(400, f"「{d.name}」是系统固定模板，字段不能新增")
     if data.type not in schemas.FIELD_TYPES:
         raise HTTPException(400, f"字段类型必须是 {schemas.FIELD_TYPES}")
     res = await db.execute(
@@ -204,6 +207,7 @@ async def update_field(
     current: models.User = Depends(require_not_viewer),
     db: AsyncSession = Depends(get_db),
 ):
+    from ..sheet_templates import is_known_sheet
     res = await db.execute(select(models.Field).where(models.Field.id == fid))
     f = res.scalar_one_or_none()
     if not f:
@@ -212,6 +216,8 @@ async def update_field(
     p = await _get_project_or_404(db, d.project_id)
     if not await user_can_edit_project(db, current, p):
         raise HTTPException(403, "无权修改")
+    if is_known_sheet(d.name) and data.name is not None and data.name != f.name:
+        raise HTTPException(400, f"「{d.name}」是系统固定模板，字段名不能改")
     if data.name is not None:
         f.name = data.name
     if data.type is not None:
@@ -233,6 +239,7 @@ async def delete_field(
     current: models.User = Depends(require_not_viewer),
     db: AsyncSession = Depends(get_db),
 ):
+    from ..sheet_templates import is_known_sheet
     res = await db.execute(select(models.Field).where(models.Field.id == fid))
     f = res.scalar_one_or_none()
     if not f:
@@ -241,6 +248,8 @@ async def delete_field(
     p = await _get_project_or_404(db, d.project_id)
     if not await user_can_edit_project(db, current, p):
         raise HTTPException(403, "无权删除")
+    if is_known_sheet(d.name):
+        raise HTTPException(400, f"「{d.name}」是系统固定模板，字段不能删")
     await db.delete(f)
     await db.commit()
     return schemas.Msg(message="已删除")

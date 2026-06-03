@@ -20,6 +20,7 @@ from ..deps import (
     get_current_user, require_not_viewer,
     user_can_view_project, user_can_edit_project,
 )
+from ..sheet_templates import SHEET_TEMPLATES, is_known_sheet, map_excel_to_template
 
 router = APIRouter(prefix="/api", tags=["Excel 导入导出"])
 
@@ -317,6 +318,18 @@ async def import_excel(
 
     if not sheets_meta:
         raise HTTPException(400, "Excel 中没有可识别的数据")
+
+    # ===== 模板对齐：已知 sheet 类型按模板重排字段（钣金装配 / 标准件清单 / 外协外购 / 原料下料单）=====
+    aligned_meta = []
+    for sname, headers, rows, preamble in sheets_meta:
+        if is_known_sheet(sname):
+            res = map_excel_to_template(sname, headers, rows)
+            if res:
+                tpl_headers, tpl_rows = res
+                aligned_meta.append((sname, tpl_headers, tpl_rows, preamble))
+                continue
+        aligned_meta.append((sname, headers, rows, preamble))
+    sheets_meta = aligned_meta
 
     # ===== 全量替换：先删本项目所有现有数据表（级联删除字段、记录、字段权限） =====
     from sqlalchemy import delete as _del
