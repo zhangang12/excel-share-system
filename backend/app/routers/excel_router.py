@@ -115,12 +115,14 @@ def _fill_merged_data_cells(
     这里把合并范围内的所有单元格都填上左上角的值，方便每行独立可读。
 
     - merged_ranges 统一为闭区间 [rlo, rhi] × [clo, chi]（0-indexed）
-    - 只处理 rlo >= header_row_idx 的合并（项目头 + 表头区的合并视觉用，不动）
+    - 只处理 rlo > header_row_idx 的合并（项目头 0..header_row_idx-1
+      和表头行 header_row_idx 都不应该填充，否则会把"品牌"等表头
+      值塞到原本空的标头位置，造成后续 fallback 列识别错乱）
     - 仅当目标位置为 None / '' / '-' 时才填，避免覆盖手填值
     """
     for (rlo, rhi, clo, chi) in merged_ranges:
-        if rlo < header_row_idx:
-            continue  # 项目头 / 表头区合并不动
+        if rlo <= header_row_idx:
+            continue  # 项目头 + 表头行的合并不动
         if rlo >= len(rows) or clo >= len(rows[rlo]):
             continue
         top_left = rows[rlo][clo]
@@ -281,8 +283,9 @@ async def import_excel(
                 # 之后正常 iter_rows 就能拿到填好的数据
                 for merge in list(ws.merged_cells.ranges):
                     # openpyxl: min_row / max_row 都是 1-indexed inclusive
-                    if (merge.min_row - 1) < HEADER_ROW_INDEX:
-                        continue  # 项目头 / 表头区合并不动
+                    # 数据区 = 表头行的下一行起；表头行 + 项目头都不动
+                    if (merge.min_row - 1) <= HEADER_ROW_INDEX:
+                        continue  # 项目头 + 表头区合并不动
                     top_left = ws.cell(row=merge.min_row, column=merge.min_col).value
                     if top_left in (None, "", "-"):
                         continue
@@ -331,17 +334,36 @@ async def import_excel(
         aligned_meta.append((sname, headers, rows, preamble))
     sheets_meta = aligned_meta
 
-    # ===== 全量替换：先删本项目所有现有数据表（级联删除字段、记录、字段权限） =====
+    # ===== 全量替换：先删本项目所有现有数据表（含字段、记录、字段权限） =====
     from sqlalchemy import delete as _del
-    # 先查出所有相关 field id（要删字段权限）
+    # 先查出所有相关 field id（要删字段权限和确认数量）
     fres = await db.execute(
         select(models.Field.id).join(models.Datasheet, models.Field.datasheet_id == models.Datasheet.id)
         .where(models.Datasheet.project_id == pid)
     )
     field_ids = [r[0] for r in fres.all()]
+    # 数 records / datasheets 用于回显
+    rres = await db.execute(
+        select(func.count(models.Record.id))
+        .join(models.Datasheet, models.Record.datasheet_id == models.Datasheet.id)
+        .where(models.Datasheet.project_id == pid)
+    )
+    old_record_count = rres.scalar() or 0
+    dres = await db.execute(
+        select(func.count(models.Datasheet.id)).where(models.Datasheet.project_id == pid)
+    )
+    old_ds_count = dres.scalar() or 0
+    # 显式删整链：records / field_permissions / fields / datasheets
     if field_ids:
         await db.execute(_del(models.FieldPermission).where(models.FieldPermission.field_id.in_(field_ids)))
-    # 然后删数据表（外键级联会带走 fields + records）
+        await db.execute(_del(models.Field).where(models.Field.id.in_(field_ids)))
+    # 再显式删 records（不依赖外键 CASCADE）
+    ds_ids_res = await db.execute(
+        select(models.Datasheet.id).where(models.Datasheet.project_id == pid)
+    )
+    ds_ids_to_del = [r[0] for r in ds_ids_res.all()]
+    if ds_ids_to_del:
+        await db.execute(_del(models.Record).where(models.Record.datasheet_id.in_(ds_ids_to_del)))
     await db.execute(_del(models.Datasheet).where(models.Datasheet.project_id == pid))
     await db.flush()
     # =====================================================================
@@ -408,7 +430,12 @@ async def import_excel(
             total_records += 1
 
     await db.commit()
-    return schemas.Msg(message=f"导入完成：{len(sheets_meta)} 个数据表，共 {total_records} 行")
+    return schemas.Msg(
+        message=(
+            f"导入完成：清除旧数据 {old_ds_count} 个数据表 / {old_record_count} 行 → "
+            f"新建 {len(sheets_meta)} 个数据表 / {total_records} 行"
+        )
+    )
 
 
 # ============== 导出公共工具：preamble 公式列实时计算 ==============

@@ -236,15 +236,18 @@ async def backfill_project_header_from_datasheets(db: AsyncSession) -> int:
 
 
 async def cleanup_filler_columns(db: AsyncSession) -> dict:
-    """清理存量数据中"列N"格式 + 整列空 的空白填充列。
+    """清理存量数据中"列N"格式的空白填充列。
 
     背景：早期导入时 Excel 文件本身宽度大（如 35 列）但用户只填了前
-    N 列，后面会被 fallback 成"列N"自动命名，且数据全空。这种字段
-    撑得表格特别宽，14 寸笔记本看不下，窗口缩放也卡。
+    N 列；或合并单元格被错误填充塞进了表头位置 → 后面会被 fallback
+    成"列N"自动命名。这些字段不仅撑宽表格，还会让 align_known_sheet_*
+    数据迁移按位置重命名时整体错位。
 
-    严格条件 —— 同时满足才删：
+    判定条件 —— 满足任一即删（更激进，因为这些字段本就来自空标头位置）：
     1. 字段名匹配 ^列\\d+$（系统自动 fallback 命名）
-    2. 该字段在所有 records 的 values 中均无值
+    2. 即使该字段有数据（可能是合并单元格脏数据），也删除：
+       原因是 fallback 名说明 Excel 那位置原本没有列名，
+       字段意义不明确，数据可能是错位/合并填充导致的副产物
     """
     import re as _re
     from sqlalchemy import delete as sql_delete
@@ -254,9 +257,9 @@ async def cleanup_filler_columns(db: AsyncSession) -> dict:
     all_fields = res.scalars().all()
     candidates = [f for f in all_fields if FALLBACK_RE.match((f.name or '').strip())]
     if not candidates:
-        return {"deleted": 0, "kept": 0}
+        return {"deleted": 0, "with_data": 0}
 
-    # 拉所有相关 records 的 values，查每个 candidate 是否真的全空
+    # 统计有数据的"列N"字段数（仅供日志，全部都删）
     ds_ids = list({f.datasheet_id for f in candidates})
     res = await db.execute(
         select(models.Record).where(models.Record.datasheet_id.in_(ds_ids))
@@ -265,35 +268,28 @@ async def cleanup_filler_columns(db: AsyncSession) -> dict:
     for r in res.scalars().all():
         records_by_ds.setdefault(r.datasheet_id, []).append(r)
 
-    to_delete: list[int] = []
-    kept = 0
+    with_data = 0
+    to_delete: list[int] = [f.id for f in candidates]
     for f in candidates:
         rs = records_by_ds.get(f.datasheet_id, [])
-        has_value = False
-        fid_str = str(f.id)
         for r in rs:
-            v = (r.values or {}).get(fid_str)
+            v = (r.values or {}).get(str(f.id))
             if v not in (None, '', '-'):
-                has_value = True
+                with_data += 1
                 break
-        if has_value:
-            kept += 1
-        else:
-            to_delete.append(f.id)
 
-    if to_delete:
-        await db.execute(sql_delete(models.FieldPermission).where(
-            models.FieldPermission.field_id.in_(to_delete)
-        ))
-        await db.execute(sql_delete(models.Field).where(
-            models.Field.id.in_(to_delete)
-        ))
-        await db.commit()
-        log.info(
-            '[cleanup_filler_columns] 删除 %d 个"列N"空白填充列（保留 %d 个有数据的）',
-            len(to_delete), kept,
-        )
-    return {"deleted": len(to_delete), "kept": kept}
+    await db.execute(sql_delete(models.FieldPermission).where(
+        models.FieldPermission.field_id.in_(to_delete)
+    ))
+    await db.execute(sql_delete(models.Field).where(
+        models.Field.id.in_(to_delete)
+    ))
+    await db.commit()
+    log.info(
+        '[cleanup_filler_columns] 删除 %d 个"列N"空白填充列（其中 %d 个含数据但来自空标头位置，删除以避免后续 align 错位）',
+        len(to_delete), with_data,
+    )
+    return {"deleted": len(to_delete), "with_data": with_data}
 
 
 async def align_known_sheet_fields_to_template(db: AsyncSession) -> dict:
