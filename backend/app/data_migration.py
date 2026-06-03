@@ -400,9 +400,17 @@ async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
         await db.execute(sql_delete(models.Record).where(
             models.Record.datasheet_id == d.id
         ))
+        # 按模板重建空字段（让用户看到固定列名的空表，可重新导入或手填）
+        for sort_i, tpl_name in enumerate(template):
+            db.add(models.Field(
+                datasheet_id=d.id,
+                name=tpl_name,
+                type='text',
+                sort_order=sort_i,
+            ))
         log.warning(
-            "[cleanup_misaligned_known_sheets] 清空错位数据表 datasheet#%d (%s)；%s。"
-            "请用户重新导入 Excel。",
+            "[cleanup_misaligned_known_sheets] 清空+按模板重建 datasheet#%d (%s)；"
+            "%s。请用户重新导入 Excel 填充数据。",
             d.id, d.name, ", ".join(reasons) or "字段结构与模板不一致",
         )
         cleared += 1
