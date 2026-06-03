@@ -293,6 +293,15 @@ function displayCellValue(_record: DataRecord, f: DataField): {
   return { text: String(raw), isError: false, isEmpty: false }
 }
 
+/** 按单元格值识别状态色：完成绿 / 进行中红 / 未开始灰；不限定字段名 */
+function cellStatusClass(text: string): string {
+  const t = (text || '').trim()
+  if (t === '完成' || t === '已完成') return 'status-done'
+  if (t === '进行中' || t === '正在做' || t === '处理中') return 'status-doing'
+  if (t === '未开始' || t === '待开始' || t === '待处理') return 'status-todo'
+  return ''
+}
+
 // 列宽自适应（紧凑版：每字符 ~10px，14 寸笔记本全屏可显）
 function colWidth(f: DataField): number {
   const headerLen = (f.name || '').length
@@ -501,7 +510,10 @@ async function addRow() {
           </template>
           <template v-else>
             <span class="cell"
-                  :class="{ editable: fieldEditable(f) }"
+                  :class="[
+                    { editable: fieldEditable(f) },
+                    cellStatusClass(displayCellValue(row, f).text),
+                  ]"
                   @click="startEdit(row, f)">
               <template v-if="displayCellValue(row, f).isEmpty">
                 <span class="muted">-</span>
@@ -594,6 +606,26 @@ async function addRow() {
 .cell.editable:hover {
   background: rgba(37,99,235,.10);
   outline: 1px dashed var(--primary);
+}
+
+/* 状态值着色：按内容识别，不限定字段名 */
+.cell.status-done {
+  color: #065f46 !important;
+  background: #d1fae5 !important;
+  font-weight: 800 !important;
+  border-radius: 3px;
+}
+.cell.status-doing {
+  color: #991b1b !important;
+  background: #fee2e2 !important;
+  font-weight: 800 !important;
+  border-radius: 3px;
+}
+.cell.status-todo {
+  color: #475569 !important;
+  background: #f1f5f9 !important;
+  font-weight: 700 !important;
+  border-radius: 3px;
 }
 /* 单元格手动公式相关样式（.cell.formula / .formula-help）已随功能下线移除 */
 
