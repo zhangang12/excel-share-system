@@ -113,14 +113,24 @@ def map_excel_to_template(
     sheet_name: str,
     excel_headers: list[str],
     excel_rows: list[list],
+    header_merge_skip_cols: set[int] | None = None,
 ) -> tuple[list[str], list[list]] | None:
     """对已知 sheet 类型，把 Excel 数据按模板字段名 + 位置映射重建。
 
     策略：
-    - 跳过 Excel 的"序号"列（按名字识别）和完全空的列
+    - 跳过 Excel 的"序号"列（按名字识别）
+    - 跳过空标头列
+    - 跳过"表头合并的延续列"（即表头行合并范围内非左上角的列）
+      —— 用户场景：如 F、G 列合并显示"品牌"，G 列虽然空但也属于
+      品牌列；如果旧 bug 给 G 列填了脏数据，跳过它能避免位置错位
     - 剩下的列按位置对应模板字段
     - 如果 Excel 有效列数比模板少，模板尾部字段在数据里设 None
-    - 如果 Excel 有效列数比模板多，多出来的尾列丢弃（模板已经能装下所有业务字段）
+    - 如果 Excel 有效列数比模板多，多出来的尾列丢弃
+
+    参数:
+        header_merge_skip_cols: 表头行合并的"延续列"索引集合（0-indexed），
+            这些列在 Excel 中视觉上属于左侧的合并大列，本身不算单独的字段。
+            传 None 等价于空集（向后兼容）。
 
     返回: (模板字段名列表, 转换后的数据行) 或 None（如果不是已知 sheet）
     """
@@ -129,10 +139,13 @@ def map_excel_to_template(
 
     template = SHEET_TEMPLATES[sheet_name]
     rownum_names = {'序号', '#', '序', '行号', 'No', 'No.'}
+    skip = set(header_merge_skip_cols or set())
 
-    # 找出 Excel 的"有效列"索引：去掉序号 + 空标头
+    # 找出 Excel 的"有效列"索引：去掉序号 + 空标头 + 合并延续列
     valid_idx: list[int] = []
     for i, h in enumerate(excel_headers):
+        if i in skip:
+            continue
         name = str(h or '').strip()
         if not name:
             continue

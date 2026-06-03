@@ -224,6 +224,10 @@ async def import_excel(
     tmp = Path(tempfile.gettempdir()) / f"_imp_{pid}_{file.filename}"
     tmp.write_bytes(content)
 
+    # 每个 sheet 的"表头合并延续列"（用户场景：如 F、G 合并显示"品牌"，
+    # G 列本身不算单独的字段，跳过它）
+    sheet_header_merge_skip: dict[str, set[int]] = {}
+
     try:
         sheets_meta: list[tuple[str, list[str], list[list[Any]]]] = []
         if suffix == ".xls":
@@ -257,6 +261,15 @@ async def import_excel(
                 merged = [(rlo, rhi - 1, clo, chi - 1)
                           for (rlo, rhi, clo, chi) in ws.merged_cells]
                 _fill_merged_data_cells(full_rows, merged, HEADER_ROW_INDEX)
+                # 2b) 收集"表头行的合并延续列" —— 这些列虽然在 Excel 里
+                # 有视觉占位，但语义上属于左侧合并大列，不算单独的字段
+                header_merge_skip: set[int] = set()
+                for (rlo, rhi, clo, chi) in ws.merged_cells:
+                    # xlrd: rhi/chi exclusive；表头行 = HEADER_ROW_INDEX
+                    if rlo <= HEADER_ROW_INDEX < rhi:
+                        for c in range(clo + 1, chi):
+                            header_merge_skip.add(c)
+                sheet_header_merge_skip[ws.name] = header_merge_skip
                 # 3) 取 preamble / headers / rows
                 header_idx = _find_data_header_row(full_rows[:10])
                 preamble = []
@@ -281,6 +294,18 @@ async def import_excel(
                 ws = wb[sn]
                 # 数据区合并：在 ws 上 unmerge + 把左上角值填充到所有单元格
                 # 之后正常 iter_rows 就能拿到填好的数据
+                # 先收集表头合并延续列（unmerge 之前）
+                header_merge_skip_xlsx: set[int] = set()
+                for merge in list(ws.merged_cells.ranges):
+                    min_row_0 = merge.min_row - 1
+                    max_row_0 = merge.max_row - 1
+                    if min_row_0 <= HEADER_ROW_INDEX <= max_row_0:
+                        for c in range(merge.min_col, merge.max_col + 1):  # 1-indexed
+                            # 转 0-indexed，跳过左上角（min_col）
+                            if c > merge.min_col:
+                                header_merge_skip_xlsx.add(c - 1)
+                sheet_header_merge_skip[sn] = header_merge_skip_xlsx
+
                 for merge in list(ws.merged_cells.ranges):
                     # openpyxl: min_row / max_row 都是 1-indexed inclusive
                     # 数据区 = 表头行的下一行起；表头行 + 项目头都不动
@@ -326,7 +351,10 @@ async def import_excel(
     aligned_meta = []
     for sname, headers, rows, preamble in sheets_meta:
         if is_known_sheet(sname):
-            res = map_excel_to_template(sname, headers, rows)
+            # 传入"表头合并延续列"：如 F、G 合并显示"品牌"，G 不算单独字段
+            skip = sheet_header_merge_skip.get(sname, set())
+            res = map_excel_to_template(sname, headers, rows,
+                                         header_merge_skip_cols=skip)
             if res:
                 tpl_headers, tpl_rows = res
                 aligned_meta.append((sname, tpl_headers, tpl_rows, preamble))

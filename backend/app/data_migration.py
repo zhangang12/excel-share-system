@@ -336,18 +336,17 @@ async def align_known_sheet_fields_to_template(db: AsyncSession) -> dict:
 
 
 async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
-    """检测已知 sheet 类型的字段是否与模板一致；不一致就清空 datasheet
-    （所有字段 + 所有 records），让用户重新导入 Excel 走干净的映射逻辑。
+    """检测已知 sheet 类型的字段是否与模板严格一致；不一致就清空 datasheet。
 
-    判定"对齐"的标准：
-    - datasheet 的字段集合（按名字）⊇ 模板字段集合
-    - 即模板里的每个字段名都能在 datasheet 里找到
+    判定"对齐"的标准（严格）：
+    - 字段名集合（去重后）必须严格等于模板字段集合
+    - 字段总数必须等于模板字段数（防止重复字段）
 
-    不要求字段数完全等于模板 —— 多余字段（如旧数据"完成日期"）也
-    会一并清掉。
+    任一不满足 → 字段错位或残留，清空 datasheet 的 fields + records
+    + field_permissions，让用户重新导入 Excel 走干净的映射。
 
-    这是修复历史 bug 的"硬重置"，必须执行。前置假设：用户的真实
-    数据保存在 Excel 文件里，重新导入即可恢复。
+    这是修复历史 bug 的"硬重置"。前置假设：用户的真实数据保存在
+    Excel 文件里，重新导入即可恢复。
     """
     from sqlalchemy import delete as sql_delete
     from .sheet_templates import SHEET_TEMPLATES
@@ -361,17 +360,35 @@ async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
     cleared = 0
     for d in targets:
         template = SHEET_TEMPLATES[d.name]
+        tpl_set = set(template)
         res = await db.execute(
             select(models.Field).where(models.Field.datasheet_id == d.id)
         )
         fields = list(res.scalars().all())
-        field_names = {(f.name or '').strip() for f in fields}
-        # 检查模板里每个字段名是否都在 datasheet 里
-        missing = [name for name in template if name not in field_names]
-        if not missing:
-            continue  # 字段集已包含模板要求，无需清空
+        field_names_list = [(f.name or '').strip() for f in fields]
+        field_names_set = set(field_names_list)
 
-        # 缺失模板字段 → 数据库里这张 sheet 的字段是错位/老版本，必须清空
+        # 严格条件：集合等于 + 字段数等于 + 无重复
+        is_aligned = (
+            field_names_set == tpl_set
+            and len(fields) == len(template)
+            and len(field_names_list) == len(field_names_set)  # 无重复
+        )
+        if is_aligned:
+            continue
+
+        # 收集差异信息用于日志
+        missing = sorted(tpl_set - field_names_set)
+        extra = sorted(field_names_set - tpl_set)
+        duplicated = sorted({n for n in field_names_list if field_names_list.count(n) > 1})
+        reasons = []
+        if missing:
+            reasons.append(f"缺失={missing}")
+        if extra:
+            reasons.append(f"多余={extra}")
+        if duplicated:
+            reasons.append(f"重复={duplicated}")
+
         field_ids = [f.id for f in fields]
         if field_ids:
             await db.execute(sql_delete(models.FieldPermission).where(
@@ -384,9 +401,9 @@ async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
             models.Record.datasheet_id == d.id
         ))
         log.warning(
-            "[cleanup_misaligned_known_sheets] 清空错位数据表 datasheet#%d (%s)；"
-            "缺失模板字段：%s。请用户重新导入 Excel。",
-            d.id, d.name, missing,
+            "[cleanup_misaligned_known_sheets] 清空错位数据表 datasheet#%d (%s)；%s。"
+            "请用户重新导入 Excel。",
+            d.id, d.name, ", ".join(reasons) or "字段结构与模板不一致",
         )
         cleared += 1
 
