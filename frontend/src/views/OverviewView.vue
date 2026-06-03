@@ -43,6 +43,9 @@ type OverviewTplCol = {
   label: string
   source: 'code' | 'name' | 'status' | 'meta' | 'derived'
   derived?: 'duration' | 'elapsed' | 'remaining' | 'design_days'
+  // fallbackDerived: source='meta' 但 meta 无值时，按这个派生公式算
+  // 即"可编辑但有默认公式"——用户填了就用填的，没填就显示算出的值
+  fallbackDerived?: 'duration' | 'elapsed' | 'remaining' | 'design_days'
   editable: boolean
   widthPct: number
 }
@@ -56,7 +59,8 @@ const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '设计师',       source: 'meta',    editable: true,  widthPct: 6 },
   { label: '制图开始',     source: 'meta',    editable: true,  widthPct: 7 },
   { label: '制图结束',     source: 'meta',    editable: true,  widthPct: 7 },
-  { label: '制图用时',     source: 'derived', derived: 'design_days', editable: false, widthPct: 6 },
+  // 制图用时：可手填覆盖公式，公式 = 制图结束 - 制图开始
+  { label: '制图用时',     source: 'meta',    fallbackDerived: 'design_days', editable: true, widthPct: 6 },
   { label: '电工',         source: 'meta',    editable: true,  widthPct: 6 },
   { label: '货期',         source: 'derived', derived: 'duration',  editable: false, widthPct: 5 },
   { label: '已过时间',     source: 'derived', derived: 'elapsed',   editable: false, widthPct: 6 },
@@ -109,32 +113,41 @@ function rowMetaValue(row: OverviewRow, key: string): string {
   return String(row.extra?.[`${OVERVIEW_PREFIX}${key}`] ?? '')
 }
 
+// 派生公式：基于一览自己的 __o__ 日期 key 实时算
+function computeDerived(row: OverviewRow, kind: string): string {
+  void todayKey.value
+  const signed = parseLooseDate(rowMetaValue(row, '签订日期'))
+  const deliver = parseLooseDate(rowMetaValue(row, '交货日期'))
+  const designStart = parseLooseDate(rowMetaValue(row, '制图开始'))
+  const designEnd = parseLooseDate(rowMetaValue(row, '制图结束'))
+  const today = new Date()
+  switch (kind) {
+    // 货期 = 交货日期 - 签订日期
+    case 'duration':    return signed && deliver ? String(daysBetween(deliver, signed)) : ''
+    // 已过时间 = TODAY() - 签订日期
+    case 'elapsed':     return signed            ? String(daysBetween(today, signed))   : ''
+    // 剩余制作时间 = 交货日期 - TODAY()（数学上等价于 货期 - 已过时间）
+    case 'remaining':   return deliver           ? String(daysBetween(deliver, today))  : ''
+    // 制图用时 = 制图结束 - 制图开始
+    case 'design_days': return designStart && designEnd ? String(daysBetween(designEnd, designStart)) : ''
+  }
+  return ''
+}
+
 // 模板列的显示值
 function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
   if (col.source === 'code') return row.code || ''
   if (col.source === 'name') return row.name || ''
   if (col.source === 'status') return row.status || ''
   if (col.source === 'meta') {
-    return smartFormatValue(rowMetaValue(row, col.label))
+    const v = rowMetaValue(row, col.label)
+    if (v) return smartFormatValue(v)
+    // 用户没手填 → 尝试 fallback 派生公式（如"制图用时"）
+    if (col.fallbackDerived) return computeDerived(row, col.fallbackDerived)
+    return ''
   }
   if (col.source === 'derived' && col.derived) {
-    void todayKey.value
-    // 派生列读"一览自己的"日期（__o__ 独立 key）
-    const signed = parseLooseDate(rowMetaValue(row, '签订日期'))
-    const deliver = parseLooseDate(rowMetaValue(row, '交货日期'))
-    const designStart = parseLooseDate(rowMetaValue(row, '制图开始'))
-    const designEnd = parseLooseDate(rowMetaValue(row, '制图结束'))
-    const today = new Date()
-    switch (col.derived) {
-      // 货期 = 交货日期 - 签订日期
-      case 'duration':    return signed && deliver ? String(daysBetween(deliver, signed)) : ''
-      // 已过时间 = TODAY() - 签订日期
-      case 'elapsed':     return signed            ? String(daysBetween(today, signed))   : ''
-      // 剩余制作时间 = 货期 - 已过时间 = 交货日期 - TODAY()（数学上等价）
-      case 'remaining':   return deliver           ? String(daysBetween(deliver, today))  : ''
-      // 制图用时 = 制图结束 - 制图开始
-      case 'design_days': return designStart && designEnd ? String(daysBetween(designEnd, designStart)) : ''
-    }
+    return computeDerived(row, col.derived)
   }
   return ''
 }
@@ -165,7 +178,15 @@ function startEditTpl(row: OverviewRow, col: OverviewTplCol) {
   if (!isTplCellEditable(col)) return
   editingTplRowId.value = row.id
   editingTplLabel.value = col.label
-  editingTplValue.value = templateCellValue(row, col)
+  // meta 列编辑时显示用户实际存的值（无值就空），不带公式 fallback；
+  // name 列显示 row.name；其他列走 templateCellValue
+  if (col.source === 'meta') {
+    editingTplValue.value = rowMetaValue(row, col.label)
+  } else if (col.source === 'name') {
+    editingTplValue.value = row.name || ''
+  } else {
+    editingTplValue.value = templateCellValue(row, col)
+  }
 }
 function cancelEditTpl() {
   editingTplRowId.value = 0
