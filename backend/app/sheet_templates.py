@@ -80,35 +80,33 @@ SHEET_TEMPLATES: dict[str, list[str]] = {
 
 
 # 项目一览的固定列（"# 序号"由表格自动生成，不在此列表）
-# 类型: source 描述数据来源；editable 是否可编辑；alias_to 同义词映射（指向项目头的 key）
+# 注意：一览与项目详情的数据"完全独立"——一览的"签订日期"存
+# __h__签订日期，项目详情的"下单日期"存 __h__下单日期，互不影响。
+# 这样改一处不会影响另一处。
 OVERVIEW_FIELDS: list[dict] = [
     {'label': '项目编号',     'source': 'code',    'editable': False},
     {'label': '项目名称',     'source': 'name',    'editable': True},
-    {'label': '签订日期',     'source': 'meta',    'editable': True,  'alias_to': '下单日期'},
-    {'label': '交货日期',     'source': 'meta',    'editable': True,  'alias_to': '交货日期'},
-    {'label': '销售',         'source': 'meta',    'editable': True,  'alias_to': '销售'},
-    {'label': '设计师',       'source': 'meta',    'editable': True,  'alias_to': '设计师'},
-    {'label': '设图开始',     'source': 'meta',    'editable': True,  'alias_to': '设图开始'},
-    {'label': '设图结束',     'source': 'meta',    'editable': True,  'alias_to': '设图结束'},
+    {'label': '签订日期',     'source': 'meta',    'editable': True},
+    {'label': '交货日期',     'source': 'meta',    'editable': True},
+    {'label': '销售',         'source': 'meta',    'editable': True},
+    {'label': '设计师',       'source': 'meta',    'editable': True},
+    {'label': '设图开始',     'source': 'meta',    'editable': True},
+    {'label': '设图结束',     'source': 'meta',    'editable': True},
     {'label': '设图费时',     'source': 'derived', 'editable': False, 'derived': 'design_days'},
-    {'label': '电工',         'source': 'meta',    'editable': True,  'alias_to': '电器'},
+    {'label': '电工',         'source': 'meta',    'editable': True},
     {'label': '货期',         'source': 'derived', 'editable': False, 'derived': 'duration'},
     {'label': '已过时间',     'source': 'derived', 'editable': False, 'derived': 'elapsed'},
     {'label': '剩余货期时间', 'source': 'derived', 'editable': False, 'derived': 'remaining'},
     # 已完成项目专属（进行中为空）
-    {'label': '完成日期',     'source': 'meta',    'editable': True,  'alias_to': '完成日期'},
+    {'label': '完成日期',     'source': 'meta',    'editable': True},
     {'label': '实际用时',     'source': 'derived', 'editable': False, 'derived': 'actual_days'},
     {'label': '拖后时间',     'source': 'derived', 'editable': False, 'derived': 'delay_days'},
-    {'label': '出货日期',     'source': 'meta',    'editable': True,  'alias_to': '出货日期'},
+    {'label': '出货日期',     'source': 'meta',    'editable': True},
 ]
 
 
-# 一览字段 → 项目头 meta key 的别名映射（与 OVERVIEW_FIELDS.alias_to 一致）
-OVERVIEW_HEADER_ALIAS: dict[str, str] = {
-    f['label']: f['alias_to']
-    for f in OVERVIEW_FIELDS
-    if f.get('alias_to')
-}
+# 别名映射已下线：一览与项目详情数据各存各的，互不影响
+OVERVIEW_HEADER_ALIAS: dict[str, str] = {}
 
 
 def is_known_sheet(sheet_name: str) -> bool:

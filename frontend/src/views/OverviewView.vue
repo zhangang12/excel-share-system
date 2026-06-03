@@ -38,10 +38,11 @@ function fieldEditable(f: OverviewField): boolean {
 }
 
 // ===== 项目一览固定模板列（与后端 sheet_templates.OVERVIEW_FIELDS 一致）=====
+// 一览的数据与项目详情完全独立——一览的"签订日期"直接存
+// row.extra['__h__签订日期']，不与项目详情的"下单日期"共享。
 type OverviewTplCol = {
   label: string
   source: 'code' | 'name' | 'meta' | 'derived'
-  alias_to?: string  // meta 别名映射到 project.extra.__h__<alias_to>
   derived?: 'duration' | 'elapsed' | 'remaining' | 'design_days' | 'actual_days' | 'delay_days'
   editable: boolean
   widthPct: number
@@ -49,21 +50,21 @@ type OverviewTplCol = {
 const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '项目编号',     source: 'code',    editable: false, widthPct: 6 },
   { label: '项目名称',     source: 'name',    editable: true,  widthPct: 12 },
-  { label: '签订日期',     source: 'meta', alias_to: '下单日期', editable: true,  widthPct: 6 },
-  { label: '交货日期',     source: 'meta', alias_to: '交货日期', editable: true,  widthPct: 6 },
-  { label: '销售',         source: 'meta', alias_to: '销售',     editable: true,  widthPct: 5 },
-  { label: '设计师',       source: 'meta', alias_to: '设计师',   editable: true,  widthPct: 5 },
-  { label: '设图开始',     source: 'meta', alias_to: '设图开始', editable: true,  widthPct: 6 },
-  { label: '设图结束',     source: 'meta', alias_to: '设图结束', editable: true,  widthPct: 6 },
+  { label: '签订日期',     source: 'meta',    editable: true,  widthPct: 6 },
+  { label: '交货日期',     source: 'meta',    editable: true,  widthPct: 6 },
+  { label: '销售',         source: 'meta',    editable: true,  widthPct: 5 },
+  { label: '设计师',       source: 'meta',    editable: true,  widthPct: 5 },
+  { label: '设图开始',     source: 'meta',    editable: true,  widthPct: 6 },
+  { label: '设图结束',     source: 'meta',    editable: true,  widthPct: 6 },
   { label: '设图费时',     source: 'derived', derived: 'design_days', editable: false, widthPct: 5 },
-  { label: '电工',         source: 'meta', alias_to: '电器',     editable: true,  widthPct: 5 },
+  { label: '电工',         source: 'meta',    editable: true,  widthPct: 5 },
   { label: '货期',         source: 'derived', derived: 'duration',  editable: false, widthPct: 4 },
   { label: '已过时间',     source: 'derived', derived: 'elapsed',   editable: false, widthPct: 5 },
   { label: '剩余货期时间', source: 'derived', derived: 'remaining', editable: false, widthPct: 6 },
-  { label: '完成日期',     source: 'meta', alias_to: '完成日期', editable: true,  widthPct: 6 },
+  { label: '完成日期',     source: 'meta',    editable: true,  widthPct: 6 },
   { label: '实际用时',     source: 'derived', derived: 'actual_days', editable: false, widthPct: 5 },
   { label: '拖后时间',     source: 'derived', derived: 'delay_days',  editable: false, widthPct: 5 },
-  { label: '出货日期',     source: 'meta', alias_to: '出货日期', editable: true,  widthPct: 6 },
+  { label: '出货日期',     source: 'meta',    editable: true,  widthPct: 6 },
 ]
 
 // 日期解析与天数差（与 DatasheetGrid 一致）
@@ -93,21 +94,22 @@ onMounted(() => {
 import { onBeforeUnmount } from 'vue'
 onBeforeUnmount(() => { if (_todayTimer !== null) window.clearInterval(_todayTimer) })
 
-// 从 row.extra 取项目头数据（通过 alias）
-function rowMetaValue(row: OverviewRow, alias: string): string {
-  return String(row.extra?.[`__h__${alias}`] ?? '')
+// 从 row.extra 直接按 key 取一览数据（独立存储，不映射到项目详情）
+function rowMetaValue(row: OverviewRow, key: string): string {
+  return String(row.extra?.[`__h__${key}`] ?? '')
 }
 
 // 模板列的显示值
 function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
   if (col.source === 'code') return row.code || ''
   if (col.source === 'name') return row.name || ''
-  if (col.source === 'meta' && col.alias_to) {
-    return smartFormatValue(rowMetaValue(row, col.alias_to))
+  if (col.source === 'meta') {
+    return smartFormatValue(rowMetaValue(row, col.label))
   }
   if (col.source === 'derived' && col.derived) {
     void todayKey.value
-    const signed = parseLooseDate(rowMetaValue(row, '下单日期'))
+    // 派生列读"一览自己的"日期（独立 key），不读项目详情的
+    const signed = parseLooseDate(rowMetaValue(row, '签订日期'))
     const deliver = parseLooseDate(rowMetaValue(row, '交货日期'))
     const designStart = parseLooseDate(rowMetaValue(row, '设图开始'))
     const designEnd = parseLooseDate(rowMetaValue(row, '设图结束'))
@@ -169,12 +171,12 @@ async function saveEditTpl(row: OverviewRow, col: OverviewTplCol) {
       const idx = rows.value.findIndex(r => r.id === row.id)
       if (idx >= 0) rows.value[idx] = { ...rows.value[idx], name: newVal }
     } else if (col.source === 'meta') {
-      // 后端 alias 映射会把 col.label（如"签订日期"）写到 __h__下单日期
+      // 直接用 col.label 作为 key 存储（与项目详情独立）
       await projectsApi.updateHeaderCell(row.id, col.label, newVal || null)
       const idx = rows.value.findIndex(r => r.id === row.id)
-      if (idx >= 0 && col.alias_to) {
+      if (idx >= 0) {
         const extra = { ...rows.value[idx].extra }
-        const key = `__h__${col.alias_to}`
+        const key = `__h__${col.label}`
         if (!newVal) delete extra[key]
         else extra[key] = newVal
         rows.value[idx] = { ...rows.value[idx], extra }
