@@ -61,6 +61,12 @@ function onHeaderUpdated(payload: { key: string; value: string | null }) {
   }
   project.value = { ...project.value, header_meta: meta }
 }
+
+// 项目自身字段（name 等）被改 → 同步本地 project
+function onProjectFieldUpdated(payload: { field: 'name'; value: string }) {
+  if (!project.value) return
+  project.value = { ...project.value, [payload.field]: payload.value }
+}
 async function loadMembers() { members.value = await projectsApi.listMembers(pid.value) }
 
 async function loadDatasheets() {
@@ -280,6 +286,7 @@ onMounted(async () => {
           :header-lines="activeSheetHeaderLines"
           :project="project"
           @header-updated="onHeaderUpdated"
+          @project-field-updated="onProjectFieldUpdated"
         />
         <el-empty v-else description="还没有数据表，请上传 Excel 模版">
         </el-empty>

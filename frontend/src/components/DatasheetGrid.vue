@@ -22,8 +22,10 @@ const props = defineProps<{
   project?: Project | null
 }>()
 const emit = defineEmits<{
-  // 项目头表某字段被更新，请父组件刷新 project 对象
+  // 项目头表某字段（meta 来源）被更新
   'header-updated': [{ key: string; value: string | null }]
+  // 项目自身字段（name / code 等）被更新
+  'project-field-updated': [{ field: 'name'; value: string }]
 }>()
 
 const keyword = ref("")
@@ -156,7 +158,7 @@ const COMPANY_TITLE = '同辉智能装备（无锡）有限公司   (注解：�
 const HEADER_COLUMNS: HeaderColumn[] = [
   { label: '序号',     source: 'index',   editable: false },
   { label: '项目编号', source: 'code',    editable: false },
-  { label: '设备名称', source: 'name',    editable: false },
+  { label: '设备名称', source: 'name',    editable: true },   // 改 Project.name
   { label: '数量',     source: 'meta',    metaKey: '数量',     editable: true },
   { label: '制表日期', source: 'meta',    metaKey: '制表日期', editable: true },
   { label: '销售',     source: 'meta',    metaKey: '销售',     editable: true },
@@ -216,18 +218,21 @@ function projectHeaderClass(col: HeaderColumn): string {
 }
 
 // 项目头单元格编辑
-const editingHeader = ref<HeaderColumn | null>(null)
+// 注意：用 label 字符串做标识，不要直接存 HeaderColumn 对象引用 ——
+// Vue 3 ref 对对象值会自动 reactive proxy 包装，导致
+// editingHeader.value === col 永远 false（proxy ≠ raw object）。
+const editingHeaderLabel = ref<string>('')
 const editingHeaderValue = ref<string>('')
 
 function isEditingHeader(col: HeaderColumn): boolean {
-  return editingHeader.value === col
+  return editingHeaderLabel.value === col.label
 }
 function isHeaderCellEditable(col: HeaderColumn): boolean {
   return !!col.editable && !!props.canEdit && !projectHeaderFormula(col)
 }
 function startEditHeader(col: HeaderColumn) {
   if (!isHeaderCellEditable(col)) return
-  editingHeader.value = col
+  editingHeaderLabel.value = col.label
   editingHeaderValue.value = projectHeaderValue(col)
 }
 function onHeaderCellClick(col: HeaderColumn) {
@@ -235,17 +240,29 @@ function onHeaderCellClick(col: HeaderColumn) {
     startEditHeader(col)
   }
 }
-function cancelEditHeader() { editingHeader.value = null }
+function cancelEditHeader() { editingHeaderLabel.value = '' }
 async function saveHeader() {
-  const col = editingHeader.value
-  editingHeader.value = null
-  if (!col || !props.project || col.source !== 'meta' || !col.metaKey) return
+  const label = editingHeaderLabel.value
+  editingHeaderLabel.value = ''
+  if (!label || !props.project) return
+  const col = HEADER_COLUMNS.find(c => c.label === label)
+  if (!col) return
   const newVal = editingHeaderValue.value.trim()
   const oldVal = projectHeaderValue(col)
   if (newVal === oldVal) return
   try {
-    await projectsApi.updateHeaderCell(props.project.id, col.metaKey, newVal || null)
-    emit('header-updated', { key: col.metaKey, value: newVal || null })
+    if (col.source === 'meta' && col.metaKey) {
+      // 写入 Project.extra 的 __h__<key>
+      await projectsApi.updateHeaderCell(props.project.id, col.metaKey, newVal || null)
+      emit('header-updated', { key: col.metaKey, value: newVal || null })
+    } else if (col.source === 'name') {
+      // 写入 Project.name
+      if (!newVal) { ElMessage.warning('设备名称不能为空'); return }
+      await projectsApi.update(props.project.id, { name: newVal })
+      emit('project-field-updated', { field: 'name', value: newVal })
+    } else {
+      return
+    }
     ElMessage.success('已保存')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '保存失败')
