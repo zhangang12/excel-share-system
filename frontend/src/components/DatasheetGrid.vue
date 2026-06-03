@@ -342,6 +342,20 @@ function isProgressField(f: DataField): boolean {
 }
 const PROGRESS_OPTIONS = ['完成', '进行中']
 
+// 整列着色：进度列的 td 按值染色（与项目一览状态列一致）
+function datasheetCellClass({ row, column }: any): string {
+  if (!column?.label) return ''
+  // 仅"进度"列（PROGRESS_FIELD_NAMES）参与染色
+  if (!PROGRESS_FIELD_NAMES.has(column.label.trim())) return ''
+  // 在可见字段里找到这个列对应的 field
+  const f = visibleFields.value.find(ff => ff.name === column.label)
+  if (!f) return ''
+  const v = String(row.values?.[String(f.id)] ?? '').trim()
+  if (!v || v === '-') return ''
+  if (v === '完成' || v === '已完成' || v === '完工' || v === '已结束') return 'cell-row-done'
+  return 'cell-row-doing'
+}
+
 // el-select 渲染后自动 focus + 弹出 dropdown（automatic-dropdown 配合）
 // 这样用户单击单元格 → 下拉立刻打开，看到两个选项
 function onProgressSelectMount(el: any) {
@@ -540,6 +554,7 @@ async function addRow() {
     <el-table ref="tableRef" :data="pagedRecords" border stripe :size="fitScreen ? 'small' : 'default'"
               style="width: 100%" :height="tableHeight"
               v-loading="loading"
+              :cell-class-name="datasheetCellClass"
               :empty-text="loading ? '加载中…' : (fields.length === 0 ? '请先添加字段（列）' : '暂无数据，点添加行开始录入')">
       <el-table-column type="index" label="#" width="38" align="center" fixed="left"
                        :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
@@ -672,8 +687,7 @@ async function addRow() {
   outline: 1px dashed var(--primary);
 }
 
-/* 状态值着色：按内容识别，不限定字段名
- * 完成系 → 绿；其他所有状态词 → 红，让待办一眼可见 */
+/* 状态值着色：按内容识别，不限定字段名（仅对单元格内文字）*/
 .cell.status-done {
   color: #065f46 !important;
   background: #d1fae5 !important;
@@ -685,6 +699,30 @@ async function addRow() {
   background: #fee2e2 !important;
   font-weight: 800 !important;
   border-radius: 3px;
+}
+
+/* 进度列整格着色：覆盖斑马纹和 hover */
+:deep(.el-table td.el-table__cell.cell-row-done),
+:deep(.el-table tbody tr td.el-table__cell.cell-row-done),
+:deep(.el-table tbody tr:hover td.el-table__cell.cell-row-done),
+:deep(.el-table .el-table__row--striped td.el-table__cell.cell-row-done) {
+  background: #d1fae5 !important;
+}
+:deep(.el-table td.el-table__cell.cell-row-doing),
+:deep(.el-table tbody tr td.el-table__cell.cell-row-doing),
+:deep(.el-table tbody tr:hover td.el-table__cell.cell-row-doing),
+:deep(.el-table .el-table__row--striped td.el-table__cell.cell-row-doing) {
+  background: #fee2e2 !important;
+}
+/* 进度列内的文字也加深加粗 */
+:deep(.cell-row-done .cell) { color: #065f46 !important; font-weight: 800 !important; }
+:deep(.cell-row-doing .cell) { color: #991b1b !important; font-weight: 800 !important; }
+/* 编辑态 select 透明白底，让格底色显出 */
+:deep(.cell-row-done .el-select__wrapper),
+:deep(.cell-row-doing .el-select__wrapper) {
+  background: rgba(255, 255, 255, 0.55) !important;
+  box-shadow: none !important;
+  border: 1px solid rgba(0, 0, 0, .15) !important;
 }
 /* 单元格手动公式相关样式（.cell.formula / .formula-help）已随功能下线移除 */
 
