@@ -293,12 +293,28 @@ function displayCellValue(_record: DataRecord, f: DataField): {
   return { text: String(raw), isError: false, isEmpty: false }
 }
 
-/** 按单元格值识别状态色：完成绿 / 进行中红 / 未开始灰；不限定字段名 */
+/** 按单元格值识别状态色：
+ *  - "完成 / 已完成 / 完工" → 绿
+ *  - 其他已知状态词（进行中 / 未开始 / 延期 / 暂停等）→ 红
+ *  - 普通文本（人名、日期、编号等）不染色，避免误伤
+ */
 function cellStatusClass(text: string): string {
   const t = (text || '').trim()
-  if (t === '完成' || t === '已完成') return 'status-done'
-  if (t === '进行中' || t === '正在做' || t === '处理中') return 'status-doing'
-  if (t === '未开始' || t === '待开始' || t === '待处理') return 'status-todo'
+  if (!t || t === '-') return ''
+  // 绿色：完成系
+  if (t === '完成' || t === '已完成' || t === '完工' || t === '已结束') {
+    return 'status-done'
+  }
+  // 红色：所有其他已知状态词
+  const RED_STATES = new Set([
+    '进行中', '正在做', '处理中', '在做',
+    '未开始', '待开始', '待处理', '未开工',
+    '延期', '逾期', '超期',
+    '暂停', '搁置', '挂起',
+    '取消', '作废',
+    '待审核', '审核中',
+  ])
+  if (RED_STATES.has(t)) return 'status-doing'
   return ''
 }
 
@@ -608,7 +624,8 @@ async function addRow() {
   outline: 1px dashed var(--primary);
 }
 
-/* 状态值着色：按内容识别，不限定字段名 */
+/* 状态值着色：按内容识别，不限定字段名
+ * 完成系 → 绿；其他所有状态词 → 红，让待办一眼可见 */
 .cell.status-done {
   color: #065f46 !important;
   background: #d1fae5 !important;
@@ -619,12 +636,6 @@ async function addRow() {
   color: #991b1b !important;
   background: #fee2e2 !important;
   font-weight: 800 !important;
-  border-radius: 3px;
-}
-.cell.status-todo {
-  color: #475569 !important;
-  background: #f1f5f9 !important;
-  font-weight: 700 !important;
   border-radius: 3px;
 }
 /* 单元格手动公式相关样式（.cell.formula / .formula-help）已随功能下线移除 */
