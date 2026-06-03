@@ -293,15 +293,61 @@ async def cleanup_filler_columns(db: AsyncSession) -> dict:
 
 
 async def align_known_sheet_fields_to_template(db: AsyncSession) -> dict:
-    """对已知 sheet 类型的所有 datasheet，把字段按位置重命名为模板字段名。
+    """对已知 sheet 类型的所有 datasheet，安全地确认字段名与模板一致。
 
-    策略：
-    - 只处理 datasheet.name 在 SHEET_TEMPLATES 里的（钣金装配等）
-    - 按 sort_order 升序取字段
-    - 如果字段数 <= 模板字段数，按位置重命名为模板字段名
-    - 多余字段（位置超出模板长度）保留原状（避免误删用户数据）
-    - records.values 的 key 是 field.id，重命名不影响数据
-    - 幂等：如果已经叫模板名了，跳过
+    安全策略（重要 —— 避免历史 bug 扩散）：
+    - 只对"字段名已经在模板里"的字段，按其在模板里的位置移动 sort_order
+    - 不强行按位置重命名 —— 因为如果之前有"列N"等错位字段，按位置
+      重命名会把"采购负责人"改成"订购日期"等，错位扩散
+    - 字段名不在模板里的（如"列N"、旧数据"完成日期"），保留原状，
+      留给 cleanup_misaligned_known_sheets 处理
+    """
+    from .sheet_templates import SHEET_TEMPLATES
+
+    res = await db.execute(select(models.Datasheet))
+    datasheets = res.scalars().all()
+    targets = [d for d in datasheets if d.name in SHEET_TEMPLATES]
+    if not targets:
+        return {"datasheets": 0, "reordered_fields": 0}
+
+    reordered = 0
+    for d in targets:
+        template = SHEET_TEMPLATES[d.name]
+        tpl_idx = {name: i for i, name in enumerate(template)}
+        res = await db.execute(
+            select(models.Field).where(models.Field.datasheet_id == d.id)
+        )
+        fields = list(res.scalars().all())
+        # 按模板顺序重设 sort_order：字段名在模板里的，按模板下标排序；
+        # 不在模板里的，放到最后（保留但不参与模板）
+        for f in fields:
+            target_order = tpl_idx.get(f.name)
+            if target_order is not None and f.sort_order != target_order:
+                f.sort_order = target_order
+                reordered += 1
+
+    if reordered:
+        await db.commit()
+        log.info(
+            "[align_known_sheet_fields_to_template] 重排了 %d 个字段的顺序（仅对模板内的字段名）",
+            reordered,
+        )
+    return {"datasheets": len(targets), "reordered_fields": reordered}
+
+
+async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
+    """检测已知 sheet 类型的字段是否与模板一致；不一致就清空 datasheet
+    （所有字段 + 所有 records），让用户重新导入 Excel 走干净的映射逻辑。
+
+    判定"对齐"的标准：
+    - datasheet 的字段集合（按名字）⊇ 模板字段集合
+    - 即模板里的每个字段名都能在 datasheet 里找到
+
+    不要求字段数完全等于模板 —— 多余字段（如旧数据"完成日期"）也
+    会一并清掉。
+
+    这是修复历史 bug 的"硬重置"，必须执行。前置假设：用户的真实
+    数据保存在 Excel 文件里，重新导入即可恢复。
     """
     from sqlalchemy import delete as sql_delete
     from .sheet_templates import SHEET_TEMPLATES
@@ -310,32 +356,47 @@ async def align_known_sheet_fields_to_template(db: AsyncSession) -> dict:
     datasheets = res.scalars().all()
     targets = [d for d in datasheets if d.name in SHEET_TEMPLATES]
     if not targets:
-        return {"datasheets": 0, "renamed_fields": 0}
+        return {"cleared": 0, "checked": 0}
 
-    renamed = 0
+    cleared = 0
     for d in targets:
         template = SHEET_TEMPLATES[d.name]
         res = await db.execute(
             select(models.Field).where(models.Field.datasheet_id == d.id)
-            .order_by(models.Field.sort_order, models.Field.id)
         )
         fields = list(res.scalars().all())
-        # 按位置重命名（位置 i 的字段 → template[i]）
-        for i, f in enumerate(fields):
-            if i >= len(template):
-                break
-            new_name = template[i]
-            if f.name != new_name:
-                f.name = new_name
-                renamed += 1
+        field_names = {(f.name or '').strip() for f in fields}
+        # 检查模板里每个字段名是否都在 datasheet 里
+        missing = [name for name in template if name not in field_names]
+        if not missing:
+            continue  # 字段集已包含模板要求，无需清空
 
-    if renamed:
+        # 缺失模板字段 → 数据库里这张 sheet 的字段是错位/老版本，必须清空
+        field_ids = [f.id for f in fields]
+        if field_ids:
+            await db.execute(sql_delete(models.FieldPermission).where(
+                models.FieldPermission.field_id.in_(field_ids)
+            ))
+            await db.execute(sql_delete(models.Field).where(
+                models.Field.id.in_(field_ids)
+            ))
+        await db.execute(sql_delete(models.Record).where(
+            models.Record.datasheet_id == d.id
+        ))
+        log.warning(
+            "[cleanup_misaligned_known_sheets] 清空错位数据表 datasheet#%d (%s)；"
+            "缺失模板字段：%s。请用户重新导入 Excel。",
+            d.id, d.name, missing,
+        )
+        cleared += 1
+
+    if cleared:
         await db.commit()
         log.info(
-            "[align_known_sheet_fields_to_template] 重命名了 %d 个字段以对齐 %d 个已知 sheet 的模板",
-            renamed, len(targets),
+            "[cleanup_misaligned_known_sheets] 共清空 %d 个错位的已知 sheet 类型数据表（共检查 %d 个）",
+            cleared, len(targets),
         )
-    return {"datasheets": len(targets), "renamed_fields": renamed}
+    return {"cleared": cleared, "checked": len(targets)}
 
 
 async def run_all(db: AsyncSession) -> None:
@@ -364,3 +425,7 @@ async def run_all(db: AsyncSession) -> None:
         await align_known_sheet_fields_to_template(db)
     except Exception as e:
         log.warning("align_known_sheet_fields_to_template failed: %s", e)
+    try:
+        await cleanup_misaligned_known_sheets(db)
+    except Exception as e:
+        log.warning("cleanup_misaligned_known_sheets failed: %s", e)
