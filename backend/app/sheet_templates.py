@@ -80,28 +80,23 @@ SHEET_TEMPLATES: dict[str, list[str]] = {
 
 
 # 项目一览的固定列（"# 序号"由表格自动生成，不在此列表）
-# 注意：一览与项目详情的数据"完全独立"——一览的"签订日期"存
-# __h__签订日期，项目详情的"下单日期"存 __h__下单日期，互不影响。
-# 这样改一处不会影响另一处。
+# 一览与项目详情数据"完全独立"——一览的 meta 列存 __o__<label>，
+# 项目详情存 __h__<label>，互不影响。
 OVERVIEW_FIELDS: list[dict] = [
     {'label': '项目编号',     'source': 'code',    'editable': False},
     {'label': '项目名称',     'source': 'name',    'editable': True},
+    {'label': '状态',         'source': 'status',  'editable': True},
     {'label': '签订日期',     'source': 'meta',    'editable': True},
     {'label': '交货日期',     'source': 'meta',    'editable': True},
     {'label': '销售',         'source': 'meta',    'editable': True},
     {'label': '设计师',       'source': 'meta',    'editable': True},
-    {'label': '设图开始',     'source': 'meta',    'editable': True},
-    {'label': '设图结束',     'source': 'meta',    'editable': True},
-    {'label': '设图费时',     'source': 'derived', 'editable': False, 'derived': 'design_days'},
+    {'label': '制图开始',     'source': 'meta',    'editable': True},
+    {'label': '制图结束',     'source': 'meta',    'editable': True},
+    {'label': '制图用时',     'source': 'derived', 'editable': False, 'derived': 'design_days'},
     {'label': '电工',         'source': 'meta',    'editable': True},
     {'label': '货期',         'source': 'derived', 'editable': False, 'derived': 'duration'},
     {'label': '已过时间',     'source': 'derived', 'editable': False, 'derived': 'elapsed'},
-    {'label': '剩余货期时间', 'source': 'derived', 'editable': False, 'derived': 'remaining'},
-    # 已完成项目专属（进行中为空）
-    {'label': '完成日期',     'source': 'meta',    'editable': True},
-    {'label': '实际用时',     'source': 'derived', 'editable': False, 'derived': 'actual_days'},
-    {'label': '拖后时间',     'source': 'derived', 'editable': False, 'derived': 'delay_days'},
-    {'label': '出货日期',     'source': 'meta',    'editable': True},
+    {'label': '剩余制作时间', 'source': 'derived', 'editable': False, 'derived': 'remaining'},
 ]
 
 

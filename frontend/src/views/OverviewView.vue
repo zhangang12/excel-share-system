@@ -38,34 +38,32 @@ function fieldEditable(f: OverviewField): boolean {
 }
 
 // ===== 项目一览固定模板列（与后端 sheet_templates.OVERVIEW_FIELDS 一致）=====
-// 一览的数据与项目详情完全独立——一览的"签订日期"直接存
-// row.extra['__h__签订日期']，不与项目详情的"下单日期"共享。
+// 一览的数据与项目详情完全独立——meta 列存 row.extra['__o__<label>']。
 type OverviewTplCol = {
   label: string
-  source: 'code' | 'name' | 'meta' | 'derived'
-  derived?: 'duration' | 'elapsed' | 'remaining' | 'design_days' | 'actual_days' | 'delay_days'
+  source: 'code' | 'name' | 'status' | 'meta' | 'derived'
+  derived?: 'duration' | 'elapsed' | 'remaining' | 'design_days'
   editable: boolean
   widthPct: number
 }
 const OVERVIEW_FIELDS: OverviewTplCol[] = [
-  { label: '项目编号',     source: 'code',    editable: false, widthPct: 6 },
-  { label: '项目名称',     source: 'name',    editable: true,  widthPct: 12 },
-  { label: '签订日期',     source: 'meta',    editable: true,  widthPct: 6 },
-  { label: '交货日期',     source: 'meta',    editable: true,  widthPct: 6 },
-  { label: '销售',         source: 'meta',    editable: true,  widthPct: 5 },
-  { label: '设计师',       source: 'meta',    editable: true,  widthPct: 5 },
-  { label: '设图开始',     source: 'meta',    editable: true,  widthPct: 6 },
-  { label: '设图结束',     source: 'meta',    editable: true,  widthPct: 6 },
-  { label: '设图费时',     source: 'derived', derived: 'design_days', editable: false, widthPct: 5 },
-  { label: '电工',         source: 'meta',    editable: true,  widthPct: 5 },
-  { label: '货期',         source: 'derived', derived: 'duration',  editable: false, widthPct: 4 },
-  { label: '已过时间',     source: 'derived', derived: 'elapsed',   editable: false, widthPct: 5 },
-  { label: '剩余货期时间', source: 'derived', derived: 'remaining', editable: false, widthPct: 6 },
-  { label: '完成日期',     source: 'meta',    editable: true,  widthPct: 6 },
-  { label: '实际用时',     source: 'derived', derived: 'actual_days', editable: false, widthPct: 5 },
-  { label: '拖后时间',     source: 'derived', derived: 'delay_days',  editable: false, widthPct: 5 },
-  { label: '出货日期',     source: 'meta',    editable: true,  widthPct: 6 },
+  { label: '项目编号',     source: 'code',    editable: false, widthPct: 7 },
+  { label: '项目名称',     source: 'name',    editable: true,  widthPct: 14 },
+  { label: '状态',         source: 'status',  editable: true,  widthPct: 7 },
+  { label: '签订日期',     source: 'meta',    editable: true,  widthPct: 7 },
+  { label: '交货日期',     source: 'meta',    editable: true,  widthPct: 7 },
+  { label: '销售',         source: 'meta',    editable: true,  widthPct: 6 },
+  { label: '设计师',       source: 'meta',    editable: true,  widthPct: 6 },
+  { label: '制图开始',     source: 'meta',    editable: true,  widthPct: 7 },
+  { label: '制图结束',     source: 'meta',    editable: true,  widthPct: 7 },
+  { label: '制图用时',     source: 'derived', derived: 'design_days', editable: false, widthPct: 6 },
+  { label: '电工',         source: 'meta',    editable: true,  widthPct: 6 },
+  { label: '货期',         source: 'derived', derived: 'duration',  editable: false, widthPct: 5 },
+  { label: '已过时间',     source: 'derived', derived: 'elapsed',   editable: false, widthPct: 6 },
+  { label: '剩余制作时间', source: 'derived', derived: 'remaining', editable: false, widthPct: 6 },
 ]
+
+const STATUS_OPTIONS_NEW = ['进行中', '已完成']
 
 // 日期解析与天数差（与 DatasheetGrid 一致）
 function parseLooseDate(s: unknown): Date | null {
@@ -105,25 +103,27 @@ function rowMetaValue(row: OverviewRow, key: string): string {
 function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
   if (col.source === 'code') return row.code || ''
   if (col.source === 'name') return row.name || ''
+  if (col.source === 'status') return row.status || ''
   if (col.source === 'meta') {
     return smartFormatValue(rowMetaValue(row, col.label))
   }
   if (col.source === 'derived' && col.derived) {
     void todayKey.value
-    // 派生列读"一览自己的"日期（独立 key），不读项目详情的
+    // 派生列读"一览自己的"日期（__o__ 独立 key）
     const signed = parseLooseDate(rowMetaValue(row, '签订日期'))
     const deliver = parseLooseDate(rowMetaValue(row, '交货日期'))
-    const designStart = parseLooseDate(rowMetaValue(row, '设图开始'))
-    const designEnd = parseLooseDate(rowMetaValue(row, '设图结束'))
-    const done = parseLooseDate(rowMetaValue(row, '完成日期'))
+    const designStart = parseLooseDate(rowMetaValue(row, '制图开始'))
+    const designEnd = parseLooseDate(rowMetaValue(row, '制图结束'))
     const today = new Date()
     switch (col.derived) {
-      case 'duration':    return signed && deliver  ? String(daysBetween(deliver, signed)) : ''
-      case 'elapsed':     return signed             ? String(daysBetween(today, signed))   : ''
-      case 'remaining':   return deliver            ? String(daysBetween(deliver, today))  : ''
+      // 货期 = 交货日期 - 签订日期
+      case 'duration':    return signed && deliver ? String(daysBetween(deliver, signed)) : ''
+      // 已过时间 = TODAY() - 签订日期
+      case 'elapsed':     return signed            ? String(daysBetween(today, signed))   : ''
+      // 剩余制作时间 = 货期 - 已过时间 = 交货日期 - TODAY()（数学上等价）
+      case 'remaining':   return deliver           ? String(daysBetween(deliver, today))  : ''
+      // 制图用时 = 制图结束 - 制图开始
       case 'design_days': return designStart && designEnd ? String(daysBetween(designEnd, designStart)) : ''
-      case 'actual_days': return signed && done     ? String(daysBetween(done, signed))    : ''
-      case 'delay_days':  return done && deliver    ? String(daysBetween(done, deliver))   : ''
     }
   }
   return ''
@@ -238,15 +238,22 @@ async function load() {
   } finally { loading.value = false }
 }
 
-// 状态筛选（'' = 全部；'进行中' / '已完成' / '已归档'）
+// 状态筛选（'' = 全部；'进行中' / '已完成'）
 const statusFilter = ref<string>('')
 function onStatusFilterChange() { currentPage.value = 1 }
 
-// 过滤 + 分页：先按状态筛 → 再按搜索词筛
+// 项目编号筛选（包含匹配，不区分大小写）
+const codeFilter = ref<string>('')
+
+// 过滤 + 分页：状态 → 编号 → 关键词
 const filteredRows = computed(() => {
   let result = rows.value
   if (statusFilter.value) {
     result = result.filter(r => r.status === statusFilter.value)
+  }
+  const cf = codeFilter.value.trim().toLowerCase()
+  if (cf) {
+    result = result.filter(r => (r.code || '').toLowerCase().includes(cf))
   }
   const k = keyword.value.trim().toLowerCase()
   if (!k) return result
@@ -458,18 +465,18 @@ onMounted(load)
                    @change="onFitScreenChange" />
       </el-tooltip>
       <el-select v-model="statusFilter" placeholder="全部状态" size="large"
-                 style="width: 140px" clearable @change="onStatusFilterChange">
+                 style="width: 130px" clearable @change="onStatusFilterChange">
         <el-option label="进行中" value="进行中">
           <span class="status-dot status-dot-doing"></span> 进行中
         </el-option>
         <el-option label="已完成" value="已完成">
           <span class="status-dot status-dot-done"></span> 已完成
         </el-option>
-        <el-option label="已归档" value="已归档">
-          <span class="status-dot status-dot-archived"></span> 已归档
-        </el-option>
       </el-select>
-      <el-input v-model="keyword" placeholder="搜索任意列..." style="width: 240px"
+      <el-input v-model="codeFilter" placeholder="项目编号筛选（如 2026）"
+                style="width: 200px" size="large" clearable
+                @input="currentPage = 1" />
+      <el-input v-model="keyword" placeholder="搜索任意列..." style="width: 200px"
                 size="large" clearable :prefix-icon="Search" @input="currentPage = 1" />
       <!-- 一览列名已固定为 Excel 模板（与"2026 项目倒计时"对齐），"添加列"已下线 -->
       <el-button :icon="Download" size="large" @click="onExport">导出</el-button>
@@ -487,40 +494,35 @@ onMounted(load)
                 :default-sort="{ prop: 'code', order: 'ascending' }">
         <el-table-column type="index" label="#" width="55" align="center" fixed="left"
                          :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
-        <el-table-column prop="code" label="项目编号" :width="fitScreen ? 110 : 140" fixed="left" sortable>
+        <!-- 14 列固定模板（项目编号/项目名称/状态/签订日期/...）-->
+        <el-table-column v-for="col in OVERVIEW_FIELDS" :key="col.label"
+                         :label="col.label"
+                         :min-width="fitScreen ? 80 : 110"
+                         :fixed="col.source === 'code' ? 'left' : undefined"
+                         show-overflow-tooltip>
           <template #default="{ row }">
-            <a class="proj-link" @click.stop="openProject(row.id)">{{ row.code }}</a>
-          </template>
-        </el-table-column>
-        <el-table-column prop="name" label="项目名称" :min-width="fitScreen ? 130 : 200" show-overflow-tooltip sortable>
-          <template #default="{ row }">
-            <span class="proj-name" @click.stop="openProject(row.id)">{{ row.name }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" :width="fitScreen ? 100 : 116" sortable>
-          <template #default="{ row }">
-            <el-select v-if="isAdmin" :model-value="row.status" size="small" style="width: 100%"
-                       @update:model-value="(v: any) => changeStatus(row, v as string)">
-              <el-option v-for="s in STATUS_OPTIONS" :key="s" :value="s" :label="s" />
-            </el-select>
-            <el-tag v-else :type="(STATUS_COLOR[row.status] || 'info') as any" effect="light" size="small">
-              {{ row.status }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="manager_name" label="项目经理" :width="fitScreen ? 90 : 110">
-          <template #default="{ row }">
-            <span v-if="row.manager_name">{{ row.manager_name }}</span>
-            <span v-else class="muted">-</span>
-          </template>
-        </el-table-column>
-
-        <!-- 固定模板列（与 Excel "2026 项目倒计时"对齐） -->
-        <el-table-column v-for="col in OVERVIEW_FIELDS" :key="col.label" :label="col.label"
-                         :min-width="fitScreen ? 75 : 100" show-overflow-tooltip>
-          <template #default="{ row }">
-            <!-- 编辑态 -->
-            <el-input v-if="isEditingTpl(row, col)"
+            <!-- 状态列：el-select 下拉（只显示 进行中/已完成；旧值显示禁用项）-->
+            <template v-if="col.source === 'status'">
+              <el-select v-if="isAdmin"
+                         :model-value="row.status" size="small" style="width: 100%"
+                         @update:model-value="(v: any) => changeStatus(row, v as string)">
+                <el-option v-for="s in STATUS_OPTIONS_NEW" :key="s" :value="s" :label="s">
+                  <span class="status-dot" :class="{
+                    'status-dot-doing': s === '进行中',
+                    'status-dot-done': s === '已完成',
+                  }"></span> {{ s }}
+                </el-option>
+                <el-option v-if="row.status && !STATUS_OPTIONS_NEW.includes(row.status)"
+                           :label="row.status + '（旧值）'" :value="row.status" disabled />
+              </el-select>
+              <el-tag v-else
+                      :type="row.status === '已完成' ? 'success' : (row.status === '进行中' ? 'danger' : 'info')"
+                      effect="dark" size="small">
+                {{ row.status }}
+              </el-tag>
+            </template>
+            <!-- meta 编辑态 -->
+            <el-input v-else-if="isEditingTpl(row, col)"
                       v-model="editingTplValue" autofocus size="small"
                       class="cell-edit-input"
                       @blur="saveEditTpl(row, col)"
