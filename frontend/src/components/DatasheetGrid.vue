@@ -327,6 +327,16 @@ function isProgressField(f: DataField): boolean {
 }
 const PROGRESS_OPTIONS = ['完成', '进行中']
 
+// el-select 渲染后自动 focus + 弹出 dropdown（automatic-dropdown 配合）
+// 这样用户单击单元格 → 下拉立刻打开，看到两个选项
+function onProgressSelectMount(el: any) {
+  if (!el) return
+  // nextTick 后 focus，触发 automatic-dropdown 打开 dropdown
+  setTimeout(() => {
+    try { el.focus?.() } catch { /* ignore */ }
+  }, 0)
+}
+
 // 列宽自适应（紧凑版：每字符 ~10px，14 寸笔记本全屏可显）
 function colWidth(f: DataField): number {
   const headerLen = (f.name || '').length
@@ -532,9 +542,10 @@ async function addRow() {
           <template v-if="isEditing(row, f)">
             <!-- 进度列：固定下拉框（完成 / 进行中），存量旧值显示为禁用项让用户重新选 -->
             <el-select v-if="isProgressField(f)"
-                       v-model="editingValue" size="small" autofocus
+                       v-model="editingValue" size="small"
                        class="cell-edit-select"
-                       :teleported="false"
+                       automatic-dropdown
+                       :ref="(el: any) => onProgressSelectMount(el)"
                        @change="saveEdit(row, f)"
                        @blur="saveEdit(row, f)"
                        @keyup.escape="cancelEdit">
