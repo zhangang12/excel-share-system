@@ -147,6 +147,10 @@ function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
     return ''
   }
   if (col.source === 'derived' && col.derived) {
+    // 已完成项目的"剩余制作时间"和"已过时间"不再算（业务上无意义）
+    if (row.status === '已完成' && (col.derived === 'remaining' || col.derived === 'elapsed')) {
+      return ''
+    }
     return computeDerived(row, col.derived)
   }
   return ''
