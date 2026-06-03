@@ -136,8 +136,11 @@ async def _add_all_active_users_as_members(
 router = APIRouter(prefix="/api/projects", tags=["项目"])
 
 
-# 项目头元数据在 extra 中的 key 前缀（与项目一览自定义列的 field_id 数字 key 不冲突）
+# 项目头元数据在 extra 中的 key 前缀：
+#   __h__  → 项目详情的项目头表
+#   __o__  → 项目一览（独立存储，与项目详情完全解耦）
 HEADER_KEY_PREFIX = "__h__"
+OVERVIEW_KEY_PREFIX = "__o__"
 
 
 def _extract_header_meta(extra: Optional[dict]) -> dict:
@@ -320,13 +323,12 @@ async def update_project_header_cell(
     if not key:
         raise HTTPException(400, "key 不能为空")
 
-    # 一览字段别名映射：客户端传"签订日期"，实际写入"下单日期"
-    from ..sheet_templates import OVERVIEW_HEADER_ALIAS
-    physical_key = OVERVIEW_HEADER_ALIAS.get(key, key)
+    # 一览（is_overview=True）写到 __o__ 前缀，与项目详情的 __h__ 完全独立
+    prefix = OVERVIEW_KEY_PREFIX if data.is_overview else HEADER_KEY_PREFIX
 
     # JSONB 字段必须重新赋值才会被 SQLAlchemy 识别为脏
     extra = dict(p.extra or {})
-    storage_key = f"{HEADER_KEY_PREFIX}{physical_key}"
+    storage_key = f"{prefix}{key}"
     val = data.value
     if val is None or (isinstance(val, str) and val.strip() == ""):
         extra.pop(storage_key, None)

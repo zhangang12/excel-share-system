@@ -105,9 +105,11 @@ class ProjectOut(BaseModel):
 
 
 class HeaderCellUpdate(BaseModel):
-    """更新项目头单元格"""
+    """更新项目头单元格 / 项目一览单元格"""
     key: str = Field(min_length=1, max_length=64)
     value: Optional[str] = None  # None 或空串 = 清空
+    # is_overview=True 时写入 __o__<key>（一览独立存储）；否则写 __h__<key>
+    is_overview: bool = False
 
 
 class ProjectMemberIn(BaseModel):

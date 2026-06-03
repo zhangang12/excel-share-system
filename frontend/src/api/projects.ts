@@ -17,8 +17,9 @@ export const projectsApi = {
     http.delete<{ message: string }>(`/projects/${id}`).then(r => r.data),
 
   // 更新项目头表单个字段（数量 / 销售 / 设计师 / 电器 / 下单日期 / 交货日期 / 制表日期）
-  updateHeaderCell: (id: number, key: string, value: string | null) =>
-    http.put<{ message: string }>(`/projects/${id}/header-cell`, { key, value })
+  // is_overview=true → 写到 __o__<key>（一览独立存储），与项目详情完全解耦
+  updateHeaderCell: (id: number, key: string, value: string | null, is_overview = false) =>
+    http.put<{ message: string }>(`/projects/${id}/header-cell`, { key, value, is_overview })
       .then(r => r.data),
 
   // 成员

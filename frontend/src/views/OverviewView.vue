@@ -94,9 +94,11 @@ onMounted(() => {
 import { onBeforeUnmount } from 'vue'
 onBeforeUnmount(() => { if (_todayTimer !== null) window.clearInterval(_todayTimer) })
 
-// 从 row.extra 直接按 key 取一览数据（独立存储，不映射到项目详情）
+// 一览专属前缀 __o__，与项目详情的 __h__ 完全独立
+const OVERVIEW_PREFIX = '__o__'
+
 function rowMetaValue(row: OverviewRow, key: string): string {
-  return String(row.extra?.[`__h__${key}`] ?? '')
+  return String(row.extra?.[`${OVERVIEW_PREFIX}${key}`] ?? '')
 }
 
 // 模板列的显示值
@@ -171,12 +173,12 @@ async function saveEditTpl(row: OverviewRow, col: OverviewTplCol) {
       const idx = rows.value.findIndex(r => r.id === row.id)
       if (idx >= 0) rows.value[idx] = { ...rows.value[idx], name: newVal }
     } else if (col.source === 'meta') {
-      // 直接用 col.label 作为 key 存储（与项目详情独立）
-      await projectsApi.updateHeaderCell(row.id, col.label, newVal || null)
+      // is_overview=true → 后端存到 __o__<label>（一览独立 key）
+      await projectsApi.updateHeaderCell(row.id, col.label, newVal || null, true)
       const idx = rows.value.findIndex(r => r.id === row.id)
       if (idx >= 0) {
         const extra = { ...rows.value[idx].extra }
-        const key = `__h__${col.label}`
+        const key = `${OVERVIEW_PREFIX}${col.label}`
         if (!newVal) delete extra[key]
         else extra[key] = newVal
         rows.value[idx] = { ...rows.value[idx], extra }
