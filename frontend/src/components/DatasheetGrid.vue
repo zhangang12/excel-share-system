@@ -279,19 +279,22 @@ function getCellValue(record: DataRecord, f: DataField) {
   return record.values?.[String(f.id)]
 }
 
-/** 把"整数.0"格式的字符串去掉尾部 .0，保留带单位的 ("2.5米") 或
- *  其他字符的 ("1+4 (备)") 等。数字类型由 JS 的 String() 已经处理。
+/** 显示用格式化：
+ *  - "整数.0/.00" → 去尾巴（"6.0" → "6"）
+ *  - "YYYY-MM-DD 00:00:00" 或带 T 的同款 → 截掉时间部分（只剩日期）
+ *  - "2.5米"、"1+4 (备)"、"1.5" 等保留不动
  */
 function smartFormatValue(v: unknown): string {
   if (v === null || v === undefined) return ''
-  if (typeof v === 'number') {
-    // JS 里 6.0 === 6，String(6.0) 已经是 "6"。但 6.7 仍保留小数
-    return String(v)
-  }
-  const s = String(v)
-  // 严格匹配：开头到结尾，符号 + 整数 + . + 至少一个 0
-  const m = /^(-?\d+)\.0+$/.exec(s)
-  return m ? m[1] : s
+  if (typeof v === 'number') return String(v)
+  let s = String(v)
+  // 1) 日期带零点时间：去掉时间部分
+  const dateOnly = /^(\d{4}-\d{1,2}-\d{1,2})[T ]00:00:00(\.\d+)?Z?$/.exec(s)
+  if (dateOnly) s = dateOnly[1]
+  // 2) 整数.0 → 去尾巴
+  const intDot0 = /^(-?\d+)\.0+$/.exec(s)
+  if (intDot0) s = intDot0[1]
+  return s
 }
 
 /** 单元格显示值（纯文本 / 数组），不再做公式求值 */
@@ -343,17 +346,27 @@ function isProgressField(f: DataField): boolean {
 const PROGRESS_OPTIONS = ['完成', '进行中']
 
 // 整列着色：进度列的 td 按值染色（与项目一览状态列一致）
-function datasheetCellClass({ row, column }: any): string {
-  if (!column?.label) return ''
-  // 仅"进度"列（PROGRESS_FIELD_NAMES）参与染色
-  if (!PROGRESS_FIELD_NAMES.has(column.label.trim())) return ''
-  // 在可见字段里找到这个列对应的 field
-  const f = visibleFields.value.find(ff => ff.name === column.label)
-  if (!f) return ''
+// 用 columnIndex 精确定位字段：columnIndex 0 是 # 自动行号列，从 1 起对应 visibleFields[0..]
+// 严格匹配已知状态词，其他值（日期、人名、数字）一律不染色 —— 避免误伤
+const STATUS_DONE_WORDS = new Set(['完成', '已完成', '完工', '已结束'])
+const STATUS_DOING_WORDS = new Set([
+  '进行中', '正在做', '处理中', '在做',
+  '未开始', '待开始', '待处理', '未开工',
+  '延期', '逾期', '超期',
+  '暂停', '搁置', '挂起',
+  '取消', '作废',
+  '待审核', '审核中',
+])
+function datasheetCellClass({ row, columnIndex }: any): string {
+  const fieldIdx = columnIndex - 1
+  if (fieldIdx < 0 || fieldIdx >= visibleFields.value.length) return ''
+  const f = visibleFields.value[fieldIdx]
+  if (!f || !isProgressField(f)) return ''
   const v = String(row.values?.[String(f.id)] ?? '').trim()
   if (!v || v === '-') return ''
-  if (v === '完成' || v === '已完成' || v === '完工' || v === '已结束') return 'cell-row-done'
-  return 'cell-row-doing'
+  if (STATUS_DONE_WORDS.has(v)) return 'cell-row-done'
+  if (STATUS_DOING_WORDS.has(v)) return 'cell-row-doing'
+  return ''  // 其他值（如日期）不染色
 }
 
 // el-select 渲染后自动 focus + 弹出 dropdown（automatic-dropdown 配合）
