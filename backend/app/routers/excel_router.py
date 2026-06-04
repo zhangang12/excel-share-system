@@ -137,11 +137,50 @@ def _fill_merged_data_cells(
                     rows[r][c] = top_left
 
 
-def _find_data_header_row(rows: list) -> int:
-    """固定返回 HEADER_ROW_INDEX。如果不足 5 行则用第 1 行兜底。"""
+# 已知数据表表头里会出现的列名（用于自动定位"列名表头行"）。
+# 用模板所有字段名 + 旧格式列名 + 行号，覆盖面足够宽。
+_HEADER_KEYWORDS: set[str] = set()
+for _fields in SHEET_TEMPLATES.values():
+    _HEADER_KEYWORDS.update(_fields)
+_HEADER_KEYWORDS.update({
+    '序号', '#', 'No', 'No.',
+    # 旧格式（钣金装配 改名前）列名，兼容老文件
+    '钣金/钳工', '钣金发出日期', '钣金完成日期',
+    '封板/抛光', '封板发出日期', '封板完成日期',
+})
+
+
+def _detect_header_row(rows: list, max_scan: int = 12) -> int:
+    """自动定位"列名表头行"：在前 max_scan 行里，挑与已知表头列名
+    匹配最多的那一行。
+
+    这样同时支持两种 Excel 排版：
+    - 老格式：前几行是公司标题 / 项目信息，第 4 行（HEADER_ROW_INDEX）才是列头
+    - 精简格式：第 1 行直接就是列头，没有项目头区
+
+    匹配数 >= 3 才认定；否则回退 HEADER_ROW_INDEX（再不够就第 1 行）。
+    """
+    best_idx, best_score = -1, 0
+    for i in range(min(max_scan, len(rows))):
+        row = rows[i] or []
+        score = 0
+        for cell in row:
+            name = str(cell).strip() if cell is not None else ''
+            if name in _HEADER_KEYWORDS:
+                score += 1
+        if score > best_score:
+            best_score, best_idx = score, i
+    if best_idx >= 0 and best_score >= 3:
+        return best_idx
+    # 回退：老逻辑（假设前 3 行是项目头）
     if len(rows) > HEADER_ROW_INDEX:
         return HEADER_ROW_INDEX
     return 0
+
+
+def _find_data_header_row(rows: list) -> int:
+    """兼容旧调用名 —— 现在走自动检测。"""
+    return _detect_header_row(rows)
 
 
 # 表格自带 # 行号列，这些字段名导入时会跳过（避免视觉冗余）
@@ -256,22 +295,23 @@ async def import_excel(
                                 pass
                         row.append(v)
                     full_rows.append(row)
-                # 2) 数据区合并填充：xlrd 的 (rlo, rhi, clo, chi) 中 rhi/chi 是 exclusive，
-                #    转成 inclusive 0-indexed 给统一函数处理
+                # 2) 先自动定位"列名表头行"（兼容有/无项目头两种排版）
+                header_idx = _detect_header_row(full_rows)
+                # 3) 数据区合并填充：xlrd 的 (rlo, rhi, clo, chi) 中 rhi/chi 是 exclusive，
+                #    转成 inclusive 0-indexed 给统一函数处理；用检测到的表头行做基准
                 merged = [(rlo, rhi - 1, clo, chi - 1)
                           for (rlo, rhi, clo, chi) in ws.merged_cells]
-                _fill_merged_data_cells(full_rows, merged, HEADER_ROW_INDEX)
-                # 2b) 收集"表头行的合并延续列" —— 这些列虽然在 Excel 里
+                _fill_merged_data_cells(full_rows, merged, header_idx)
+                # 3b) 收集"表头行的合并延续列" —— 这些列虽然在 Excel 里
                 # 有视觉占位，但语义上属于左侧合并大列，不算单独的字段
                 header_merge_skip: set[int] = set()
                 for (rlo, rhi, clo, chi) in ws.merged_cells:
-                    # xlrd: rhi/chi exclusive；表头行 = HEADER_ROW_INDEX
-                    if rlo <= HEADER_ROW_INDEX < rhi:
+                    # xlrd: rhi/chi exclusive；表头行 = header_idx
+                    if rlo <= header_idx < rhi:
                         for c in range(clo + 1, chi):
                             header_merge_skip.add(c)
                 sheet_header_merge_skip[ws.name] = header_merge_skip
-                # 3) 取 preamble / headers / rows
-                header_idx = _find_data_header_row(full_rows[:10])
+                # 4) 取 preamble / headers / rows
                 preamble = []
                 for ri in range(header_idx):
                     line = []
@@ -292,6 +332,11 @@ async def import_excel(
             wb = load_workbook(tmp, data_only=True)
             for sn in wb.sheetnames:
                 ws = wb[sn]
+                # 先按当前内容自动定位表头行（兼容有/无项目头两种排版）
+                _preview = list(ws.iter_rows(values_only=True))
+                if not _preview:
+                    continue
+                header_idx = _detect_header_row(_preview)
                 # 数据区合并：在 ws 上 unmerge + 把左上角值填充到所有单元格
                 # 之后正常 iter_rows 就能拿到填好的数据
                 # 先收集表头合并延续列（unmerge 之前）
@@ -299,7 +344,7 @@ async def import_excel(
                 for merge in list(ws.merged_cells.ranges):
                     min_row_0 = merge.min_row - 1
                     max_row_0 = merge.max_row - 1
-                    if min_row_0 <= HEADER_ROW_INDEX <= max_row_0:
+                    if min_row_0 <= header_idx <= max_row_0:
                         for c in range(merge.min_col, merge.max_col + 1):  # 1-indexed
                             # 转 0-indexed，跳过左上角（min_col）
                             if c > merge.min_col:
@@ -309,7 +354,7 @@ async def import_excel(
                 for merge in list(ws.merged_cells.ranges):
                     # openpyxl: min_row / max_row 都是 1-indexed inclusive
                     # 数据区 = 表头行的下一行起；表头行 + 项目头都不动
-                    if (merge.min_row - 1) <= HEADER_ROW_INDEX:
+                    if (merge.min_row - 1) <= header_idx:
                         continue  # 项目头 + 表头区合并不动
                     top_left = ws.cell(row=merge.min_row, column=merge.min_col).value
                     if top_left in (None, "", "-"):
@@ -328,7 +373,6 @@ async def import_excel(
                 rows_iter = list(ws.iter_rows(values_only=True))
                 if not rows_iter:
                     continue
-                header_idx = _find_data_header_row(rows_iter[:10])
                 # 保留 header_idx 之前所有行作为 preamble（前 4 行）
                 preamble = []
                 for r in rows_iter[:header_idx]:
