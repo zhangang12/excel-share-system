@@ -17,8 +17,8 @@ from ..deps import (
     get_current_user, require_admin, require_admin_or_manager, require_not_viewer,
     user_can_view_project, user_can_edit_project,
 )
-from ..sheet_templates import OVERVIEW_FIELDS
-from .projects_router import OVERVIEW_KEY_PREFIX
+from ..sheet_templates import OVERVIEW_FIELDS, OVERVIEW_HEADER_ALIAS
+from .projects_router import OVERVIEW_KEY_PREFIX, HEADER_KEY_PREFIX
 
 # 一览模板中可写入 meta 的字段标签集合
 OVERVIEW_META_LABELS = {
@@ -452,11 +452,19 @@ async def import_overview(
                 touched_pids.add(p.id)
                 total_create += 1
             else:
-                # 首次在本次导入中遇到 → 清空 __o__* key（覆盖语义；
-                # 保留非 __o__ 的 key，比如项目详情的 __h__）
+                # 首次在本次导入中遇到 → 清空 __o__* + 一览映射到的 __h__* key
+                # （覆盖语义；保留无映射的 __h__ key，如项目详情专有的"数量/制表日期"）
                 if p.id not in touched_pids:
-                    cleaned = {k: v for k, v in (p.extra or {}).items()
-                               if not (isinstance(k, str) and k.startswith(OVERVIEW_KEY_PREFIX))}
+                    h_keys_to_clear = {
+                        f"{HEADER_KEY_PREFIX}{alias}"
+                        for alias in OVERVIEW_HEADER_ALIAS.values()
+                    }
+                    cleaned = {
+                        k: v for k, v in (p.extra or {}).items()
+                        if not (isinstance(k, str) and (
+                            k.startswith(OVERVIEW_KEY_PREFIX) or k in h_keys_to_clear
+                        ))
+                    }
                     p.extra = cleaned
                     touched_pids.add(p.id)
                     total_update += 1
@@ -465,23 +473,31 @@ async def import_overview(
                 if row_status:
                     p.status = row_status
 
-            # 按 col_to_meta 填 __o__<label>
+            # 按 col_to_meta 填 __o__<label>，同时同步到 __h__<alias>
             extra = dict(p.extra or {})
             for ci, meta_label in col_to_meta.items():
                 if ci >= len(row):
                     continue
                 v = row[ci]
                 storage_key = f"{OVERVIEW_KEY_PREFIX}{meta_label}"
+                h_alias = OVERVIEW_HEADER_ALIAS.get(meta_label)
+                h_storage_key = f"{HEADER_KEY_PREFIX}{h_alias}" if h_alias else None
+
                 if v is None or v == '':
                     extra.pop(storage_key, None)
+                    if h_storage_key:
+                        extra.pop(h_storage_key, None)
                 else:
                     # 日期类型规范化为 YYYY-MM-DD 字符串
                     if isinstance(v, datetime):
-                        extra[storage_key] = v.strftime('%Y-%m-%d')
+                        normalized = v.strftime('%Y-%m-%d')
                     elif isinstance(v, date):
-                        extra[storage_key] = v.strftime('%Y-%m-%d')
+                        normalized = v.strftime('%Y-%m-%d')
                     else:
-                        extra[storage_key] = str(v).strip()
+                        normalized = str(v).strip()
+                    extra[storage_key] = normalized
+                    if h_storage_key:
+                        extra[h_storage_key] = normalized  # 同步到项目详情
                     total_filled_cells += 1
             p.extra = extra
 

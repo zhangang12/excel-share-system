@@ -323,17 +323,31 @@ async def update_project_header_cell(
     if not key:
         raise HTTPException(400, "key 不能为空")
 
-    # 一览（is_overview=True）写到 __o__ 前缀，与项目详情的 __h__ 完全独立
+    # 一览（is_overview=True）写到 __o__ 前缀
     prefix = OVERVIEW_KEY_PREFIX if data.is_overview else HEADER_KEY_PREFIX
 
     # JSONB 字段必须重新赋值才会被 SQLAlchemy 识别为脏
     extra = dict(p.extra or {})
     storage_key = f"{prefix}{key}"
     val = data.value
+    normalized_val = val.strip() if isinstance(val, str) else val
+
     if val is None or (isinstance(val, str) and val.strip() == ""):
         extra.pop(storage_key, None)
+        # 一览删除时也同步删除对应的 __h__（如果是 alias 字段）
+        if data.is_overview:
+            from ..sheet_templates import OVERVIEW_HEADER_ALIAS
+            h_key = OVERVIEW_HEADER_ALIAS.get(key)
+            if h_key:
+                extra.pop(f"{HEADER_KEY_PREFIX}{h_key}", None)
     else:
-        extra[storage_key] = val.strip() if isinstance(val, str) else val
+        extra[storage_key] = normalized_val
+        # 一览写入时同步到项目详情头表（仅对 alias 映射里的字段）
+        if data.is_overview:
+            from ..sheet_templates import OVERVIEW_HEADER_ALIAS
+            h_key = OVERVIEW_HEADER_ALIAS.get(key)
+            if h_key:
+                extra[f"{HEADER_KEY_PREFIX}{h_key}"] = normalized_val
     p.extra = extra
     await db.commit()
 
