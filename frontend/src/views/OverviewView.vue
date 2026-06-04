@@ -69,6 +69,43 @@ const OVERVIEW_FIELDS: OverviewTplCol[] = [
 
 const STATUS_OPTIONS_NEW = ['进行中', '已完成']
 
+// 按列名给紧凑/默认两套最小宽度（14 寸 1366px 全屏下 14 列全部可见）
+function overviewColMinWidth(col: OverviewTplCol): number {
+  if (fitScreen.value) {
+    switch (col.label) {
+      case '项目编号': return 80
+      case '项目名称': return 140
+      case '状态':     return 78
+      case '销售':     return 58
+      case '设计师':   return 60
+      case '电工':     return 50
+      case '货期':     return 48
+      case '签订日期':
+      case '交货日期':
+      case '制图开始':
+      case '制图结束':
+      case '完成日期':
+      case '出货日期': return 76
+      case '制图用时':
+      case '已过时间':
+      case '剩余制作时间': return 60
+      default:         return 70
+    }
+  }
+  // 默认（适应屏幕关闭，宽屏舒适模式）
+  switch (col.label) {
+    case '项目编号': return 110
+    case '项目名称': return 180
+    case '签订日期':
+    case '交货日期':
+    case '制图开始':
+    case '制图结束':
+    case '完成日期':
+    case '出货日期': return 100
+    default:         return 90
+  }
+}
+
 // 整列着色：状态列的 td 按 row.status 直接染色
 function cellClassName({ row, column }: any): string {
   const label = column?.label || ''
@@ -528,12 +565,12 @@ onMounted(load)
                 :empty-text="loading ? '加载中…' : '无数据'"
                 :default-sort="{ prop: 'code', order: 'ascending' }"
                 :cell-class-name="cellClassName">
-        <el-table-column type="index" label="#" width="55" align="center" fixed="left"
+        <el-table-column type="index" label="#" :width="fitScreen ? 38 : 55" align="center" fixed="left"
                          :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
         <!-- 14 列固定模板（项目编号/项目名称/状态/签订日期/...）-->
         <el-table-column v-for="col in OVERVIEW_FIELDS" :key="col.label"
                          :label="col.label"
-                         :min-width="fitScreen ? 80 : 110"
+                         :min-width="overviewColMinWidth(col)"
                          :fixed="col.source === 'code' ? 'left' : undefined"
                          show-overflow-tooltip>
           <template #default="{ row }">
@@ -730,6 +767,35 @@ onMounted(load)
 :deep(.el-table th.el-table__cell) {
   border-right: 2px solid #94a3b8 !important;
   border-bottom: 2px solid #94a3b8 !important;
+}
+
+/* 紧凑模式（fitScreen）：减小 padding + 字号，让 14 列在 14 寸笔记本全屏可见 */
+:deep(.el-table--small .el-table__cell) {
+  padding: 3px 0 !important;
+  height: auto !important;
+}
+:deep(.el-table--small .el-table__cell .cell) {
+  padding: 0 5px !important;
+  line-height: 1.35 !important;
+  font-size: 12.5px !important;
+}
+:deep(.el-table--small th.el-table__cell .cell) {
+  font-weight: 700 !important;
+  font-size: 12.5px !important;
+  letter-spacing: 0.2px;
+}
+/* 紧凑模式下输入框/下拉/cell span 也跟着小 */
+:deep(.el-table--small .el-select__wrapper) {
+  min-height: 22px !important;
+  padding: 0 6px !important;
+  font-size: 12px !important;
+}
+:deep(.el-table--small .el-input__wrapper) {
+  padding: 0 4px !important;
+}
+:deep(.el-table--small .el-input__inner) {
+  height: 22px !important;
+  font-size: 12px !important;
 }
 :deep(.el-table--border),
 :deep(.el-table--border .el-table__inner-wrapper) {
