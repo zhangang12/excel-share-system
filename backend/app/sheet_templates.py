@@ -87,6 +87,7 @@ SHEET_TEMPLATES: dict[str, list[str]] = {
 OVERVIEW_FIELDS: list[dict] = [
     {'label': '项目编号',     'source': 'code',    'editable': False},
     {'label': '项目名称',     'source': 'name',    'editable': True},
+    {'label': '数量',         'source': 'meta',    'editable': True},
     {'label': '状态',         'source': 'status',  'editable': True},
     {'label': '签订日期',     'source': 'meta',    'editable': True},
     {'label': '交货日期',     'source': 'meta',    'editable': True},
@@ -115,6 +116,7 @@ OVERVIEW_HEADER_ALIAS: dict[str, str] = {
     '销售':    '销售',
     '设计师':  '设计师',
     '交货日期': '交货日期',
+    '数量':    '数量',
 }
 
 

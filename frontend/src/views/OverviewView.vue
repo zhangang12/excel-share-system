@@ -51,7 +51,8 @@ type OverviewTplCol = {
 }
 const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '项目编号',     source: 'code',    editable: false, widthPct: 7 },
-  { label: '项目名称',     source: 'name',    editable: true,  widthPct: 14 },
+  { label: '项目名称',     source: 'name',    editable: true,  widthPct: 12 },
+  { label: '数量',         source: 'meta',    editable: true,  widthPct: 5 },
   { label: '状态',         source: 'status',  editable: true,  widthPct: 7 },
   { label: '签订日期',     source: 'meta',    editable: true,  widthPct: 7 },
   { label: '交货日期',     source: 'meta',    editable: true,  widthPct: 7 },
