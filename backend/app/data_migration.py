@@ -424,6 +424,58 @@ async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
     return {"cleared": cleared, "checked": len(targets)}
 
 
+async def sync_overview_to_header(db: AsyncSession) -> dict:
+    """一次性把存量项目的一览字段（__o__）同步到项目详情头表（__h__）。
+
+    针对 OVERVIEW_HEADER_ALIAS 里的 5 个映射字段：
+      签订日期→下单日期 / 电工→电器 / 销售 / 设计师 / 交货日期
+
+    策略：
+    - 如果项目的 __o__<key> 有值，__h__<alias> 没值 → 复制
+    - 如果项目的 __h__<alias> 已经有值（用户在详情手填过） → **不动**
+      保护用户手填的详情数据，避免被一览数据强制覆盖
+
+    幂等：再次启动不会重复同步（因为 __h__ 已经有值会被跳过）。
+    用户后续可以手动编辑详情来调整不一致的值。
+    """
+    from .sheet_templates import OVERVIEW_HEADER_ALIAS
+    from .routers.projects_router import OVERVIEW_KEY_PREFIX, HEADER_KEY_PREFIX
+
+    if not OVERVIEW_HEADER_ALIAS:
+        return {"synced_projects": 0, "synced_fields": 0}
+
+    res = await db.execute(
+        select(models.Project).where(models.Project.is_deleted == False)
+    )
+    projects = res.scalars().all()
+
+    synced_projects = 0
+    synced_fields = 0
+    for p in projects:
+        extra = dict(p.extra or {})
+        before = dict(extra)  # 浅拷贝用于判断是否改动
+        for ov_key, h_key in OVERVIEW_HEADER_ALIAS.items():
+            o_storage = f"{OVERVIEW_KEY_PREFIX}{ov_key}"
+            h_storage = f"{HEADER_KEY_PREFIX}{h_key}"
+            o_val = extra.get(o_storage)
+            h_val = extra.get(h_storage)
+            # __o__ 有值 + __h__ 无值 → 复制
+            if o_val not in (None, '') and (h_val in (None, '')):
+                extra[h_storage] = o_val
+                synced_fields += 1
+        if extra != before:
+            p.extra = extra
+            synced_projects += 1
+
+    if synced_projects:
+        await db.commit()
+        log.info(
+            "[sync_overview_to_header] 同步 %d 个项目的一览数据到项目详情头表（共 %d 个字段）",
+            synced_projects, synced_fields,
+        )
+    return {"synced_projects": synced_projects, "synced_fields": synced_fields}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -454,3 +506,7 @@ async def run_all(db: AsyncSession) -> None:
         await cleanup_misaligned_known_sheets(db)
     except Exception as e:
         log.warning("cleanup_misaligned_known_sheets failed: %s", e)
+    try:
+        await sync_overview_to_header(db)
+    except Exception as e:
+        log.warning("sync_overview_to_header failed: %s", e)
