@@ -196,11 +196,8 @@ function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
 function templateCellClass(row: OverviewRow, col: OverviewTplCol): string {
   if (col.derived === 'remaining') {
     const v = parseInt(templateCellValue(row, col))
-    if (!isNaN(v)) {
-      if (v < 0) return 'cell-overdue'
-      if (v <= 3) return 'cell-urgent'
-      if (v <= 7) return 'cell-warning'
-    }
+    // 只有"剩余制作时间 < 0"（已超期）才标红；含正数在内的其余值都不着色
+    if (!isNaN(v) && v < 0) return 'cell-overdue'
   }
   return ''
 }
