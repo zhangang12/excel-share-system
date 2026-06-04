@@ -746,7 +746,10 @@ onMounted(load)
 }
 
 .cell {
-  display: inline-block; min-width: 60px; min-height: 32px;
+  /* inline-flex + 居中：让文字在 min-height 高度内「上下也居中」，
+     解决之前 inline-block 时单行文字贴在单元格顶部的问题 */
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 60px; min-height: 32px;
   padding: 6px 8px;
   line-height: 20px;
   text-align: center;
@@ -838,6 +841,7 @@ onMounted(load)
 /* 单元格内容默认居中、字体加粗加深，对齐项目列表风格 */
 :deep(.el-table td.el-table__cell) {
   text-align: center !important;
+  vertical-align: middle !important;  /* 上下也居中 */
 }
 /* 关键：只命中 Element Plus 自己的外层 .cell 包裹层（td 的直接子级），
    强制其内部 inline/inline-block 内容（我们的 span.cell / a.proj-link / 状态下拉）水平居中。

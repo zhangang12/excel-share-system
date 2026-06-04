@@ -663,7 +663,8 @@ async function addRow() {
 }
 
 .cell {
-  display: inline-block;
+  /* inline-flex + 居中：单行文字在 min-height 内上下也居中 */
+  display: inline-flex; align-items: center; justify-content: center;
   min-width: 40px;
   min-height: 22px;
   padding: 2px 4px;
@@ -737,6 +738,7 @@ async function addRow() {
   padding: 2px 0 !important;
   height: auto !important;
   text-align: center !important;
+  vertical-align: middle !important;  /* 上下也居中 */
 }
 /* 强制 Element Plus 外层 .cell 包裹层（td 直接子级）内联内容居中，
    使数据表所有字段值水平居中展示 */
