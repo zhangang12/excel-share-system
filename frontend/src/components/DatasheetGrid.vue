@@ -209,11 +209,8 @@ function projectHeaderFormula(col: HeaderColumn): string {
 function projectHeaderClass(col: HeaderColumn): string {
   if (col.source === 'derived' && col.derivedKey === 'remaining') {
     const v = parseInt(projectHeaderValue(col))
-    if (!isNaN(v)) {
-      if (v < 0) return 'preamble-overdue'
-      if (v <= 3) return 'preamble-urgent'
-      if (v <= 7) return 'preamble-warning'
-    }
+    // 只有"倒计时 < 0"（已超期）才标红；含正数在内的其余值都不着色
+    if (!isNaN(v) && v < 0) return 'preamble-overdue'
   }
   return ''
 }
