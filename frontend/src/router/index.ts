@@ -13,7 +13,7 @@ const router = createRouter({
     {
       path: '/',
       component: () => import('@/layouts/MainLayout.vue'),
-      redirect: '/projects',
+      redirect: '/overview',
       children: [
         {
           path: 'projects',
@@ -57,7 +57,7 @@ router.beforeEach((to) => {
   const auth = useAuthStore()
   if (to.meta.public) return true
   if (!auth.isLoggedIn) return { name: 'login' }
-  if (to.meta.requireAdmin && !auth.isAdmin) return { name: 'projects' }
+  if (to.meta.requireAdmin && !auth.isAdmin) return { name: 'overview' }
   return true
 })
 

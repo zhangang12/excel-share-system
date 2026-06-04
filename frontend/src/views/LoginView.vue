@@ -19,7 +19,7 @@ async function onSubmit() {
   try {
     await auth.login(form.username, form.password)
     ElMessage.success('登录成功')
-    router.push('/projects')
+    router.push('/overview')
   } catch {
     /* */
   } finally {
