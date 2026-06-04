@@ -476,6 +476,47 @@ async def sync_overview_to_header(db: AsyncSession) -> dict:
     return {"synced_projects": synced_projects, "synced_fields": synced_fields}
 
 
+async def backfill_template_sheets_for_empty_projects(db: AsyncSession) -> dict:
+    """对"一张数据表都没有"的活跃项目，预置 4 个固定数据表（空表头）。
+
+    背景：早期"新建项目"按钮只建项目不建数据表，导致进入项目详情看到
+    "还没有数据表"。新逻辑下每个项目都应自带 4 张固定表（钣金装配/
+    标准件清单/外协外购/原料下料单）。
+
+    策略（保守）：
+    - 只处理 datasheet 数量为 0 的活跃项目（已有任意表的项目一律不动，
+      避免干扰已导入 Excel 的项目）
+    - 幂等：建完就有 4 张表，下次启动不再命中
+    """
+    from .routers.projects_router import create_default_template_sheets
+
+    res = await db.execute(
+        select(models.Project.id).where(models.Project.is_deleted == False)
+    )
+    active_pids = [r[0] for r in res.all()]
+    if not active_pids:
+        return {"projects": 0, "sheets": 0}
+
+    # 已有至少一张数据表的项目集合
+    res = await db.execute(select(models.Datasheet.project_id).distinct())
+    pids_with_sheets = {r[0] for r in res.all()}
+
+    empty_pids = [pid for pid in active_pids if pid not in pids_with_sheets]
+    if not empty_pids:
+        return {"projects": 0, "sheets": 0}
+
+    total_sheets = 0
+    for pid in empty_pids:
+        total_sheets += await create_default_template_sheets(db, pid)
+
+    await db.commit()
+    log.info(
+        "[backfill_template_sheets_for_empty_projects] 为 %d 个空项目预置了 %d 张固定数据表",
+        len(empty_pids), total_sheets,
+    )
+    return {"projects": len(empty_pids), "sheets": total_sheets}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -510,3 +551,7 @@ async def run_all(db: AsyncSession) -> None:
         await sync_overview_to_header(db)
     except Exception as e:
         log.warning("sync_overview_to_header failed: %s", e)
+    try:
+        await backfill_template_sheets_for_empty_projects(db)
+    except Exception as e:
+        log.warning("backfill_template_sheets_for_empty_projects failed: %s", e)

@@ -1,4 +1,5 @@
 """项目管理"""
+import json
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,7 +7,44 @@ from sqlalchemy import select, or_, func, delete as sql_delete
 
 from ..database import get_db
 from .. import models, schemas
+from ..sheet_templates import SHEET_TEMPLATES
 from ..utils import write_audit
+
+
+def _template_field_type(name: str) -> str:
+    """按字段名推断模板字段类型（用于新建项目时预置空数据表）。"""
+    if name == '进度':
+        return 'select'
+    if name.endswith('日期'):
+        return 'date'
+    if name == '数量':
+        return 'number'
+    return 'text'
+
+
+async def create_default_template_sheets(db: AsyncSession, project_id: int) -> int:
+    """为新建项目预置 4 个固定数据表（钣金装配/标准件清单/外协外购/原料下料单），
+    每张表按 SHEET_TEMPLATES 建好字段表头，但不插入任何数据行（空表）。
+    返回创建的数据表数量。调用方负责 commit。"""
+    created = 0
+    for s_idx, (sheet_name, field_names) in enumerate(SHEET_TEMPLATES.items()):
+        d = models.Datasheet(
+            project_id=project_id, name=sheet_name, sort_order=s_idx,
+            header_lines=None,
+        )
+        db.add(d)
+        await db.flush()  # 拿到 d.id
+        for f_idx, fname in enumerate(field_names):
+            ftype = _template_field_type(fname)
+            config = None
+            if fname == '进度':
+                config = json.dumps({'options': ['完成', '进行中']}, ensure_ascii=False)
+            db.add(models.Field(
+                datasheet_id=d.id, name=fname, type=ftype,
+                sort_order=f_idx, config=config,
+            ))
+        created += 1
+    return created
 from ..deps import (
     get_current_user, require_admin, require_not_viewer,
     user_can_view_project, user_can_edit_project,
@@ -225,6 +263,8 @@ async def create_project(
     await db.flush()  # 拿到 p.id 用于添加默认成员
     # 默认把所有 active 的非 admin/manager 用户加为 edit 成员
     added_count = await _add_all_active_users_as_members(db, p.id, permission="edit")
+    # 预置 4 个固定数据表（表头按模板建好，空数据），与导入 Excel 后的结构一致
+    sheet_count = await create_default_template_sheets(db, p.id)
     await db.commit()
     await db.refresh(p)
     res = await db.execute(select(models.Project).where(models.Project.id == p.id))
@@ -232,7 +272,7 @@ async def create_project(
     await write_audit(
         db, user=current, action="create_project",
         target_type="project", target_id=p.id,
-        detail=f"{p.code} {p.name} · 默认添加 {added_count} 个成员"
+        detail=f"{p.code} {p.name} · 默认添加 {added_count} 个成员 · 预置 {sheet_count} 张数据表"
     )
     return await _project_to_out(p, db)
 
