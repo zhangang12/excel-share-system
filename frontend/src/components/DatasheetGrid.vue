@@ -671,6 +671,7 @@ async function addRow() {
   font-size: 12.5px;
   font-weight: 600;
   color: #0f172a;
+  text-align: center;
 }
 .cell.editable {
   cursor: cell; border-radius: 3px;
@@ -735,6 +736,12 @@ async function addRow() {
 :deep(.el-table td.el-table__cell) {
   padding: 2px 0 !important;
   height: auto !important;
+  text-align: center !important;
+}
+/* 强制 Element Plus 外层 .cell 包裹层（td 直接子级）内联内容居中，
+   使数据表所有字段值水平居中展示 */
+:deep(.el-table td.el-table__cell > .cell) {
+  text-align: center !important;
 }
 :deep(.el-table td.el-table__cell .cell) {
   padding: 0 4px !important;

@@ -749,6 +749,7 @@ onMounted(load)
   display: inline-block; min-width: 60px; min-height: 32px;
   padding: 6px 8px;
   line-height: 20px;
+  text-align: center;
 }
 .cell.editable {
   cursor: cell; border-radius: 3px;
@@ -836,7 +837,13 @@ onMounted(load)
 }
 /* 单元格内容默认居中、字体加粗加深，对齐项目列表风格 */
 :deep(.el-table td.el-table__cell) {
-  text-align: center;
+  text-align: center !important;
+}
+/* 关键：只命中 Element Plus 自己的外层 .cell 包裹层（td 的直接子级），
+   强制其内部 inline/inline-block 内容（我们的 span.cell / a.proj-link / 状态下拉）水平居中。
+   用 > 直接子选择器，避免把我们嵌套的 span.cell 也改成块级而破坏「已过期」红底徽章形态 */
+:deep(.el-table td.el-table__cell > .cell) {
+  text-align: center !important;
 }
 :deep(.el-table td.el-table__cell .cell) {
   color: #0f172a;
