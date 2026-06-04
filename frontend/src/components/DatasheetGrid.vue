@@ -552,7 +552,8 @@ async function addRow() {
                        :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
 
       <el-table-column v-for="f in visibleFields" :key="f.id" :label="f.name"
-                       :min-width="colWidth(f)" show-overflow-tooltip>
+                       :min-width="colWidth(f)" show-overflow-tooltip
+                       align="center" header-align="center">
         <template #header>
           <span class="field-header">
             <el-tooltip :content="f.name" placement="top" :show-after="300" :hide-after="0">

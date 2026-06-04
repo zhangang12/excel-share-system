@@ -110,9 +110,11 @@ onMounted(load)
         <el-option label="已完成" value="已完成" />
         <el-option label="已归档" value="已归档" />
       </el-select>
+      <!-- 新建项目入口已迁移到「项目一览」工具栏（避免两处重复维护）
       <el-button v-if="canCreate" type="primary" size="large" :icon="Plus" @click="openCreate">
         新建项目
       </el-button>
+      -->
     </div>
 
     <div v-if="loading" v-loading="loading" class="loading-box"></div>

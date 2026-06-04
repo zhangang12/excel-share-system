@@ -91,13 +91,13 @@ onMounted(async () => {
 
       <!-- 导航 -->
       <nav>
-        <a :class="{ active: activeKey === 'projects' }" @click="go('projects')">
-          <el-icon class="nav-icon"><FolderOpened /></el-icon>
-          <span v-if="!collapsed">项目列表</span>
-        </a>
         <a :class="{ active: activeKey === 'overview' }" @click="go('overview')">
           <el-icon class="nav-icon"><DataLine /></el-icon>
           <span v-if="!collapsed">项目一览</span>
+        </a>
+        <a :class="{ active: activeKey === 'projects' }" @click="go('projects')">
+          <el-icon class="nav-icon"><FolderOpened /></el-icon>
+          <span v-if="!collapsed">项目列表</span>
         </a>
 
         <template v-if="auth.isAdmin || auth.user?.role_code === 'manager'">

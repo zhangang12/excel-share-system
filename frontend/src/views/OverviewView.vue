@@ -346,6 +346,36 @@ function openProject(rowId: number) {
   router.push({ name: 'project-detail', params: { id: rowId } })
 }
 
+// ===== 新建项目（一览页主入口） =====
+const createDialogVisible = ref(false)
+const creating = ref(false)
+const createForm = ref({
+  code: '', name: '', status: '进行中',
+})
+function openCreateProject() {
+  createForm.value = { code: '', name: '', status: '进行中' }
+  createDialogVisible.value = true
+}
+async function submitCreateProject() {
+  const f = createForm.value
+  if (!f.code.trim()) { ElMessage.warning('请填写项目编号'); return }
+  if (!f.name.trim()) { ElMessage.warning('请填写项目名称'); return }
+  creating.value = true
+  try {
+    const p = await projectsApi.create({
+      code: f.code.trim(),
+      name: f.name.trim(),
+      status: f.status,
+    })
+    createDialogVisible.value = false
+    ElMessage.success(`已新建项目 ${p.code} · ${p.name}`)
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '新建失败')
+  } finally {
+    creating.value = false
+  }
+}
 
 // 列宽自适应
 const fitScreen = ref(localStorage.getItem('pms_overview_fit') !== '0')  // 默认开
@@ -552,11 +582,16 @@ onMounted(load)
                 size="large" clearable :prefix-icon="Search" @input="currentPage = 1" />
       <!-- 一览列名已固定为 Excel 模板（与"2026 项目倒计时"对齐），"添加列"已下线 -->
       <el-button :icon="Download" size="large" @click="onExport">导出</el-button>
+      <el-button v-if="isAdmin" type="primary" :icon="Plus" size="large" @click="openCreateProject">
+        新建项目
+      </el-button>
+      <!-- 导入汇总表已隐藏（仍保留 onImportFile 函数和路由，可恢复）
       <label v-if="isAdmin" class="el-button el-button--primary el-button--large" style="margin: 0">
         <el-icon style="margin-right:6px"><Upload /></el-icon>
         <span>导入汇总表</span>
         <input type="file" accept=".xlsx,.xlsm,.xls" hidden @change="onImportFile" />
       </label>
+      -->
     </div>
 
     <el-card v-loading="loading">
@@ -567,11 +602,13 @@ onMounted(load)
                 :cell-class-name="cellClassName">
         <el-table-column type="index" label="#" :width="fitScreen ? 38 : 55" align="center" fixed="left"
                          :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
-        <!-- 14 列固定模板（项目编号/项目名称/状态/签订日期/...）-->
+        <!-- 14 列固定模板（项目编号/项目名称/状态/签订日期/...），所有列居中 -->
         <el-table-column v-for="col in OVERVIEW_FIELDS" :key="col.label"
                          :label="col.label"
                          :min-width="overviewColMinWidth(col)"
                          :fixed="col.source === 'code' ? 'left' : undefined"
+                         align="center"
+                         header-align="center"
                          show-overflow-tooltip>
           <template #default="{ row }">
             <!-- 状态列：el-select 下拉（只显示 进行中/已完成；旧值显示禁用项）-->
@@ -641,6 +678,34 @@ onMounted(load)
       <template #footer>
         <el-button @click="fieldDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submitField">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 新建项目对话框（与项目列表共享同一后端接口）-->
+    <el-dialog v-model="createDialogVisible" title="新建项目" width="500px"
+               :close-on-click-modal="false">
+      <el-form label-position="top">
+        <el-form-item label="项目编号 *">
+          <el-input v-model="createForm.code" size="large" placeholder="如 2026-040"
+                    @keyup.enter="submitCreateProject" />
+        </el-form-item>
+        <el-form-item label="项目名称 *">
+          <el-input v-model="createForm.name" size="large"
+                    placeholder="如 500ML 双行星混合机"
+                    @keyup.enter="submitCreateProject" />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="createForm.status" size="large" style="width:100%">
+            <el-option label="进行中" value="进行中" />
+            <el-option label="已完成" value="已完成" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="submitCreateProject">
+          新建并跳转
+        </el-button>
       </template>
     </el-dialog>
 
@@ -761,7 +826,21 @@ onMounted(load)
 :deep(.el-table th.el-table__cell) {
   background: linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%) !important;
   color: #0f172a;
-  font-weight: 700;
+  font-weight: 800;
+  text-align: center;
+}
+:deep(.el-table th.el-table__cell .cell) {
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  letter-spacing: 0.3px;
+}
+/* 单元格内容默认居中、字体加粗加深，对齐项目列表风格 */
+:deep(.el-table td.el-table__cell) {
+  text-align: center;
+}
+:deep(.el-table td.el-table__cell .cell) {
+  color: #0f172a;
+  font-weight: 600;
 }
 :deep(.el-table td.el-table__cell),
 :deep(.el-table th.el-table__cell) {
