@@ -203,11 +203,13 @@ function computeHeaderDerived(kind: string): string {
   const deliver = parseLooseDate(ovRaw('交货日期', '交货日期'))
   const dStart = parseLooseDate(ovRaw('制图开始'))
   const dEnd = parseLooseDate(ovRaw('制图结束'))
-  const today = new Date()
+  // 已完成项目：用「完成日期」冻结 已过时间/剩余制作时间，不再随今天变
+  const done = props.project?.status === '已完成' ? parseLooseDate(ovRaw('完成日期')) : null
+  const ref = done || new Date()
   switch (kind) {
     case 'duration':    return signed && deliver ? String(daysBetween(deliver, signed)) : ''
-    case 'elapsed':     return signed            ? String(daysBetween(today, signed))   : ''
-    case 'remaining':   return deliver           ? String(daysBetween(deliver, today))  : ''
+    case 'elapsed':     return signed            ? String(daysBetween(ref, signed))     : ''
+    case 'remaining':   return deliver           ? String(daysBetween(deliver, ref))    : ''
     case 'design_days': return dStart && dEnd    ? String(daysBetween(dEnd, dStart))    : ''
   }
   return ''
@@ -227,10 +229,8 @@ function projectHeaderValue(col: HeaderColumn): string {
     return ''
   }
   if (col.source === 'derived' && col.derivedKey) {
-    // 已完成项目的「剩余制作时间 / 已过时间」不再算（与一览一致）
-    if (p.status === '已完成' && (col.derivedKey === 'remaining' || col.derivedKey === 'elapsed')) {
-      return ''
-    }
+    // 已完成项目的「已过时间 / 剩余制作时间」用完成日期冻结（computeHeaderDerived 内处理），
+    // 不再实时计算，但仍显示冻结值（与一览一致）
     return computeHeaderDerived(col.derivedKey)
   }
   return ''

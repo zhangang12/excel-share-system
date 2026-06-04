@@ -632,6 +632,41 @@ async def sync_header_to_overview(db: AsyncSession) -> dict:
     return {"synced_projects": synced_projects, "synced_fields": synced_fields}
 
 
+async def backfill_completion_date(db: AsyncSession) -> dict:
+    """给存量「已完成」项目回填完成日期（__o__完成日期），用于冻结
+    已过时间/剩余制作时间（完成后不再实时计算）。
+
+    真实完成时间无从得知，用项目 updated_at 的日期作为最佳近似；
+    幂等：已有 __o__完成日期 的项目跳过。状态非「已完成」的不处理。
+    """
+    from .routers.projects_router import OVERVIEW_KEY_PREFIX
+
+    cd_key = f"{OVERVIEW_KEY_PREFIX}完成日期"
+    res = await db.execute(
+        select(models.Project).where(
+            models.Project.is_deleted == False,
+            models.Project.status == "已完成",
+        )
+    )
+    projects = res.scalars().all()
+    filled = 0
+    for p in projects:
+        extra = dict(p.extra or {})
+        if extra.get(cd_key):
+            continue
+        d = p.updated_at
+        if d is None:
+            continue
+        extra[cd_key] = d.strftime("%Y-%m-%d")
+        p.extra = extra
+        filled += 1
+
+    if filled:
+        await db.commit()
+        log.info("[backfill_completion_date] 回填 %d 个已完成项目的完成日期（按 updated_at 近似）", filled)
+    return {"filled": filled}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -678,3 +713,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_template_sheets_for_empty_projects(db)
     except Exception as e:
         log.warning("backfill_template_sheets_for_empty_projects failed: %s", e)
+    try:
+        await backfill_completion_date(db)
+    except Exception as e:
+        log.warning("backfill_completion_date failed: %s", e)

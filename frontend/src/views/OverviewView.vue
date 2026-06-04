@@ -158,14 +158,17 @@ function computeDerived(row: OverviewRow, kind: string): string {
   const deliver = parseLooseDate(rowMetaValue(row, '交货日期'))
   const designStart = parseLooseDate(rowMetaValue(row, '制图开始'))
   const designEnd = parseLooseDate(rowMetaValue(row, '制图结束'))
-  const today = new Date()
+  // 已完成项目：用「完成日期」冻结 已过时间/剩余制作时间，不再随今天变；
+  // 进行中：用今天实时算
+  const done = row.status === '已完成' ? parseLooseDate(rowMetaValue(row, '完成日期')) : null
+  const ref = done || new Date()
   switch (kind) {
-    // 货期 = 交货日期 - 签订日期
+    // 货期 = 交货日期 - 签订日期（与今天无关，本就固定）
     case 'duration':    return signed && deliver ? String(daysBetween(deliver, signed)) : ''
-    // 已过时间 = TODAY() - 签订日期
-    case 'elapsed':     return signed            ? String(daysBetween(today, signed))   : ''
-    // 剩余制作时间 = 交货日期 - TODAY()（数学上等价于 货期 - 已过时间）
-    case 'remaining':   return deliver           ? String(daysBetween(deliver, today))  : ''
+    // 已过时间 = 参照日 - 签订日期（已完成→完成日期；进行中→TODAY()）
+    case 'elapsed':     return signed            ? String(daysBetween(ref, signed))     : ''
+    // 剩余制作时间 = 交货日期 - 参照日（已完成→完成日期；进行中→TODAY()）
+    case 'remaining':   return deliver           ? String(daysBetween(deliver, ref))    : ''
     // 制图用时 = 制图结束 - 制图开始
     case 'design_days': return designStart && designEnd ? String(daysBetween(designEnd, designStart)) : ''
   }
@@ -185,10 +188,8 @@ function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
     return ''
   }
   if (col.source === 'derived' && col.derived) {
-    // 已完成项目的"剩余制作时间"和"已过时间"不再算（业务上无意义）
-    if (row.status === '已完成' && (col.derived === 'remaining' || col.derived === 'elapsed')) {
-      return ''
-    }
+    // 已完成项目的"已过时间/剩余制作时间"用完成日期冻结（computeDerived 内处理），
+    // 不再实时计算，但仍显示冻结值
     return computeDerived(row, col.derived)
   }
   return ''

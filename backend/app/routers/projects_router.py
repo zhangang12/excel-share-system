@@ -1,5 +1,6 @@
 """项目管理"""
 import json
+from datetime import date
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -337,7 +338,21 @@ async def update_project(
             p.code = new_code
     if data.name is not None: p.name = data.name
     if data.description is not None: p.description = data.description
-    if data.status is not None: p.status = data.status
+    if data.status is not None:
+        old_status = p.status
+        p.status = data.status
+        # 状态切到「已完成」→ 冻结完成日期（已过时间/剩余制作时间从此不再实时计算）；
+        # 切回非「已完成」→ 清除完成日期，恢复按 TODAY() 实时计算
+        cd_key = f"{OVERVIEW_KEY_PREFIX}完成日期"
+        if data.status == "已完成" and old_status != "已完成":
+            extra = dict(p.extra or {})
+            if not extra.get(cd_key):
+                extra[cd_key] = date.today().strftime("%Y-%m-%d")
+                p.extra = extra
+        elif data.status != "已完成" and old_status == "已完成":
+            extra = dict(p.extra or {})
+            if extra.pop(cd_key, None) is not None:
+                p.extra = extra
     if data.manager_id is not None and current.role.code in ("admin", "manager"):
         p.manager_id = data.manager_id
     await db.commit()
