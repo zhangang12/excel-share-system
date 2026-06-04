@@ -192,6 +192,18 @@ def _extract_header_meta(extra: Optional[dict]) -> dict:
     return out
 
 
+def _extract_overview_meta(extra: Optional[dict]) -> dict:
+    """从 project.extra 提取一览字段数据（去掉 __o__ 前缀）。
+    项目详情头表「镜像一览」时读这里，与一览同源。"""
+    if not extra:
+        return {}
+    out = {}
+    for k, v in extra.items():
+        if isinstance(k, str) and k.startswith(OVERVIEW_KEY_PREFIX):
+            out[k[len(OVERVIEW_KEY_PREFIX):]] = v
+    return out
+
+
 async def _project_to_out(p: models.Project, db: AsyncSession) -> schemas.ProjectOut:
     res = await db.execute(
         select(func.count(models.ProjectMember.id)).where(models.ProjectMember.project_id == p.id)
@@ -206,6 +218,7 @@ async def _project_to_out(p: models.Project, db: AsyncSession) -> schemas.Projec
         member_count=member_count,
         created_at=p.created_at, updated_at=p.updated_at,
         header_meta=_extract_header_meta(p.extra),
+        overview_meta=_extract_overview_meta(p.extra),
     )
 
 

@@ -22,6 +22,9 @@ export interface Project {
   created_at: string; updated_at: string
   // 项目头表数据：{数量, 销售, 设计师, 电器, 下单日期, 交货日期, 制表日期, ...}
   header_meta?: Record<string, string>
+  // 一览字段数据（项目头表「镜像一览」时读这里，与一览同源）：
+  // {签订日期, 交货日期, 销售, 设计师, 制图开始, 制图结束, 制图用时, 电工, ...}
+  overview_meta?: Record<string, string>
 }
 
 export interface ProjectMember {

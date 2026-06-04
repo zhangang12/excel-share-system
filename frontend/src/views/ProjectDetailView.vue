@@ -49,17 +49,18 @@ async function loadProject() {
   catch { router.push({ name: 'projects' }) }
 }
 
-// 项目头表某字段被子组件保存成功 → 同步更新本地 project.header_meta
-// 这样切换 sheet / 同时打开多个 sheet 时都能看到新值（同 datasheet 内已经渲染过的也立即反应）
+// 项目头表某字段被子组件保存成功 → 同步更新本地 project.overview_meta
+// （项目头表已镜像「项目一览」，写入的是一览存储 __o__，读的是 overview_meta）
+// 这样切换 sheet / 同时打开多个 sheet 时都能看到新值
 function onHeaderUpdated(payload: { key: string; value: string | null }) {
   if (!project.value) return
-  const meta = { ...(project.value.header_meta || {}) }
+  const meta = { ...(project.value.overview_meta || {}) }
   if (payload.value === null || payload.value === '') {
     delete meta[payload.key]
   } else {
     meta[payload.key] = payload.value
   }
-  project.value = { ...project.value, header_meta: meta }
+  project.value = { ...project.value, overview_meta: meta }
 }
 
 // 项目自身字段（name / code）被改 → 同步本地 project

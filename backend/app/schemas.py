@@ -102,6 +102,9 @@ class ProjectOut(BaseModel):
     updated_at: datetime
     # 项目级元数据（项目头表的值）：{数量, 制表日期, 销售, 设计师, 电器, 下单日期, 交货日期, ...}
     header_meta: dict = Field(default_factory=dict)
+    # 一览字段的值（__o__ 前缀去掉后）：{签订日期, 交货日期, 销售, 设计师, 制图开始, 制图结束, 制图用时, 电工, ...}
+    # 项目详情头表「镜像一览」时读这里，保证两处同源同步
+    overview_meta: dict = Field(default_factory=dict)
 
 
 class HeaderCellUpdate(BaseModel):

@@ -144,73 +144,118 @@ function daysBetween(a: Date, b: Date): number {
   return Math.round((a0 - b0) / 86400000)
 }
 
-// ============= 项目头表（固定 13 列，所有 sheet 共享一份数据） =============
+// ============= 项目头表（镜像「项目一览」的 14 列，与一览同源同步） =============
+// 数据来源：项目一览的 __o__ 字段（后端 ProjectOut.overview_meta）。
+// 编辑时以 is_overview=true 写回 __o__，从而项目详情头表 ↔ 项目一览 双向一致。
+// fallbackHeaderKey：兼容存量——overview_meta 没值时回退读老的 __h__（header_meta）。
 type HeaderColumn = {
   label: string
-  source: 'index' | 'code' | 'name' | 'meta' | 'derived'
-  metaKey?: string
-  derivedKey?: 'duration' | 'elapsed' | 'remaining'
+  source: 'code' | 'name' | 'status' | 'meta' | 'derived'
+  ovKey?: string              // 一览字段名（__o__ key），meta 列读写都用它
+  fallbackHeaderKey?: string  // 存量兼容：overview_meta 无值时回退读 header_meta 的这个 key
+  derivedKey?: 'duration' | 'elapsed' | 'remaining' | 'design_days'
+  fallbackDerived?: 'design_days'  // meta 列没手填值时回退到的派生公式（制图用时）
   editable: boolean
   widthPct: number  // 占整张项目头表宽度的百分比，总和约 100
 }
 
 const COMPANY_TITLE = '同辉智能装备（无锡）有限公司   (注解：图纸编号 字母+2 位数/材料编号 2 位数/完成度 进行中/完成 填充/钣金字母 B 打头，机加工 J 打头，外购 W 打头)'
 
+// 与 OVERVIEW_FIELDS 完全对齐（项目编号/项目名称/状态/签订日期/交货日期/销售/
+// 设计师/制图开始/制图结束/制图用时/电工/货期/已过时间/剩余制作时间）
 const HEADER_COLUMNS: HeaderColumn[] = [
-  { label: '序号',     source: 'index',   editable: false, widthPct: 4 },
-  { label: '项目编号', source: 'code',    editable: true,  widthPct: 8 },   // 改 Project.code
-  { label: '设备名称', source: 'name',    editable: true,  widthPct: 18 },  // 改 Project.name
-  { label: '数量',     source: 'meta',    metaKey: '数量',     editable: true, widthPct: 5 },
-  { label: '制表日期', source: 'meta',    metaKey: '制表日期', editable: true, widthPct: 9 },
-  { label: '销售',     source: 'meta',    metaKey: '销售',     editable: true, widthPct: 6 },
-  { label: '设计师',   source: 'meta',    metaKey: '设计师',   editable: true, widthPct: 6 },
-  { label: '电器',     source: 'meta',    metaKey: '电器',     editable: true, widthPct: 6 },
-  { label: '下单日期', source: 'meta',    metaKey: '下单日期', editable: true, widthPct: 9 },
-  { label: '交货日期', source: 'meta',    metaKey: '交货日期', editable: true, widthPct: 9 },
-  { label: '货期',     source: 'derived', derivedKey: 'duration',  editable: false, widthPct: 5 },
-  { label: '已过时间', source: 'derived', derivedKey: 'elapsed',   editable: false, widthPct: 6 },
-  { label: '倒计时',   source: 'derived', derivedKey: 'remaining', editable: false, widthPct: 9 },
+  { label: '项目编号',     source: 'code',    editable: true,  widthPct: 7 },   // 改 Project.code
+  { label: '项目名称',     source: 'name',    editable: true,  widthPct: 14 },  // 改 Project.name
+  { label: '状态',         source: 'status',  editable: false, widthPct: 6 },   // 显示 Project.status
+  { label: '签订日期',     source: 'meta', ovKey: '签订日期', fallbackHeaderKey: '下单日期', editable: true, widthPct: 8 },
+  { label: '交货日期',     source: 'meta', ovKey: '交货日期', fallbackHeaderKey: '交货日期', editable: true, widthPct: 8 },
+  { label: '销售',         source: 'meta', ovKey: '销售',   fallbackHeaderKey: '销售',   editable: true, widthPct: 6 },
+  { label: '设计师',       source: 'meta', ovKey: '设计师', fallbackHeaderKey: '设计师', editable: true, widthPct: 6 },
+  { label: '制图开始',     source: 'meta', ovKey: '制图开始', editable: true, widthPct: 8 },
+  { label: '制图结束',     source: 'meta', ovKey: '制图结束', editable: true, widthPct: 8 },
+  { label: '制图用时',     source: 'meta', ovKey: '制图用时', fallbackDerived: 'design_days', editable: true, widthPct: 6 },
+  { label: '电工',         source: 'meta', ovKey: '电工',   fallbackHeaderKey: '电器',   editable: true, widthPct: 6 },
+  { label: '货期',         source: 'derived', derivedKey: 'duration',  editable: false, widthPct: 4 },
+  { label: '已过时间',     source: 'derived', derivedKey: 'elapsed',   editable: false, widthPct: 5 },
+  { label: '剩余制作时间', source: 'derived', derivedKey: 'remaining', editable: false, widthPct: 8 },
 ]
 
-function projectHeaderValue(col: HeaderColumn, rowSeq = 1): string {
+// 读 meta 原值：优先一览数据（overview_meta / __o__），存量兼容回退 header_meta（__h__）
+function ovRaw(ovKey?: string, fallbackHeaderKey?: string): string {
   const p = props.project
   if (!p) return ''
-  if (col.source === 'index') return String(rowSeq)
+  if (ovKey) {
+    const v = p.overview_meta?.[ovKey]
+    if (v !== undefined && v !== null && String(v) !== '') return String(v)
+  }
+  if (fallbackHeaderKey) {
+    const v = p.header_meta?.[fallbackHeaderKey]
+    if (v !== undefined && v !== null && String(v) !== '') return String(v)
+  }
+  return ''
+}
+
+// 派生公式（与一览口径一致）：货期/已过/剩余/制图用时
+function computeHeaderDerived(kind: string): string {
+  void todayKey.value  // 响应式依赖：跨天自动重算
+  const signed = parseLooseDate(ovRaw('签订日期', '下单日期'))
+  const deliver = parseLooseDate(ovRaw('交货日期', '交货日期'))
+  const dStart = parseLooseDate(ovRaw('制图开始'))
+  const dEnd = parseLooseDate(ovRaw('制图结束'))
+  const today = new Date()
+  switch (kind) {
+    case 'duration':    return signed && deliver ? String(daysBetween(deliver, signed)) : ''
+    case 'elapsed':     return signed            ? String(daysBetween(today, signed))   : ''
+    case 'remaining':   return deliver           ? String(daysBetween(deliver, today))  : ''
+    case 'design_days': return dStart && dEnd    ? String(daysBetween(dEnd, dStart))    : ''
+  }
+  return ''
+}
+
+function projectHeaderValue(col: HeaderColumn): string {
+  const p = props.project
+  if (!p) return ''
   if (col.source === 'code') return p.code || ''
   if (col.source === 'name') return p.name || ''
-  if (col.source === 'meta' && col.metaKey) {
-    return smartFormatValue(p.header_meta?.[col.metaKey])
+  if (col.source === 'status') return p.status || ''
+  if (col.source === 'meta') {
+    const v = ovRaw(col.ovKey, col.fallbackHeaderKey)
+    if (v) return smartFormatValue(v)
+    // 没手填值 → 回退派生（制图用时）
+    if (col.fallbackDerived) return computeHeaderDerived(col.fallbackDerived)
+    return ''
   }
-  if (col.source === 'derived') {
-    void todayKey.value  // 响应式依赖：跨天自动重算
-    const orderDate = parseLooseDate(p.header_meta?.['下单日期'])
-    const deliverDate = parseLooseDate(p.header_meta?.['交货日期'])
-    const today = new Date()
-    if (col.derivedKey === 'duration') {
-      if (orderDate && deliverDate) return String(daysBetween(deliverDate, orderDate))
-    } else if (col.derivedKey === 'elapsed') {
-      if (orderDate) return String(daysBetween(today, orderDate))
-    } else if (col.derivedKey === 'remaining') {
-      if (deliverDate) return String(daysBetween(deliverDate, today))
+  if (col.source === 'derived' && col.derivedKey) {
+    // 已完成项目的「剩余制作时间 / 已过时间」不再算（与一览一致）
+    if (p.status === '已完成' && (col.derivedKey === 'remaining' || col.derivedKey === 'elapsed')) {
+      return ''
     }
+    return computeHeaderDerived(col.derivedKey)
   }
   return ''
 }
 
 function projectHeaderFormula(col: HeaderColumn): string {
   if (col.source === 'derived') {
-    if (col.derivedKey === 'duration')  return '= 交货日期 - 下单日期'
-    if (col.derivedKey === 'elapsed')   return '= TODAY() - 下单日期'
+    if (col.derivedKey === 'duration')  return '= 交货日期 - 签订日期'
+    if (col.derivedKey === 'elapsed')   return '= TODAY() - 签订日期'
     if (col.derivedKey === 'remaining') return '= 交货日期 - TODAY()'
   }
+  // 制图用时为可编辑列（手填可覆盖），不返回公式，保持可点击编辑
   return ''
 }
 
 function projectHeaderClass(col: HeaderColumn): string {
   if (col.source === 'derived' && col.derivedKey === 'remaining') {
     const v = parseInt(projectHeaderValue(col))
-    // 只有"倒计时 < 0"（已超期）才标红；含正数在内的其余值都不着色
+    // 只有"剩余制作时间 < 0"（已超期）才标红；含正数在内的其余值都不着色
     if (!isNaN(v) && v < 0) return 'preamble-overdue'
+  }
+  // 状态列：完成绿 / 进行中红（与项目一览一致）
+  if (col.source === 'status') {
+    const s = props.project?.status
+    if (s === '已完成') return 'preamble-status-done'
+    if (s === '进行中') return 'preamble-status-doing'
   }
   return ''
 }
@@ -231,7 +276,12 @@ function isHeaderCellEditable(col: HeaderColumn): boolean {
 function startEditHeader(col: HeaderColumn) {
   if (!isHeaderCellEditable(col)) return
   editingHeaderLabel.value = col.label
-  editingHeaderValue.value = projectHeaderValue(col)
+  // meta 列预填「手填原值」（不含派生回退，避免把计算出的制图用时塞进输入框）
+  if (col.source === 'meta') {
+    editingHeaderValue.value = ovRaw(col.ovKey, col.fallbackHeaderKey)
+  } else {
+    editingHeaderValue.value = projectHeaderValue(col)
+  }
 }
 function onHeaderCellClick(col: HeaderColumn) {
   if (isHeaderCellEditable(col) && !isEditingHeader(col)) {
@@ -246,16 +296,19 @@ async function saveHeader() {
   const col = HEADER_COLUMNS.find(c => c.label === label)
   if (!col) return
   const newVal = editingHeaderValue.value.trim()
-  const oldVal = projectHeaderValue(col)
+  // meta 列比对「手填原值」，其余比对显示值
+  const oldVal = col.source === 'meta'
+    ? ovRaw(col.ovKey, col.fallbackHeaderKey)
+    : projectHeaderValue(col)
   if (newVal === oldVal) return
   try {
-    if (col.source === 'meta' && col.metaKey) {
-      // 写入 Project.extra 的 __h__<key>
-      await projectsApi.updateHeaderCell(props.project.id, col.metaKey, newVal || null)
-      emit('header-updated', { key: col.metaKey, value: newVal || null })
+    if (col.source === 'meta' && col.ovKey) {
+      // 以 is_overview=true 写入一览存储 __o__<ovKey>，与项目一览同源同步
+      await projectsApi.updateHeaderCell(props.project.id, col.ovKey, newVal || null, true)
+      emit('header-updated', { key: col.ovKey, value: newVal || null })
     } else if (col.source === 'name') {
       // 写入 Project.name
-      if (!newVal) { ElMessage.warning('设备名称不能为空'); return }
+      if (!newVal) { ElMessage.warning('项目名称不能为空'); return }
       await projectsApi.update(props.project.id, { name: newVal })
       emit('project-field-updated', { field: 'name', value: newVal })
     } else if (col.source === 'code') {
@@ -797,10 +850,11 @@ async function addRow() {
   background: #e2e8f0;
   border: 2px solid #64748b;
   border-bottom: 3px solid var(--primary);
-  border-radius: 8px 8px 0 0;
+  border-radius: 8px;
   padding: 0;
   overflow-x: auto;
-  margin-bottom: -1px;
+  /* 需求 4：项目头表（第 1-3 行）与下方数据表（第 4 行）之间留出上下间隔 */
+  margin-bottom: 16px;
 }
 .preamble table.preamble-table {
   border-collapse: collapse;
@@ -864,6 +918,17 @@ async function addRow() {
 .preamble td.preamble-overdue {
   color: #ffffff !important;
   background: #dc2626 !important;
+  font-weight: 700 !important;
+}
+/* 状态列：完成绿 / 进行中红（与项目一览状态列一致） */
+.preamble td.preamble-status-done {
+  color: #065f46 !important;
+  background: #d1fae5 !important;
+  font-weight: 700 !important;
+}
+.preamble td.preamble-status-doing {
+  color: #991b1b !important;
+  background: #fee2e2 !important;
   font-weight: 700 !important;
 }
 /* fx 公式列：表头紫色徽标 */

@@ -292,6 +292,69 @@ async def cleanup_filler_columns(db: AsyncSession) -> dict:
     return {"deleted": len(to_delete), "with_data": with_data}
 
 
+async def migrate_sheet_template_v2(db: AsyncSession) -> dict:
+    """把存量数据表迁移到「模板 v2」：钣金装配字段改名 + 钣金装配/外协外购补「备注」列。
+
+    必须在 align_known_sheet_fields_to_template / cleanup_misaligned_known_sheets
+    之前运行，否则旧字段名与新模板不一致会被 cleanup 当成错位整表清空（丢数据）。
+
+    1. 钣金装配字段改名（按 field.id 改 name，records 按 id 取值，数据不丢）：
+       钣金/钳工→工艺1、钣金发出日期→工艺1发出日期、钣金完成日期→工艺1完成日期、
+       封板/抛光→工艺2、封板发出日期→工艺2发出日期、封板完成日期→工艺2完成日期
+    2. 钣金装配 / 外协外购：若缺「备注」字段则补一个（放末尾）
+
+    幂等：改完名 / 补完列后再次运行命中不到旧名 / 已有备注，空操作。
+    """
+    RENAME_MAP = {
+        '钣金/钳工': '工艺1',
+        '钣金发出日期': '工艺1发出日期',
+        '钣金完成日期': '工艺1完成日期',
+        '封板/抛光': '工艺2',
+        '封板发出日期': '工艺2发出日期',
+        '封板完成日期': '工艺2完成日期',
+    }
+    ADD_REMARK_SHEETS = {'钣金装配', '外协外购'}
+
+    res = await db.execute(select(models.Datasheet))
+    datasheets = res.scalars().all()
+    renamed = 0
+    remark_added = 0
+
+    for d in datasheets:
+        if d.name not in ('钣金装配', '外协外购'):
+            continue
+        res = await db.execute(
+            select(models.Field).where(models.Field.datasheet_id == d.id)
+        )
+        fields = list(res.scalars().all())
+
+        # 1) 改名（仅钣金装配会命中 RENAME_MAP）
+        for f in fields:
+            new_name = RENAME_MAP.get((f.name or '').strip())
+            if new_name and f.name != new_name:
+                f.name = new_name
+                renamed += 1
+
+        # 2) 补「备注」列
+        if d.name in ADD_REMARK_SHEETS:
+            names = {(f.name or '').strip() for f in fields}
+            if '备注' not in names:
+                max_order = max((f.sort_order for f in fields), default=-1)
+                db.add(models.Field(
+                    datasheet_id=d.id, name='备注', type='text',
+                    sort_order=max_order + 1,
+                ))
+                remark_added += 1
+
+    if renamed or remark_added:
+        await db.commit()
+        log.info(
+            "[migrate_sheet_template_v2] 钣金装配改名 %d 个字段；补「备注」列 %d 张表",
+            renamed, remark_added,
+        )
+    return {"renamed": renamed, "remark_added": remark_added}
+
+
 async def align_known_sheet_fields_to_template(db: AsyncSession) -> dict:
     """对已知 sheet 类型的所有 datasheet，安全地确认字段名与模板一致。
 
@@ -517,6 +580,58 @@ async def backfill_template_sheets_for_empty_projects(db: AsyncSession) -> dict:
     return {"projects": len(empty_pids), "sheets": total_sheets}
 
 
+async def sync_header_to_overview(db: AsyncSession) -> dict:
+    """反向同步：把存量项目详情头表（__h__）的数据补到一览（__o__）。
+
+    背景：通过「导入 Excel」建的项目，项目头数据写在 __h__；一览读 __o__，
+    于是这些项目在一览/新版项目头表里看不到值。这里做一次反向回填，让
+    两边同源。
+
+    针对 OVERVIEW_HEADER_ALIAS 的反向映射（header_key → overview_label）：
+      下单日期→签订日期 / 电器→电工 / 销售 / 设计师 / 交货日期
+    策略：__h__<header_key> 有值且 __o__<overview_label> 没值 → 复制；
+    已有 __o__ 值（用户在一览填过）则不动。幂等。
+    """
+    from .sheet_templates import OVERVIEW_HEADER_ALIAS
+    from .routers.projects_router import OVERVIEW_KEY_PREFIX, HEADER_KEY_PREFIX
+
+    if not OVERVIEW_HEADER_ALIAS:
+        return {"synced_projects": 0, "synced_fields": 0}
+
+    # 反向映射：header_key → overview_label
+    reverse = {h_key: ov_key for ov_key, h_key in OVERVIEW_HEADER_ALIAS.items()}
+
+    res = await db.execute(
+        select(models.Project).where(models.Project.is_deleted == False)
+    )
+    projects = res.scalars().all()
+
+    synced_projects = 0
+    synced_fields = 0
+    for p in projects:
+        extra = dict(p.extra or {})
+        before = dict(extra)
+        for h_key, ov_key in reverse.items():
+            h_storage = f"{HEADER_KEY_PREFIX}{h_key}"
+            o_storage = f"{OVERVIEW_KEY_PREFIX}{ov_key}"
+            h_val = extra.get(h_storage)
+            o_val = extra.get(o_storage)
+            if h_val not in (None, '') and (o_val in (None, '')):
+                extra[o_storage] = h_val
+                synced_fields += 1
+        if extra != before:
+            p.extra = extra
+            synced_projects += 1
+
+    if synced_projects:
+        await db.commit()
+        log.info(
+            "[sync_header_to_overview] 反向同步 %d 个项目的详情头表数据到一览（共 %d 个字段）",
+            synced_projects, synced_fields,
+        )
+    return {"synced_projects": synced_projects, "synced_fields": synced_fields}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -540,6 +655,10 @@ async def run_all(db: AsyncSession) -> None:
     except Exception as e:
         log.warning("cleanup_filler_columns failed: %s", e)
     try:
+        await migrate_sheet_template_v2(db)
+    except Exception as e:
+        log.warning("migrate_sheet_template_v2 failed: %s", e)
+    try:
         await align_known_sheet_fields_to_template(db)
     except Exception as e:
         log.warning("align_known_sheet_fields_to_template failed: %s", e)
@@ -551,6 +670,10 @@ async def run_all(db: AsyncSession) -> None:
         await sync_overview_to_header(db)
     except Exception as e:
         log.warning("sync_overview_to_header failed: %s", e)
+    try:
+        await sync_header_to_overview(db)
+    except Exception as e:
+        log.warning("sync_header_to_overview failed: %s", e)
     try:
         await backfill_template_sheets_for_empty_projects(db)
     except Exception as e:
