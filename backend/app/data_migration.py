@@ -63,6 +63,56 @@ async def backfill_empty_project_members(db: AsyncSession) -> int:
     return added
 
 
+async def backfill_members_all_users_all_projects(db: AsyncSession) -> dict:
+    """确保每个 active 非 admin/manager 用户都是每个 active 项目的成员。
+
+    修复「项目先建好、用户后创建」导致的新用户缺存量项目权限问题。
+    比 backfill_empty_project_members 更彻底（后者只处理 0 成员的项目，
+    无法把后建的用户补进已有成员的项目）。
+
+    - 已存在的 (项目,用户) 成员关系不动（尊重已配置的 view/edit）
+    - 只新增缺失的，权限默认 edit
+    - 幂等：补齐后再次运行命中不到缺失项
+    """
+    res = await db.execute(
+        select(models.User.id).join(models.Role).where(
+            models.User.is_active == True,
+            models.Role.code.notin_(("admin", "manager")),
+        )
+    )
+    user_ids = [r[0] for r in res.all()]
+    res = await db.execute(
+        select(models.Project.id).where(models.Project.is_deleted == False)
+    )
+    pids = [r[0] for r in res.all()]
+    if not user_ids or not pids:
+        return {"added": 0}
+
+    res = await db.execute(
+        select(models.ProjectMember.project_id, models.ProjectMember.user_id)
+    )
+    existing = {(p, u) for p, u in res.all()}
+
+    added = 0
+    for pid in pids:
+        for uid in user_ids:
+            if (pid, uid) in existing:
+                continue
+            db.add(models.ProjectMember(
+                project_id=pid, user_id=uid, permission="edit"
+            ))
+            added += 1
+
+    if added:
+        await db.commit()
+        log.info(
+            "[backfill_members_all_users_all_projects] 补 %d 条成员关系"
+            "（%d 用户 × %d 项目 全覆盖）",
+            added, len(user_ids), len(pids),
+        )
+    return {"added": added}
+
+
 async def cleanup_deleted_project_data(db: AsyncSession) -> dict:
     """清理软删项目（is_deleted=true）挂着的孤儿数据。
 
@@ -677,6 +727,10 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_empty_project_members(db)
     except Exception as e:
         log.warning("backfill_empty_project_members failed: %s", e)
+    try:
+        await backfill_members_all_users_all_projects(db)
+    except Exception as e:
+        log.warning("backfill_members_all_users_all_projects failed: %s", e)
     try:
         await cleanup_rownum_fields(db)
     except Exception as e:

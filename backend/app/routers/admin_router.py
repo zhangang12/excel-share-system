@@ -67,7 +67,8 @@ async def create_user(
         raise HTTPException(400, "用户名已存在")
     # 校验 role 存在
     role_res = await db.execute(select(models.Role).where(models.Role.id == data.role_id))
-    if not role_res.scalar_one_or_none():
+    role = role_res.scalar_one_or_none()
+    if not role:
         raise HTTPException(400, "角色不存在")
     u = models.User(
         username=data.username,
@@ -79,6 +80,12 @@ async def create_user(
         is_active=data.is_active,
     )
     db.add(u)
+    await db.flush()  # 拿到 u.id
+    # 新用户默认加入所有「存量活跃项目」为 edit 成员
+    # （admin/manager 在 deps 层自动拥有全部项目权限，无需塞 member）
+    if u.is_active and role.code not in ("admin", "manager"):
+        from .projects_router import _add_user_to_all_active_projects
+        await _add_user_to_all_active_projects(db, u.id, "edit")
     await db.commit()
     await db.refresh(u)
     # 重新查带关联（避免 lazy 异步问题）

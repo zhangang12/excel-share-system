@@ -172,6 +172,35 @@ async def _add_all_active_users_as_members(
         added += 1
     return added
 
+
+async def _add_user_to_all_active_projects(
+    db: AsyncSession, user_id: int, permission: str = "edit"
+) -> int:
+    """把某个用户加为所有「活跃项目」的成员（已是成员的跳过）。
+    新建用户时调用，保证新用户能看到/编辑存量项目。返回新增条数。
+    调用方负责 commit。"""
+    res = await db.execute(
+        select(models.Project.id).where(models.Project.is_deleted == False)
+    )
+    pids = [r[0] for r in res.all()]
+    if not pids:
+        return 0
+    res = await db.execute(
+        select(models.ProjectMember.project_id).where(
+            models.ProjectMember.user_id == user_id
+        )
+    )
+    existing_pids = {r[0] for r in res.all()}
+    added = 0
+    for pid in pids:
+        if pid in existing_pids:
+            continue
+        db.add(models.ProjectMember(
+            project_id=pid, user_id=user_id, permission=permission
+        ))
+        added += 1
+    return added
+
 router = APIRouter(prefix="/api/projects", tags=["项目"])
 
 
