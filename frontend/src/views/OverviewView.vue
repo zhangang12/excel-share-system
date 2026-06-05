@@ -310,9 +310,10 @@ async function load() {
 }
 
 // 状态筛选（'' = 全部；'进行中' / '已完成'）
-// 用 localStorage 记住用户的选择：跨路由跳转、刷新、网页关闭都保持，直到主动清缓存
+// 默认「进行中」；用 localStorage 记住用户的选择（跨路由跳转、刷新、网页关闭都保持）。
+// 用 ?? 而非 ||：只有「从没存过」(null) 才用默认值；用户主动选了「全部」(存 '') 要尊重。
 const STATUS_FILTER_KEY = 'pms_overview_status_filter'
-const statusFilter = ref<string>(localStorage.getItem(STATUS_FILTER_KEY) || '')
+const statusFilter = ref<string>(localStorage.getItem(STATUS_FILTER_KEY) ?? '进行中')
 function onStatusFilterChange() {
   currentPage.value = 1
   localStorage.setItem(STATUS_FILTER_KEY, statusFilter.value || '')
@@ -587,7 +588,8 @@ onMounted(load)
                    @change="onFitScreenChange" />
       </el-tooltip>
       <el-select v-model="statusFilter" placeholder="全部状态" size="large"
-                 style="width: 130px" clearable @change="onStatusFilterChange">
+                 style="width: 130px" @change="onStatusFilterChange">
+        <el-option label="全部" value="" />
         <el-option label="进行中" value="进行中">
           <span class="status-dot status-dot-doing"></span> 进行中
         </el-option>
