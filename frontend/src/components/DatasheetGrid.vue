@@ -168,9 +168,9 @@ const HEADER_COLUMNS: HeaderColumn[] = [
   { label: '项目名称',     source: 'name',    editable: true,  widthPct: 12 },  // 改 Project.name
   { label: '数量',         source: 'meta', ovKey: '数量', fallbackHeaderKey: '数量', editable: true, widthPct: 5 },
   { label: '状态',         source: 'status',  editable: false, widthPct: 6 },   // 显示 Project.status
+  { label: '销售',         source: 'meta', ovKey: '销售',   fallbackHeaderKey: '销售',   editable: true, widthPct: 6 },
   { label: '签订日期',     source: 'meta', ovKey: '签订日期', fallbackHeaderKey: '下单日期', editable: true, widthPct: 8 },
   { label: '交货日期',     source: 'meta', ovKey: '交货日期', fallbackHeaderKey: '交货日期', editable: true, widthPct: 8 },
-  { label: '销售',         source: 'meta', ovKey: '销售',   fallbackHeaderKey: '销售',   editable: true, widthPct: 6 },
   { label: '设计师',       source: 'meta', ovKey: '设计师', fallbackHeaderKey: '设计师', editable: true, widthPct: 6 },
   { label: '制图开始',     source: 'meta', ovKey: '制图开始', editable: true, widthPct: 8 },
   { label: '制图结束',     source: 'meta', ovKey: '制图结束', editable: true, widthPct: 8 },

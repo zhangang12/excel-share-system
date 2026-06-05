@@ -54,9 +54,9 @@ const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '项目名称',     source: 'name',    editable: true,  widthPct: 12 },
   { label: '数量',         source: 'meta',    editable: true,  widthPct: 5 },
   { label: '状态',         source: 'status',  editable: true,  widthPct: 7 },
+  { label: '销售',         source: 'meta',    editable: true,  widthPct: 6 },
   { label: '签订日期',     source: 'meta',    editable: true,  widthPct: 7 },
   { label: '交货日期',     source: 'meta',    editable: true,  widthPct: 7 },
-  { label: '销售',         source: 'meta',    editable: true,  widthPct: 6 },
   { label: '设计师',       source: 'meta',    editable: true,  widthPct: 6 },
   { label: '制图开始',     source: 'meta',    editable: true,  widthPct: 7 },
   { label: '制图结束',     source: 'meta',    editable: true,  widthPct: 7 },
@@ -310,8 +310,13 @@ async function load() {
 }
 
 // 状态筛选（'' = 全部；'进行中' / '已完成'）
-const statusFilter = ref<string>('')
-function onStatusFilterChange() { currentPage.value = 1 }
+// 用 localStorage 记住用户的选择：跨路由跳转、刷新、网页关闭都保持，直到主动清缓存
+const STATUS_FILTER_KEY = 'pms_overview_status_filter'
+const statusFilter = ref<string>(localStorage.getItem(STATUS_FILTER_KEY) || '')
+function onStatusFilterChange() {
+  currentPage.value = 1
+  localStorage.setItem(STATUS_FILTER_KEY, statusFilter.value || '')
+}
 
 // 项目编号筛选（包含匹配，不区分大小写）
 const codeFilter = ref<string>('')
