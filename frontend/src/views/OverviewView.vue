@@ -354,10 +354,14 @@ function openProject(rowId: number) {
 const createDialogVisible = ref(false)
 const creating = ref(false)
 const createForm = ref({
-  code: '', name: '', status: '进行中',
+  code: '', name: '', qty: '', status: '进行中',
+  sales: '', signDate: '', deliverDate: '', designer: '',
 })
 function openCreateProject() {
-  createForm.value = { code: '', name: '', status: '进行中' }
+  createForm.value = {
+    code: '', name: '', qty: '', status: '进行中',
+    sales: '', signDate: '', deliverDate: '', designer: '',
+  }
   createDialogVisible.value = true
 }
 async function submitCreateProject() {
@@ -371,6 +375,18 @@ async function submitCreateProject() {
       name: f.name.trim(),
       status: f.status,
     })
+    // 其余字段写入一览存储 __o__（is_overview=true），同时按别名同步到项目详情头表
+    const metaWrites: [string, string][] = [
+      ['数量', f.qty],
+      ['销售', f.sales],
+      ['签订日期', f.signDate],
+      ['交货日期', f.deliverDate],
+      ['设计师', f.designer],
+    ]
+    for (const [key, val] of metaWrites) {
+      const v = (val ?? '').toString().trim()
+      if (v) await projectsApi.updateHeaderCell(p.id, key, v, true)
+    }
     createDialogVisible.value = false
     ElMessage.success(`已新建项目 ${p.code} · ${p.name}`)
     await load()
@@ -698,11 +714,30 @@ onMounted(load)
                     placeholder="如 500ML 双行星混合机"
                     @keyup.enter="submitCreateProject" />
         </el-form-item>
+        <el-form-item label="数量">
+          <el-input v-model="createForm.qty" size="large" placeholder="如 1" />
+        </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="createForm.status" size="large" style="width:100%">
             <el-option label="进行中" value="进行中" />
             <el-option label="已完成" value="已完成" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="销售">
+          <el-input v-model="createForm.sales" size="large" placeholder="如 赵仁辉" />
+        </el-form-item>
+        <el-form-item label="签订日期">
+          <el-date-picker v-model="createForm.signDate" type="date" size="large"
+                          style="width:100%" placeholder="选择签订日期"
+                          value-format="YYYY-MM-DD" format="YYYY-MM-DD" />
+        </el-form-item>
+        <el-form-item label="交货日期">
+          <el-date-picker v-model="createForm.deliverDate" type="date" size="large"
+                          style="width:100%" placeholder="选择交货日期"
+                          value-format="YYYY-MM-DD" format="YYYY-MM-DD" />
+        </el-form-item>
+        <el-form-item label="设计师">
+          <el-input v-model="createForm.designer" size="large" placeholder="如 陈立新" />
         </el-form-item>
       </el-form>
       <template #footer>
