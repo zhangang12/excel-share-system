@@ -310,14 +310,9 @@ async function load() {
 }
 
 // 状态筛选（'' = 全部；'进行中' / '已完成'）
-// 默认「进行中」；用 localStorage 记住用户的选择（跨路由跳转、刷新、网页关闭都保持）。
-// 用 ?? 而非 ||：只有「从没存过」(null) 才用默认值；用户主动选了「全部」(存 '') 要尊重。
-const STATUS_FILTER_KEY = 'pms_overview_status_filter'
-const statusFilter = ref<string>(localStorage.getItem(STATUS_FILTER_KEY) ?? '进行中')
-function onStatusFilterChange() {
-  currentPage.value = 1
-  localStorage.setItem(STATUS_FILTER_KEY, statusFilter.value || '')
-}
+// 每次进入一览都默认「进行中」（不记忆上次选择）；本次会话内可自由切换。
+const statusFilter = ref<string>('进行中')
+function onStatusFilterChange() { currentPage.value = 1 }
 
 // 项目编号筛选（包含匹配，不区分大小写）
 const codeFilter = ref<string>('')
