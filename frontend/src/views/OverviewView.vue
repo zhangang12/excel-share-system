@@ -10,6 +10,7 @@ import { permApi } from '@/api/permissions'
 // 字段权限统一在「权限管理 → 权限矩阵」页配置，不再挂在表头
 import { useRealtime } from '@/composables/useRealtime'
 import { useTableHeight } from '@/composables/useTableHeight'
+import { useDragFill } from '@/composables/useDragFill'
 import { useAuthStore } from '@/stores/auth'
 import type { OverviewField, OverviewRow } from '@/types'
 
@@ -35,6 +36,17 @@ const visibleFields = computed(() =>
 )
 function fieldEditable(f: OverviewField): boolean {
   return myPerms.value[String(f.id)]?.can_edit !== false
+}
+
+// 一览模板列 label → overview_fields 表字段 id（让一览页按字段权限控制可见/可编辑）。
+// 只有「可填写列」在 overview_fields 表里有记录；系统/派生列没有 → 始终可见、仅管理员可改。
+const tplFieldIdMap = computed<Record<string, number>>(() => {
+  const m: Record<string, number> = {}
+  for (const f of fields.value) m[f.name] = f.id
+  return m
+})
+function tplFieldId(label: string): number | null {
+  return tplFieldIdMap.value[label] ?? null
 }
 
 // ===== 项目一览固定模板列（与后端 sheet_templates.OVERVIEW_FIELDS 一致）=====
@@ -132,6 +144,32 @@ function daysBetween(a: Date, b: Date): number {
   return Math.round((a0 - b0) / 86400000)
 }
 
+// 日期列：录入/显示统一规范为 YYYY-MM-DD（与后端 sheet_templates.is_date_field 一致）
+const DATE_LABELS = new Set(['签订日期', '交货日期', '制图开始', '制图结束', '完成日期', '出货日期'])
+function isDateCol(col: OverviewTplCol): boolean {
+  return DATE_LABELS.has(col.label)
+}
+/** 把松散日期规范化为 YYYY-MM-DD；解析不了就原样返回（保留"待定"等非日期文本）。
+ *  支持 2026/5/12、2026.5.12、2026年5月12日、2026-6-4、20260408（8 位无分隔符）、
+ *  Excel 日期序列号（5 位，如 45390）。与后端 normalize_date_str 同一套规则。*/
+function normalizeDate(s: unknown): string {
+  if (s === null || s === undefined) return ''
+  const raw = String(s).trim()
+  if (!raw) return ''
+  let y = 0, mo = 0, d = 0
+  const m = /^(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/.exec(raw)
+  const m8 = /^(\d{4})(\d{2})(\d{2})$/.exec(raw)
+  if (m) { y = +m[1]; mo = +m[2]; d = +m[3] }
+  else if (m8) { y = +m8[1]; mo = +m8[2]; d = +m8[3] }
+  else if (/^\d{5}$/.test(raw) && +raw >= 30000 && +raw <= 60000) {
+    // Excel 日期序列号（基准 1899-12-30，已含 1900 闰年补偿）
+    const dt = new Date(Date.UTC(1899, 11, 30) + +raw * 86400000)
+    y = dt.getUTCFullYear(); mo = dt.getUTCMonth() + 1; d = dt.getUTCDate()
+  } else return raw
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return raw
+  return `${String(y).padStart(4, '0')}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
 // 每分钟刷新一次响应式 today，让派生列跨天自动跳
 const todayKey = ref(new Date().toDateString())
 let _todayTimer: number | null = null
@@ -182,7 +220,7 @@ function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
   if (col.source === 'status') return row.status || ''
   if (col.source === 'meta') {
     const v = rowMetaValue(row, col.label)
-    if (v) return smartFormatValue(v)
+    if (v) return isDateCol(col) ? normalizeDate(v) : smartFormatValue(v)
     // 用户没手填 → 尝试 fallback 派生公式（如"制图用时"）
     if (col.fallbackDerived) return computeDerived(row, col.fallbackDerived)
     return ''
@@ -212,8 +250,20 @@ function isEditingTpl(row: OverviewRow, col: OverviewTplCol): boolean {
   return editingTplRowId.value === row.id && editingTplLabel.value === col.label
 }
 function isTplCellEditable(col: OverviewTplCol): boolean {
-  return !!col.editable && !!isAdmin.value
+  if (!col.editable) return false
+  if (isAdmin.value) return true
+  // 非管理员：按一览字段权限（「项目名称」等无对应权限字段的列仅管理员可改）
+  const fid = tplFieldId(col.label)
+  if (fid == null) return false
+  return myPerms.value[String(fid)]?.can_edit !== false
 }
+// 列可见性：可填写列按字段权限隐藏；系统/派生列（无权限字段）始终可见
+function tplColViewable(col: OverviewTplCol): boolean {
+  const fid = tplFieldId(col.label)
+  if (fid == null) return true
+  return myPerms.value[String(fid)]?.can_view !== false
+}
+const visibleTplCols = computed(() => OVERVIEW_FIELDS.filter(tplColViewable))
 function startEditTpl(row: OverviewRow, col: OverviewTplCol) {
   if (!isTplCellEditable(col)) return
   editingTplRowId.value = row.id
@@ -221,7 +271,8 @@ function startEditTpl(row: OverviewRow, col: OverviewTplCol) {
   // meta 列编辑时显示用户实际存的值（无值就空），不带公式 fallback；
   // name 列显示 row.name；其他列走 templateCellValue
   if (col.source === 'meta') {
-    editingTplValue.value = rowMetaValue(row, col.label)
+    const raw = rowMetaValue(row, col.label)
+    editingTplValue.value = isDateCol(col) ? normalizeDate(raw) : raw
   } else if (col.source === 'name') {
     editingTplValue.value = row.name || ''
   } else {
@@ -233,7 +284,9 @@ function cancelEditTpl() {
   editingTplLabel.value = ''
 }
 async function saveEditTpl(row: OverviewRow, col: OverviewTplCol) {
-  const newVal = (editingTplValue.value || '').trim()
+  let newVal = (editingTplValue.value || '').trim()
+  // 日期列：录入任意格式都规范化为 YYYY-MM-DD 再存
+  if (newVal && isDateCol(col)) newVal = normalizeDate(newVal)
   const oldVal = templateCellValue(row, col)
   cancelEditTpl()
   if (newVal === oldVal) return
@@ -260,6 +313,43 @@ async function saveEditTpl(row: OverviewRow, col: OverviewTplCol) {
     ElMessage.error(e?.response?.data?.detail || '保存失败')
   }
 }
+
+// ===== 向下拖拽填充（复制源单元格的值到下方各行；仅 meta 可编辑列）=====
+async function applyTplMeta(row: OverviewRow, col: OverviewTplCol, rawVal: string) {
+  let val = (rawVal ?? '').toString().trim()
+  if (val && isDateCol(col)) val = normalizeDate(val)
+  const oldVal = rowMetaValue(row, col.label)
+  if (val === oldVal) return
+  await projectsApi.updateHeaderCell(row.id, col.label, val || null, true)
+  const idx = rows.value.findIndex(r => r.id === row.id)
+  if (idx >= 0) {
+    const extra = { ...rows.value[idx].extra }
+    const key = `${OVERVIEW_PREFIX}${col.label}`
+    if (!val) delete extra[key]
+    else extra[key] = val
+    rows.value[idx] = { ...rows.value[idx], extra }
+  }
+}
+async function onFillCommitOv(colLabel: string, startIdx: number, endIdx: number) {
+  const col = OVERVIEW_FIELDS.find(c => c.label === colLabel)
+  if (!col || col.source !== 'meta' || !isTplCellEditable(col)) return
+  const src = pagedRows.value[startIdx]
+  if (!src) return
+  const val = rowMetaValue(src, col.label)
+  const targets: OverviewRow[] = []
+  for (let i = startIdx + 1; i <= endIdx; i++) {
+    const r = pagedRows.value[i]
+    if (r) targets.push(r)
+  }
+  if (!targets.length) return
+  try {
+    await Promise.all(targets.map(r => applyTplMeta(r, col, val)))
+    ElMessage.success(`已向下填充 ${targets.length} 个单元格`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '填充失败')
+  }
+}
+const { beginFill, isInRange } = useDragFill(onFillCommitOv)
 
 const STATUS_COLOR: Record<string, string> = {
   '进行中': 'primary', '已完成': 'success', '已归档': 'info',
@@ -584,7 +674,9 @@ onMounted(load)
       </el-tooltip>
       <el-select v-model="statusFilter" placeholder="全部状态" size="large"
                  style="width: 130px" @change="onStatusFilterChange">
-        <el-option label="全部" value="" />
+        <el-option label="全部" value="">
+          <span class="status-dot status-dot-all"></span> 全部
+        </el-option>
         <el-option label="进行中" value="进行中">
           <span class="status-dot status-dot-doing"></span> 进行中
         </el-option>
@@ -620,14 +712,14 @@ onMounted(load)
         <el-table-column type="index" label="#" :width="fitScreen ? 38 : 55" align="center" fixed="left"
                          :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
         <!-- 14 列固定模板（项目编号/项目名称/状态/签订日期/...），所有列居中 -->
-        <el-table-column v-for="col in OVERVIEW_FIELDS" :key="col.label"
+        <el-table-column v-for="col in visibleTplCols" :key="col.label"
                          :label="col.label"
                          :min-width="overviewColMinWidth(col)"
                          :fixed="col.source === 'code' ? 'left' : undefined"
                          align="center"
                          header-align="center"
                          show-overflow-tooltip>
-          <template #default="{ row }">
+          <template #default="{ row, $index }">
             <!-- 状态列：el-select 下拉（只显示 进行中/已完成；旧值显示禁用项）-->
             <template v-if="col.source === 'status'">
               <el-select v-if="isAdmin"
@@ -662,11 +754,17 @@ onMounted(load)
             <span v-else class="cell"
                   :class="[
                     templateCellClass(row, col),
-                    { editable: isTplCellEditable(col) },
+                    { editable: isTplCellEditable(col),
+                      'fill-in-range': col.source === 'meta' && isInRange(col.label, $index) },
                   ]"
+                  :data-fill-row="$index"
+                  :data-fill-col="col.source === 'meta' ? col.label : undefined"
                   @click="startEditTpl(row, col)">
               <span v-if="templateCellValue(row, col)">{{ templateCellValue(row, col) }}</span>
               <span v-else class="muted">-</span>
+              <span v-if="col.source === 'meta' && isTplCellEditable(col)" class="fill-handle"
+                    title="按住向下拖，复制到下方单元格"
+                    @mousedown="beginFill(col.label, $index, $event)" @click.stop></span>
             </span>
           </template>
         </el-table-column>
@@ -784,6 +882,7 @@ onMounted(load)
 .cell {
   /* inline-flex + 居中：让文字在 min-height 高度内「上下也居中」，
      解决之前 inline-block 时单行文字贴在单元格顶部的问题 */
+  position: relative;
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 60px; min-height: 32px;
   padding: 6px 8px;
@@ -796,6 +895,23 @@ onMounted(load)
 .cell.editable:hover {
   background: rgba(37,99,235,.08);
   outline: 1px dashed var(--primary);
+}
+/* 向下拖拽填充：填充柄（hover 可编辑单元格才显示）+ 拖拽范围高亮 */
+.fill-handle {
+  position: absolute; right: 0; bottom: 0;
+  width: 9px; height: 9px;
+  background: var(--primary, #2563eb);
+  border: 1px solid #fff;
+  cursor: ns-resize;
+  opacity: 0;
+  transition: opacity .12s;
+  z-index: 5;
+}
+.cell.editable:hover .fill-handle { opacity: 1; }
+.fill-in-range {
+  background: rgba(37, 99, 235, .15) !important;
+  outline: 1px solid var(--primary, #2563eb);
+  outline-offset: -1px;
 }
 
 .pager { padding: 16px 0; text-align: right; }
@@ -850,6 +966,7 @@ onMounted(load)
 .status-dot-doing { background: #ef4444; }
 .status-dot-done { background: #10b981; }
 .status-dot-archived { background: #94a3b8; }
+.status-dot-all { background: #94a3b8; }
 
 /* ===== 表格底色 + 加粗边框 + 圆角（v2: 加重视觉分量） ===== */
 :deep(.el-table) {
@@ -904,6 +1021,9 @@ onMounted(load)
   padding: 0 5px !important;
   line-height: 1.35 !important;
   font-size: 12.5px !important;
+  /* 紧凑模式下不强撑 .cell 的 60px 最小宽：窄列（电工/货期 min-width 48-50）里
+     60px 的 inline-flex 盒子会溢出顶破右边框，形成"毛刺" */
+  min-width: 0 !important;
 }
 :deep(.el-table--small th.el-table__cell .cell) {
   font-weight: 700 !important;
