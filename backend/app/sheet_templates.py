@@ -13,6 +13,7 @@ OVERVIEW_FIELDS 是一览页固定显示的列。
 OVERVIEW_HEADER_ALIAS 把一览的列名（"签订日期/电工"）映射到项目头表的物理
 key（"下单日期/电器"），让两套 UI 共享同一份数据。
 """
+import re
 
 SHEET_TEMPLATES: dict[str, list[str]] = {
     '钣金装配': [
@@ -118,6 +119,47 @@ OVERVIEW_HEADER_ALIAS: dict[str, str] = {
     '交货日期': '交货日期',
     '数量':    '数量',
 }
+
+
+# ===== 日期字段统一规范化（YYYY-MM-DD） =====
+# 一览/项目头里这些字段名视为"日期型"，录入和存量都规范化为 YYYY-MM-DD。
+# 不以"日期"结尾但本质是日期的列（制图开始/制图结束），在 _DATE_FIELD_EXTRA 显式列出。
+_DATE_FIELD_EXTRA = {'制图开始', '制图结束'}
+_DATE_RE = re.compile(r'^(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})')
+_DATE_RE_COMPACT = re.compile(r'^(\d{4})(\d{2})(\d{2})$')  # 20260408 这种无分隔符
+
+
+def is_date_field(label: str) -> bool:
+    """字段名是否为日期型（需要规范化为 YYYY-MM-DD）。"""
+    s = (label or '').strip()
+    return s.endswith('日期') or s in _DATE_FIELD_EXTRA
+
+
+def normalize_date_str(s) -> str:
+    """把松散日期规范化为 YYYY-MM-DD；解析不了就原样返回（保留"待定"等文本）。
+
+    支持：2026-6-4 / 2026/5/12 / 2026.5.12 / 2026年5月12日 / 20260408（8 位无分隔符）
+    / Excel 日期序列号（5 位，如 45390）。
+    幂等：已是 YYYY-MM-DD 的值规范化后不变。前端 normalizeDate 用同一套规则。
+    """
+    if s is None:
+        return ''
+    raw = str(s).strip()
+    if not raw:
+        return ''
+    m = _DATE_RE.match(raw) or _DATE_RE_COMPACT.match(raw)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    elif raw.isdigit() and len(raw) == 5 and 30000 <= int(raw) <= 60000:
+        # Excel 日期序列号（基准 1899-12-30，已含 1900 闰年补偿）
+        from datetime import date as _date, timedelta as _td
+        dt = _date(1899, 12, 30) + _td(days=int(raw))
+        y, mo, d = dt.year, dt.month, dt.day
+    else:
+        return raw
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return raw
+    return f"{y:04d}-{mo:02d}-{d:02d}"
 
 
 def is_known_sheet(sheet_name: str) -> bool:

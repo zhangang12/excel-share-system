@@ -8,7 +8,7 @@ from sqlalchemy import select, or_, func, delete as sql_delete
 
 from ..database import get_db
 from .. import models, schemas
-from ..sheet_templates import SHEET_TEMPLATES
+from ..sheet_templates import SHEET_TEMPLATES, is_date_field, normalize_date_str
 from ..utils import write_audit
 
 
@@ -428,6 +428,9 @@ async def update_project_header_cell(
     storage_key = f"{prefix}{key}"
     val = data.value
     normalized_val = val.strip() if isinstance(val, str) else val
+    # 日期型字段统一规范化为 YYYY-MM-DD（用户填 2026/5/12、2026.5.12 等都自动转）
+    if isinstance(normalized_val, str) and is_date_field(key):
+        normalized_val = normalize_date_str(normalized_val)
 
     if val is None or (isinstance(val, str) and val.strip() == ""):
         extra.pop(storage_key, None)
