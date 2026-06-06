@@ -717,6 +717,114 @@ async def backfill_completion_date(db: AsyncSession) -> dict:
     return {"filled": filled}
 
 
+async def normalize_overview_date_fields(db: AsyncSession) -> dict:
+    """把存量项目 extra 里的日期型字段统一规范化为 YYYY-MM-DD。
+
+    覆盖一览（__o__）与项目详情头表（__h__）两套前缀下、字段名是日期型的 key
+    （签订日期/交货日期/制图开始/制图结束/完成日期/下单日期/制表日期/出货日期…）。
+    用户历史上填的 2026/5/12、2026.5.12、2026年5月12日、2026-6-4 等都转成 2026-05-12。
+
+    幂等：已是 YYYY-MM-DD 的值规范化后不变；解析不了的（如"待定"）原样保留。
+    """
+    from .routers.projects_router import OVERVIEW_KEY_PREFIX, HEADER_KEY_PREFIX
+    from .sheet_templates import is_date_field, normalize_date_str
+
+    res = await db.execute(
+        select(models.Project).where(models.Project.is_deleted == False)
+    )
+    projects = res.scalars().all()
+
+    changed_projects = 0
+    changed_cells = 0
+    for p in projects:
+        extra = dict(p.extra or {})
+        before = dict(extra)
+        for k, v in list(extra.items()):
+            if not isinstance(k, str) or not isinstance(v, str):
+                continue
+            if k.startswith(OVERVIEW_KEY_PREFIX):
+                label = k[len(OVERVIEW_KEY_PREFIX):]
+            elif k.startswith(HEADER_KEY_PREFIX):
+                label = k[len(HEADER_KEY_PREFIX):]
+            else:
+                continue
+            if not is_date_field(label):
+                continue
+            nv = normalize_date_str(v)
+            if nv != v:
+                extra[k] = nv
+                changed_cells += 1
+        if extra != before:
+            p.extra = extra
+            changed_projects += 1
+
+    if changed_projects:
+        await db.commit()
+        log.info(
+            "[normalize_overview_date_fields] 规范化 %d 个项目的 %d 个日期单元格为 YYYY-MM-DD",
+            changed_projects, changed_cells,
+        )
+    return {"projects": changed_projects, "cells": changed_cells}
+
+
+async def align_overview_fields_to_template(db: AsyncSession) -> dict:
+    """把一览字段表（overview_fields）对齐到「项目一览」模板的可配置列。
+
+    背景：overview_fields 是早期导入/手动建的，残留了大量与现模板不符的旧字段
+    （制图完成日期/完成时间/生产进度单/实际用时/滞后时间/发货日期/fdsf…），还把
+    派生列（货期/已过时间/剩余制作时间）也塞了进来，导致「权限管理 → 项目一览
+    字段」的列名和一览页对不上、且配了不生效。
+
+    这里按一览模板的「可填写列」重建权限字段集：
+      数量 / 销售 / 签订日期 / 交货日期 / 设计师 / 制图开始 / 制图结束 / 制图用时 / 电工
+      - 删除不在期望集的字段（连带其 OverviewFieldPermission）
+      - 补齐缺失字段、修正 type 与 sort_order
+      - 名字已对的字段保留（其已配权限不丢）
+    幂等：再次运行无多余字段可删、期望字段都在，空操作。
+    """
+    from sqlalchemy import delete as _del
+
+    EXPECTED: list[tuple[str, str]] = [
+        ('数量', 'number'), ('销售', 'text'), ('签订日期', 'date'),
+        ('交货日期', 'date'), ('设计师', 'text'), ('制图开始', 'date'),
+        ('制图结束', 'date'), ('制图用时', 'number'), ('电工', 'text'),
+    ]
+    expected_names = {n for n, _ in EXPECTED}
+
+    res = await db.execute(select(models.OverviewField))
+    existing = {f.name: f for f in res.scalars().all()}
+
+    # 1) 删除多余字段 + 其权限
+    stale = [f for name, f in existing.items() if name not in expected_names]
+    if stale:
+        ids = [f.id for f in stale]
+        await db.execute(_del(models.OverviewFieldPermission).where(
+            models.OverviewFieldPermission.field_id.in_(ids)))
+        await db.execute(_del(models.OverviewField).where(
+            models.OverviewField.id.in_(ids)))
+
+    # 2) 补齐缺失 / 修正 type 与顺序
+    added = 0
+    for i, (name, typ) in enumerate(EXPECTED):
+        f = existing.get(name)
+        if f is not None:
+            if f.sort_order != i:
+                f.sort_order = i
+            if f.type != typ:
+                f.type = typ
+        else:
+            db.add(models.OverviewField(name=name, type=typ, sort_order=i))
+            added += 1
+
+    if stale or added:
+        await db.commit()
+        log.info(
+            "[align_overview_fields_to_template] 一览字段表对齐模板：删除 %d 个旧字段，补齐 %d 个",
+            len(stale), added,
+        )
+    return {"deleted": len(stale), "added": added}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -771,3 +879,11 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_completion_date(db)
     except Exception as e:
         log.warning("backfill_completion_date failed: %s", e)
+    try:
+        await normalize_overview_date_fields(db)
+    except Exception as e:
+        log.warning("normalize_overview_date_fields failed: %s", e)
+    try:
+        await align_overview_fields_to_template(db)
+    except Exception as e:
+        log.warning("align_overview_fields_to_template failed: %s", e)
