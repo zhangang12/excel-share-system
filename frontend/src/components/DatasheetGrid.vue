@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 // 字段权限统一在「权限管理 → 权限矩阵」页配置，不再挂在表头
 import { useRealtime } from '@/composables/useRealtime'
 import { useTableHeight } from '@/composables/useTableHeight'
+import { useDragFill } from '@/composables/useDragFill'
 // 单元格手动公式（=A2+B2）功能已禁用；保留 utils/formula.ts 文件以便后续重启。
 // 系统自动公式（preamble 的"货期/已过时间/倒计时"）走 preambleCell/preambleFormula，
 // 与单元格公式无关，继续工作。
@@ -465,6 +466,42 @@ async function saveEdit(r: DataRecord, f: DataField) {
 
 function cancelEdit() { editingCell.value = null }
 
+// ===== 向下拖拽填充（复制源单元格的值到下方各行）=====
+async function applyCellValue(r: DataRecord, f: DataField, val: any) {
+  const oldVal = getCellValue(r, f)
+  if (JSON.stringify(val) === JSON.stringify(oldVal)) return
+  await datasheetsApi.updateCell(r.id, f.id, val)
+  const idx = records.value.findIndex(x => x.id === r.id)
+  if (idx >= 0) {
+    const newValues = { ...records.value[idx].values }
+    const fid = String(f.id)
+    const empty = val === null || val === '' || (Array.isArray(val) && val.length === 0)
+    if (empty) delete newValues[fid]
+    else newValues[fid] = val
+    records.value[idx] = { ...records.value[idx], values: newValues }
+  }
+}
+async function onFillCommit(colId: string, startIdx: number, endIdx: number) {
+  const f = visibleFields.value.find(x => String(x.id) === colId)
+  if (!f || !fieldEditable(f)) return
+  const src = pagedRecords.value[startIdx]
+  if (!src) return
+  const val = getCellValue(src, f) ?? ''
+  const targets: DataRecord[] = []
+  for (let i = startIdx + 1; i <= endIdx; i++) {
+    const r = pagedRecords.value[i]
+    if (r) targets.push(r)
+  }
+  if (!targets.length) return
+  try {
+    await Promise.all(targets.map(r => applyCellValue(r, f, val)))
+    ElMessage.success(`已向下填充 ${targets.length} 个单元格`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '填充失败')
+  }
+}
+const { beginFill, isInRange } = useDragFill(onFillCommit)
+
 // 字段管理
 const fieldDialogVisible = ref(false)
 const editingField = ref<DataField | null>(null)
@@ -612,7 +649,7 @@ async function addRow() {
             </el-tooltip>
           </span>
         </template>
-        <template #default="{ row }">
+        <template #default="{ row, $index }">
           <template v-if="isEditing(row, f)">
             <!-- 进度列：固定下拉框（完成 / 进行中），存量旧值显示为禁用项让用户重新选 -->
             <el-select v-if="isProgressField(f)"
@@ -636,7 +673,8 @@ async function addRow() {
                  字段中文值是"完成"的情况）；整格着色由 :cell-class-name
                  +datasheetCellClass 完成，仅对"进度"列生效 -->
             <span class="cell"
-                  :class="{ editable: fieldEditable(f) }"
+                  :class="{ editable: fieldEditable(f), 'fill-in-range': isInRange(String(f.id), $index) }"
+                  :data-fill-row="$index" :data-fill-col="f.id"
                   @click="startEdit(row, f)">
               <template v-if="displayCellValue(row, f).isEmpty">
                 <span class="muted">-</span>
@@ -644,6 +682,9 @@ async function addRow() {
               <template v-else>
                 {{ displayCellValue(row, f).text }}
               </template>
+              <span v-if="fieldEditable(f)" class="fill-handle"
+                    title="按住向下拖，复制到下方单元格"
+                    @mousedown="beginFill(String(f.id), $index, $event)" @click.stop></span>
             </span>
           </template>
         </template>
@@ -715,6 +756,7 @@ async function addRow() {
 
 .cell {
   /* inline-flex + 居中：单行文字在 min-height 内上下也居中 */
+  position: relative;
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 40px;
   min-height: 22px;
@@ -731,6 +773,23 @@ async function addRow() {
 .cell.editable:hover {
   background: rgba(37,99,235,.10);
   outline: 1px dashed var(--primary);
+}
+/* 向下拖拽填充：填充柄（hover 可编辑单元格才显示）+ 拖拽范围高亮 */
+.fill-handle {
+  position: absolute; right: 0; bottom: 0;
+  width: 8px; height: 8px;
+  background: var(--primary, #2563eb);
+  border: 1px solid #fff;
+  cursor: ns-resize;
+  opacity: 0;
+  transition: opacity .12s;
+  z-index: 5;
+}
+.cell.editable:hover .fill-handle { opacity: 1; }
+.fill-in-range {
+  background: rgba(37, 99, 235, .15) !important;
+  outline: 1px solid var(--primary, #2563eb);
+  outline-offset: -1px;
 }
 
 /* .cell.status-done / status-doing 已下线，避免按值染色误染其他字段 */
