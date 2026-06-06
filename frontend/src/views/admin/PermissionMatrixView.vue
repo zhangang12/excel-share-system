@@ -66,7 +66,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
 
     <el-card v-loading="loading">
       <el-radio-group v-model="activeView" size="default" style="margin-bottom: 16px">
-        <el-radio-button value="overview"><el-icon><DataLine /></el-icon> 项目一览字段</el-radio-button>
+        <el-radio-button value="overview"><el-icon><DataLine /></el-icon> 项目目录字段</el-radio-button>
         <el-radio-button value="datasheets"><el-icon><FolderOpened /></el-icon> 项目进度字段</el-radio-button>
       </el-radio-group>
 
@@ -80,7 +80,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
 
       <!-- 项目一览字段矩阵 -->
       <div v-if="activeView === 'overview'">
-        <el-empty v-if="!matrix?.overview.length" description="项目一览还没有自定义字段" />
+        <el-empty v-if="!matrix?.overview.length" description="项目目录还没有自定义字段" />
         <table v-else class="matrix">
           <thead>
             <tr>

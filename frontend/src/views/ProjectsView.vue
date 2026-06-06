@@ -98,7 +98,7 @@ onMounted(load)
   <div>
     <div class="page-header">
       <div>
-        <h1>项目列表</h1>
+        <h1>项目详单</h1>
         <div class="desc">点项目编号进入维护进度表</div>
       </div>
       <div class="spacer"></div>

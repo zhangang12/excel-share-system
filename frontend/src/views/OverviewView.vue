@@ -378,7 +378,7 @@ async function onExport() {
     const blob = await res.blob()
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = '项目一览.xlsx'
+    a.download = '项目目录.xlsx'
     document.body.appendChild(a); a.click(); a.remove()
     URL.revokeObjectURL(a.href)
   } catch (e: any) {
@@ -617,7 +617,7 @@ async function onImportFile(ev: Event) {
   const file = input.files?.[0]
   if (!file) return
   const ok = await ElMessageBox.confirm(
-    `导入「${file.name}」？\n\n⚠ 此操作会：\n• 删除项目一览所有自定义列（之前配的字段权限会丢）\n• 清空所有项目的一览数据\n• 然后从 Excel 重新导入\n\n项目本身、项目内的进度表数据不受影响。`,
+    `导入「${file.name}」？\n\n⚠ 此操作会：\n• 删除项目目录所有自定义列（之前配的字段权限会丢）\n• 清空所有项目的目录数据\n• 然后从 Excel 重新导入\n\n项目本身、项目内的进度表数据不受影响。`,
     '全量导入确认',
     { confirmButtonText: '清空并导入', cancelButtonText: '取消', type: 'warning', dangerouslyUseHTMLString: false }
   ).catch(() => false)
@@ -659,7 +659,7 @@ onMounted(load)
   <div>
     <div class="page-header">
       <div>
-        <h1>项目一览</h1>
+        <h1>项目目录</h1>
         <div class="desc">共 {{ rows.length }} 个项目 · {{ fields.length }} 个自定义列</div>
       </div>
       <div class="spacer"></div>

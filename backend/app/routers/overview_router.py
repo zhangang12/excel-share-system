@@ -210,7 +210,7 @@ async def export_overview(
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "项目一览"
+    ws.title = "项目目录"
     ws.append(["项目编号", "项目名称", "状态", "项目经理"] + [f.name for f in fields])
     for p in visible:
         manager_name = ""
@@ -228,7 +228,7 @@ async def export_overview(
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    fname = "项目一览.xlsx"
+    fname = "项目目录.xlsx"
     return StreamingResponse(
         bio,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
