@@ -77,7 +77,7 @@ const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '电工',         source: 'meta',    editable: true,  widthPct: 6 },
   { label: '货期',         source: 'derived', derived: 'duration',  editable: false, widthPct: 5 },
   { label: '已过时间',     source: 'derived', derived: 'elapsed',   editable: false, widthPct: 6 },
-  { label: '剩余制作时间', source: 'derived', derived: 'remaining', editable: false, widthPct: 6 },
+  { label: '剩余制作时间', source: 'meta', fallbackDerived: 'remaining', editable: true, widthPct: 6 },
 ]
 
 const STATUS_OPTIONS_NEW = ['进行中', '已完成']
@@ -219,6 +219,10 @@ function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
   if (col.source === 'name') return row.name || ''
   if (col.source === 'status') return row.status || ''
   if (col.source === 'meta') {
+    // 剩余制作时间：仅「已完成」用管理层手填的覆盖值；进行中始终实时派生
+    if (col.label === '剩余制作时间' && row.status !== '已完成') {
+      return computeDerived(row, 'remaining')
+    }
     const v = rowMetaValue(row, col.label)
     if (v) return isDateCol(col) ? normalizeDate(v) : smartFormatValue(v)
     // 用户没手填 → 尝试 fallback 派生公式（如"制图用时"）
@@ -234,7 +238,7 @@ function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
 }
 
 function templateCellClass(row: OverviewRow, col: OverviewTplCol): string {
-  if (col.derived === 'remaining') {
+  if (col.label === '剩余制作时间') {
     const v = parseInt(templateCellValue(row, col))
     // 只有"剩余制作时间 < 0"（已超期）才标红；含正数在内的其余值都不着色
     if (!isNaN(v) && v < 0) return 'cell-overdue'
@@ -249,8 +253,12 @@ const editingTplValue = ref<string>('')
 function isEditingTpl(row: OverviewRow, col: OverviewTplCol): boolean {
   return editingTplRowId.value === row.id && editingTplLabel.value === col.label
 }
-function isTplCellEditable(col: OverviewTplCol): boolean {
+function isTplCellEditable(col: OverviewTplCol, row?: OverviewRow): boolean {
   if (!col.editable) return false
+  // 剩余制作时间：仅「已完成」项目可由管理层修正；进行中为实时派生、不可编辑
+  if (col.label === '剩余制作时间') {
+    return !!row && row.status === '已完成' && isAdmin.value
+  }
   if (isAdmin.value) return true
   // 非管理员：按一览字段权限（「项目名称」等无对应权限字段的列仅管理员可改）
   const fid = tplFieldId(col.label)
@@ -265,7 +273,7 @@ function tplColViewable(col: OverviewTplCol): boolean {
 }
 const visibleTplCols = computed(() => OVERVIEW_FIELDS.filter(tplColViewable))
 function startEditTpl(row: OverviewRow, col: OverviewTplCol) {
-  if (!isTplCellEditable(col)) return
+  if (!isTplCellEditable(col, row)) return
   editingTplRowId.value = row.id
   editingTplLabel.value = col.label
   // meta 列编辑时显示用户实际存的值（无值就空），不带公式 fallback；
@@ -332,7 +340,7 @@ async function applyTplMeta(row: OverviewRow, col: OverviewTplCol, rawVal: strin
 }
 async function onFillCommitOv(colLabel: string, startIdx: number, endIdx: number) {
   const col = OVERVIEW_FIELDS.find(c => c.label === colLabel)
-  if (!col || col.source !== 'meta' || !isTplCellEditable(col)) return
+  if (!col || col.source !== 'meta' || col.label === '剩余制作时间' || !isTplCellEditable(col)) return
   const src = pagedRows.value[startIdx]
   if (!src) return
   const val = rowMetaValue(src, col.label)
@@ -754,7 +762,7 @@ onMounted(load)
             <span v-else class="cell"
                   :class="[
                     templateCellClass(row, col),
-                    { editable: isTplCellEditable(col),
+                    { editable: isTplCellEditable(col, row),
                       'fill-in-range': col.source === 'meta' && isInRange(col.label, $index) },
                   ]"
                   :data-fill-row="$index"
@@ -762,7 +770,7 @@ onMounted(load)
                   @click="startEditTpl(row, col)">
               <span v-if="templateCellValue(row, col)">{{ templateCellValue(row, col) }}</span>
               <span v-else class="muted">-</span>
-              <span v-if="col.source === 'meta' && isTplCellEditable(col)" class="fill-handle"
+              <span v-if="col.source === 'meta' && col.label !== '剩余制作时间' && isTplCellEditable(col, row)" class="fill-handle"
                     title="按住向下拖，复制到下方单元格"
                     @mousedown="beginFill(col.label, $index, $event)" @click.stop></span>
             </span>
