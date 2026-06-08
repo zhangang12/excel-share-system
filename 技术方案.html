@@ -1,0 +1,103 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>技术方案</title><style>:root{--pri:#2563eb;--bd:#d0d7de;--bg:#f6f8fa;--tx:#1f2328;--mut:#656d76;}*{box-sizing:border-box;}body{margin:0;background:#fff;color:var(--tx);font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;line-height:1.7;}.wrap{max-width:920px;margin:0 auto;padding:36px 28px 80px;}h1{font-size:27px;border-bottom:2px solid var(--bd);padding-bottom:12px;margin:0 0 18px;}h2{font-size:21px;border-bottom:1px solid var(--bd);padding-bottom:8px;margin:32px 0 14px;}h3{font-size:17px;margin:22px 0 10px;}h4{font-size:15px;margin:16px 0 8px;color:var(--mut);}p{margin:10px 0;}a{color:var(--pri);}ul,ol{margin:10px 0;padding-left:26px;}li{margin:4px 0;}ul ul{margin:4px 0;}code{background:rgba(175,184,193,.25);padding:.15em .4em;border-radius:5px;font-size:88%;font-family:Consolas,monospace;}pre{background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:14px 16px;overflow:auto;}pre code{background:none;padding:0;font-size:13px;line-height:1.55;}blockquote{margin:12px 0;padding:8px 16px;color:var(--mut);border-left:4px solid var(--pri);background:#f8fbff;border-radius:0 6px 6px 0;}hr{border:none;border-top:1px solid var(--bd);margin:26px 0;}table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;display:block;overflow-x:auto;}th,td{border:1px solid var(--bd);padding:8px 12px;text-align:left;vertical-align:top;}th{background:var(--bg);font-weight:700;white-space:nowrap;}tbody tr:nth-child(even){background:#fafbfc;}strong{color:#0f172a;}.toolbar{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--bd);padding:10px 28px;display:flex;gap:10px;align-items:center;}.toolbar b{flex:1;font-size:14px;}.toolbar button{border:1px solid var(--bd);background:#fff;border-radius:7px;padding:6px 14px;cursor:pointer;font-size:13px;}.toolbar button:hover{border-color:var(--pri);color:var(--pri);}@media print{.toolbar{display:none;}.wrap{max-width:none;padding:0;}}</style></head><body><div class="toolbar"><b>📄 技术方案</b><button onclick="window.print()">🖨 打印 / 导出 PDF</button></div><div class="wrap"><h1>部门协作流程 · 技术方案</h1>
+<blockquote>配套文档：《需求分析》(<code>需求分析.md</code> / <code>.html</code>)、UI 设计稿 (<code>demo/增量UI设计图.html</code>)。 原则：接得上现有「Vue3 + FastAPI」系统，增量扩展，现有页面 UI 不动。</blockquote>
+<hr>
+<h2>一、现状可复用资产</h2>
+<table><thead><tr><th>能力</th><th>现状</th><th>本次如何利用</th></tr></thead><tbody><tr><td>后端</td><td>FastAPI + SQLAlchemy2.0 异步；DB 用 <code>PortableJSON</code>（PG=JSONB / SQLite=JSON）；生产 Postgres</td><td>新表沿用同一 Base / 异步 session</td></tr><tr><td>迁移</td><td>无 alembic；启动 <code>lifespan</code> 跑 <code>create_all</code> + <code>data_migration.run_all</code>（幂等）</td><td>新表自动建；角色/存量数据用新增幂等迁移函数</td></tr><tr><td>角色</td><td><code>seed.py</code> 硬编码 8 角色，启动同步（不支持运行时自定义）</td><td>扩角色＝改 <code>ROLES</code> 常量 + 重启</td></tr><tr><td>权限</td><td><code>ProjectMember</code>(项目级) + <code>FieldPermission/OverviewFieldPermission</code>(字段级 by role)</td><td>下单/导出权限按角色码判断；字段权限沿用</td></tr><tr><td>实时</td><td><code>ws_router.ConnectionManager</code>，room=<code>datasheet:{id}</code>/<code>overview</code></td><td>新增 <code>user:{id}</code> room 推站内通知</td></tr><tr><td>文件</td><td>仅 Excel 导入/导出；<strong>无通用附件表</strong>；<code>docker-compose.prod</code> 已挂 <code>uploads_data:/app/uploads</code></td><td>新建 <code>attachments</code> 表 + 落盘 <code>/app/uploads</code></td></tr><tr><td>四张表</td><td>每项目自带 4 个固定 <code>Datasheet</code>（<code>create_default_template_sheets</code>）</td><td>四表校验＝判断这 4 表是否有 <code>Record</code></td></tr><tr><td>项目元数据</td><td><code>Project.extra</code> 存 <code>__o__</code>(一览)/<code>__h__</code>(详情头)</td><td>制图开始/完成回传复用 <code>__o__</code></td></tr><tr><td>定时</td><td>无；compose 内有 Redis</td><td>逾期检测：asyncio 定时 + Redis 锁</td></tr><tr><td>企业微信</td><td>无</td><td>全新集成（自建应用消息 API），凭证未到位降级为仅站内</td></tr></tbody></table>
+<h2>二、数据模型设计（新增表）</h2>
+<blockquote>全部沿用 <code>PortableJSON</code> / 异步 Base；<code>create_all</code> 自动建表。</blockquote>
+<pre><code>dept_orders          部门任务单（下单核心）
+  id, project_id FK, dept(design/electric/produce),
+  assignee_id FK users, created_by FK users,
+  requirement Text, status(pending/doing/done),
+  plan_start Date, plan_due Date, done_at Date,
+  notify_user_id FK users,                 # 完成后通知谁
+  is_overdue Bool, overdue_notified Bool,  # 逾期检测去重
+  created_at, updated_at
+
+attachments          通用附件（下单资料 + 完成产物 + 发货单）
+  id, owner_type(dept_order/dept_order_output/shipment_invoice),
+  owner_id, kind(material/word/nameplate_cad/purchase_list/circuit/invoice),
+  stage(on_assign/on_complete),            # 采购清单=接单后；电路图/说明书/铭牌=完成时
+  to_dept(purchase/logistics/null),        # 产物推送目标
+  filename, stored_name, content_type, size,
+  uploaded_by FK users, created_at
+
+shipments            物流发货待办（每项目一条）
+  id, project_id FK unique, status(pending/shipped),
+  receiver_name, receiver_phone, receiver_addr,
+  shipped_at, invoice_attachment_id FK attachments,
+  created_at, updated_at
+  # 汇总资料 = attachments(to_dept=logistics 且同 project)，按来源部门分三栏
+
+notifications        站内消息 + 企微发送记录
+  id, to_user_id FK, kind(wx/overdue/approval),
+  title, content, link, is_read,
+  channel(inapp/wechat), wechat_sent Bool, created_at
+
+export_requests      导出权限申请/审批（一次性）
+  id, requested_by FK, scope, status(pending/approved/rejected),
+  approver_id FK, decided_at, created_at</code></pre>
+<p><strong>字段/小改动</strong></p>
+<ul><li><code>roles</code>：seed 增加 <code>electrician / assembly_1 / assembly_2 / assembly_3 / logistics / purchasing / design_lead / electric_lead / produce_lead</code>。</li><li><code>roles</code> 加 <code>is_push_target Bool</code> + 可选 <code>dept</code>（逾期按部门推主管）。</li><li><code>users</code> 加 <code>wechat_userid String</code>（企微 touser；为空则仅站内）。</li><li>四表上传状态<strong>不新增字段</strong>，派生：查 4 个固定 <code>Datasheet</code> 是否各有 ≥1 条 <code>Record</code>。</li></ul>
+<h2>三、后端 API（新增，前缀 <code>/api</code>）</h2>
+<table><thead><tr><th>方法 路径</th><th>说明</th><th>权限</th></tr></thead><tbody><tr><td><code>POST /api/dept-orders</code></td><td>下单</td><td>管理层(design/electric)、生产主管(produce)</td></tr><tr><td><code>GET /api/dept-orders?dept=&amp;mine=1</code></td><td>部门订单/我的待办</td><td>登录</td></tr><tr><td><code>PUT /api/dept-orders/{id}/start</code></td><td>接单填时间、开始（设计部回传制图开始）</td><td>负责人</td></tr><tr><td><code>POST /api/dept-orders/{id}/complete</code></td><td>完成（校验四表+通知+产物+推下游+逾期判定）</td><td>负责人</td></tr><tr><td><code>PUT /api/dept-orders/{id}/reopen</code></td><td>改回进行中</td><td>负责人/管理层</td></tr><tr><td><code>POST /api/attachments</code> (multipart)</td><td>上传附件（落盘 uploads）</td><td>登录</td></tr><tr><td><code>GET /api/attachments/{id}</code></td><td>鉴权下载</td><td>按归属鉴权</td></tr><tr><td><code>GET /api/projects/{id}/sheet-status</code></td><td>四表上传校验状态</td><td>登录</td></tr><tr><td><code>GET /api/purchase/inbox</code></td><td>采购部收件箱</td><td>采购/管理层</td></tr><tr><td><code>GET /api/shipments</code>、<code>PUT /api/shipments/{id}/receiver</code>、<code>POST /api/shipments/{id}/ship</code></td><td>物流列表/收货信息/已发货</td><td>物流/管理层</td></tr><tr><td><code>GET /api/reports/monthly?month=&amp;dept=</code></td><td>月度报表聚合</td><td>管理层/主管</td></tr><tr><td><code>GET /api/notifications</code>、<code>PUT /api/notifications/read</code></td><td>站内消息</td><td>登录</td></tr><tr><td><code>POST/GET/PUT /api/export-requests[/{id}]</code></td><td>导出申请/列表/审批</td><td>申请:登录；审批:管理层</td></tr><tr><td><code>PUT /api/admin/roles/{id}/push-target</code></td><td>设置消息推送人</td><td>管理层</td></tr></tbody></table>
+<blockquote>写操作统一 <code>write_audit(...)</code> 记审计；通知走新增 <code>broadcast_to_user</code>。</blockquote>
+<h2>四、前端设计</h2>
+<p><strong>新增页面/路由</strong>（<code>MainLayout</code> 加菜单）</p>
+<ul><li>设计部/电工部/生产部 → 复用 <code>DeptWorkbench.vue</code>（按 <code>dept</code> 渲染：管理视图=订单跟踪表；负责人视图=待办+已完成）。</li><li><code>PurchaseInbox.vue</code>、<code>LogisticsView.vue</code>（三栏资料 + 收货信息 + 发货）、<code>ReportView.vue</code>、<code>ExportApproveView.vue</code>。</li></ul>
+<p><strong>改动现有页面（仅叠加，不改原 UI）</strong></p>
+<ul><li><code>OverviewView.vue</code>(项目目录)：编号 hover 浮出「＋下单」；制图开始/结束由设计完成回传（复用 <code>__o__</code>）。</li><li><code>ProjectDetailView.vue</code>：加「四表上传校验区」+「各部门任务进度卡」。</li><li><code>PermissionMatrixView.vue</code>：角色加「消息推送人」开关。</li></ul>
+<p><strong>通用组件</strong></p>
+<ul><li><code>OrderDialog.vue</code>（下单）、<code>CompleteDialog.vue</code>（完成：四表校验+通知人+产物上传）、<code>useNotifications.ts</code>（铃铛+WS <code>user:{id}</code>）。</li></ul>
+<h2>五、关键技术点</h2>
+<ol><li><strong>角色扩展</strong>：改 <code>seed.ROLES</code>；<code>roles</code> 加 <code>is_push_target</code>；迁移 <code>backfill_new_roles</code>（幂等）。</li><li><strong>附件存储</strong>：落盘 <code>/app/uploads/{yyyymm}/{uuid}{ext}</code>（卷已挂），DB 存元数据，按归属鉴权下载；量大可平滑换 OSS。</li><li><strong>四表校验</strong>：<code>GET sheet-status</code> 查 4 表 <code>Record</code> 数；设计部 <code>complete</code> 缺表返回 422。</li><li><strong>产物上传与推送（分阶段）</strong>：① 电工部<strong>接单后</strong>(<code>stage=on_assign</code>)即可传采购清单(Excel)→采购部收件箱，不必等完成；② 设计部完成传 说明书(Word)+铭牌(CAD)→物流；③ 电工部完成时<strong>强制校验电路图(PDF)已上传</strong>，否则 <code>complete</code> 返回 422；产物 <code>attachments.to_dept</code> 决定去向，<code>complete</code> 事务内归集并发通知。各部门「完成必传产物」由 <code>DEPTS</code> 配置 <code>required</code> 声明。</li><li><strong>企业微信</strong>：<code>wechat.py</code>：<code>get_token</code>(Redis 缓存) + <code>send_text/send_card</code>；<code>.env</code> 配 <code>WECHAT_*</code>；凭证未到位整体降级仅站内；失败不阻断主流程。</li><li><strong>逾期检测</strong>：<code>lifespan</code> 起 asyncio 定时（每日 09:00）+ Redis <code>SETNX</code> 锁；扫 <code>doing &amp; plan_due&lt;today &amp; !overdue_notified</code> → 推对应主管 → 标记。</li><li><strong>站内通知</strong>：<code>ws_router</code> 加 <code>user:{id}</code> room + <code>broadcast_to_user</code>；未读走 <code>GET /notifications</code>。</li><li><strong>导出审批（一次性）</strong>：点导出→建 <code>export_request(pending)</code>→审批 <code>approved</code> 仅放行本次。</li><li><strong>物流三栏 + 收货</strong>：<code>shipments</code> 持收货信息；汇总资料 = <code>attachments(to_dept=logistics)</code> 按 from 部门分组。</li></ol>
+<h2>六、分期实施路线</h2>
+<table><thead><tr><th>阶段</th><th>内容</th><th>预估</th></tr></thead><tbody><tr><td><strong>P1 角色+下单+执行</strong></td><td>角色扩展；<code>dept_orders</code>/<code>attachments</code>；下单→待办→开始→完成(可逆)→效率；制图回传；四表校验</td><td>~5–7 人日</td></tr><tr><td><strong>P2 下游+物流</strong></td><td>产物推送采购/物流；采购收件箱；物流三栏+收货信息+发货</td><td>~3–4 人日</td></tr><tr><td><strong>P3 站内通知</strong></td><td><code>user:{id}</code> 推送 + 消息中心 + 铃铛</td><td>~2 人日</td></tr><tr><td><strong>P4 企微+逾期</strong></td><td>企微消息 API；逾期定时推主管</td><td>~3 人日</td></tr><tr><td><strong>P5 报表+导出审批</strong></td><td>月度报表聚合；导出申请/审批；推送人开关</td><td>~3–4 人日</td></tr></tbody></table>
+<blockquote>合计 ~16–20 人日（不含联调与企微对接）。每阶段可独立上线（main 直推 + docker 重建 + <code>run_all</code> 自动迁移）。</blockquote>
+<h2>七、风险与取舍</h2>
+<ul><li><strong>角色非运行时可配</strong>：新增角色需改代码+重启（与现状一致，简单稳）。</li><li><strong>企微依赖外部凭证</strong>：P4 与凭证申请并行，先上站内通知版。</li><li><strong>定时任务多实例</strong>：单 backend 容器无虑；扩容靠 Redis 锁。</li><li><strong>附件落盘 vs OSS</strong>：先落盘（卷已挂），按量再迁。</li><li>具体业务口径以《需求分析》第五节确认结果为准（影响逾期/效率/四表校验等实现细节）。</li></ul>
+<hr>
+<h2>八、企业微信消息推送方案（详）</h2>
+<h3>8.1 集成方式</h3>
+<p>采用<strong>企业微信「自建应用」+ 应用消息</strong>（<code>message/send</code>）：后端用应用 <code>corpid + secret</code> 换 <code>access_token</code>，向应用可见范围内成员推送。无需第三方/代开发。</p>
+<h3>8.2 前置准备（企业管理员一次性）</h3>
+<ol><li>企业微信管理后台 → 应用管理 → 自建 → 创建应用，记录 <strong>AgentId / Secret</strong>；「我的企业」页拿 <strong>CorpID</strong>。</li><li>应用「可见范围」勾选需接收通知的部门/成员。</li><li>「企业可信IP」加入<strong>服务器公网出口 IP</strong>（调用发送接口要求）；如用消息内 H5 跳转，另配「可信域名」。</li></ol>
+<p>4.（可选）开启通讯录同步，便于系统用户↔企微成员自动映射。</p>
+<h3>8.3 用户映射（User ↔ 企微 UserID）</h3>
+<ul><li><code>users</code> 增 <code>wechat_userid</code>；为空者<strong>仅站内通知</strong>（自动降级）。</li><li>映射方式（任选/组合）：手机号匹配（调通讯录接口回填，推荐）/ 管理页手动绑定 / OAuth 自助（企微内打开系统授权拿 userid）。</li></ul>
+<h3>8.4 access_token 获取与缓存</h3>
+<ul><li><code>GET /cgi-bin/gettoken?corpid=&amp;corpsecret=</code>，有效期 7200s。</li><li><strong>Redis 缓存</strong> <code>wx:token:{agentid}</code>，TTL 7000s（提前过期）；取 token 加 <code>SETNX</code> 锁防并发重复。</li><li>收到 <code>40014/42001</code>（token 失效）→ 清缓存重取一次。</li></ul>
+<h3>8.5 发送消息</h3>
+<ul><li><code>POST /cgi-bin/message/send?access_token=</code>，参数 <code>touser</code>(企微 userid，多人用 <code>|</code>)、<code>agentid</code>、<code>msgtype</code>。</li><li>按场景选类型：完成/审批 → <strong>textcard</strong>（标题+描述+跳转 url）；逾期 → <strong>markdown</strong>（富文本）；兜底 → <strong>text</strong>。</li><li>跳转 <code>url</code> 指向系统页（如 <code>{BASE_URL}/#/project/{id}</code>）；企微内免登可配 OAuth2 网页授权。</li></ul>
+<h3>8.6 后端实现（<code>app/wechat.py</code>）</h3>
+<pre><code>async def get_access_token() -&gt; str          # Redis 缓存 + 锁 + 自动刷新
+async def send_textcard(touser, title, desc, url)
+async def send_markdown(touser, content)
+async def send_text(touser, content)</code></pre>
+<p>与站内通知合并的统一入口：</p>
+<pre><code>async def notify(user, *, title, content, link=None, kind):
+    1) 写 notifications（站内，必做）
+    2) if settings.wechat_enabled and user.wechat_userid:
+         try:  send_textcard/markdown; wechat_sent=True
+         except: wechat_sent=False        # 不抛、不阻断主流程
+    3) ws.broadcast_to_user(user.id, ...)  # 铃铛</code></pre>
+<p>触发点：<code>dept_orders.complete</code>（通知所选人）、逾期定时（通知部门主管）、<code>export_requests</code> 审批结果。</p>
+<h3>8.7 配置（<code>.env</code>）</h3>
+<pre><code>WECHAT_ENABLED=true
+WECHAT_CORPID=ww************
+WECHAT_AGENTID=1000002
+WECHAT_SECRET=********************
+WECHAT_BASE_URL=https://你的系统域名     # 生成跳转链接</code></pre>
+<p><code>config.py</code> 加对应字段；<code>WECHAT_ENABLED=false</code>（凭证未到位/开发）→ 全走站内通知。</p>
+<h3>8.8 容错 / 限流 / 重试</h3>
+<ul><li>发送 <code>try/except</code>，<strong>失败不影响主业务</strong>，失败记 <code>notifications.wechat_sent=false</code>。</li><li>企微有频率配额：批量逾期推送<strong>串行+间隔</strong>或合并多 <code>touser</code> 一条。</li><li>可选补发：定时扫 <code>wechat_sent=false</code> 近 N 小时记录重试。</li></ul>
+<h3>8.9 安全</h3>
+<ul><li><code>Secret</code> 仅放环境变量，不入库、不下发前端、不写日志。</li><li>「企业可信IP」白名单 = 服务器公网 IP。</li></ul>
+<h3>8.10 联调步骤</h3>
+<ol><li>管理员建应用、配可见范围与可信IP。</li><li>配 <code>.env</code> → 调试脚本先给<strong>自己</strong> userid 发一条 text 验证打通。</li><li>回填测试用户 <code>wechat_userid</code> → 跑「完成→通知」真实链路。</li><li>灰度：先设计部启用，再全量。</li></ol>
+<h3>8.11 时序（完成通知）</h3>
+<pre><code>设计师点完成 → complete 事务（写完成/产物推送）
+   → notify(通知人)：写 notifications → get_token(Redis) → message/send(textcard)
+   → ws 推铃铛
+通知人企微收到卡片 → 点开（OAuth 免登）→ 系统对应页</code></pre>
+<blockquote>对接现有系统：复用 <code>notifications</code>(<code>channel/wechat_sent</code>)、<code>users.wechat_userid</code>、<code>ws_router</code> 的 <code>user:{id}</code> 推送；触发点在 <code>complete</code>/逾期任务/审批。<code>WECHAT_ENABLED=false</code> 时 P3 站内先行、P4 接通企微。</blockquote></div></body></html>

@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>同辉项目管理 · 增量 UI 设计图（基于现有系统）</title>
+<style>
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  :root{ --primary:#2563eb; --primary-d:#1d4ed8; --primary-l:#dbeafe;
+    --sidebar-bg:#1e293b; --sidebar-tx:#cbd5e1;
+    --bd:#e2e8f0; --tx1:#0f172a; --tx2:#475569; --tx3:#94a3b8;
+    --ok:#16a34a; --ok-l:#dcfce7; --warn:#d97706; --warn-l:#fef3c7; --danger:#dc2626; --danger-l:#fee2e2; --info-l:#e0f2fe; --info:#0369a1;
+    --tbl-line:#94a3b8; --tbl-out:#64748b; --stripe:#e2e8f0; --hover:#dbeafe; }
+  body{ font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; color:var(--tx1); background:#f1f5f9; }
+  .app{ display:flex; min-height:100vh; }
+  .sidebar{ width:212px; background:var(--sidebar-bg); color:var(--sidebar-tx); flex:0 0 212px; box-shadow:0 0 24px rgba(0,0,0,.1); }
+  .brand{ display:flex; align-items:center; gap:12px; padding:20px 16px 16px; border-bottom:1px solid rgba(255,255,255,.06); min-height:76px; }
+  .brand .logo{ width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg,var(--primary),#6366f1); display:grid; place-items:center; font-size:20px; box-shadow:0 4px 12px rgba(37,99,235,.3); }
+  .brand b{ color:#fff; font-size:17px; letter-spacing:.5px; }
+  .nav{ padding-top:6px; }
+  .nav a{ display:flex; align-items:center; gap:11px; padding:11px 18px; color:var(--sidebar-tx); cursor:pointer; font-size:14px; border-left:3px solid transparent; user-select:none; }
+  .nav a:hover{ background:rgba(148,163,184,.12); color:#fff; } .nav a.active{ background:rgba(37,99,235,.22); color:#fff; border-left-color:var(--primary); font-weight:600; }
+  .nav .ico{ width:18px; text-align:center; } .nav .group{ color:#64748b; font-size:11.5px; padding:13px 18px 5px; letter-spacing:.5px; }
+  .nav a.new::after{ content:"🆕"; margin-left:auto; font-size:11px; } .nav a .cnt{ margin-left:auto; background:var(--danger); color:#fff; font-size:10px; border-radius:9px; padding:0 6px; }
+  .main{ flex:1; display:flex; flex-direction:column; min-width:0; }
+  .topbar{ height:58px; background:#fff; border-bottom:1px solid var(--bd); display:flex; align-items:center; gap:14px; padding:0 22px; position:sticky; top:0; z-index:6; }
+  .crumb{ font-size:14px; color:var(--tx2); } .crumb b{ color:var(--tx1); } .spacer{ flex:1; }
+  .roleSel{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--tx2); } .roleSel select{ padding:6px 10px; border:1px solid var(--bd); border-radius:7px; font-size:13px; cursor:pointer; }
+  .bell{ position:relative; font-size:19px; cursor:pointer; padding:6px; border-radius:8px; } .bell:hover{ background:#f1f5f9; }
+  .bell .dot{ position:absolute; top:2px; right:2px; min-width:16px; height:16px; background:var(--danger); color:#fff; font-size:10px; border-radius:8px; display:grid; place-items:center; padding:0 3px; }
+  .inc-banner{ background:linear-gradient(90deg,#ecfdf5,#eff6ff); border-bottom:1px solid var(--bd); padding:9px 22px; font-size:12.5px; color:var(--tx2); display:flex; gap:16px; flex-wrap:wrap; align-items:center; }
+  .inc-banner b{ color:var(--tx1); } .lg{ display:inline-flex; align-items:center; gap:5px; } .lg .nw{ background:#16a34a; color:#fff; border-radius:5px; padding:0 6px; font-size:11px; } .lg .ed{ background:#d97706; color:#fff; border-radius:5px; padding:0 6px; font-size:11px; }
+  .content{ padding:22px; }
+  .page-h{ display:flex; align-items:center; gap:12px; margin-bottom:6px; } .page-h h1{ font-size:21px; }
+  .tag-dept{ font-size:12px; background:var(--primary-l); color:var(--primary); padding:2px 9px; border-radius:20px; }
+  .inc{ font-size:11px; background:#16a34a; color:#fff; padding:2px 8px; border-radius:20px; } .inc.ed{ background:#d97706; }
+  .page-desc{ color:var(--tx3); font-size:13px; margin-bottom:16px; }
+  .btn{ border:none; border-radius:8px; padding:9px 16px; font-size:14px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; font-family:inherit; }
+  .btn-primary{ background:var(--primary); color:#fff; } .btn-primary:hover{ background:var(--primary-d); } .btn-primary:disabled{ background:#cbd5e1; cursor:not-allowed; }
+  .btn-ghost{ background:#fff; border:1px solid var(--bd); color:var(--tx1); } .btn-ghost:hover{ border-color:var(--primary); color:var(--primary); }
+  .btn-ok{ background:var(--ok); color:#fff; } .btn-sm{ padding:6px 12px; font-size:13px; }
+  .card{ background:#fff; border:2px solid var(--tbl-out); border-radius:10px; overflow:hidden; } .card+.card{ margin-top:16px; }
+  .card-h{ padding:13px 16px; font-weight:700; border-bottom:2px solid var(--tbl-line); display:flex; align-items:center; gap:8px; background:#f8fafc; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{ background:linear-gradient(180deg,#cbd5e1 0%,#94a3b8 100%); color:#0f172a; font-weight:800; text-align:center; padding:10px 12px; border-right:2px solid var(--tbl-line); border-bottom:2px solid var(--tbl-line); white-space:nowrap; letter-spacing:.3px; }
+  thead th:last-child{ border-right:none; }
+  tbody td{ padding:9px 12px; text-align:center; border-right:2px solid var(--tbl-line); border-bottom:2px solid var(--tbl-line); background:#fff; color:#1e293b; }
+  tbody td:last-child{ border-right:none; } tbody tr:last-child td{ border-bottom:none; }
+  tbody tr:nth-child(even) td{ background:var(--stripe); } tbody tr:hover td{ background:var(--hover); }
+  .code{ color:var(--primary); font-weight:700; cursor:pointer; } .code:hover{ text-decoration:underline; } .muted{ color:var(--tx3); }
+  .back-tag{ background:#fffbeb; color:#b45309; border:1px dashed #fbbf24; border-radius:6px; padding:1px 7px; font-size:12px; }
+  .code-cell{ position:relative; } .code-cell .code-wrap{ position:relative; display:inline-block; }
+  .float-order{ position:absolute; left:100%; top:-9px; margin-left:2px; white-space:nowrap; background:var(--primary); color:#fff; border:none; border-radius:5px; padding:2px 8px; font-size:11px; cursor:pointer; opacity:0; pointer-events:none; transition:.12s; box-shadow:0 2px 8px rgba(37,99,235,.4); z-index:3; }
+  .code-cell:hover .float-order{ opacity:1; pointer-events:auto; } .float-order:hover{ background:var(--primary-d); }
+  .pill{ font-size:12px; padding:2px 10px; border-radius:20px; font-weight:600; display:inline-block; white-space:nowrap; }
+  .p-pending{ background:var(--warn-l); color:var(--warn); } .p-drawing{ background:var(--primary-l); color:var(--primary); } .p-done{ background:var(--ok-l); color:var(--ok); } .p-overdue{ background:var(--danger-l); color:var(--danger); } .p-ship{ background:#ede9fe; color:#6d28d9; }
+  .eff{ font-weight:800; } .eff-good{ color:var(--ok); } .eff-bad{ color:var(--danger); }
+  .todo{ display:grid; grid-template-columns:repeat(auto-fill,minmax(380px,1fr)); gap:14px; padding:16px; }
+  .t{ background:#fff; border:1px solid var(--bd); border-left:4px solid var(--primary); border-radius:12px; padding:16px 18px; box-shadow:0 2px 8px rgba(15,23,42,.05); transition:transform .15s,box-shadow .15s; } .t:hover{ transform:translateY(-2px); box-shadow:0 10px 24px rgba(15,23,42,.10); } .t.urgent{ border-left-color:var(--danger); } .t.assign{ border-left-color:var(--warn); }
+  .t-h{ display:flex; align-items:center; gap:8px; margin-bottom:6px; } .t-h .code{ font-size:16px; font-weight:800; } .t-name{ color:var(--tx2); font-size:13px; margin-bottom:12px; }
+  .assign-bar{ display:flex; align-items:flex-end; gap:10px; margin-top:14px; padding-top:13px; border-top:1px dashed var(--bd); flex-wrap:wrap; } .assign-bar .field{ margin:0; flex:1; min-width:140px; }
+  /* 自定义下拉（替代原生 select 的丑陋系统列表） */
+  .dd{ position:relative; }
+  .dd-trigger{ width:100%; display:flex; align-items:center; gap:8px; padding:8px 11px; border:1px solid var(--bd); border-radius:8px; background:#fff; font-size:13px; cursor:pointer; font-family:inherit; color:var(--tx1); transition:border-color .12s, box-shadow .12s; }
+  .dd-trigger:hover{ border-color:var(--primary); } .dd.open .dd-trigger{ border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-l); }
+  .dd-trigger .nm{ flex:1; text-align:left; } .dd-caret{ color:var(--tx3); font-size:10px; transition:transform .15s; } .dd.open .dd-caret{ transform:rotate(180deg); color:var(--primary); }
+  .dd-backdrop{ position:fixed; inset:0; z-index:40; }
+  .dd-panel{ position:absolute; top:calc(100% + 6px); left:0; right:0; z-index:41; background:#fff; border:1px solid var(--bd); border-radius:10px; box-shadow:0 14px 34px rgba(15,23,42,.18); padding:5px; max-height:220px; overflow:auto; animation:ddIn .12s ease; }
+  @keyframes ddIn{ from{ opacity:0; transform:translateY(-5px); } to{ opacity:1; transform:none; } }
+  .dd-opt{ display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:7px; font-size:13px; cursor:pointer; color:var(--tx1); }
+  .dd-opt:hover{ background:var(--primary-l); color:var(--primary-d); }
+  .dd-opt.on{ background:var(--primary); color:#fff; font-weight:600; } .dd-opt.on::after{ content:"✓"; margin-left:auto; font-size:12px; }
+  .dd-av{ width:22px; height:22px; border-radius:50%; background:var(--primary-l); color:var(--primary); display:grid; place-items:center; font-size:11px; font-weight:700; flex:0 0 22px; } .dd-opt.on .dd-av{ background:rgba(255,255,255,.25); color:#fff; }
+  /* 可搜索物料下拉 */
+  .msel{ position:relative; }
+  .msel-trigger{ width:100%; display:flex; align-items:center; gap:8px; padding:9px 11px; border:1px solid var(--bd); border-radius:8px; background:#fff; font-size:14px; cursor:pointer; } .msel-trigger:hover{ border-color:var(--primary); } .msel-trigger .ml{ flex:1; text-align:left; }
+  .msel-panel{ margin-top:6px; background:#fff; border:1px solid var(--bd); border-radius:10px; box-shadow:0 8px 20px rgba(15,23,42,.10); padding:8px; }
+  .msel-search{ width:100%; padding:8px 10px; border:1px solid var(--bd); border-radius:8px; font-size:13px; margin-bottom:6px; font-family:inherit; }
+  .msel-list{ max-height:230px; overflow:auto; }
+  .msel-opt{ padding:8px 10px; border-radius:7px; font-size:13px; cursor:pointer; display:flex; gap:8px; align-items:center; } .msel-opt:hover{ background:var(--primary-l); color:var(--primary-d); } .msel-opt .mc{ font-family:ui-monospace,Consolas,monospace; color:var(--tx3); font-size:12px; }
+  /* 仓库组功能说明条 */
+  .wh-help{ display:flex; gap:10px; align-items:flex-start; background:linear-gradient(90deg,#eff6ff,#f0fdf4); border:1px solid #dbeafe; border-radius:10px; padding:11px 14px; font-size:13px; color:var(--tx2); margin-bottom:14px; line-height:1.65; } .wh-help .i{ font-size:16px; flex:0 0 auto; } .wh-help b{ color:var(--tx1); }
+  .files{ display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+  .file-chip{ display:inline-flex; align-items:center; gap:6px; background:#f1f5f9; border:1px solid var(--bd); border-radius:6px; padding:3px 8px; font-size:12px; color:var(--tx2); }
+  .file-chip .fn{ cursor:pointer; } .file-chip .fn:hover{ color:var(--primary); text-decoration:underline; } .file-chip .dl{ cursor:pointer; color:var(--tx3); font-weight:700; border-left:1px solid #cbd5e1; padding-left:6px; } .file-chip .dl:hover{ color:var(--primary); }
+  .req{ background:#f8fafc; border-left:3px solid var(--primary); padding:8px 10px; font-size:12.5px; color:var(--tx2); border-radius:0 6px 6px 0; margin:8px 0; text-align:left; }
+  .field-row{ display:flex; gap:10px; margin:10px 0; flex-wrap:wrap; } .field{ flex:1; min-width:150px; } .field label{ display:block; font-size:12px; color:var(--tx2); margin-bottom:4px; text-align:left; }
+  .field input,.field select{ width:100%; padding:8px 10px; border:1px solid var(--bd); border-radius:8px; font-size:13px; font-family:inherit; background:#fff; } .field select{ cursor:pointer; }
+  .t-actions{ display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap; } .kv{ font-size:12.5px; color:var(--tx2); text-align:left; } .kv b{ color:var(--tx1); }
+  .msg{ display:flex; gap:12px; padding:13px 16px; border-bottom:1px solid #f1f5f9; text-align:left; } .msg .mi{ width:32px; height:32px; border-radius:50%; display:grid; place-items:center; flex:0 0 32px; font-size:15px; }
+  .mi.warn{ background:var(--danger-l); color:var(--danger); } .mi.wx{ background:#dcfce7; color:#16a34a; } .mi.info{ background:var(--info-l); color:var(--info); }
+  .msg .mt{ font-size:13.5px; line-height:1.5; } .msg .mtime{ color:var(--tx3); font-size:12px; margin-top:3px; } .msg.unread{ background:#fffdf5; }
+  .empty{ padding:42px; text-align:center; color:var(--tx3); }
+  .mask{ position:fixed; inset:0; background:rgba(15,23,42,.45); display:grid; place-items:center; z-index:50; }
+  .dialog{ width:600px; max-width:94vw; background:#fff; border-radius:14px; overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.25); } .dialog.wide{ width:min(1140px,96vw); }
+  .d-h{ padding:15px 20px; border-bottom:1px solid var(--bd); display:flex; align-items:center; } .d-h b{ font-size:16px; } .d-h .x{ margin-left:auto; cursor:pointer; color:var(--tx3); font-size:20px; }
+  .d-b{ padding:20px; max-height:68vh; overflow:auto; } .d-f{ padding:13px 20px; border-top:1px solid var(--bd); display:flex; justify-content:flex-end; gap:10px; }
+  .fg{ margin-bottom:15px; } .fg>label{ display:block; font-size:13px; font-weight:600; margin-bottom:6px; } .req-star{ color:var(--danger); }
+  .fg input[type=text],.fg textarea,.fg select{ width:100%; padding:9px 11px; border:1px solid var(--bd); border-radius:8px; font-size:14px; font-family:inherit; } .fg textarea{ resize:vertical; min-height:60px; }
+  .seg{ display:flex; gap:8px; } .seg label{ flex:1; } .seg input{ display:none; } .seg .opt{ display:block; text-align:center; padding:9px; border:1px solid var(--bd); border-radius:9px; cursor:pointer; font-size:13.5px; } .seg input:checked + .opt{ border-color:var(--primary); background:var(--primary-l); color:var(--primary); font-weight:700; }
+  .uploader{ border:2px dashed #cbd5e1; border-radius:9px; padding:13px; text-align:center; cursor:pointer; color:var(--tx2); font-size:13px; } .uploader:hover{ border-color:var(--primary); background:#f8fbff; } .uploader small{ display:block; color:var(--tx3); margin-top:3px; }
+  .filelist{ margin-top:8px; display:flex; flex-direction:column; gap:6px; } .filelist .f{ display:flex; align-items:center; gap:8px; background:#f8fafc; border:1px solid var(--bd); border-radius:7px; padding:6px 10px; font-size:13px; } .filelist .f .rm{ margin-left:auto; color:var(--tx3); cursor:pointer; }
+  .hint{ background:var(--info-l); color:var(--info); border-radius:8px; padding:9px 12px; font-size:12.5px; text-align:left; }
+  .out-row{ display:flex; align-items:center; gap:10px; border:1px solid var(--bd); border-radius:8px; padding:9px 11px; margin-bottom:8px; } .out-row .ol{ font-size:13px; flex:1; text-align:left; } .out-row .to{ font-size:11px; color:#6d28d9; background:#ede9fe; padding:1px 7px; border-radius:10px; } .out-row .st{ font-size:12px; color:var(--ok); }
+  .check{ display:flex; flex-direction:column; gap:6px; margin:6px 0 4px; } .check .ci{ display:flex; align-items:center; gap:8px; font-size:13px; } .check .ci .dot{ width:16px; height:16px; border-radius:50%; display:grid; place-items:center; font-size:11px; color:#fff; } .ci.ok .dot{ background:var(--ok); } .ci.no .dot{ background:var(--danger); }
+  .flow{ display:flex; gap:7px; flex-wrap:wrap; margin:0 0 16px; } .flow .s{ background:#fff; border:1px solid var(--bd); border-radius:20px; padding:6px 12px; font-size:12px; color:var(--tx2); display:flex; align-items:center; gap:6px; } .flow .s b{ background:var(--primary); color:#fff; width:17px; height:17px; border-radius:50%; display:grid; place-items:center; font-size:10px; } .flow .arr{ align-self:center; color:var(--tx3); }
+  .switch{ position:relative; display:inline-block; width:40px; height:22px; } .switch input{ display:none; } .switch .sl{ position:absolute; inset:0; background:#cbd5e1; border-radius:20px; transition:.2s; cursor:pointer; } .switch .sl::before{ content:""; position:absolute; width:18px; height:18px; left:2px; top:2px; background:#fff; border-radius:50%; transition:.2s; } .switch input:checked + .sl{ background:var(--primary); } .switch input:checked + .sl::before{ transform:translateX(18px); }
+  .viewer{ background:#f8fafc; } .viewer-note{ background:var(--info-l); color:var(--info); padding:8px 12px; border-radius:8px; font-size:12.5px; margin-bottom:14px; }
+  .vb{ font-size:11px; color:#fff; padding:1px 7px; border-radius:4px; margin-right:4px; } .vb-pdf{ background:#dc2626; } .vb-doc{ background:#2563eb; } .vb-xls{ background:#16a34a; } .vb-cad{ background:#0891b2; }
+  .doc-page{ background:#fff; border:1px solid var(--bd); border-radius:6px; padding:24px 30px; min-height:260px; text-align:left; } .doc-page h3{ text-align:center; margin-bottom:14px; } .doc-page p{ font-size:13.5px; color:#334155; line-height:1.9; } .doc-foot{ text-align:center; color:var(--tx3); font-size:12px; margin-top:18px; }
+  .xls-grid{ width:100%; border-collapse:collapse; background:#fff; } .xls-grid th,.xls-grid td{ border:1px solid #cbd5e1; padding:6px 9px; font-size:13px; text-align:center; } .xls-grid th{ background:#f1f5f9; }
+  .detail-head{ background:#fff; border:2px solid var(--tbl-out); border-radius:10px; padding:16px 18px; margin:12px 0 16px; } .dt-top{ display:flex; align-items:center; gap:12px; } .dt-meta{ display:flex; flex-wrap:wrap; gap:18px; margin-top:10px; font-size:13px; color:var(--tx2); } .dt-meta b{ color:var(--tx1); }
+  .dept-cards{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:16px; } .dc{ background:#fff; border:2px solid var(--tbl-line); border-radius:10px; padding:14px 16px; } .dc h4{ font-size:14px; margin-bottom:10px; display:flex; gap:7px; } .dc .row{ display:flex; justify-content:space-between; font-size:12.5px; color:var(--tx2); padding:3px 0; } .dc .row b{ color:var(--tx1); }
+  .tabs{ display:flex; gap:6px; padding:12px 16px 0; flex-wrap:wrap; } .tabs .tb{ padding:7px 13px; border:2px solid var(--tbl-line); border-bottom:none; border-radius:8px 8px 0 0; font-size:13px; cursor:pointer; background:#f8fafc; color:var(--tx2); } .tabs .tb.on{ background:#fff; color:var(--primary); font-weight:700; }
+  .sheet-slots{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; } .slot{ border:2px dashed var(--bd); border-radius:9px; padding:12px; text-align:center; font-size:13px; } .slot.up{ border-style:solid; border-color:#86efac; background:#f0fdf4; } .slot .nm{ font-weight:600; margin-bottom:6px; } .slot .ac{ font-size:12px; color:var(--primary); cursor:pointer; }
+  .toast{ position:fixed; top:70px; left:50%; transform:translateX(-50%); background:#0f172a; color:#fff; padding:11px 18px; border-radius:10px; font-size:13.5px; z-index:99; box-shadow:0 10px 30px rgba(0,0,0,.3); max-width:80vw; }
+  .stat{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:16px; } .sb{ background:#fff; border:2px solid var(--tbl-line); border-radius:10px; padding:16px; } .sb .v{ font-size:26px; font-weight:800; } .sb .l{ font-size:12.5px; color:var(--tx3); margin-top:3px; }
+  .rep-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; } @media(max-width:980px){ .rep-grid{ grid-template-columns:1fr; } }
+  .barrow{ display:flex; align-items:center; gap:10px; margin-bottom:9px; } .barrow:last-child{ margin-bottom:0; }
+  .barrow .bl{ width:130px; font-size:12.5px; text-align:right; color:var(--tx2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .barrow .bt{ flex:1; background:#f1f5f9; border-radius:6px; height:22px; overflow:hidden; }
+  .barrow .bf{ height:100%; display:flex; align-items:center; justify-content:flex-end; padding:0 8px; color:#fff; font-size:11.5px; font-weight:700; border-radius:6px; min-width:36px; }
+  .bf.good{ background:linear-gradient(90deg,#22c55e,#16a34a); } .bf.bad{ background:linear-gradient(90deg,#f87171,#dc2626); }
+  .minibar{ width:64px; height:8px; background:#e2e8f0; border-radius:5px; overflow:hidden; display:inline-block; vertical-align:middle; margin-left:6px; } .minibar i{ display:block; height:100%; background:var(--primary); }
+  /* 项目目录状态染色（还原现有一览） */
+  td.st-doing{ background:#fee2e2 !important; color:#991b1b; font-weight:700; }
+  td.st-done{ background:#d1fae5 !important; color:#065f46; font-weight:700; }
+  td.cell-overdue{ background:#dc2626 !important; color:#fff !important; font-weight:700; }
+  /* 项目详单卡片视图（还原现有 ProjectsView） */
+  .pgrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
+  .pcard{ background:#fff; border:1px solid var(--bd); border-radius:12px; padding:18px; cursor:pointer; transition:transform .15s,box-shadow .15s; }
+  .pcard:hover{ transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,0,0,.08); }
+  .pc-top{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }
+  .pc-icon{ width:40px; height:40px; background:var(--primary-l); color:var(--primary); border-radius:10px; display:grid; place-items:center; font-size:20px; }
+  .pc-code{ font-size:12px; color:var(--tx3); margin-bottom:4px; }
+  .pc-name{ font-size:16px; font-weight:600; margin-bottom:12px; }
+  .pc-meta{ display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--tx2); margin-bottom:14px; } .pc-meta b{ color:var(--tx1); }
+  .pc-actions{ display:flex; gap:8px; }
+  /* 仓库组 / 销售 / 钣金 增量样式 */
+  .loc{ font-family:ui-monospace,Consolas,monospace; font-size:12px; background:#f1f5f9; border-radius:5px; padding:1px 7px; color:var(--tx2); }
+  .qty{ font-variant-numeric:tabular-nums; font-weight:700; } .qty.low{ color:var(--warn); } .qty.zero{ color:var(--danger); }
+  .flag{ font-size:11px; background:var(--warn-l); color:var(--warn); border:1px solid #fcd34d; border-radius:5px; padding:0 6px; margin-left:5px; cursor:help; }
+  tfoot td{ font-weight:800; background:#f8fafc; }
+  /* 工作流图（并行/串行 DAG） */
+  .wf{ display:flex; align-items:stretch; gap:0; overflow-x:auto; padding:14px 2px 6px; }
+  .wf-col{ display:flex; flex-direction:column; justify-content:center; gap:12px; }
+  .wf-grp{ border:1px dashed #94a3b8; border-radius:12px; padding:16px 11px 11px; position:relative; display:flex; flex-direction:column; gap:12px; background:#fbfdff; }
+  .wf-grp>.gl{ position:absolute; top:-10px; left:12px; background:#fff; font-size:11px; color:#b45309; padding:1px 8px; border:1px solid #fcd34d; border-radius:10px; font-weight:700; white-space:nowrap; }
+  .wf-node{ width:188px; border:2px solid var(--tbl-line); border-radius:10px; padding:9px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .wf-node h5{ font-size:13.5px; display:flex; align-items:center; gap:6px; margin:0 0 7px; }
+  .wf-node h5 .sp{ margin-left:auto; }
+  .wf-node .ln{ font-size:12px; color:var(--tx2); display:flex; justify-content:space-between; gap:8px; padding:1px 0; } .wf-node .ln b{ color:var(--tx1); }
+  .wf-node.done{ border-color:#86efac; background:#f0fdf4; } .wf-node.doing{ border-color:#93c5fd; background:#eff6ff; } .wf-node.wait{ border-color:#fcd34d; background:#fffbeb; } .wf-node.idle{ opacity:.6; }
+  .wf-arr{ display:flex; flex-direction:column; align-items:center; justify-content:center; padding:0 4px; min-width:58px; }
+  .wf-arr .a{ font-size:26px; line-height:1; color:#94a3b8; } .wf-arr .lb{ font-size:10.5px; margin-top:3px; text-align:center; white-space:nowrap; color:var(--tx2); }
+  .wf-legend{ display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--tx2); margin-top:12px; } .wf-legend span{ display:inline-flex; align-items:center; gap:5px; } .wf-legend i{ width:12px; height:12px; border-radius:3px; display:inline-block; border:1px solid #cbd5e1; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar"><div class="brand"><div class="logo">🏭</div><b>同辉项目管理</b></div><div class="nav" id="nav"></div></aside>
+  <div class="main">
+    <header class="topbar"><div class="crumb" id="crumb"></div><div class="spacer"></div>
+      <div class="roleSel"><span>当前身份</span><select id="roleSelect" onchange="switchUser(this.value)"></select></div>
+      <div class="bell" onclick="go('msg')">🔔<span class="dot" id="bellDot" style="display:none">0</span></div>
+    </header>
+    <div class="inc-banner">
+      <b>📐 增量 UI 设计图</b> · 基于现有系统外观
+      <span class="lg"><span class="nw">🆕</span> 新增：销售部 / 设计 / 电工 / 生产 / 钣金组 / 采购 / 仓库组 / 物流 / 月度报表 / 导出审批</span>
+      <span class="lg"><span class="ed">✏️</span> 改动：项目目录（编号下单）、权限管理（新角色 · 消息推送人）</span>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+<div id="modalRoot"></div><div id="toastRoot"></div>
+
+<script>
+const DEPTS={
+  design:{ key:"design", name:"设计部", ico:"📐", orderBy:"manager", wrole:"设计师", sl:"制图开始", el:"预计完成", dl:"制图完成",
+    workers:[{id:"d1",name:"张工"},{id:"d2",name:"李工"}], sheetCheck:true, notifyPool:"logistics", notifyLabel:"完成后通知（限相关角色·单选 D3）",
+    startOutputs:[{k:"sheetpkg",label:"PDF 图纸包",t:"pdf",to:"sheet"}],
+    outputs:[{k:"word",label:"说明书 (Word)",t:"doc",to:"logistics"},{k:"nameplate",label:"铭牌 (CAD)",t:"cad",to:"logistics"}] },
+  electric:{ key:"electric", name:"电工部", ico:"⚡", orderBy:"manager", wrole:"电工", sl:"接线开始", el:"预计完成", dl:"接线完成",
+    workers:[{id:"el1",name:"刘工"},{id:"el2",name:"周工"}], sheetCheck:false, notifyPool:"purchase", notifyLabel:"完成后通知采购部人员",
+    startOutputs:[{k:"plist",label:"采购清单 (Excel)",t:"xls",to:"purchase"}],
+    outputs:[{k:"circuit",label:"电路图 (PDF)",t:"pdf",to:"logistics",required:true}] },
+  produce:{ key:"produce", name:"生产部", ico:"🏭", orderBy:"pmlead", wrole:"装配组", sl:"生产开始", el:"预计完成", dl:"生产完成",
+    workers:[{id:"a1",name:"装配组1·赵师傅"},{id:"a2",name:"装配组2·孙师傅"},{id:"a3",name:"装配组3·吴师傅"}], sheetCheck:false, notifyPool:"logistics", notifyLabel:"完成后通知物流部人员", outputs:[] },
+};
+const DOWN={ purchase:{name:"采购部",ico:"🛒"}, logistics:{name:"物流发货部",ico:"🚚"}, sheet:{name:"钣金组",ico:"🔧"} };
+const REQUIRED_SHEETS=["钣金装配","标准件清单","外协外购","原料下料单"];
+const USERS={
+  mgr:{name:"王经理",role:"管理层",type:"manager",export:true},
+  pm:{name:"钱主管",role:"生产部主管",type:"pmlead"},
+  d1:{name:"张工",role:"设计师",type:"worker",dept:"design",wid:"d1"},
+  el1:{name:"刘工",role:"电工",type:"worker",dept:"electric",wid:"el1"},
+  a1:{name:"赵师傅",role:"装配组1",type:"worker",dept:"produce",wid:"a1"},
+  pu1:{name:"林采购",role:"采购部",type:"down",down:"purchase"},
+  lo1:{name:"马师傅",role:"物流发货部",type:"down",down:"logistics"},
+  lead:{name:"周总监",role:"部门主管·消息推送人",type:"lead",push:true},
+  sale1:{name:"赵仁辉",role:"销售员",type:"sales"},
+  salelead:{name:"高总·销售主管",role:"销售主管",type:"salelead",push:true},
+  dlead:{name:"陈工·设计负责人",role:"设计部负责人",type:"deptlead",dept:"design"},
+  elead:{name:"许工·电工负责人",role:"电工部负责人",type:"deptlead",dept:"electric"},
+  sm1:{name:"何师傅",role:"钣金组",type:"sheet"},
+  wh1:{name:"孙仓管",role:"仓库员",type:"wh"},
+  whlead:{name:"郑主管·仓库主管",role:"仓库主管·消息推送人",type:"wh",push:true},
+};
+function cu(){ return USERS[state.userId]; }
+const ROLES=[
+  {name:"管理层",canOrder:"设计/电工下单 + 审批",push:false},
+  {name:"生产部主管",canOrder:"生产部下单",push:true},
+  {name:"设计师",canOrder:"—",push:false},
+  {name:"电工 🆕",canOrder:"—",push:false},
+  {name:"装配组1 / 2 / 3 🆕",canOrder:"—",push:false},
+  {name:"采购部（角色合并）",canOrder:"—",push:false},
+  {name:"物流发货部 🆕",canOrder:"—",push:false},
+  {name:"销售员 🆕",canOrder:"销售下单（仅本人订单）",push:false},
+  {name:"销售主管 🆕",canOrder:"查看全部订单",push:true},
+  {name:"设计部负责人 🆕",canOrder:"分派设计任务 / 作废单号",push:true},
+  {name:"电工部负责人 🆕",canOrder:"分派电工任务 / 作废单号",push:true},
+  {name:"钣金组 🆕",canOrder:"接收 PDF 图纸包",push:false},
+  {name:"仓库员 🆕",canOrder:"出入库 / 库存 / 发货清单",push:false},
+  {name:"仓库主管 🆕",canOrder:"仓库管理 + 预警推送",push:true},
+];
+function poolUsers(pool){ if(pool==="any") return Object.keys(USERS).map(id=>({id,name:USERS[id].name+"·"+USERS[id].role})); return Object.keys(USERS).filter(id=>USERS[id].down===pool).map(id=>({id,name:USERS[id].name})); }
+function uName(id){ return USERS[id]?USERS[id].name:id; }
+function today(){ return new Date().toISOString().slice(0,10); }
+function addDays(n){ const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function days(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
+function thisMonth(){ return new Date().toISOString().slice(0,7); }
+
+let seq=20;
+const state={ userId:"mgr", menu:"catalog", detailCode:null, detailTab:0, detailTop:"data", openDD:null, assignSel:{}, upFiles:[], orderFor:null, orderDept:"design", completeId:null, completeFiles:{}, shipFor:null, shipFile:null, whTab:"ov", whKw:"", whPeriod:"2026-05", whIo:"", whIoEdit:null,
+  orders:[
+    {id:"o1",dept:"design",code:"2026-043A",name:"5L双行星压料一体机",wid:"d1",req:"出钣金件加工图，材料304。",files:[{n:"设计任务书.pdf",t:"pdf"}],status:"drawing",start:"2026-05-11",dueEnd:"2026-06-01",done:null,outputs:[],notify:null},
+    {id:"o2",dept:"design",code:"2026-050",name:"100L真空均质乳化机",wid:null,by:"sale1",req:"销售下单：出整机布局图。",files:[{n:"技术协议.pdf",t:"pdf"}],status:"待派",start:null,dueEnd:null,done:null,outputs:[],notify:null},
+    {id:"o3",dept:"design",code:"2026-041M",name:"1100L强力分散混合机",wid:"d2",req:"龙门式，出装配图。",files:[{n:"方案.pdf",t:"pdf"}],status:"done",start:"2026-05-20",dueEnd:"2026-05-28",done:"2026-05-26",outputs:[{n:"装配图.dwg",t:"cad"}],notify:"lo1"},
+    {id:"o4",dept:"electric",code:"2026-041M",name:"1100L强力分散混合机",wid:"el1",req:"接线、调试变频器。",files:[{n:"电气要求.docx",t:"doc"}],status:"drawing",start:"2026-05-28",dueEnd:"2026-06-02",done:null,outputs:[],notify:null},
+    {id:"o5",dept:"produce",code:"2026-041M",name:"1100L强力分散混合机",wid:"a1",req:"整机装配试运行。",files:[{n:"装配工艺.docx",t:"doc"}],status:"done",start:"2026-05-26",dueEnd:"2026-05-30",done:"2026-06-02",outputs:[],notify:"lo1"},
+    {id:"o6",dept:"design",code:"2026-039",name:"2L双行星分散混合机",wid:"d2",req:"防爆型整机出图。",files:[{n:"防爆要求.pdf",t:"pdf"}],status:"done",start:"2026-05-04",dueEnd:"2026-05-12",done:"2026-05-10",outputs:[{n:"整机图.pdf",t:"pdf"}],notify:"lo1"},
+    {id:"o7",dept:"electric",code:"2026-039",name:"2L双行星分散混合机",wid:"el2",req:"防爆接线。",files:[{n:"电气.docx",t:"doc"}],status:"done",start:"2026-05-12",dueEnd:"2026-05-16",done:"2026-05-15",outputs:[{n:"采购清单.xlsx",t:"xls"}],notify:"pu1"},
+    {id:"o8",dept:"electric",code:"2026-050",name:"100L真空均质乳化机",wid:null,by:"sale1",req:"销售下单：电气接线，出采购清单。",files:[],status:"待派",start:null,dueEnd:null,done:null,outputs:[],notify:null},
+  ],
+  projects:[
+    {code:"2026-043A",name:"5L双行星压料一体机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-09",deliver:"2026-06-05",designer:"张工",drawStart:"2026-05-11",drawEnd:null,drawUse:"",elec:"宋朴",dur:57,elapsed:58,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":false,"原料下料单":false}},
+    {code:"2026-050",name:"100L真空均质乳化机",qty:1,status:"进行中",sales:"代文飞",sign:"2026-04-16",deliver:"2026-06-16",designer:"张工",drawStart:null,drawEnd:null,drawUse:"",elec:"周瑞",dur:61,elapsed:51,remain:10,sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false}},
+    {code:"2026-041M",name:"1100L强力分散混合机",qty:1,status:"已完成",sales:"文艺",sign:"2026-05-08",deliver:"2026-06-18",designer:"李工",drawStart:"2026-05-20",drawEnd:"2026-05-26",drawUse:6,elec:"宋朴",dur:41,elapsed:29,remain:12,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},sheetPkg:{n:"041M-钣金图纸包.pdf",t:"pdf"}},
+    {code:"2026-039",name:"2L双行星分散混合机",qty:1,status:"已完成",sales:"方步森",sign:"2026-04-30",deliver:"2026-06-05",designer:"李工",drawStart:"2026-05-04",drawEnd:"2026-05-10",drawUse:6,elec:"周瑞",dur:36,elapsed:37,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true}},
+  ],
+  shipments:[
+    {code:"2026-041M",name:"1100L强力分散混合机",materials:[{from:"设计部",name:"装配图.dwg",t:"cad"},{from:"电工部",name:"电路图.pdf",t:"pdf"}],status:"待发货",invoice:null,receiver:{name:"华东制药·王主管",phone:"139-0000-1234",addr:"江苏省无锡市惠山区工业园8号"}},
+    {code:"2026-043A",name:"5L双行星压料一体机",materials:[],status:"待发货",invoice:null,receiver:{name:"广药集团·李经理",phone:"138-0000-5678",addr:"广东省广州市白云区大道12号"}},
+    {code:"2026-050",name:"100L真空均质乳化机",materials:[],status:"待发货",invoice:null,receiver:null},
+    {code:"2026-039",name:"2L双行星分散混合机",materials:[{from:"设计部",name:"整机图.pdf",t:"pdf"}],status:"已发货",invoice:{n:"发货单039.pdf",t:"pdf"},receiver:{name:"科伦药业·赵采购",phone:"136-0000-3456",addr:"四川省成都市温江区科技街9号"}},
+  ],
+  purchaseInbox:[{code:"2026-039",from:"电工部",name:"采购清单.xlsx",t:"xls",time:"2026-05-15 16:20"}],
+  exportReqs:[{id:"r1",by:"pu1",scope:"导出采购清单",status:"待审批",time:"2026-06-05 10:20"}], messages:[],
+};
+function unread(){ return state.messages.filter(m=>!m.read && (m.to===state.userId||m.toAll)).length; }
+function shipmentOf(code){ return state.shipments.find(s=>s.code===code); }
+
+const MENUS=[{k:"catalog",t:"项目目录",ico:"📋"},{k:"list",t:"项目详单",ico:"📁"},{k:"sales",t:"销售部",ico:"💼",isNew:1},{k:"design",t:"设计部",ico:"📐",isNew:1},{k:"electric",t:"电工部",ico:"⚡",isNew:1},{k:"produce",t:"生产部",ico:"🏭",isNew:1},{k:"sheet",t:"钣金组",ico:"🔧",isNew:1},{k:"purchase",t:"采购部",ico:"🛒",isNew:1},{k:"warehouse",t:"仓库组",ico:"📦",isNew:1},{k:"logistics",t:"物流发货部",ico:"🚚",isNew:1},{k:"report",t:"月度工作报表",ico:"📊",isNew:1}];
+const ADMIN=[{k:"perm",t:"权限管理",ico:"🔒"},{k:"approve",t:"导出审批",ico:"✅",isNew:1},{k:"wxbind",t:"企微绑定",ico:"📲",isNew:1},{k:"audit",t:"操作审计",ico:"📝"}];
+function menuVisible(k){ const u=cu(), t=u.type; // A3：本部门成员 + 管理层可见
+  if(t==="manager"||t==="admin") return true;
+  if(k==="catalog"||k==="list") return true;                 // 现有页全员可见
+  const tag=u.dept?(t+":"+u.dept):t, dn="down:"+(u.down||"");
+  const map={ sales:["sales","salelead"], design:["deptlead:design","worker:design"], electric:["deptlead:electric","worker:electric"],
+    produce:["pmlead","worker:produce"], sheet:["sheet","worker:design"], purchase:["down:purchase"],
+    warehouse:["wh"], logistics:["down:logistics"],
+    report:[], perm:[], approve:[], wxbind:[], audit:[] };  /* 月度报表仅管理层(manager/admin) 可见 */
+  const keys=map[k]||[]; return keys.includes(t)||keys.includes(tag)||keys.includes(dn);
+}
+function renderNav(){ let h=""; MENUS.filter(m=>menuVisible(m.k)).forEach(m=>h+=navA(m)); const adm=ADMIN.filter(m=>menuVisible(m.k)); if(adm.length){ h+=`<div class="group">管理</div>`; adm.forEach(m=>h+=navA(m)); } document.getElementById("nav").innerHTML=h; }
+function navA(m){ let c=""; if(m.k==="logistics"){ const n=state.shipments.filter(s=>s.status==="待发货").length; if(n) c=`<span class="cnt">${n}</span>`; } else if(m.k==="approve"){ const n=state.exportReqs.filter(r=>r.status==="待审批").length; if(n) c=`<span class="cnt">${n}</span>`; } return `<a class="${state.menu===m.k?'active':''} ${(m.isNew&&!c)?'new':''}" onclick="go('${m.k}')"><span class="ico">${m.ico}</span>${m.t}${c}</a>`; }
+function renderTop(){ let o=""; Object.keys(USERS).forEach(id=>o+=`<option value="${id}" ${id===state.userId?'selected':''}>${USERS[id].name} · ${USERS[id].role}</option>`); document.getElementById("roleSelect").innerHTML=o;
+  const nm=([...MENUS,...ADMIN,{k:"msg",t:"消息中心"},{k:"detail",t:"项目详情"}].find(m=>m.k===state.menu)||{}).t||""; document.getElementById("crumb").innerHTML=`同辉项目管理 / <b>${nm}</b>`;
+  const n=unread(); const d=document.getElementById("bellDot"); d.style.display=n?'grid':'none'; d.textContent=n; }
+function go(k){ state.menu=k; render(); }
+function switchUser(id){ state.userId=id; render(); }
+function render(){ if(!menuVisible(state.menu)&&!["detail","msg"].includes(state.menu)) state.menu="catalog"; renderNav(); renderTop(); const map={catalog:pageCatalog,list:pageList,detail:pageDetail,sales:pageSales,design:()=>pageDept("design"),electric:()=>pageDept("electric"),produce:()=>pageDept("produce"),sheet:pageSheet,purchase:pagePurchase,warehouse:pageWarehouse,logistics:pageLogistics,report:pageReport,perm:pagePerm,approve:pageApprove,wxbind:pageWxBind,msg:pageMsg,audit:pagePlaceholder}; document.getElementById("content").innerHTML=(map[state.menu]||pagePlaceholder)(); }
+
+function pageCatalog(){
+  const mgr=cu().type==="manager";
+  const canOrder = mgr || cu().type==="pmlead";   // 管理层(设计/电工) + 生产部主管(生产) 都能在项目目录下单
+  const rows=state.projects.map(p=>{
+    const st=p.status==="已完成"?"st-done":(p.status==="已归档"?"":"st-doing");
+    return `<tr>
+      <td class="code-cell"><span class="code-wrap"><span class="code" onclick="openDetail('${p.code}')">${p.code}</span>${canOrder?`<button class="float-order" onclick="event.stopPropagation();openOrderForProject('${p.code}')">＋ 下单</button>`:""}</span></td>
+      <td>${p.name}</td><td>${p.qty}</td><td class="${st}">${p.status}</td><td>${p.sales}</td>
+      <td>${p.sign||'-'}</td><td>${p.deliver||'-'}</td><td>${p.designer}</td>
+      <td>${p.elec||'-'}</td><td>${p.dur??'-'}</td><td>${p.elapsed??'-'}</td>
+      <td class="${(typeof p.remain==='number'&&p.remain<0)?'cell-overdue':''}">${p.remain??'-'}</td></tr>`;
+  }).join("");
+  return `<div class="page-h"><h1>项目目录</h1><span class="inc ed">✏️ 叠加下单</span><div class="spacer"></div>${mgr?`<button class="btn btn-primary btn-sm" onclick="openNewProject()">＋ 新建项目</button>`:""}<button class="btn btn-ghost btn-sm" onclick="tryExport('项目目录')">⬇ 导出</button></div>
+    <div class="page-desc">现有页保持原样；增量＝鼠标移到项目编号上浮出「＋下单」给部门派单 🆕。</div>
+    <div class="card"><div style="overflow-x:auto"><table><thead><tr><th>项目编号</th><th>项目名称</th><th>数量</th><th>状态</th><th>销售</th><th>签订日期</th><th>交货日期</th><th>设计师</th><th>电工</th><th>货期</th><th>已过时间</th><th>剩余制作时间</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+function sheetBadge(p){ const n=Object.values(p.sheets).filter(Boolean).length; const cls=n===4?'p-done':(n===0?'p-pending':'p-drawing'); return `<span class="pill ${cls}">${n}/4</span>`; }
+function backTag(p,w){ const o=state.orders.find(o=>o.dept==="design"&&o.code===p.code); if(!o) return ""; if(w==='s'&&o.start===p.drawStart&&o.start) return '<span class="back-tag">↩ 设计回传</span>'; if(w==='e'&&o.done===p.drawEnd&&o.drawEnd) return '<span class="back-tag">↩ 设计回传</span>'; return ""; }
+
+function pageList(){
+  const cards=state.projects.map(p=>{ const st=p.status==="已完成"?"p-done":(p.status==="已归档"?"p-pending":"p-drawing");
+    return `<div class="pcard" onclick="openDetail('${p.code}')">
+      <div class="pc-top"><div class="pc-icon">📁</div><span class="pill ${st}">${p.status}</span></div>
+      <div class="pc-code">${p.code}</div><div class="pc-name">${p.name}</div>
+      <div class="pc-meta"><span>项目经理：<b>${p.designer}</b></span><span>成员 8 人</span></div>
+      <div class="pc-actions"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openDetail('${p.code}')">编辑</button></div>
+    </div>`; }).join("");
+  return `<div class="page-h"><h1>项目详单</h1><span class="muted" style="font-size:12px;font-weight:400">（现有卡片视图 · 保持不变）</span></div>
+    <div class="page-desc">现有「项目列表」为卡片视图，点卡片进项目详情。增量设计不改动本页。</div>
+    <div class="pgrid">${cards}</div>`;
+}
+function lastOrder(k,code){ return state.orders.filter(o=>o.dept===k&&o.code===code).slice(-1)[0]; }
+
+function openDetail(code){ state.detailCode=code; state.detailTab=0; state.detailTop="data"; state.menu="detail"; render(); }
+function detailTop(t){ state.detailTop=t; render(); }
+function onImportExcel(){ const p=state.projects.find(x=>x.code===state.detailCode); const s=REQUIRED_SHEETS[state.detailTab]; if(p) p.sheets[s]=true; toast('已导入「'+s+'」Excel（按当前选中的进度表）',"ok"); render(); }
+/* ===== 工作流图（并行/串行 DAG） ===== */
+function wfNode(ico,name,pill,lines,cls){ return `<div class="wf-node ${cls||''}"><h5>${ico} ${name}<span class="sp">${pill||''}</span></h5>${lines.map(l=>`<div class="ln"><span>${l[0]}</span><b>${l[1]}</b></div>`).join("")}</div>`; }
+function wfDep(p,k){ const o=p?lastOrder(k,p.code):null; if(!o) return {pill:'<span class="pill p-pending">未下单</span>',cls:'idle',o:null};
+  const m={"待派":["待分派","p-pending","wait"],"pending":["待接单","p-pending","wait"],"drawing":["进行中","p-drawing","doing"],"done":["已完成","p-done","done"],"作废":["已作废","p-pending","idle"]}; const x=m[o.status]||["—","p-pending","wait"]; return {pill:`<span class="pill ${x[1]}">${x[0]}</span>`,cls:x[2],o}; }
+function workflowGraph(p){
+  const live=!!p; const sh=p?shipmentOf(p.code):null;
+  const arr=(lb)=>`<div class="wf-arr"><div class="a">➜</div><div class="lb">${lb}</div></div>`;
+  const saleBy=p?(state.orders.find(o=>o.by&&o.code===p.code)||{}).by:null;
+  const saleN=wfNode('💼','销售下单', live?'<span class="pill p-done">已下单</span>':'', [['下单销售',live?(saleBy?uName(saleBy):'—'):'销售员'],['动作','建项目 + 派部门']], live?'done':'');
+  const mk=k=>{ const s=wfDep(p,k); const d=DEPTS[k]; const lines=[['负责人',live?(s.o&&s.o.wid?workerName(k,s.o.wid):(s.o?'待分派':'—')):'负责人分派'],[d.dl,live?(s.o&&s.o.done?s.o.done:'—'):'—'],['效率',live?(effOf(s.o)!=null?effOf(s.o)+'%':'—'):'—']]; return wfNode(d.ico,d.name,live?s.pill:'',lines,live?s.cls:''); };
+  const design=mk('design'),electric=mk('electric'),produce=mk('produce');
+  const pkg=p?p.sheetPkg:null;
+  const sheetN=wfNode('🔧','钣金组',live?(pkg?'<span class="pill p-done">已接收</span>':'<span class="pill p-pending">待图纸包</span>'):'',[['来源','设计 PDF 图纸包'],['钣金装配',live?(p.sheets['钣金装配']?'已上传':'未上传'):'引用四表']],live?(pkg?'done':'wait'):'');
+  const pur=p?state.purchaseInbox.filter(it=>it.code===p.code):[];
+  const purN=wfNode('🛒','采购部',live?(pur.length?'<span class="pill p-done">已收清单</span>':'<span class="pill p-pending">待清单</span>'):'',[['来源','电工 采购清单'],['采购清单',live?(pur.length?pur[0].name:'待推送'):'电工推送']],live?(pur.length?'done':'wait'):'');
+  const whOut=p?whTxns.filter(t=>t.party===p.code&&t.dir==='out'):[]; const whShip=p&&sh?sh.materials.filter(m=>m.from==='仓库组'):[];
+  const whN=wfNode('📦','仓库组','',[['项目领料',live?whOut.length+' 笔':'按需领料'],['发货清单',live?(whShip.length?'已上传':'未上传'):'挂项目推物流']],live?((whOut.length||whShip.length)?'doing':''):'');
+  const ready=p?shipReady(p.code):false;
+  const loPill=live?(sh&&sh.status==='已发货'?'<span class="pill p-done">已发货</span>':(ready?'<span class="pill p-ship">可发货</span>':'<span class="pill p-pending">待齐</span>')):'';
+  const loN=wfNode('🚚','物流发货部',loPill,[['闸门',live?(ready?'三部门完成 ✓':'待部门完成'):'设计&电工&生产'],['汇总资料',live&&sh?sh.materials.length+' 项':'—'],['收货',live?(sh&&sh.receiver?'已填':'待完善'):'销售录入']],live?(sh&&sh.status==='已发货'?'done':(ready?'doing':'wait')):'');
+  const doneN=wfNode('✅','已发货 / 完成',live?(sh&&sh.status==='已发货'?'<span class="pill p-done">已发货</span>':'<span class="pill p-pending">待发货</span>'):'',[['项目状态',live?p.status:'管理层归档']],live?(sh&&sh.status==='已发货'?'done':'wait'):'');
+  return `<div class="wf">
+    <div class="wf-col">${saleN}</div>${arr('派单·并行')}
+    <div class="wf-col"><div class="wf-grp"><span class="gl">⫶ 并行执行</span>${design}${electric}${produce}</div></div>${arr('产出推送')}
+    <div class="wf-col"><div class="wf-grp"><span class="gl">⫶ 并行·下游协同</span>${sheetN}${purN}${whN}</div></div>${arr('汇总·闸门(串行)')}
+    <div class="wf-col">${loN}</div>${arr('串行 发货')}
+    <div class="wf-col">${doneN}</div>
+  </div>
+  <div class="wf-legend"><span><i style="background:#f0fdf4;border-color:#86efac"></i>已完成</span><span><i style="background:#eff6ff;border-color:#93c5fd"></i>进行中</span><span><i style="background:#fffbeb;border-color:#fcd34d"></i>待处理</span><span><i style="background:#fff;opacity:.6"></i>未开始/未下单</span><span>⫶ 虚线框=并行节点 · ➜=串行依赖</span></div>`;
+}
+function pageDetail(){
+  const p=state.projects.find(x=>x.code===state.detailCode); if(!p) return pagePlaceholder();
+  const u=cu(); const top=state.detailTop||"data"; const sh=shipmentOf(p.code);
+  const stPill=`<span class="pill ${p.status==='已完成'?'p-done':(p.status==='已归档'?'p-pending':'p-drawing')}">${p.status}</span>`;
+  // ===== 原系统页头（保持原样：返回 / 名称 / 编号·状态·项目经理 / 克隆权限 · 导入Excel · 导出全部）=====
+  const header=`<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+    <button class="btn btn-ghost btn-sm" onclick="go('catalog')">← 返回</button>
+    <div><h1 style="font-size:20px;line-height:1.2">${p.name}</h1><div class="muted" style="font-size:13px;margin-top:3px"><b style="color:var(--primary)">${p.code}</b> · ${stPill} · 项目经理：${p.designer||'-'}</div></div>
+    <div class="spacer"></div>
+    <button class="btn btn-ghost btn-sm" onclick="toast('原型示意：克隆权限','info')">克隆权限</button>
+    <button class="btn btn-primary btn-sm" onclick="onImportExcel()">⬆ 导入 Excel</button>
+    <button class="btn btn-ghost btn-sm" onclick="tryExport('项目数据')">⬇ 导出全部</button>
+  </div>`;
+  // ===== 原系统顶层 Tab：进度表 / 成员（原样）+ 新增「部门协作 🆕」=====
+  const topbar=`<div class="tabs"><span class="tb ${top==='data'?'on':''}" onclick="detailTop('data')">进度表</span><span class="tb ${top==='members'?'on':''}" onclick="detailTop('members')">成员 (8)</span><span class="tb ${top==='collab'?'on':''}" onclick="detailTop('collab')">部门协作 🆕</span></div>`;
+  let body="";
+  if(top==="data"){ // —— 原「进度表」：数据表子tab + 表格（保持原样）——
+    const dtabs=REQUIRED_SHEETS.map((s,i)=>`<span class="tb ${i===state.detailTab?'on':''}" onclick="setTab(${i})">📄 ${s}</span>`).join("");
+    body=`<div class="card" style="border-radius:0 10px 10px 10px"><div class="tabs">${dtabs}</div>
+      <table><thead><tr><th>#</th><th>名称</th><th>图纸名称</th><th>采购负责人</th><th>供应商</th><th>发出日期</th><th>进度</th></tr></thead><tbody>
+      <tr><td>1</td><td>${REQUIRED_SHEETS[state.detailTab]}</td><td>B01-总图</td><td>潘丽娜</td><td>顺鑫</td><td>2026-05-22</td><td><span class="pill p-done">完成</span></td></tr>
+      <tr><td>2</td><td>${REQUIRED_SHEETS[state.detailTab]}</td><td>B02-机架</td><td>潘丽娜</td><td>越欣发</td><td>2026-05-22</td><td><span class="pill p-drawing">进行中</span></td></tr>
+      </tbody></table></div>
+      <div class="page-desc" style="margin-top:10px">↑ 原系统「进度表」：项目自带 4 张数据表（DatasheetGrid），样式保持不变。</div>`;
+  } else if(top==="members"){ // —— 原「成员」tab（保持原样）——
+    body=`<div class="card" style="border-radius:0 10px 10px 10px"><div class="card-h">👥 项目成员</div>
+      <table><thead><tr><th>姓名</th><th>角色</th><th>项目权限</th></tr></thead><tbody>
+      <tr><td>张工</td><td>设计师</td><td>可编辑</td></tr><tr><td>王经理</td><td>管理层</td><td>可编辑</td></tr><tr><td>刘工</td><td>电工</td><td>只读</td></tr></tbody></table></div>
+      <div class="page-desc" style="margin-top:10px">↑ 原系统「成员」tab：样式保持不变。</div>`;
+  } else { // —— 🆕 新增 tab：项目状态 + 四表校验 + 全流程工作流 ——
+    const slots=REQUIRED_SHEETS.map(s=>`<div class="slot ${p.sheets[s]?'up':''}"><div class="nm">${s}</div>${p.sheets[s]?'<div class="st" style="color:var(--ok)">✅ 已导入</div>':'<div class="st" style="color:var(--tx3)">⬜ 未导入</div>'}</div>`).join("");
+    body=`<div class="hint" style="margin-bottom:14px">🆕 本 tab 为<b>增量新增</b>，不改动原「进度表 / 成员」。集中放：项目状态、四表校验、<b>全流程工作流</b>。</div>
+      <div class="card" style="margin-bottom:14px"><div class="card-h">项目状态 / 发货</div><div style="padding:14px;display:flex;align-items:center;gap:18px;flex-wrap:wrap"><span>项目状态：${stPill}</span><span>发货：${sh?(sh.status==="已发货"?'<span class="pill p-done">已发货</span>':'<span class="pill p-ship">待发货</span>'):'—'}</span>${u.type==="manager"?`<span style="margin-left:auto;font-size:13px;color:var(--tx2)">管理层手动改状态：<select onchange="setProjStatus('${p.code}',this.value)" style="padding:6px 9px;border:1px solid var(--bd);border-radius:7px">${["进行中","已完成","已归档"].map(s=>`<option ${p.status===s?'selected':''}>${s}</option>`).join("")}</select></span>`:''}</div></div>
+      <div class="card" style="margin-bottom:14px"><div class="card-h">📑 四个数据表（设计完成前置校验）<span class="inc">🆕</span></div><div style="padding:14px"><div class="sheet-slots">${slots}</div><div class="page-desc" style="margin:10px 2px 0">数据表统一通过页头「⬆ 导入 Excel」上传；此处仅显示完成校验状态，不单独提供上传入口。</div></div></div>
+      <div class="card"><div class="card-h">🔀 全流程工作流（并行 / 串行）<span class="inc">🆕</span></div><div style="padding:6px 14px 14px;overflow-x:auto">${workflowGraph(p)}</div></div>`;
+  }
+  return header + topbar + `<div style="margin-top:0">${body}</div>`;
+}
+function setTab(i){ state.detailTab=i; render(); }
+function uploadSheet(code,sheet){ const p=state.projects.find(x=>x.code===code); p.sheets[sheet]=true; toast(`已上传「${sheet}」Excel`,"ok"); render(); }
+
+function pageDept(deptKey){
+  const d=DEPTS[deptKey]; const u=cu(); const isProd=deptKey==="produce"; const stockBtn=deptKey==="design"?'<div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="openStockQuery()">🔎 查库存(只读)</button>':'';
+  const flow=`<div class="flow"><div class="s"><b>1</b>${isProd?'生产主管下单':'销售下单'}</div><span class="arr">→</span><div class="s"><b>2</b>${isProd?'选装配组':d.name+'负责人分派'}</div><span class="arr">→</span><div class="s"><b>3</b>${d.wrole}接单填时间</div><span class="arr">→</span><div class="s"><b>4</b>完成（${d.sheetCheck?'校验四表/':''}通知/产物）</div><span class="arr">→</span><div class="s"><b>5</b>推送下游+逾期提醒</div></div>`;
+  if(u.type==="worker" && u.dept===deptKey){
+    const mine=state.orders.filter(o=>o.dept===deptKey&&o.wid===u.wid&&o.status!=="done");
+    const done=state.orders.filter(o=>o.dept===deptKey&&o.wid===u.wid&&o.status==="done");
+    return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${d.wrole}工作台 · ${u.name}</span>${stockBtn}</div>
+      <div class="page-desc">填「${d.sl}/${d.el}」并开始；完成时${d.sheetCheck?'校验四表→':''}选通知人（企业微信）${d.outputs.length?'+上传产物→推送下游':''}。逾期提醒主管。<b>时间本人不可改，仅管理层可改</b>（B5）。</div>${flow}
+      <div class="card"><div class="card-h">📥 我的待办（${mine.length}）</div>${mine.length?`<div class="todo">${mine.map(o=>todoCard(o,d)).join("")}</div>`:`<div class="empty">暂无待办</div>`}</div>
+      ${done.length?`<div class="card"><div class="card-h">✅ 已完成</div><table><thead><tr><th>项目</th><th>${d.sl}</th><th>${d.el}</th><th>完成</th><th>完成效率</th><th>通知</th><th>操作</th></tr></thead><tbody>${done.map(o=>`<tr><td><span class="code" onclick="openDetail('${o.code}')">${o.code}</span></td><td>${o.start}</td><td>${o.dueEnd}</td><td>${o.done}</td><td>${effCell(o)}</td><td>${o.notify?'📲'+uName(o.notify):'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回进行中</button></td></tr>`).join("")}</tbody></table></div>`:""}`;
+  }
+  if(u.type==="deptlead" && u.dept===deptKey){
+    const todo=state.orders.filter(o=>o.dept===deptKey&&o.status==="待派");
+    const wopts=d.workers.map(w=>`<option value="${w.id}">${w.name}</option>`).join("");
+    const cards=todo.map(o=>`<div class="t assign"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span><span class="spacer"></span>${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req} <span class="muted">· 销售：${o.by?uName(o.by):'—'}</span></div>${o.files.length?`<div class="files">${o.files.map(fileChip).join("")}</div>`:''}<div class="assign-bar"><div class="field"><label>分派给 ${d.wrole}</label>${ddAssign(o,d)}</div><button class="btn btn-primary btn-sm" onclick="assignOrder('${o.id}')">✓ 分派</button><button class="btn btn-ghost btn-sm" onclick="voidOrder('${o.id}')">作废单号</button></div></div>`).join("");
+    return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${d.name}负责人 · ${u.name}</span>${stockBtn}</div>
+      <div class="page-desc">销售下单后由你<b>分派</b>给具体${d.wrole}；可<b>作废单号</b>（管理层收到信息后可重新下单）。</div>${flow}
+      <div class="card"><div class="card-h">📥 待分派（${todo.length}）</div>${todo.length?`<div class="todo">${cards}</div>`:`<div class="empty">暂无待分派</div>`}</div>
+      ${deptTrackCard(deptKey,d)}`;
+  }
+  const canOrder = (d.orderBy==="manager"&&u.type==="manager")||(d.orderBy==="pmlead"&&u.type==="pmlead");
+  return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">下单跟踪</span>${stockBtn}</div>
+    <div class="page-desc">下单链：<b>${isProd?'生产主管下单→选装配组':'销售下单 → '+d.name+'负责人分派 → '+d.wrole+'执行'}</b>。本页跟踪进度与<b>完成效率（实际用时÷预计用时）</b>。</div>${flow}
+    <div class="hint" style="margin-bottom:14px">📌 ${canOrder?`你也可在「项目目录」编号上「＋下单」选「${d.name}」。`:`${isProd?'仅生产部主管可下生产单。':'销售下单后由「'+d.name+'负责人」分派（切到对应负责人身份可操作）。'}`}</div>
+    ${deptTrackCard(deptKey,d)}`;
+}
+function workerName(k,wid){ const w=DEPTS[k].workers.find(x=>x.id===wid); return w?w.name:"-"; }
+function todoCard(o,d){
+  const uw=(o.dept!=="design"&&!deptDoneState(o.code,"design").ok)?`<div class="kv" style="color:var(--warn);margin-top:6px">⚠ 上游「设计」未完成 —— 可并行赶工，注意返工风险（软提示，不拦截）</div>`:'';
+  if(o.status==="pending"){ return `<div class="t"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span> ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div><div class="files">${o.files.map(fileChip).join("")}</div>
+    <div class="field-row"><div class="field"><label>${d.sl}</label><input type="date" id="s_${o.id}" value="${today()}"></div><div class="field"><label>${d.el}</label><input type="date" id="e_${o.id}" value="${addDays(7)}"></div></div>${uw}
+    <div class="t-actions"><button class="btn btn-primary btn-sm" onclick="startTask('${o.id}')">开始</button></div></div>`; }
+  const over=o.dueEnd&&today()>o.dueEnd;
+  const startUp = (d.startOutputs||[]).map(so=>{ const up=o.startUploaded&&o.startUploaded[so.k]; return up?`<div class="kv" style="color:var(--ok);margin-top:6px">✅ ${so.label} 已推送${DOWN[so.to].name}（${up.n}）</div>`:`<div class="kv" style="margin-top:6px"><label style="color:var(--primary);cursor:pointer"><input type="file" style="display:none" onchange="uploadStart('${o.id}','${so.k}',this)">📎 接单后上传${so.label} → 推${DOWN[so.to].name}</label></div>`; }).join("");
+  return `<div class="t ${over?'urgent':''}"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span> ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div><div class="files">${o.files.map(fileChip).join("")}</div>
+    <div class="kv">${d.sl}：<b>${o.start}</b> ｜ ${d.el}：<b>${o.dueEnd}</b> ${over?'<span class="pill p-overdue" style="margin-left:6px">已超预计</span>':''}</div>${uw}
+    ${startUp}
+    <div class="t-actions"><button class="btn btn-ok btn-sm" onclick="openComplete('${o.id}')">✓ 完成…</button></div></div>`;
+}
+function startTask(id){ const o=state.orders.find(x=>x.id===id); const s=document.getElementById("s_"+id).value,e=document.getElementById("e_"+id).value; if(!s||!e){toast("请填时间","warn");return;} if(e<s){toast("预计完成不能早于开始","warn");return;} o.start=s;o.dueEnd=e;o.status="drawing"; if(o.dept==="design"){const p=state.projects.find(p=>p.code===o.code);if(p)p.drawStart=s;} toast("已开始","ok"); render(); }
+function reopenTask(id){ const o=state.orders.find(x=>x.id===id); const names=(o.outputs||[]).map(f=>f.n); const dn=DEPTS[o.dept].name;
+  const sh=shipmentOf(o.code); if(sh) sh.materials=sh.materials.filter(m=>!(m.from===dn && names.includes(m.name)));
+  state.purchaseInbox=state.purchaseInbox.filter(it=>!(it.code===o.code && it.from===dn && names.includes(it.name)));
+  o.status="drawing"; o.done=null; o.outputs=[]; if(o.dept==="design"){const p=state.projects.find(p=>p.code===o.code);if(p){p.drawEnd=null; if(p.sheetPkg&&names.includes(p.sheetPkg.n)) p.sheetPkg=null;}} toast("已改回进行中（已撤回推送给下游的资料）","ok"); render(); }
+function uploadStart(id,k,input){ const f=input.files[0]; if(!f) return; const o=state.orders.find(x=>x.id===id); const d=DEPTS[o.dept]; const so=(d.startOutputs||[]).find(x=>x.k===k); if(!so) return; o.startUploaded=o.startUploaded||{}; o.startUploaded[k]={n:f.name,t:so.t}; if(so.to==="purchase"){ state.purchaseInbox.unshift({code:o.code,from:d.name,name:f.name,t:so.t,time:new Date().toLocaleString("zh-CN")}); } else if(so.to==="logistics"){ const sh=shipmentOf(o.code); if(sh) sh.materials.push({from:d.name,name:f.name,t:so.t}); } else if(so.to==="sheet"){ const p=state.projects.find(x=>x.code===o.code); if(p) p.sheetPkg={n:f.name,t:so.t}; pushWx("sm1",`设计部已上传 ${o.code} PDF图纸包，请下载：${f.name}`); } toast(`${so.label} 已推送${DOWN[so.to].name}`,"ok"); render(); }
+
+function openComplete(id){
+  const o=state.orders.find(x=>x.id===id); const d=DEPTS[o.dept]; state.completeId=id; state.completeFiles={};
+  let checkHtml="";
+  if(d.sheetCheck){ const p=state.projects.find(p=>p.code===o.code); const items=REQUIRED_SHEETS.map(s=>`<div class="ci ${p.sheets[s]?'ok':'no'}"><span class="dot">${p.sheets[s]?'✓':'✕'}</span>${s}</div>`).join(""); const ok=REQUIRED_SHEETS.every(s=>p.sheets[s]); checkHtml=`<div class="fg"><label>① 四表上传校验 ${ok?'<span style="color:var(--ok)">通过</span>':'<span style="color:var(--danger)">未通过（缺表无法完成，去项目详情上传）</span>'}</label><div class="check">${items}</div></div>`; }
+  const pool=poolUsers(d.notifyPool); const opts=pool.map(u=>`<option value="${u.id}">${u.name}</option>`).join("");
+  let outHtml=""; if(d.outputs.length){ outHtml=`<div class="fg"><label>③ 上传产物（完成后按目标推送）</label>${d.outputs.map(ot=>`<div class="out-row"><span class="ol">${fico(ot.t)} ${ot.label}${ot.required?' <span class="req-star">*必传</span>':''}</span><span class="to">→ ${DOWN[ot.to].name}</span><label style="cursor:pointer;color:var(--primary);font-size:12px"><input type="file" style="display:none" onchange="pickOut('${ot.k}','${ot.t}',this)">📎 上传</label><span class="st" id="ost_${ot.k}"></span></div>`).join("")}</div>`; }
+  modal(`<div class="d-h"><b>✓ 完成任务 · ${o.code}（${d.name}）</b><span class="x" onclick="closeModal()">×</span></div>
+    <div class="d-b">${checkHtml}
+      <div class="fg"><label>② ${d.notifyLabel} <span class="req-star">*</span></label><select id="c_notify">${opts}</select><div class="hint" style="margin-top:8px">完成后将通过 <b>企业微信</b> 通知所选人员（原型模拟）。</div></div>
+      ${outHtml}</div>
+    <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-ok" onclick="confirmComplete()">确认完成</button></div>`);
+}
+function pickOut(k,t,input){ const f=input.files[0]; if(!f) return; state.completeFiles[k]={n:f.name,t}; document.getElementById("ost_"+k).textContent="✓ "+f.name; }
+function confirmComplete(){
+  const o=state.orders.find(x=>x.id===state.completeId); const d=DEPTS[o.dept];
+  if(d.sheetCheck){ const p=state.projects.find(p=>p.code===o.code); if(!REQUIRED_SHEETS.every(s=>p.sheets[s])){ toast("四表未上传齐，无法完成","danger"); return; } }
+  const notify=document.getElementById("c_notify").value; if(!notify){ toast("请选择通知人员","warn"); return; }
+  for(const ot of d.outputs){ if(ot.required && !state.completeFiles[ot.k]){ toast(`请先上传【${ot.label}】才能完成`,"danger"); return; } }
+  o.status="done"; o.done=today(); o.notify=notify; o.outputs=Object.values(state.completeFiles);
+  if(o.dept==="design"){ const p=state.projects.find(p=>p.code===o.code); if(p)p.drawEnd=o.done; }
+  d.outputs.forEach(ot=>{ const f=state.completeFiles[ot.k]; if(!f) return; if(ot.to==="logistics"){ const sh=shipmentOf(o.code); if(sh) sh.materials.push({from:d.name,name:f.n,t:f.t}); } if(ot.to==="purchase"){ state.purchaseInbox.unshift({code:o.code,from:d.name,name:f.n,t:f.t,time:new Date().toLocaleString("zh-CN")}); } if(ot.to==="sheet"){ const pp=state.projects.find(x=>x.code===o.code); if(pp) pp.sheetPkg={n:f.n,t:f.t}; pushWx("sm1",`设计完成·${o.code} PDF图纸包已推送钣金组：${f.n}`); } });
+  pushWx(notify, `【${d.name}·${o.code}】${workerName(o.dept,o.wid)} 已完成${d.dl}${o.outputs.length?'，并上传：'+o.outputs.map(f=>f.n).join("、"):''}。`);
+  if(o.dueEnd&&o.done>o.dueEnd) pushOverdue(o,d);
+  closeModal(); toast(`已完成，已企业微信通知 ${uName(notify)}${o.outputs.length?'，产物已推送下游':''}`,"ok"); render();
+}
+function pushWx(toId,text){ state.messages.unshift({read:false,to:toId,kind:"wx",time:new Date().toLocaleString("zh-CN"),text:"📲 企业微信："+text}); }
+function leadOf(dept){ return dept==="design"?"dlead":dept==="electric"?"elead":dept==="produce"?"pm":"lead"; }
+function pushOverdue(o,d){ const tm=new Date().toLocaleString("zh-CN"); const txt=`【${d.name}逾期·推送主管】${o.code} ${o.name} 预计 <b>${o.dueEnd}</b>、实际 <b>${o.done}</b>，效率 <b>${effOf(o)}%</b>。负责人：${workerName(o.dept,o.wid)}`;
+  state.messages.unshift({read:false,to:leadOf(o.dept),kind:"warn",time:tm,text:txt});
+  state.messages.unshift({read:false,to:"mgr",kind:"warn",time:tm,text:"（抄送管理层）"+txt}); }
+
+function effOf(o){ if(!o||o.status!=="done"||!o.start||!o.dueEnd||!o.done) return null; const plan=days(o.start,o.dueEnd),act=days(o.start,o.done); return Math.round(act/Math.max(plan,1)*100); /* C3：预计用时0按1天 */ }
+function effCell(o){ const e=effOf(o); if(e==null) return '<span class="muted">—</span>'; return `<span class="eff ${e<=100?'eff-good':'eff-bad'}" title="实际用时 ÷ 预计用时">${e}%</span>`; }
+
+function openOrderForProject(code){
+  const p=state.projects.find(x=>x.code===code); if(!p) return; state.upFiles=[]; state.orderFor={code:p.code,name:p.name};
+  const u=cu(); const allow=[]; if(u.type==="manager"){allow.push("design","electric");} if(u.type==="pmlead"){allow.push("produce");}
+  if(!allow.length){ toast("当前身份无下单权限","warn"); return; } state.orderDept=allow[0];
+  const seg=allow.map((k,i)=>`<label><input type="radio" name="dept" value="${k}" ${i===0?'checked':''} onchange="onDeptChange('${k}')"><span class="opt">${DEPTS[k].ico} ${DEPTS[k].name}</span></label>`).join("");
+  modal(`<div class="d-h"><b>＋ 下单 · ${p.code}</b><span class="x" onclick="closeModal()">×</span></div>
+    <div class="d-b"><div class="hint" style="margin-bottom:14px">💡 选部门 + 指派负责人，TA 在对应工作台收到待办。</div>
+      <div class="fg"><label>下单部门 <span class="req-star">*</span></label><div class="seg">${seg}</div></div>
+      <div class="fg"><label>项目（来自项目目录）</label><input type="text" value="${p.code} · ${p.name}" disabled style="background:#f1f5f9;color:#475569"></div>
+      <div class="fg"><label>指派负责人 <span class="req-star">*</span></label><select id="f_worker">${workerOpts(allow[0])}</select></div>
+      <div class="fg"><label>要求说明</label><textarea id="f_req" placeholder="要点、材料、技术要求"></textarea></div>
+      ${state.orderDept!=="produce"?`<div class="fg"><label>资料（PDF / Word / Excel）</label><label class="uploader" for="f_file">📎 选择文件上传<small>.pdf .doc .docx .xls .xlsx，可多选</small></label><input type="file" id="f_file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx" style="display:none" onchange="onPick(this)"><div class="filelist" id="f_list"></div></div>`:`<div class="hint">🏭 生产部下单无需上传资料，选好装配组即可派发。</div>`}</div>
+    <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitOrder()">下单并派发</button></div>`);
+}
+function workerOpts(k){ return DEPTS[k].workers.map(w=>`<option value="${w.id}">${w.name}</option>`).join(""); }
+function onDeptChange(k){ state.orderDept=k; document.getElementById("f_worker").innerHTML=workerOpts(k); }
+function onPick(input){ [...input.files].forEach(f=>{const ext=(f.name.split(".").pop()||"").toLowerCase();const t=ext.startsWith("pdf")?"pdf":(ext.startsWith("xls")?"xls":"doc");state.upFiles.push({n:f.name,t});}); input.value=""; renderUp(); }
+function renderUp(){ document.getElementById("f_list").innerHTML=state.upFiles.map((f,i)=>`<div class="f">${fico(f.t)} ${f.n}<span class="rm" onclick="rmUp(${i})">✕</span></div>`).join(""); }
+function rmUp(i){ state.upFiles.splice(i,1); renderUp(); }
+function submitOrder(){ const dept=state.orderDept; const wid=document.getElementById("f_worker").value; const req=document.getElementById("f_req").value.trim(); const{code:c,name:nm}=state.orderFor;
+  state.orders.unshift({id:"o"+(++seq),dept,code:c,name:nm,wid,req:req||"（无特殊说明）",files:state.upFiles.slice(),status:"pending",start:null,dueEnd:null,done:null,outputs:[],notify:null}); closeModal(); toast(`已向【${DEPTS[dept].name}】下单，派发给 ${workerName(dept,wid)}`,"ok"); render(); }
+
+function openNewProject(){ modal(`<div class="d-h"><b>＋ 新建项目</b><span class="x" onclick="closeModal()">×</span></div>
+  <div class="d-b"><div class="hint" style="margin-bottom:14px">💡 新建后自动给「物流发货部」创建发货待办；<b>收货信息由销售/管理层在此填写</b>（业务确认 E2）🆕。</div>
+    <div class="fg"><label>项目编号 <span class="req-star">*</span></label><input type="text" id="np_code" placeholder="如 2026-052"></div>
+    <div class="fg"><label>项目名称 <span class="req-star">*</span></label><input type="text" id="np_name" placeholder="如 250L双行星分散机"></div>
+    <div class="fg"><label>设计师</label><input type="text" id="np_d" placeholder="如 张工"></div>
+    <div class="fg"><label>收货信息 🆕</label><input type="text" id="np_rname" placeholder="收货人 / 单位" style="margin-bottom:6px"><input type="text" id="np_rphone" placeholder="联系电话" style="margin-bottom:6px"><input type="text" id="np_raddr" placeholder="收货地址"></div></div>
+  <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitProject()">创建</button></div>`); }
+function submitProject(){ const c=document.getElementById("np_code").value.trim(),nm=document.getElementById("np_name").value.trim(),dr=document.getElementById("np_d").value.trim();
+  if(!c||!nm){ toast("请填编号和名称","warn"); return; } if(state.projects.find(p=>p.code===c)){ toast("编号已存在","warn"); return; }
+  const rn=document.getElementById("np_rname").value.trim(),rp=document.getElementById("np_rphone").value.trim(),ra=document.getElementById("np_raddr").value.trim();
+  state.projects.unshift({code:c,name:nm,qty:1,status:"进行中",sales:cu().name,sign:today(),deliver:"—",designer:dr||"—",drawStart:null,drawEnd:null,drawUse:"",elec:"—",dur:"-",elapsed:"-",remain:"-",sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false}});
+  state.shipments.unshift({code:c,name:nm,materials:[],status:"待发货",invoice:null,receiver: rn?{name:rn,phone:rp,addr:ra}:null}); pushWx("lo1",`新项目 ${c} ${nm} 已创建，已为你建立发货待办。`); closeModal(); toast(`已新建项目 ${c}，并推送发货待办给物流发货部`,"ok"); render(); }
+
+function pagePurchase(){
+  const rows=state.purchaseInbox.map(it=>`<tr><td><span class="code" onclick="openDetail('${it.code}')">${it.code}</span></td><td>${it.from}</td><td>${fileChip(it)}</td><td>${it.time}</td></tr>`).join("");
+  return `<div class="page-h"><h1>🛒 采购部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">采购清单收件箱</span><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="tryExport('采购清单')">⬇ 导出</button></div>
+    <div class="page-desc">电工部完成后推送的「采购清单(Excel)」汇总到这里。</div>
+    <div class="card"><table><thead><tr><th>项目</th><th>来源</th><th>采购清单</th><th>收到时间</th></tr></thead><tbody>${rows||'<tr><td colspan="4" class="empty">暂无采购清单</td></tr>'}</tbody></table></div>`;
+}
+function deptDoneState(code,k){ const os=state.orders.filter(o=>o.dept===k&&o.code===code&&o.status!=="作废"); if(!os.length) return {t:"未下单",ok:false,na:true}; return {t:os.every(o=>o.status==="done")?"已完成":"进行中",ok:os.every(o=>o.status==="done"),na:false}; }
+function shipReady(code){ let any=false; for(const k of ["design","electric","produce"]){ const st=deptDoneState(code,k); if(!st.na){ any=true; if(!st.ok) return false; } } return any; }
+function pageLogistics(){
+  const cell=(s,dn)=>{ const ms=s.materials.filter(m=>m.from===dn); return ms.length?ms.map(fileChip).join(" "):'<span class="muted">暂无</span>'; };
+  const pst=(code)=>{ const st=deptDoneState(code,"produce"); const c=st.ok?'p-done':(st.na?'p-pending':'p-drawing'); return `<span class="pill ${c}">${st.t}</span>`; };
+  const recv=(s)=>{ const r=s.receiver; return `<div style="text-align:left;min-width:160px">${r?`<div><b>${r.name}</b></div><div style="font-size:12px;color:var(--tx2)">📞 ${r.phone}</div><div style="font-size:12px;color:var(--tx3)">📍 ${r.addr}</div>`:'<span class="muted">待完善</span>'} <a style="font-size:11px;color:var(--primary);cursor:pointer" onclick="event.stopPropagation();openReceiver('${s.code}')">✏️ 编辑</a></div>`; };
+  const gate=(s)=>{ if(s.status==="已发货") return s.invoice?fileChip(s.invoice):'—'; const r=shipReady(s.code); return r?`<button class="btn btn-primary btn-sm" onclick="openShip('${s.code}')">📦 已发货（传发货单）</button>`:`<button class="btn btn-ghost btn-sm" disabled style="opacity:.5;cursor:not-allowed" title="设计/电工/生产 均完成后才可发货（D5）">⏳ 待部门完成</button>`; };
+  const rows=state.shipments.map(s=>`<tr><td><span class="code" onclick="openDetail('${s.code}')">${s.code}</span></td><td>${s.name}</td>
+    <td>${cell(s,"设计部")}</td><td>${cell(s,"电工部")}</td><td>${pst(s.code)}</td><td>${cell(s,"仓库组")}</td>
+    <td>${recv(s)}</td>
+    <td>${s.status==="已发货"?'<span class="pill p-done">已发货</span>':(shipReady(s.code)?'<span class="pill p-ship">可发货</span>':'<span class="pill p-pending">待齐</span>')}</td>
+    <td>${gate(s)}</td></tr>`).join("");
+  return `<div class="page-h"><h1>🚚 物流发货部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">发货待办</span></div>
+    <div class="page-desc">新建项目自动建发货待办；设计/电工资料汇总，<b>生产显示完成状态</b>（无产物 E3），<b>仓库发货清单并入</b>。<b>发货闸门：设计/电工/生产 已下单任务均完成才可发</b>（D5）🆕。</div>
+    <div class="card"><div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>名称</th><th>设计资料</th><th>电工资料</th><th>生产状态 🆕</th><th>仓库发货清单 🆕</th><th>收货信息</th><th>状态</th><th>发货闸门 🆕</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+function openShip(code){ state.shipFor=code; state.shipFile=null; const s=shipmentOf(code); const r=s.receiver;
+  modal(`<div class="d-h"><b>📦 确认发货 · ${code}</b><span class="x" onclick="closeModal()">×</span></div>
+  <div class="d-b">
+    <div class="fg"><label>收货信息</label>${r?`<div class="hint" style="background:#f0fdf4;color:#166534"><b>${r.name}</b> ｜ 📞 ${r.phone}<br>📍 ${r.addr}</div>`:'<div class="hint" style="background:#fef3c7;color:#92400e">⚠ 收货信息待完善，建议先在列表「收货信息」列填写</div>'}</div>
+    <div class="fg"><label>发货单（PDF/图片）<span class="req-star">*</span></label><label class="uploader" for="sp_file">📎 上传发货单<small>.pdf .jpg .png</small></label><input type="file" id="sp_file" style="display:none" accept=".pdf,.jpg,.png" onchange="pickShip(this)"><div class="filelist" id="sp_list"></div></div></div>
+  <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="confirmShip()">确认已发货</button></div>`); }
+function openReceiver(code){ const s=shipmentOf(code); const r=s.receiver||{name:"",phone:"",addr:""};
+  modal(`<div class="d-h"><b>📍 收货信息 · ${code}</b><span class="x" onclick="closeModal()">×</span></div>
+  <div class="d-b">
+    <div class="fg"><label>收货人 / 单位 <span class="req-star">*</span></label><input type="text" id="rc_name" value="${r.name}" placeholder="如 华东制药·王主管"></div>
+    <div class="fg"><label>联系电话 <span class="req-star">*</span></label><input type="text" id="rc_phone" value="${r.phone}" placeholder="如 139-0000-1234"></div>
+    <div class="fg"><label>收货地址 <span class="req-star">*</span></label><input type="text" id="rc_addr" value="${r.addr}" placeholder="省市区 + 详细地址"></div>
+  </div>
+  <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveReceiver('${code}')">保存</button></div>`); }
+function saveReceiver(code){ const s=shipmentOf(code); s.receiver={name:document.getElementById("rc_name").value.trim(),phone:document.getElementById("rc_phone").value.trim(),addr:document.getElementById("rc_addr").value.trim()}; closeModal(); toast("收货信息已保存","ok"); render(); }
+function pickShip(input){ const f=input.files[0]; if(!f) return; const ext=(f.name.split(".").pop()||"").toLowerCase(); state.shipFile={n:f.name,t:ext.startsWith("pdf")?"pdf":"doc"}; document.getElementById("sp_list").innerHTML=`<div class="f">${fico(state.shipFile.t)} ${f.name}</div>`; }
+function confirmShip(){ if(!state.shipFile){ toast("请上传发货单","warn"); return; } const s=shipmentOf(state.shipFor); s.status="已发货"; s.invoice=state.shipFile; closeModal(); toast(`${state.shipFor} 已发货完成`,"ok"); render(); }
+
+function pageReport(){
+  const done=state.orders.filter(o=>o.status==="done");
+  const avgOf=r=>r.effs.length?Math.round(r.effs.reduce((a,b)=>a+b,0)/r.effs.length):null;
+  const rateOf=r=>r.done?Math.round(r.ontime/r.done*100):0;
+  const byWorker={};
+  state.orders.forEach(o=>{ const key=o.dept+"|"+o.wid; if(!byWorker[key]) byWorker[key]={dept:o.dept,wid:o.wid,total:0,done:0,ontime:0,over:0,effs:[]}; const r=byWorker[key]; r.total++; if(o.status==="done"){ r.done++; const e=effOf(o); if(e!=null){r.effs.push(e); if(o.done<=o.dueEnd) r.ontime++; else r.over++;} } });
+  const people=Object.values(byWorker).sort((a,b)=>b.total-a.total);
+  const byDept={}; ["design","electric","produce"].forEach(k=>byDept[k]={total:0,done:0,ontime:0,over:0,effs:[]});
+  state.orders.forEach(o=>{ const r=byDept[o.dept]; if(!r) return; r.total++; if(o.status==="done"){ r.done++; const e=effOf(o); if(e!=null){r.effs.push(e); if(o.done<=o.dueEnd) r.ontime++; else r.over++;} } });
+  const deptCards=["design","electric","produce"].map(k=>{ const r=byDept[k],d=DEPTS[k],avg=avgOf(r),rate=rateOf(r);
+    return `<div class="dc"><h4>${d.ico} ${d.name}</h4><div class="row"><span>任务 / 完成</span><b>${r.total} / ${r.done}</b></div><div class="row"><span>逾期</span><b style="color:${r.over?'var(--danger)':'inherit'}">${r.over}</b></div><div class="row"><span>按时率</span><b>${r.done?rate+'%':'—'}</b></div><div class="row"><span>平均效率</span>${avg!=null?`<b class="eff ${avg<=100?'eff-good':'eff-bad'}">${avg}%</b>`:'<span class="muted">—</span>'}</div></div>`; }).join("");
+  const rows=people.map(r=>{ const avg=avgOf(r),rate=rateOf(r);
+    return `<tr><td>${DEPTS[r.dept].ico} ${DEPTS[r.dept].name}</td><td><b>${workerName(r.dept,r.wid)}</b></td><td>${r.total}</td><td>${r.done}</td><td>${r.ontime}</td><td>${r.over?`<span style="color:var(--danger)">${r.over}</span>`:0}</td><td>${r.done?`${rate}%<span class="minibar"><i style="width:${rate}%"></i></span>`:'—'}</td><td>${avg!=null?`<span class="eff ${avg<=100?'eff-good':'eff-bad'}">${avg}%</span>`:'—'}</td></tr>`; }).join("");
+  const effBars=people.filter(r=>r.effs.length).map(r=>{ const avg=avgOf(r); const w=Math.max(Math.min(avg,200)/2,8);
+    return `<div class="barrow"><span class="bl">${DEPTS[r.dept].ico} ${workerName(r.dept,r.wid)}</span><div class="bt"><div class="bf ${avg<=100?'good':'bad'}" style="width:${w}%">${avg}%</div></div></div>`; }).join("") || '<div class="empty">暂无完成数据</div>';
+  const maxT=Math.max(1,...people.map(r=>r.total));
+  const taskBars=people.map(r=>`<div class="barrow"><span class="bl">${DEPTS[r.dept].ico} ${workerName(r.dept,r.wid)}</span><div class="bt"><div class="bf" style="width:${Math.max(r.total/maxT*100,8)}%;background:linear-gradient(90deg,#60a5fa,#2563eb)">${r.total}</div></div></div>`).join("");
+  const od=done.filter(o=>o.done>o.dueEnd);
+  const odRows=od.map(o=>`<tr><td>${DEPTS[o.dept].ico} ${DEPTS[o.dept].name}</td><td>${workerName(o.dept,o.wid)}</td><td><span class="code" onclick="openDetail('${o.code}')">${o.code}</span></td><td>${o.dueEnd}</td><td>${o.done}</td><td><span class="pill p-overdue">超 ${days(o.dueEnd,o.done)} 天</span></td><td>${effCell(o)}</td></tr>`).join("");
+  const allAvg=(()=>{ const es=done.map(effOf).filter(x=>x!=null); return es.length?Math.round(es.reduce((a,b)=>a+b,0)/es.length):null; })();
+  return `<div class="page-h"><h1>📊 月度工作报表</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${thisMonth()}</span><div class="spacer"></div>
+      <select class="btn btn-ghost btn-sm" style="padding:7px 10px"><option>全部部门</option><option>设计部</option><option>电工部</option><option>生产部</option></select>
+      <select class="btn btn-ghost btn-sm" style="padding:7px 10px"><option>${thisMonth()}</option><option>上月</option></select>
+      <button class="btn btn-ghost btn-sm" onclick="tryExport('月度报表')">⬇ 导出</button></div>
+    <div class="page-desc">按部门 / 个人统计任务量、按时率、平均完成效率；含效率对比、任务量对比与逾期清单。</div>
+    <div class="stat">
+      <div class="sb"><div class="v" style="color:var(--primary)">${state.orders.length}</div><div class="l">本月任务总数</div></div>
+      <div class="sb"><div class="v" style="color:var(--ok)">${done.length}</div><div class="l">已完成</div></div>
+      <div class="sb"><div class="v" style="color:var(--danger)">${od.length}</div><div class="l">逾期</div></div>
+      <div class="sb"><div class="v">${done.length?Math.round((done.length-od.length)/done.length*100):0}%</div><div class="l">整体按时率 ｜ 均效率 ${allAvg!=null?allAvg+'%':'—'}</div></div>
+    </div>
+    <div style="font-weight:700;margin:4px 2px 10px">部门概览</div><div class="dept-cards">${deptCards}</div>
+    <div class="rep-grid" style="margin-bottom:16px">
+      <div class="card"><div class="card-h">📈 人均完成效率（实际÷预计 · 越低越好，绿=按时）</div><div style="padding:16px">${effBars}</div></div>
+      <div class="card"><div class="card-h">📦 人均任务量</div><div style="padding:16px">${taskBars}</div></div>
+    </div>
+    <div class="card"><div class="card-h">👤 个人工作明细</div><table><thead><tr><th>部门</th><th>人员</th><th>任务数</th><th>完成</th><th>按时</th><th>逾期</th><th>按时率</th><th>平均效率</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">暂无数据</td></tr>'}</tbody></table></div>
+    <div class="card"><div class="card-h">⏰ 逾期任务清单（${od.length}）</div><table><thead><tr><th>部门</th><th>人员</th><th>项目</th><th>预计完成</th><th>实际完成</th><th>逾期</th><th>效率</th></tr></thead><tbody>${odRows||'<tr><td colspan="7" class="empty">本月无逾期 🎉</td></tr>'}</tbody></table></div>
+    <div class="card"><div class="card-h">🆕 其它部门工作量（销售 / 仓库）</div><div style="padding:14px">${(()=>{ const sales={}; state.orders.forEach(o=>{ if(o.by){ sales[o.by]=(sales[o.by]||0)+1; } }); const srows=Object.keys(sales).map(id=>`<div class="row"><span>${uName(id)}（销售下单）</span><b>${sales[id]} 单</b></div>`).join("")||'<div class="muted">暂无销售下单</div>'; const sIn=whTxns.filter(t=>t.dir==='in').reduce((a,t)=>a+t.qty,0), sOut=whTxns.filter(t=>t.dir==='out').reduce((a,t)=>a+t.qty,0); return `<div class="dept-cards"><div class="dc"><h4>💼 销售下单量</h4>${srows}</div><div class="dc"><h4>📦 仓库出入库</h4><div class="row"><span>入库合计</span><b style="color:var(--ok)">${sIn}</b></div><div class="row"><span>出库合计</span><b style="color:var(--primary)">${sOut}</b></div><div class="row"><span>流水笔数</span><b>${whTxns.length}</b></div></div></div>`; })()}</div></div>`;
+}
+
+function pagePerm(){
+  const rows=ROLES.map((r,i)=>`<tr><td><b>${r.name}</b></td><td>${r.canOrder}</td><td><label class="switch"><input type="checkbox" ${r.push?"checked":""} onchange="togglePush(${i})"><span class="sl"></span></label></td></tr>`).join("");
+  return `<div class="page-h"><h1>🔒 权限管理</h1><span class="inc ed">✏️ 改动</span><span class="tag-dept">角色 · 消息推送人</span></div>
+    <div class="page-desc">角色体系：采购部已合并；生产部下单改为主管；新增电工部、物流发货部。新增「消息推送人」标记（接收逾期等推送）🆕。</div>
+    <div class="card"><table><thead><tr><th style="width:240px">角色</th><th>权限</th><th style="width:150px">消息推送人 🆕</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function togglePush(i){ ROLES[i].push=!ROLES[i].push; toast(`已${ROLES[i].push?'设为':'取消'}「${ROLES[i].name}」消息推送人`,"ok"); render(); }
+
+function tryExport(scope){ const u=cu(); if(u.export||u.type==="manager"){ toast(`正在导出「${scope}」…（原型）`,"ok"); return; } if(state.exportReqs.find(r=>r.by===state.userId&&r.scope===scope&&r.status==="待审批")){ toast("已提交申请，等待管理层审批","info"); return; } state.exportReqs.unshift({id:"r"+(++seq),by:state.userId,scope,status:"待审批",time:new Date().toLocaleString("zh-CN")}); pushWx("mgr",`${u.name} 申请导出权限：${scope}，待审批。`); toast("无导出权限，已提交申请给管理层审批","info"); render(); }
+function pageApprove(){
+  const mgr=cu().type==="manager";
+  const rows=state.exportReqs.map(r=>`<tr><td>${uName(r.by)} · ${USERS[r.by]?USERS[r.by].role:''}</td><td>${r.scope}</td><td>${r.time}</td><td>${r.status==="待审批"?'<span class="pill p-pending">待审批</span>':(r.status==="通过"?'<span class="pill p-done">通过</span>':'<span class="pill p-overdue">驳回</span>')}</td><td>${(mgr&&r.status==="待审批")?`<button class="btn btn-ok btn-sm" onclick="approve('${r.id}',1)">通过</button> <button class="btn btn-ghost btn-sm" onclick="approve('${r.id}',0)">驳回</button>`:'—'}</td></tr>`).join("");
+  return `<div class="page-h"><h1>✅ 导出审批</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">导出权限申请</span></div>
+    <div class="page-desc">导出受控：成员申请 → 管理层审批，通过后才能导出。${mgr?'':'（仅管理层可审批，请切到「王经理」）'}</div>
+    <div class="card"><table><thead><tr><th>申请人</th><th>导出范围</th><th>申请时间</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">暂无申请</td></tr>'}</tbody></table></div>`;
+}
+function approve(id,ok){ const r=state.exportReqs.find(x=>x.id===id); r.status=ok?"通过":"驳回"; if(ok&&USERS[r.by]) USERS[r.by].export=true; pushWx(r.by,`你的导出申请「${r.scope}」已${ok?'通过':'驳回'}。`); toast(`已${ok?'通过':'驳回'}`,"ok"); render(); }
+
+function pageMsg(){
+  state.messages.forEach(m=>{ if(m.to===state.userId||m.toAll) m.read=true; }); setTimeout(renderTop,0);
+  const mine=state.messages.filter(m=>m.to===state.userId||m.toAll);
+  const list=mine.length?mine.map(m=>`<div class="msg ${m.read?'':'unread'}"><div class="mi ${m.kind==='warn'?'warn':(m.kind==='wx'?'wx':'info')}">${m.kind==='warn'?'⚠':(m.kind==='wx'?'💬':'ℹ')}</div><div><div class="mt">${m.text}</div><div class="mtime">${m.toAll?'推送给：消息推送人':'@'+uName(m.to)} · ${m.time}</div></div></div>`).join(""):`<div class="empty">暂无消息</div>`;
+  return `<div class="page-h"><h1>🔔 消息中心</h1><span class="inc">🆕</span><span class="tag-dept">${cu().name}</span></div><div class="page-desc">企业微信通知（💬）、逾期提醒（⚠）、审批结果汇总到这里。</div><div class="card">${list}</div>`;
+}
+
+/* ========== 🆕 销售部 ========== */
+function pageSales(){
+  const u=cu(); const all = u.type==="salelead"||u.type==="manager"||u.type==="admin";
+  const mine=state.orders.filter(o=>o.by && (all||o.by===state.userId));
+  const codes=[...new Set(mine.map(o=>o.code))];   // 项目编号唯一，一项目一行
+  const rows=codes.map(code=>{ const os=mine.filter(o=>o.code===code); const p=state.projects.find(x=>x.code===code)||{}; const by=os[0].by;
+    const depts=os.map(o=>`${DEPTS[o.dept].ico} ${DEPTS[o.dept].name}`).join("、");
+    let agg; if(os.some(o=>o.status==="待派")) agg='<span class="pill p-pending">待分派</span>'; else if(os.every(o=>o.status==="done")) agg='<span class="pill p-done">全部完成</span>'; else agg='<span class="pill p-drawing">进行中</span>';
+    return `<tr><td><span class="code" onclick="openDetail('${code}')">${code}</span></td><td>${p.name||os[0].name}</td><td>${depts}</td><td>${uName(by)}</td><td>${agg}</td><td><button class="btn btn-ghost btn-sm" onclick="openWfModal('${code}')">🔍 查看全览节点</button></td></tr>`;
+  }).join("");
+  const canSell=u.type==="sales"||u.type==="salelead"||u.type==="manager";
+  return `<div class="page-h"><h1>💼 销售部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${all?'全部项目':'我的项目'} · ${u.name}</span><div class="spacer"></div>${canSell?`<button class="btn btn-primary btn-sm" onclick="openSalesOrder()">＋ 销售下单</button>`:''}</div>
+    <div class="page-desc">下单链起点：销售下单 → 设计/电工部负责人分派。<b>销售员只看自己的项目</b>，销售主管/管理层看全部。<b>每个项目编号唯一一行</b>；点「查看全览节点」看该项目的全流程工作流。</div>
+    <div class="card"><table><thead><tr><th>项目编号</th><th>项目名称</th><th>派往部门</th><th>下单销售</th><th>整体状态</th><th>全流程</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="empty">暂无项目（点右上「＋ 销售下单」）</td></tr>'}</tbody></table></div>`;
+}
+function openWfModal(code){ const p=state.projects.find(x=>x.code===code); modal(`<div class="d-h"><b>🔀 ${code}${p?' · '+p.name:''} · 全流程节点</b><span class="x" onclick="closeModal()">×</span></div><div class="d-b">${p?workflowGraph(p):'<div class="empty">项目不存在</div>'}</div><div class="d-f"><button class="btn btn-ghost" onclick="openDetail('${code}')">进入项目详情</button><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>`,'wide'); }
+function openSalesOrder(){ state.upFiles=[];
+  modal(`<div class="d-h"><b>💼 销售下单</b><span class="x" onclick="closeModal()">×</span></div>
+   <div class="d-b"><div class="hint" style="margin-bottom:14px">💡 下单后自动建项目+发货待办，并推送所选部门负责人分派。</div>
+    <div class="fg"><label>项目编号 <span class="req-star">*</span></label><input type="text" id="so_code" placeholder="如 2026-053"></div>
+    <div class="fg"><label>项目名称 <span class="req-star">*</span></label><input type="text" id="so_name" placeholder="如 300L真空乳化机"></div>
+    <div class="fg"><label>派往部门（可多选）<span class="req-star">*</span></label><div class="seg"><label><input type="checkbox" name="sod" value="design" checked><span class="opt">📐 设计部</span></label><label><input type="checkbox" name="sod" value="electric" checked><span class="opt">⚡ 电工部</span></label></div></div>
+    <div class="fg"><label>要求说明</label><textarea id="so_req" placeholder="技术交底、要点、材料要求"></textarea></div>
+    <div class="fg"><label>资料（PDF / Word / Excel）</label><label class="uploader" for="so_file">📎 选择文件上传<small>可多选</small></label><input type="file" id="so_file" multiple style="display:none" onchange="onPick(this)"><div class="filelist" id="f_list"></div></div>
+    <div class="fg"><label>收货信息（销售填写 🆕）</label><input type="text" id="so_rname" placeholder="收货人 / 单位" style="margin-bottom:6px"><input type="text" id="so_rphone" placeholder="联系电话" style="margin-bottom:6px"><input type="text" id="so_raddr" placeholder="收货地址"></div>
+   </div>
+   <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitSalesOrder()">下单</button></div>`);
+}
+function submitSalesOrder(){ const code=val("so_code").trim(),name=val("so_name").trim(),req=val("so_req").trim();
+  const depts=[...document.querySelectorAll('input[name="sod"]:checked')].map(x=>x.value);
+  if(!code||!name){ toast("请填编号和名称","warn"); return; }
+  if(!depts.length){ toast("请至少选择一个派往部门","warn"); return; }
+  if(!state.projects.find(x=>x.code===code)){ const rn=val("so_rname").trim();
+    state.projects.unshift({code,name,qty:1,status:"进行中",sales:cu().name,sign:today(),deliver:"—",designer:"—",drawStart:null,drawEnd:null,drawUse:"",elec:"—",dur:"-",elapsed:"-",remain:"-",sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false}});
+    state.shipments.unshift({code,name,materials:[],status:"待发货",invoice:null,receiver: rn?{name:rn,phone:val("so_rphone").trim(),addr:val("so_raddr").trim()}:null});
+    pushWx("lo1",`新项目 ${code} ${name} 已创建发货待办。`); }
+  depts.forEach(dept=>{ state.orders.unshift({id:"o"+(++seq),dept,code,name,wid:null,by:state.userId,req:req||"（无特殊说明）",files:state.upFiles.slice(),status:"待派",start:null,dueEnd:null,done:null,outputs:[],notify:null}); pushWx(dept==="design"?"dlead":"elead",`【销售下单】${code} ${name} 已下单到${DEPTS[dept].name}，请分派负责人。`); });
+  closeModal(); toast(`已下单到 ${depts.map(d=>DEPTS[d].name).join("、")}，等待负责人分派`,"ok"); render();
+}
+function val(id){ return document.getElementById(id).value; }
+
+/* ========== 🆕 钣金组 ========== */
+function pageSheet(){
+  const u=cu();
+  const rows=state.projects.map(p=>{ const pkg=p.sheetPkg; const bj=p.sheets&&p.sheets["钣金装配"];
+    return `<tr><td><span class="code" onclick="openDetail('${p.code}')">${p.code}</span></td><td>${p.name}</td><td>${p.designer}</td><td>${bj?`<span class="code" onclick="viewSheet('${p.code}','钣金装配')">钣金装配表 ✅</span>`:'<span class="pill p-pending">未上传</span>'}</td><td>${pkg?fileChip(pkg):'<span class="muted">待设计部上传</span>'}</td><td>${pkg?'<span class="pill p-done">可下载</span>':'<span class="pill p-pending">待图纸包</span>'}</td></tr>`;}).join("");
+  return `<div class="page-h"><h1>🔧 钣金组</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${u.name}</span></div>
+    <div class="page-desc"><b>PDF 图纸文件包由设计部在其工作台上传推送</b>（设计接单后上传 → 推钣金组），<b>钣金组在此下载</b>；「钣金装配」表为设计四表的只读引用。</div>
+    <div class="hint" style="margin-bottom:14px">📌 演示：切「陈工·设计负责人」把 2026-050 分派给张工 → 切「张工·设计师」在设计部待办里「📎 接单后上传PDF图纸包 → 推钣金组」→ 回本页点文件名/⬇ 下载。</div>
+    <div class="card"><div class="card-h">📥 项目图纸包（下载）+ 钣金装配表（引用）</div><div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>名称</th><th>设计师</th><th>钣金装配表(引用)</th><th>PDF 图纸包(下载)</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+function uploadSheetPkg(code,input){ const f=input.files[0]; if(!f) return; const p=state.projects.find(x=>x.code===code); p.sheetPkg={n:f.name,t:"pdf"}; pushWx("sm1",`设计部已上传 ${code} 钣金图纸包：${f.name}`); toast("图纸包已关联并推送钣金组","ok"); render(); }
+
+/* ========== 🆕 仓库组（仓库管理 + 发货清单） ========== */
+let whMID=0;
+function whMat(name,spec,init,safety,loc,flag){ whMID++; return {id:whMID,code:"M"+String(whMID).padStart(4,"0"),name,spec,cat:"搅拌桨",unit:"个",loc,init,safety,flag:flag||"",status:"启用"}; }
+const whMaterials=[
+  whMat("316勾式搅拌桨","5L",12,5,"A-01"), whMat("304勾式搅拌桨","5L",7,5,"A-02"),
+  whMat("304搅拌桨","200ML",2,3,"A-03","名称错字：应为「搅拌浆」"), whMat("316搅拌桨","500ML",8,5,"A-04"),
+  whMat("304搅拌浆","500ML",14,6,"A-05"), whMat("304搅拌浆","1L",17,6,"B-01"), whMat("304搅拌浆","2L",28,8,"B-02"),
+  whMat("304搅拌浆（老）","5L",25,8,"B-03","版本：老/新需合并判定"), whMat("304搅拌浆","10L",18,6,"B-04"),
+  whMat("316搅拌桨","15L/20L",10,6,"C-01","型号漂移：原 15L，3月起变 15L/20L"), whMat("304搅拌浆","15L/20L",14,6,"C-02","型号漂移：原 15L，3月起变 15L/20L"),
+  whMat("304搅拌浆","50L",4,5,"C-03"), whMat("304搅拌浆","60L",8,4,"C-04"), whMat("304搅拌浆","100L",2,3,"D-01"),
+  whMat("316搅拌桨","5L",0,5,"A-06","与首行 316勾式5L 疑似重复"), whMat("304搅拌浆（新）","5L",0,8,"B-05","版本：老/新需合并判定"), whMat("316搅拌桨","2L",0,5,"A-07"),
+];
+function whM(id){ return whMaterials.find(m=>m.id===id); }
+function whFind(n,s){ return whMaterials.find(m=>m.name===n&&m.spec===s); }
+let whTID=0,whRK=0,whCK=0; const whTxns=[];
+function whTx(n,s,date,dir,qty,source,party){ const m=whFind(n,s); if(!m) return; whTID++; const no=(dir==="in"?("RK"+date.replace(/-/g,"")+"-"+String(++whRK).padStart(3,"0")):("CK"+date.replace(/-/g,"")+"-"+String(++whCK).padStart(3,"0"))); whTxns.push({id:whTID,no,mid:m.id,date,dir,qty,source,party:party||"",op:"孙仓管"}); }
+whTx("304搅拌浆","50L","2026-05-17","out",4,"项目领料","2026-041M"); whTx("304搅拌浆","60L","2026-05-22","out",2,"项目领料","2026-039");
+whTx("304搅拌浆","2L","2026-05-23","out",2,"项目领料","2026-039"); whTx("316搅拌桨","15L/20L","2026-05-25","in",24,"采购入库","顺鑫供应");
+whTx("316搅拌桨","15L/20L","2026-05-25","out",4,"项目领料","2026-050"); whTx("304搅拌浆","15L/20L","2026-05-25","in",20,"采购入库","顺鑫供应");
+whTx("304搅拌浆（老）","5L","2026-05-25","out",2,"项目领料","2026-041M"); whTx("304搅拌浆","100L","2026-05-26","in",8,"采购入库","越欣发");
+whTx("304搅拌浆（老）","5L","2026-05-27","in",2,"退料入库","2026-038退料"); whTx("316搅拌桨","5L","2026-05-27","in",24,"采购入库","顺鑫供应");
+whTx("316搅拌桨","5L","2026-05-27","out",4,"项目领料","2026-050"); whTx("304搅拌浆（新）","5L","2026-05-27","in",56,"采购入库","华东阀门"); whTx("316搅拌桨","2L","2026-05-27","in",35,"采购入库","顺鑫供应");
+const WH_SRC_IN=["采购入库","退料入库","盘盈入库"], WH_SRC_OUT=["项目领料","发货出库","报废损耗","盘亏出库"];
+function whStock(mid){ const m=whM(mid); let s=m.init; whTxns.filter(t=>t.mid===mid).forEach(t=>s+=(t.dir==="in"?t.qty:-t.qty)); return s; }
+function whLow(){ return whMaterials.filter(m=>whStock(m.id)<m.safety); }
+function whStatus(m){ const s=whStock(m.id); if(s<=0) return {k:"p-overdue",t:"缺货"}; if(s<m.safety) return {k:"p-pending",t:"预警"}; return {k:"p-done",t:"正常"}; }
+function whSuggest(m){ return Math.max(0,m.safety-whStock(m.id)); }
+function whMonthTx(mid,ym){ return whTxns.filter(t=>t.mid===mid&&t.date.slice(0,7)===ym); }
+function whOpenBefore(mid,ym){ const m=whM(mid); let s=m.init; whTxns.filter(t=>t.mid===mid&&t.date.slice(0,7)<ym).forEach(t=>s+=(t.dir==="in"?t.qty:-t.qty)); return s; }
+function whPeriods(){ const set=new Set(whTxns.map(t=>t.date.slice(0,7))); set.add("2026-05"); return [...set].sort().reverse(); }
+function whCanWrite(){ return cu().type==="wh"; }
+function pageWarehouse(){
+  const ro=!whCanWrite(); const tabs=[["ov","库存总览"],["io","出入库登记"],["sum","收发存汇总"],["txn","出入库流水"],["mat","物料主数据"],["ship","发货清单"]];
+  const tabBar=`<div class="tabs">${tabs.map(t=>`<span class="tb ${state.whTab===t[0]?'on':''}" onclick="whGo('${t[0]}')">${t[1]}</span>`).join("")}</div>`;
+  let body; const k=state.whTab;
+  if(k==="io") body=whInout(ro); else if(k==="sum") body=whSummary(); else if(k==="txn") body=whTxnPage(ro); else if(k==="mat") body=whMaterialPage(ro); else if(k==="ship") body=whShipList(ro); else body=whOverview(ro);
+  const HELP={
+    ov:"<b>库存总览</b>：实时查看每个物料的当前库存（=建档期初＋累计入库−累计出库，系统自动算，不用手工结转）。库存低于「安全库存」会标红，并给出建议补货量。设计师/管理层只读。",
+    io:"<b>出入库登记</b>：每收/发一次料就登记一笔，提交即生成单据（自动单号）并实时更新库存。<b>入库</b>＝采购到货/退料/盘盈；<b>出库</b>＝项目领料/发货/报废/盘亏，出库可填「关联项目」做领料追溯。登记错了不要删，到「出入库流水」点冲红。",
+    sum:"<b>收发存汇总</b>：仓库行业的标准月报——按月或累计统计每个物料的「期初＋本期入−本期出＝期末」。比原来 Excel 的 31 列日表清爽，可导出对账（导出走审批）。",
+    txn:"<b>出入库流水</b>：所有出入库的明细流水账，可按类型/物料/项目筛选，能追溯到经办人与单据。纠错点「冲红」生成一笔反向单据抵消，原记录保留（不物理删除，可审计）。",
+    mat:"<b>物料主数据</b>：物料的「身份档案」——编码固定身份、名称受控、规格/库位/单位/安全库存集中维护。从源头消灭 Excel 里的错字（桨/浆）、型号漂移（15L→15L/20L）、老新重复行；支持从 Excel 历史导入并自动去重清洗。",
+    ship:"<b>发货清单</b>：上传与项目编号挂钩的发货清单，提交后自动推送给「物流发货部」对应项目（物流看板可见）。",
+  };
+  return `<div class="page-h"><h1>📦 仓库组</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${ro?'只读':cu().name}</span></div>
+    <div class="page-desc">把原来用 Excel 登记的物料台账搬进系统：实时库存 + 单据化出入库 + 收发存汇总 + 安全库存预警；并含「发货清单上传 → 物流」。${ro?'<b>（当前身份只读，设计师/管理层可查看）</b>':''}</div>
+    <div class="card" style="padding-bottom:0">${tabBar}</div>
+    <div style="margin-top:14px"><div class="wh-help"><span class="i">💡</span><div>${HELP[k]||''}</div></div>${body}</div>`;
+}
+function whGo(k){ state.whTab=k; render(); }
+function whOverview(ro){ const low=whLow(); const inN=whTxns.filter(t=>t.dir==="in"&&t.date.slice(0,7)===state.whPeriod).reduce((a,t)=>a+t.qty,0); const outN=whTxns.filter(t=>t.dir==="out"&&t.date.slice(0,7)===state.whPeriod).reduce((a,t)=>a+t.qty,0);
+  const list=whMaterials.filter(m=>!state.whKw||(m.name+m.spec+m.code+m.loc).includes(state.whKw));
+  const rows=list.map(m=>{ const s=whStock(m.id),st=whStatus(m); return `<tr><td>${m.code}</td><td>${m.name}${m.flag?`<span class="flag" title="${m.flag}">⚠</span>`:''}</td><td>${m.spec}</td><td><span class="loc">${m.loc}</span></td><td>${m.unit}</td><td><span class="qty ${st.t==='预警'?'low':st.t==='缺货'?'zero':''}">${s}</span></td><td class="muted">${m.safety}</td><td><span class="pill ${st.k}">${st.t}</span></td>${ro?'':`<td><button class="btn btn-ok btn-sm" onclick="openWhIO(${m.id},'in')">入库</button> <button class="btn btn-ghost btn-sm" onclick="openWhIO(${m.id},'out')">出库</button></td>`}</tr>`;}).join("");
+  return `<div class="stat"><div class="sb"><div class="v" style="color:var(--primary)">${whMaterials.length}</div><div class="l">物料种类</div></div><div class="sb"><div class="v" style="color:${low.length?'var(--danger)':'var(--ok)'}">${low.length}</div><div class="l">需补货（低于安全库存）</div></div><div class="sb"><div class="v" style="color:var(--ok)">${inN}</div><div class="l">本月入库（${state.whPeriod}）</div></div><div class="sb"><div class="v">${outN}</div><div class="l">本月出库（${state.whPeriod}）</div></div></div>
+   ${low.length?`<div class="card" style="margin-bottom:16px"><div class="card-h">⚠ 库存预警 · 建议补货（${low.length}）</div><div style="overflow-x:auto"><table><thead><tr><th>物料</th><th>规格</th><th>库位</th><th>当前库存</th><th>安全库存</th><th>建议补货</th>${ro?'':'<th>操作</th>'}</tr></thead><tbody>${low.map(m=>{const s=whStock(m.id);return `<tr><td>${m.name}</td><td>${m.spec}</td><td><span class="loc">${m.loc}</span></td><td><span class="qty ${s<=0?'zero':'low'}">${s}</span></td><td class="muted">${m.safety}</td><td class="qty" style="color:var(--warn)">+${whSuggest(m)}</td>${ro?'':`<td><button class="btn btn-ok btn-sm" onclick="openWhIO(${m.id},'in')">去入库</button></td>`}</tr>`;}).join("")}</tbody></table></div></div>`:''}
+   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><input type="text" placeholder="🔍 搜索 名称/规格/编码/库位（回车）" value="${state.whKw}" onchange="state.whKw=this.value;render()" style="padding:8px 11px;border:1px solid var(--bd);border-radius:8px;font-size:13px">${ro?'':`<button class="btn btn-ok btn-sm" onclick="openWhIO(null,'in')">＋ 入库</button> <button class="btn btn-primary btn-sm" onclick="openWhIO(null,'out')">－ 出库</button>`}<button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="tryExport('库存表')">⬇ 导出</button></div>
+   <div class="card"><div class="card-h">📊 物料库存清单（标红=低于安全库存）</div><div style="overflow-x:auto"><table><thead><tr><th>编码</th><th>名称</th><th>规格</th><th>库位</th><th>单位</th><th>当前库存</th><th>安全库存</th><th>状态</th>${ro?'':'<th>操作</th>'}</tr></thead><tbody>${rows||'<tr><td colspan="9" class="empty">无匹配</td></tr>'}</tbody></table></div></div>`;
+}
+function whInout(ro){ if(ro) return `<div class="card"><div class="empty">只读身份：仅可查看，无出入库登记权限</div></div>`;
+  let list=[...whTxns].reverse(); if(state.whIo) list=list.filter(t=>t.dir===state.whIo);
+  return `<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap"><button class="btn btn-ok" onclick="openWhIO(null,'in')">＋ 入库（采购到货/退料/盘盈）</button><button class="btn btn-primary" onclick="openWhIO(null,'out')">－ 出库（项目领料/发货/报废）</button><select style="margin-left:auto;padding:8px 11px;border:1px solid var(--bd);border-radius:8px" onchange="state.whIo=this.value;render()"><option value="">全部单据</option><option value="in" ${state.whIo==='in'?'selected':''}>仅入库</option><option value="out" ${state.whIo==='out'?'selected':''}>仅出库</option></select></div>
+   <div class="card"><div class="card-h">📜 最近单据</div><div style="overflow-x:auto"><table><thead><tr><th>单号</th><th>类型</th><th>物料</th><th>规格</th><th>数量</th><th>日期</th><th>来源/用途</th><th>供应商/项目</th><th>经办人</th></tr></thead><tbody>${list.map(t=>{const m=whM(t.mid);return `<tr><td><span class="loc">${t.no}</span></td><td><span class="pill ${t.dir==='in'?'p-done':'p-drawing'}">${t.dir==='in'?'入库':'出库'}</span></td><td>${m.name}</td><td>${m.spec}</td><td class="qty">${t.qty}</td><td>${t.date}</td><td>${t.source}</td><td>${t.party||'—'}</td><td>${t.op}</td></tr>`;}).join("")}</tbody></table></div></div>`;
+}
+function openWhIO(mid,dir){ if(!whCanWrite()){ toast("只读身份无登记权限","danger"); return; } state.whIoEdit={mid:mid||whMaterials[0].id,dir};
+  const cur=whM(state.whIoEdit.mid); const selLabel=`${cur.code} · ${cur.name} ${cur.spec}（现存 ${whStock(cur.id)}）`;
+  const listHtml=whMaterials.map(m=>`<div class="msel-opt" data-k="${(m.code+m.name+m.spec).toLowerCase()}" onclick="mselPick(${m.id})"><span class="mc">${m.code}</span> ${m.name} ${m.spec} <span class="muted" style="margin-left:auto">现存 ${whStock(m.id)}</span></div>`).join("")+`<div class="msel-empty" id="msel_empty" style="display:none;padding:14px;text-align:center;color:var(--tx3)">无匹配物料</div>`;
+  const srcs=(dir==='in'?WH_SRC_IN:WH_SRC_OUT).map(s=>`<option>${s}</option>`).join("");
+  modal(`<div class="d-h"><b>${dir==='in'?'➕ 入库登记':'➖ 出库登记'}</b><span class="x" onclick="closeModal()">×</span></div>
+   <div class="d-b">
+    <div class="fg"><label>类型</label><div class="seg"><label><input type="radio" name="wio" value="in" ${dir==='in'?'checked':''} onchange="whSwitchIO('in')"><span class="opt">入库</span></label><label><input type="radio" name="wio" value="out" ${dir==='out'?'checked':''} onchange="whSwitchIO('out')"><span class="opt">出库</span></label></div></div>
+    <div class="fg"><label>物料 <span class="req-star">*</span></label><div class="msel"><div class="msel-trigger" onclick="mselToggle()"><span class="ml" id="msel_label">${selLabel}</span><span class="dd-caret">▼</span></div><input type="hidden" id="wio_mat" value="${state.whIoEdit.mid}"><div class="msel-panel" id="msel_panel" style="display:none"><input type="text" class="msel-search" id="msel_search" placeholder="🔍 输入 编码/名称/规格 模糊搜索" oninput="mselFilter(this.value)"><div class="msel-list" id="msel_list">${listHtml}</div></div></div></div>
+    <div class="field-row"><div class="field"><label>数量 <span class="req-star">*</span></label><input type="number" id="wio_qty" min="1" value="1"></div><div class="field"><label>业务日期 <span class="req-star">*</span></label><input type="date" id="wio_date" value="${today()}"></div></div>
+    <div class="field-row"><div class="field"><label>${dir==='in'?'来源':'用途'}</label><select id="wio_src">${srcs}</select></div><div class="field"><label>${dir==='in'?'供应商':'关联项目'}</label><input type="text" id="wio_party" placeholder="${dir==='in'?'如 顺鑫供应':'如 2026-050'}"></div></div>
+    <div class="hint">提交即生成单据并刷新库存；纠错在「流水」冲红，不物理删除。</div>
+   </div>
+   <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitWhIO()">提交</button></div>`);
+}
+function whSwitchIO(dir){ state.whIoEdit.dir=dir; openWhIO(+document.getElementById("wio_mat").value,dir); }
+function submitWhIO(){ const mid=+document.getElementById("wio_mat").value,qty=+document.getElementById("wio_qty").value,date=document.getElementById("wio_date").value,dir=state.whIoEdit.dir,src=document.getElementById("wio_src").value,party=document.getElementById("wio_party").value.trim();
+  if(!qty||qty<1){ toast("数量需为正整数","danger"); return; } if(dir==="out"&&qty>whStock(mid)){ toast("出库数量超过当前库存","danger"); return; }
+  whTID++; const no=(dir==="in"?("RK"+date.replace(/-/g,"")+"-"+String(++whRK).padStart(3,"0")):("CK"+date.replace(/-/g,"")+"-"+String(++whCK).padStart(3,"0"))); whTxns.push({id:whTID,no,mid,date,dir,qty,source:src,party,op:cu().name});
+  closeModal(); const m=whM(mid); toast(`${dir==='in'?'入库':'出库'} ${no}：${m.name} ${qty}${m.unit}，现存 ${whStock(mid)}`,"ok"); render();
+}
+function whSummary(){ const p=state.whPeriod; let tin=0,tout=0,tend=0;
+  const rows=whMaterials.map(m=>{ let open,inn,out; if(p==="all"){open=m.init;const ts=whTxns.filter(t=>t.mid===m.id);inn=ts.filter(t=>t.dir==='in').reduce((a,t)=>a+t.qty,0);out=ts.filter(t=>t.dir==='out').reduce((a,t)=>a+t.qty,0);} else {open=whOpenBefore(m.id,p);const ts=whMonthTx(m.id,p);inn=ts.filter(t=>t.dir==='in').reduce((a,t)=>a+t.qty,0);out=ts.filter(t=>t.dir==='out').reduce((a,t)=>a+t.qty,0);} const end=open+inn-out; tin+=inn;tout+=out;tend+=end; const low=end<m.safety;
+    return `<tr><td>${m.code}</td><td>${m.name}</td><td>${m.spec}</td><td><span class="loc">${m.loc}</span></td><td>${open}</td><td style="color:var(--ok)">${inn||'·'}</td><td style="color:var(--primary)">${out||'·'}</td><td><span class="qty ${low?'low':''}">${end}</span></td></tr>`;}).join("");
+  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap"><span>统计区间</span><select style="padding:8px 11px;border:1px solid var(--bd);border-radius:8px" onchange="state.whPeriod=this.value;render()">${whPeriods().map(v=>`<option value="${v}" ${v===p?'selected':''}>${v} 月</option>`).join("")}<option value="all" ${p==='all'?'selected':''}>全部（累计）</option></select><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="tryExport('收发存表')">⬇ 导出（审批）</button></div>
+   <div class="card"><div class="card-h">📈 收发存表 · ${p==='all'?'累计':p+' 月'} · 搅拌桨（期初 + 入 − 出 = 期末）</div><div style="overflow-x:auto"><table><thead><tr><th>编码</th><th>名称</th><th>规格</th><th>库位</th><th>期初结存</th><th>本期入库</th><th>本期出库</th><th>期末结存</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="5">合计</td><td style="color:var(--ok)">${tin}</td><td style="color:var(--primary)">${tout}</td><td>${tend}</td></tr></tfoot></table></div></div>`;
+}
+function whTxnPage(ro){ let list=[...whTxns].reverse(); if(state.whIo) list=list.filter(t=>t.dir===state.whIo);
+  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px"><select style="padding:8px 11px;border:1px solid var(--bd);border-radius:8px" onchange="state.whIo=this.value;render()"><option value="">全部类型</option><option value="in" ${state.whIo==='in'?'selected':''}>仅入库</option><option value="out" ${state.whIo==='out'?'selected':''}>仅出库</option></select><span class="muted">共 ${list.length} 笔</span><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="tryExport('出入库流水')">⬇ 导出（审批）</button></div>
+   <div class="card"><div class="card-h">📜 流水明细（冲红纠错，不物理删除）</div><div style="overflow-x:auto"><table><thead><tr><th>单号</th><th>类型</th><th>物料</th><th>规格</th><th>数量</th><th>日期</th><th>来源/用途</th><th>供应商/项目</th><th>经办人</th>${ro?'':'<th>操作</th>'}</tr></thead><tbody>${list.map(t=>{const m=whM(t.mid);return `<tr><td><span class="loc">${t.no}</span></td><td><span class="pill ${t.dir==='in'?'p-done':'p-drawing'}">${t.dir==='in'?'入库':'出库'}</span></td><td>${m.name}</td><td>${m.spec}</td><td class="qty">${t.qty}</td><td>${t.date}</td><td>${t.source}</td><td>${t.party||'—'}</td><td>${t.op}</td>${ro?'':`<td><button class="btn btn-ghost btn-sm" onclick="redWhTx(${t.id})">冲红</button></td>`}</tr>`;}).join("")}</tbody></table></div></div>`;
+}
+function redWhTx(id){ const t=whTxns.find(x=>x.id===id); if(!t) return; whTID++; const date=today(); const no=(t.dir==='in'?("CK"+date.replace(/-/g,"")+"-"+String(++whCK).padStart(3,"0")):("RK"+date.replace(/-/g,"")+"-"+String(++whRK).padStart(3,"0"))); whTxns.push({id:whTID,no,mid:t.mid,date,dir:t.dir==='in'?'out':'in',qty:t.qty,source:"冲红",party:"冲销 "+t.no,op:cu().name}); toast("已生成冲红单据 "+no,"ok"); render(); }
+function whMaterialPage(ro){ const dirty=whMaterials.filter(m=>m.flag);
+  const rows=whMaterials.map(m=>`<tr><td>${m.code}</td><td>${m.name}</td><td>${m.spec}</td><td>${m.cat}</td><td><span class="loc">${m.loc}</span></td><td>${m.unit}</td><td class="muted">${m.init}</td><td>${m.safety}</td><td class="qty">${whStock(m.id)}</td><td>${m.flag?`<span class="flag" title="${m.flag}">⚠ 待清洗</span>`:'<span class="muted">—</span>'}</td><td><span class="pill ${m.status==='启用'?'p-drawing':'p-pending'}">${m.status}</span></td>${ro?'':`<td><button class="btn btn-ghost btn-sm" onclick="toast('原型示意：编辑物料','info')">编辑</button> <button class="btn btn-ghost btn-sm" onclick="toast('原型示意：合并到主物料并迁移流水','info')">合并</button></td>`}</tr>`).join("");
+  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">${ro?'':`<button class="btn btn-primary btn-sm" onclick="toast('原型示意：新增物料','info')">＋ 新增物料</button> <button class="btn btn-ghost btn-sm" onclick="toast('原型示意：Excel 历史导入并去重清洗','info')">⬆ Excel 历史导入</button>`}${dirty.length?`<span class="flag" style="margin-left:auto">⚠ ${dirty.length} 项需数据清洗（错字/型号漂移/老新重复）</span>`:''}</div>
+   <div class="card"><div class="card-h">🧱 物料清单（${whMaterials.length}）· 编码固定身份、名称受控</div><div style="overflow-x:auto"><table><thead><tr><th>编码</th><th>名称</th><th>规格</th><th>分类</th><th>库位</th><th>单位</th><th>建档期初</th><th>安全库存</th><th>当前库存</th><th>数据质量</th><th>状态</th>${ro?'':'<th>操作</th>'}</tr></thead><tbody>${rows}</tbody></table></div></div>
+   <div class="page-desc" style="margin-top:10px">后续可扩展：批次/序列号、条码扫码、ABC 分类、呆滞料预警、多仓库、库存金额核算（首期不做）。</div>`;
+}
+function whShipList(ro){ const rows=state.projects.map(p=>{ const sh=shipmentOf(p.code); const has=sh&&sh.materials.find(m=>m.from==="仓库组");
+    return `<tr><td><span class="code" onclick="openDetail('${p.code}')">${p.code}</span></td><td>${p.name}</td><td>${has?fileChip(has):'<span class="muted">未上传</span>'}</td><td>${has?'<span class="pill p-done">已推物流</span>':'<span class="pill p-pending">待上传</span>'}</td>${ro?'':`<td><label class="btn btn-primary btn-sm" style="cursor:pointer"><input type="file" style="display:none" onchange="whUploadShip('${p.code}',this)">📎 上传发货清单</label></td>`}</tr>`;}).join("");
+  return `<div class="card"><div class="card-h">📤 发货清单上传（挂项目 → 推物流发货部）<span class="inc">🆕</span></div><div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>名称</th><th>发货清单</th><th>状态</th>${ro?'':'<th>操作</th>'}</tr></thead><tbody>${rows}</tbody></table></div></div>
+   <div class="page-desc" style="margin-top:10px">仓库组上传与项目挂钩的发货清单后，自动推送给物流发货部对应项目（消息中心可见）。</div>`;
+}
+function whUploadShip(code,input){ const f=input.files[0]; if(!f) return; const sh=shipmentOf(code); const ext=(f.name.split(".").pop()||"").toLowerCase(); if(sh) sh.materials.push({from:"仓库组",name:f.name,t:ext.startsWith("xls")?"xls":(ext.startsWith("pdf")?"pdf":"doc")}); pushWx("lo1",`仓库组已上传 ${code} 发货清单：${f.name}`); toast("发货清单已推送物流发货部","ok"); render(); }
+
+/* ========== 共用：部门跟踪表 / 分派 / 作废 / 列显隐 ========== */
+function deptTrackCard(deptKey,d){
+  const list=state.orders.filter(o=>o.dept===deptKey);
+  const rows=list.map(o=>`<tr><td><span class="code" onclick="openDetail('${o.code}')">${o.code}</span></td><td>${o.wid?workerName(deptKey,o.wid):'<span class="back-tag">待分派</span>'}</td><td>${files(o.files)}</td><td>${statusPill(o)}</td><td>${o.start||'<span class="muted">—</span>'}</td><td>${o.dueEnd||'<span class="muted">—</span>'}</td><td>${o.done||'<span class="muted">—</span>'}</td><td>${effCell(o)}</td><td>${o.status==="done"?`<button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回</button>`:(o.status==="drawing"?`<button class="btn btn-ok btn-sm" onclick="openComplete('${o.id}')">✓ 完成</button>`:'<span class="muted">—</span>')}</td></tr>`).join("");
+  return `<div class="card"><div class="card-h">📋 任务跟踪（含完成效率）</div><div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>${d.wrole}</th><th>资料</th><th>状态</th><th>${d.sl}</th><th>${d.el}</th><th>完成</th><th>完成效率 🆕</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="9" class="empty">暂无任务</td></tr>'}</tbody></table></div></div>`;
+}
+function assignOrder(id){ const o=state.orders.find(x=>x.id===id); const wid=(state.assignSel&&state.assignSel[id])||DEPTS[o.dept].workers[0].id; o.wid=wid; o.status="pending"; pushWx(wid,`【分派】${o.code} ${o.name} 已分派给你，请到${DEPTS[o.dept].name}接单填写时间。`); toast(`已分派给 ${workerName(o.dept,wid)}`,"ok"); render(); }
+function ddAssign(o,d){ const sel=(state.assignSel&&state.assignSel[o.id])||d.workers[0].id; const open=state.openDD==="as_"+o.id; const av=n=>(n||'·').slice(0,1);
+  return `<div class="dd ${open?'open':''}"><button class="dd-trigger" onclick="event.stopPropagation();toggleDD('as_${o.id}')"><span class="dd-av">${av(workerName(d.key,sel))}</span><span class="nm">${workerName(d.key,sel)}</span><span class="dd-caret">▼</span></button>${open?`<div class="dd-backdrop" onclick="closeDD()"></div><div class="dd-panel">${d.workers.map(w=>`<div class="dd-opt ${w.id===sel?'on':''}" onclick="pickAssign('${o.id}','${w.id}')"><span class="dd-av">${av(w.name)}</span>${w.name}</div>`).join("")}</div>`:''}</div>`; }
+function toggleDD(id){ state.openDD=state.openDD===id?null:id; render(); }
+function closeDD(){ state.openDD=null; render(); }
+function pickAssign(oid,wid){ state.assignSel=state.assignSel||{}; state.assignSel[oid]=wid; state.openDD=null; render(); }
+function voidOrder(id){ const o=state.orders.find(x=>x.id===id); o.status="作废"; pushWx("mgr",`【作废】${DEPTS[o.dept].name} ${o.code} 单号已作废，请管理层确认是否重新下单。`); toast("已作废单号，已通知管理层","ok"); render(); }
+function setProjStatus(code,s){ const p=state.projects.find(x=>x.code===code); if(p) p.status=s; toast('项目状态改为「'+s+'」（管理层手动维护）',"ok"); render(); }
+function openStockQuery(){ const rows=whMaterials.map(m=>{const s=whStock(m.id),st=whStatus(m);return `<tr><td>${m.code}</td><td>${m.name}</td><td>${m.spec}</td><td><span class="loc">${m.loc}</span></td><td><span class="qty ${st.t==='预警'?'low':st.t==='缺货'?'zero':''}">${s}</span></td><td><span class="pill ${st.k}">${st.t}</span></td></tr>`;}).join("");
+  modal(`<div class="d-h"><b>🔎 仓库库存查询（设计部·只读）</b><span class="x" onclick="closeModal()">×</span></div><div class="d-b"><div class="hint" style="margin-bottom:12px">只读视图：设计部可查看实时库存，无出入库/编辑权限（业务确认 P-14）。</div><div style="overflow:auto;max-height:60vh"><table><thead><tr><th>编码</th><th>名称</th><th>规格</th><th>库位</th><th>当前库存</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table></div></div><div class="d-f"><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>`); }
+function pageWxBind(){
+  const rows=Object.keys(USERS).map(id=>{ const u=USERS[id]; return `<tr><td>${u.name}</td><td>${u.role}</td><td>${u.wxid?`<span class="loc">${u.wxid}</span>`:'<span class="muted">未绑定</span>'}</td><td><input type="text" id="wx_${id}" placeholder="企微 userid" value="${u.wxid||''}" style="padding:6px 9px;border:1px solid var(--bd);border-radius:6px;font-size:13px"> <button class="btn btn-ghost btn-sm" onclick="bindWx('${id}')">${u.wxid?'更新':'绑定'}</button></td></tr>`;}).join("");
+  return `<div class="page-h"><h1>📲 企业微信绑定</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">用户 ↔ 企微 userid</span></div>
+    <div class="page-desc">手动把系统用户绑定到企业微信成员 userid（F1）。绑定后完成/逾期/审批等通知即可推企微；凭证未到位前先落站内消息，不阻塞。</div>
+    <div class="card"><div style="overflow-x:auto"><table><thead><tr><th>姓名</th><th>角色</th><th>企微 userid</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+function bindWx(id){ const v=document.getElementById("wx_"+id).value.trim(); USERS[id].wxid=v; toast(v?`已绑定 ${USERS[id].name} → ${v}`:"已清空绑定","ok"); render(); }
+
+function fileChip(f){ const nm=f.n||f.name; return `<span class="file-chip"><span class="fn" onclick="viewFile('${nm}','${f.t}')" title="预览">${fico(f.t)} ${nm}</span><span class="dl" onclick="downloadFile('${nm}')" title="下载">⬇</span></span>`; }
+function files(arr){ return arr.map(fileChip).join(" "); }
+function viewFile(name,type){
+  const badge=type==='pdf'?'<span class="vb vb-pdf">PDF</span>':type==='xls'?'<span class="vb vb-xls">EXCEL</span>':type==='cad'?'<span class="vb vb-cad">CAD</span>':'<span class="vb vb-doc">WORD</span>';
+  let inner; if(type==='xls'){ const data=[['1','序号','名称','规格','数量'],['2','1','减速电机','BLD1#-23','1'],['3','2','液压站','双路24V','1']]; inner=`<table class="xls-grid"><tr><th></th><th>A</th><th>B</th><th>C</th><th>D</th></tr>`+data.map(r=>`<tr><th>${r[0]}</th>${r.slice(1).map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")+`</table>`; }
+  else if(type==='cad'){ inner=`<div class="doc-page" style="display:grid;place-items:center;color:#0891b2"><div style="text-align:center"><div style="font-size:46px">📐</div><div style="margin-top:10px">CAD 图纸预览（示意）</div></div></div>`; }
+  else { inner=`<div class="doc-page"><h3>${name.replace(/\.[^.]+$/,"")}</h3><p style="text-align:center;color:#64748b">同辉智能装备（无锡）有限公司</p><p>一、概述：下单/产出的 ${type==='pdf'?'PDF':'Word'} 资料示意。</p><p>二、技术要求：材料304；按总装图执行。</p><div class="doc-foot">— 第 1 页 / 共 3 页 —</div></div>`; }
+  modal(`<div class="d-h"><b>${badge} ${name}</b><span class="x" onclick="closeModal()">×</span></div><div class="d-b viewer"><div class="viewer-note">📄 原型预览（示意）——真实系统内嵌 PDF.js / Office / CAD 预览。</div>${inner}</div><div class="d-f"><button class="btn btn-ghost" onclick="downloadFile('${name}')">⬇ 下载</button><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>`);
+}
+function viewSheet(code,name){ const p=state.projects.find(x=>x.code===code);
+  modal(`<div class="d-h"><b>📄 ${name} · ${code}${p?' '+p.name:''}（只读预览）</b><span class="x" onclick="closeModal()">×</span></div>
+  <div class="d-b viewer"><div class="viewer-note">📄 原型预览（示意）——该表源自设计部「四个数据表」，钣金组只读引用、不可编辑；真实系统内嵌表格/Excel 预览。</div>
+  <table class="xls-grid"><tr><th>#</th><th>名称</th><th>图纸名称</th><th>材质</th><th>数量</th><th>备注</th></tr>
+  <tr><td>1</td><td>${name}</td><td>B01-总图</td><td>304</td><td>1</td><td>—</td></tr>
+  <tr><td>2</td><td>${name}</td><td>B02-机架</td><td>304</td><td>1</td><td>折弯</td></tr>
+  <tr><td>3</td><td>${name}</td><td>B03-外罩</td><td>304</td><td>2</td><td>拉丝</td></tr></table></div>
+  <div class="d-f"><button class="btn btn-ghost" onclick="downloadFile('${name}.xlsx')">⬇ 下载</button><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>`); }
+function downloadFile(name){ const blob=new Blob([`（原型占位文件）\n文件名：${name}`],{type:"application/octet-stream"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); toast("开始下载："+name,"ok"); }
+
+function statusPill(o){ if(o.status==="待派") return '<span class="pill p-pending">待分派</span>'; if(o.status==="作废") return '<span class="pill p-pending" style="opacity:.55">已作废</span>'; if(o.status==="pending") return '<span class="pill p-pending">待接单</span>'; if(o.status==="drawing") return '<span class="pill p-drawing">进行中</span>'; if(o.status==="done"&&o.dueEnd&&o.done>o.dueEnd) return '<span class="pill p-overdue">逾期完成</span>'; return '<span class="pill p-done">已完成</span>'; }
+function fico(t){ return t==="pdf"?"📕":t==="xls"?"📗":t==="cad"?"📐":"📘"; }
+function modal(h,cls){ document.getElementById("modalRoot").innerHTML=`<div class="mask" onclick="if(event.target===this)closeModal()"><div class="dialog ${cls||''}">${h}</div></div>`; }
+function closeModal(){ document.getElementById("modalRoot").innerHTML=""; }
+function mselToggle(){ const p=document.getElementById("msel_panel"); if(!p) return; const show=p.style.display==="none"; p.style.display=show?"block":"none"; if(show){ const s=document.getElementById("msel_search"); s.value=""; mselFilter(""); s.focus(); } }
+function mselFilter(q){ q=(q||"").toLowerCase().trim(); const list=document.getElementById("msel_list"); if(!list) return; let any=false; [...list.children].forEach(el=>{ if(el.classList.contains("msel-empty")) return; const k=el.getAttribute("data-k")||""; const ok=!q||k.indexOf(q)>=0; el.style.display=ok?"flex":"none"; if(ok)any=true; }); const em=document.getElementById("msel_empty"); if(em) em.style.display=any?"none":"block"; }
+function mselPick(id){ const m=whM(id); document.getElementById("wio_mat").value=id; document.getElementById("msel_label").textContent=`${m.code} · ${m.name} ${m.spec}（现存 ${whStock(m.id)}）`; document.getElementById("msel_panel").style.display="none"; }
+function pagePlaceholder(){ return `<div class="page-h"><h1>${([...MENUS,...ADMIN].find(m=>m.k===state.menu)||{}).t||""}</h1></div><div class="card"><div class="empty">现有页面（本设计图不改动），略</div></div>`; }
+function toast(msg,type){ const c=type==="ok"?"#16a34a":type==="danger"?"#dc2626":type==="warn"?"#d97706":"#0f172a"; const r=document.getElementById("toastRoot"); r.innerHTML=`<div class="toast" style="background:${c}">${type==='danger'?'⚠':type==='ok'?'✓':'ℹ'} ${msg}</div>`; setTimeout(()=>r.innerHTML="",2800); }
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>需求分析</title><style>:root{--pri:#2563eb;--bd:#d0d7de;--bg:#f6f8fa;--tx:#1f2328;--mut:#656d76;}*{box-sizing:border-box;}body{margin:0;background:#fff;color:var(--tx);font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;line-height:1.7;}.wrap{max-width:920px;margin:0 auto;padding:36px 28px 80px;}h1{font-size:27px;border-bottom:2px solid var(--bd);padding-bottom:12px;margin:0 0 18px;}h2{font-size:21px;border-bottom:1px solid var(--bd);padding-bottom:8px;margin:32px 0 14px;}h3{font-size:17px;margin:22px 0 10px;}h4{font-size:15px;margin:16px 0 8px;color:var(--mut);}p{margin:10px 0;}a{color:var(--pri);}ul,ol{margin:10px 0;padding-left:26px;}li{margin:4px 0;}ul ul{margin:4px 0;}code{background:rgba(175,184,193,.25);padding:.15em .4em;border-radius:5px;font-size:88%;font-family:Consolas,monospace;}pre{background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:14px 16px;overflow:auto;}pre code{background:none;padding:0;font-size:13px;line-height:1.55;}blockquote{margin:12px 0;padding:8px 16px;color:var(--mut);border-left:4px solid var(--pri);background:#f8fbff;border-radius:0 6px 6px 0;}hr{border:none;border-top:1px solid var(--bd);margin:26px 0;}table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;display:block;overflow-x:auto;}th,td{border:1px solid var(--bd);padding:8px 12px;text-align:left;vertical-align:top;}th{background:var(--bg);font-weight:700;white-space:nowrap;}tbody tr:nth-child(even){background:#fafbfc;}strong{color:#0f172a;}.toolbar{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--bd);padding:10px 28px;display:flex;gap:10px;align-items:center;}.toolbar b{flex:1;font-size:14px;}.toolbar button{border:1px solid var(--bd);background:#fff;border-radius:7px;padding:6px 14px;cursor:pointer;font-size:13px;}.toolbar button:hover{border-color:var(--pri);color:var(--pri);}@media print{.toolbar{display:none;}.wrap{max-width:none;padding:0;}}</style></head><body><div class="toolbar"><b>📄 需求分析</b><button onclick="window.print()">🖨 打印 / 导出 PDF</button></div><div class="wrap"><h1>部门协作流程 · 需求分析</h1>
+<blockquote>配套文档：《技术方案》(<code>技术方案.md</code> / <code>.html</code>)、UI 设计稿 (<code>demo/增量UI设计图.html</code>)。 范围：在现有「同辉智能项目管理系统」基础上，增量接入「多部门下单协作 → 下游推送 → 物流发货 → 报表 / 审批 / 通知」。</blockquote>
+<hr>
+<h2>一、背景与目标</h2>
+<p>现有系统已能管理项目（项目目录/项目详单）、维护项目内 4 张进度数据表、按角色做字段级权限。但<strong>跨部门的任务派发与协同</strong>目前靠线下沟通：设计、电工、生产各自为政，完成后靠口头/微信通知下游，进度与逾期无系统化跟踪。</p>
+<p>本次目标：把「下单 → 接单 → 完成 → 通知下游 → 物流发货」整条链搬到系统里，并提供完成效率、月度报表、导出管控等管理视图。</p>
+<h2>二、当前系统业务现状（与本次相关）</h2>
+<table><thead><tr><th>现状</th><th>说明</th></tr></thead><tbody><tr><td>项目目录（一览）</td><td>14 列表格，含状态、签订/交货日期、制图开始/结束、电工、货期、剩余制作时间等；状态可切，剩余时间按今天实时算（已完成则冻结）</td></tr><tr><td>项目详单</td><td>卡片视图，点进项目详情</td></tr><tr><td>项目详情</td><td>每个项目自带 4 张数据表：钣金装配 / 标准件清单 / 外协外购 / 原料下料单</td></tr><tr><td>角色</td><td>固定 8 个：超级管理员、管理层、设计师、生产文员、仓库员、标准件采购员、外协机加工采购员、人事行政</td></tr><tr><td>权限</td><td>项目级（成员 edit/view）+ 字段级（按角色 can_view/can_edit）</td></tr><tr><td>导出</td><td>项目一览可导出 Excel（当前无审批）</td></tr></tbody></table>
+<h2>三、需求范围与总流程</h2>
+<pre><code>管理层/主管 在项目目录「项目编号」上下单
+   → 指派部门(设计/电工/生产) + 负责人 + 要求 + 资料
+   → 负责人接单填「开始/预计完成」时间并开始
+   → 完成（设计部先校验四表 / 选通知人 / 上传产物）
+   → 产物推送下游（采购部 / 物流发货部）+ 企业微信通知
+   → 逾期则推送对应部门主管
+物流发货部：新建项目即生成发货待办，汇总各部门资料 → 维护收货信息 → 上传发货单 → 已发货
+管理视图：月度工作报表、导出权限申请/审批</code></pre>
+<h2>四、功能需求</h2>
+<h3>4.1 角色（改动）</h3>
+<ul><li>新增：电工、装配组1/2/3、物流发货部、采购部（合并原两个采购员）、设计/电工/生产部主管。</li><li>「消息推送人」：标记后接收对应部门逾期等推送。</li><li>下单权限：管理层→设计/电工部；生产部主管→生产部。</li></ul>
+<h3>4.2 下单与执行</h3>
+<table><thead><tr><th>编号</th><th>需求</th></tr></thead><tbody><tr><td>F1</td><td>项目目录「项目编号」上浮出「＋下单」（仅有权限角色可见），弹窗选部门/负责人/要求/资料(PDF/Word/Excel)</td></tr><tr><td>F2</td><td>负责人在本部门工作台收到待办</td></tr><tr><td>F3</td><td>接单填「开始/预计完成」并开始；设计部「制图开始」回传项目目录</td></tr><tr><td>F4</td><td>完成可逆（已完成 ↔ 进行中可来回切）</td></tr><tr><td>F5</td><td>完成效率 = 实际用时 ÷ 预计用时（≤100% 绿、&gt;100% 红）</td></tr><tr><td>F6</td><td>项目编号链接到项目详情的具体表格</td></tr></tbody></table>
+<h3>4.3 完成校验 / 完成后</h3>
+<table><thead><tr><th>编号</th><th>需求</th></tr></thead><tbody><tr><td>F7</td><td>设计部完成前校验该项目「四个 Excel 表」齐全，缺则禁止完成</td></tr><tr><td>F8</td><td>完成后通知具体人员（设计部自选 / 电工部→采购部 / 生产部→物流部）→ 企业微信</td></tr><tr><td>F9</td><td>各部门产物上传与推送：设计部<strong>完成</strong>时传 说明书(Word)+铭牌(CAD)→物流；电工部<strong>接单后</strong>传 采购清单(Excel)→采购，<strong>完成时必传</strong>电路图(PDF)→物流（未传不可完成）；生产部无产物</td></tr><tr><td>F10</td><td>逾期 → 推送对应部门主管</td></tr></tbody></table>
+<h3>4.4 下游与物流</h3>
+<table><thead><tr><th>编号</th><th>需求</th></tr></thead><tbody><tr><td>F11</td><td>采购部接收电工部推送的采购清单（收件箱）</td></tr><tr><td>F12</td><td>物流发货部：新建项目自动建发货待办；各部门资料按 设计/电工/生产 三栏汇总；维护收货信息；上传发货单→已发货</td></tr></tbody></table>
+<h3>4.5 报表 / 审批 / 通知</h3>
+<table><thead><tr><th>编号</th><th>需求</th></tr></thead><tbody><tr><td>F13</td><td>月度工作报表：按部门 + 个人统计任务量/按时率/平均效率，含对比图与逾期清单</td></tr><tr><td>F14</td><td>导出审批：成员申请 → 管理层审批 → 通过后导出</td></tr><tr><td>F15</td><td>企业微信通知：完成、逾期、审批结果，落消息中心 + 推企微</td></tr></tbody></table>
+<h3>4.6 非功能需求</h3>
+<ul><li>现有页面（项目目录/详单/进度表/权限）UI 不变，仅叠加增量。</li><li>附件类型白名单、大小限制、鉴权下载。</li><li>企微 token 缓存、失败降级（不影响主流程，站内兜底）。</li><li>逾期定时任务多实例幂等。</li></ul>
+<hr>
+<h2>五、需求澄清问题（结合现有系统，待业务方确认）</h2>
+<blockquote>以下问题直接影响建模与交互，建议逐条确认；标注了与现有系统的关联点。</blockquote>
+<h3>A. 角色与权限</h3>
+<ul><li><strong>A1</strong> 现有「生产文员 / 仓库员 / 人事行政」在新流程中的定位？是否参与下单/接单，还是仅沿用原字段权限？</li><li><strong>A2</strong> 采购部合并后，原「标准件采购员 / 外协机加工采购员」的<strong>存量用户与已配字段权限</strong>如何处理（自动并入 purchasing？）？</li><li><strong>A3</strong> 各部门页面的可见范围：仅本部门成员 + 管理层，还是所有登录用户都能看？</li><li><strong>A4</strong> 管理层是否可越权给<strong>生产部</strong>下单（当前定生产部主管下单）？</li></ul>
+<h3>B. 下单与执行</h3>
+<ul><li><strong>B1</strong> 同一项目、同一部门能否<strong>重复下单</strong>（返工再派）？重复是新建任务还是覆盖原任务？</li><li><strong>B2</strong> 可下单的项目范围：所有项目，还是仅「进行中」？已完成/已归档能否下单？</li><li><strong>B3</strong> 设计部「制图开始」回传项目目录时，若该列<strong>已有手填值</strong>，是否覆盖？（现状：该列是可手填的 meta 列）</li><li><strong>B4</strong> 一个任务能否指派<strong>多人</strong>（如装配组协作），还是只能一个负责人？</li><li><strong>B5</strong> 开始时间、预计完成时间在进行中<strong>能否修改</strong>？</li></ul>
+<h3>C. 时间与效率口径</h3>
+<ul><li><strong>C1</strong> 完成效率 / 逾期按<strong>自然日</strong>还是<strong>工作日</strong>（扣周末节假日）？（现状：派生列用自然日）</li><li><strong>C2</strong> 预计完成<strong>当天</strong>完成，算按时还是逾期？（边界 done == due）</li><li><strong>C3</strong> 预计用时为 0（开始=预计完成同一天）时，效率如何计算？</li><li><strong>C4</strong> 月度报表按任务的<strong>完成时间</strong>还是<strong>下单时间</strong>计入当月？</li><li><strong>C5</strong>「按时率」= 按时数 ÷ 已完成数，还是 ÷ 全部任务数？</li></ul>
+<h3>D. 完成动作与下游</h3>
+<ul><li><strong>D1</strong>「四表已上传」如何判定？4 张表各有 ≥1 行数据算，还是必须<strong>导入过 Excel</strong>？手工加行算不算？（现状：每项目自带 4 张空表）</li><li><strong>D2</strong> 四表校验是否<strong>只卡设计部</strong>完成，电工/生产完成不校验？</li><li><strong>D3</strong> 设计部「自选通知人」范围：全公司任意人，还是限定相关角色？能否<strong>多选/抄送</strong>？</li><li><strong>D4</strong>〔已明确〕电工部：采购清单(Excel)<strong>接单后</strong>上传→采购；电路图(PDF)<strong>完成时必传</strong>→物流。延伸：设计部 说明书/铭牌 是否也设为<strong>必传</strong>才能完成？</li><li><strong>D5</strong> 物流<strong>发货前置条件</strong>：是否要求设计/电工/生产都完成才可发货，还是物流可随时发？</li></ul>
+<h3>E. 物流与收货</h3>
+<ul><li><strong>E1</strong> 一个项目是否只发一次货（一条发货待办）？是否存在<strong>分批发货</strong>（多张发货单）？</li><li><strong>E2</strong> 收货信息来源：物流<strong>手工录入</strong>，还是从客户/合同带出？一个项目是否可能<strong>多个收货地址</strong>？</li><li><strong>E3</strong> 生产部不产出图纸 → 物流三栏的「生产部」恒为空，是否需要生产部完成时上传「完工/质检单」补到该栏？</li></ul>
+<h3>F. 企业微信与通知</h3>
+<ul><li><strong>F1</strong> 系统用户与企微成员的<strong>映射方式</strong>（手机号 / 工号 / 企微 userid）？无企微账号者如何通知（仅站内？）</li><li><strong>F2</strong> 通知是即时单条还是可<strong>合并</strong>（每日汇总）？逾期是否<strong>每天重复提醒</strong>直到处理？</li><li><strong>F3</strong> 站内消息是否需要「已读/未读 + 待办中心」，还是仅铃铛提示？</li></ul>
+<h3>G. 导出与审批</h3>
+<ul><li><strong>G1</strong> 哪些导出需要审批？现有「项目一览导出 Excel」是否也纳入，还是仅新增报表/清单导出？</li><li><strong>G2</strong> 审批人固定为管理层，还是按数据范围找对应负责人？审批<strong>超时</strong>怎么处理？</li><li><strong>G3</strong> 导出格式：仅 Excel，还是也要 PDF？</li></ul>
+<h3>H. 范围与上线</h3>
+<ul><li><strong>H1</strong> 新流程对<strong>存量项目</strong>（已有数十个进行中项目）是否追溯，还是只对新建项目生效？</li><li><strong>H2</strong> 上线方式：灰度（部分部门先用）还是全量切换？</li></ul>
+<hr>
+<h2>六、已确认决策</h2>
+<ol><li><strong>部门主管</strong>：新建 <code>design_lead / electric_lead / produce_lead</code> 三角色，逾期推送给对应部门主管。</li><li><strong>企业微信</strong>：自建应用尚未具备 → 先做站内通知，企微接口预留，凭证到位再接，不阻塞前序。</li><li><strong>装配组</strong>：<code>assembly_1 / assembly_2 / assembly_3</code> 三个独立角色。</li><li><strong>导出审批</strong>：一次性放行（每次导出都申请审批一次）。</li><li><strong>完成效率口径</strong>：实际用时 ÷ 预计用时（数值越低越好）。</li><li><strong>各部门产物</strong>：设计部完成传 说明书(Word)+铭牌(CAD)→物流；电工部<strong>接单后</strong>传 采购清单(Excel)→采购、<strong>完成必传</strong>电路图(PDF)→物流；生产部无产物。</li><li><strong>生产部下单</strong>：生产部主管在项目目录下单、选装配组1/2/3，<strong>下单无需上传资料</strong>（设计/电工下单仍可附资料）。</li></ol></div></body></html>
