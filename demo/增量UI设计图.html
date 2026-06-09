@@ -293,6 +293,7 @@ function myProjects(){ const u=cu();
   if(u.type==="sales") return state.projects.filter(p=>p.salesUid===state.userId);  // 销售员只看自己下单的
   if(u.type==="worker"&&u.dept==="design") return state.projects.filter(p=>p.designer===u.name || state.orders.some(o=>o.dept==="design"&&o.code===p.code&&o.wid===u.wid));  // 设计师只看自己设计/被分派的
   if(u.type==="worker"&&u.dept==="electric") return state.projects.filter(p=>state.orders.some(o=>o.dept==="electric"&&o.code===p.code&&o.wid===u.wid));  // 电工只看自己被分派的
+  if(u.type==="worker"&&u.dept==="produce") return state.projects.filter(p=>state.orders.some(o=>o.dept==="produce"&&o.code===p.code&&o.wid===u.wid));  // 装配组只看自己被分派的
   return state.projects;
 }
 function pageCatalog(){
