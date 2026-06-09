@@ -92,7 +92,9 @@
   .msg .mt{ font-size:13.5px; line-height:1.5; } .msg .mtime{ color:var(--tx3); font-size:12px; margin-top:3px; } .msg.unread{ background:#fffdf5; }
   .empty{ padding:42px; text-align:center; color:var(--tx3); }
   .mask{ position:fixed; inset:0; background:rgba(15,23,42,.45); display:grid; place-items:center; z-index:50; }
-  .dialog{ width:600px; max-width:94vw; background:#fff; border-radius:14px; overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.25); } .dialog.wide{ width:min(1140px,96vw); }
+  .dialog{ width:600px; max-width:94vw; background:#fff; border-radius:14px; overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.25); } .dialog.wide{ width:min(1140px,96vw); } .dialog.mid{ width:min(720px,96vw); }
+  .frow{ display:flex; gap:12px; } .frow .fg{ flex:1; min-width:0; }
+  .fsec{ font-size:12.5px; font-weight:800; color:var(--tx2); margin:8px 0 12px; padding-bottom:7px; border-bottom:1px solid var(--bd); display:flex; align-items:center; gap:6px; letter-spacing:.3px; }
   .d-h{ padding:15px 20px; border-bottom:1px solid var(--bd); display:flex; align-items:center; } .d-h b{ font-size:16px; } .d-h .x{ margin-left:auto; cursor:pointer; color:var(--tx3); font-size:20px; }
   .d-b{ padding:20px; max-height:68vh; overflow:auto; } .d-f{ padding:13px 20px; border-top:1px solid var(--bd); display:flex; justify-content:flex-end; gap:10px; }
   .fg{ margin-bottom:15px; } .fg>label{ display:block; font-size:13px; font-weight:600; margin-bottom:6px; } .req-star{ color:var(--danger); }
@@ -243,8 +245,8 @@ const state={ userId:"mgr", menu:"catalog", detailCode:null, detailTab:0, detail
     {id:"o8",dept:"electric",code:"2026-050",name:"100L真空均质乳化机",wid:null,by:"sale1",req:"销售下单：电气接线，出采购清单。",files:[],status:"待派",start:null,dueEnd:null,done:null,outputs:[],notify:null},
   ],
   projects:[
-    {code:"2026-043A",name:"5L双行星压料一体机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-09",deliver:"2026-06-05",designer:"张工",drawStart:"2026-05-11",drawEnd:null,drawUse:"",elec:"宋朴",dur:57,elapsed:58,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":false,"原料下料单":false}},
-    {code:"2026-050",name:"100L真空均质乳化机",qty:1,status:"进行中",sales:"代文飞",sign:"2026-04-16",deliver:"2026-06-16",designer:"张工",drawStart:null,drawEnd:null,drawUse:"",elec:"周瑞",dur:61,elapsed:51,remain:10,sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false}},
+    {code:"2026-043A",name:"5L双行星压料一体机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-09",deliver:"2026-06-05",designer:"张工",drawStart:"2026-05-11",drawEnd:null,drawUse:"",elec:"宋朴",dur:57,elapsed:58,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":false,"原料下料单":false},salesUid:"sale1",customer:"涿州市腾源阁机械厂",custType:"经销商",contract:"有",amount:93000,taxRate:"13%",invoiceStatus:93000,invoiceApplied:false},
+    {code:"2026-050",name:"100L真空均质乳化机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-16",deliver:"2026-06-16",designer:"张工",drawStart:null,drawEnd:null,drawUse:"",elec:"周瑞",dur:61,elapsed:51,remain:10,sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false},salesUid:"sale1",customer:"华东制药",custType:"终端客户",contract:"有",amount:128000,taxRate:"13%",invoiceStatus:128000,invoiceApplied:false},
     {code:"2026-041M",name:"1100L强力分散混合机",qty:1,status:"已完成",sales:"文艺",sign:"2026-05-08",deliver:"2026-06-18",designer:"李工",drawStart:"2026-05-20",drawEnd:"2026-05-26",drawUse:6,elec:"宋朴",dur:41,elapsed:29,remain:12,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},sheetPkg:{n:"041M-钣金图纸包.pdf",t:"pdf"}},
     {code:"2026-039",name:"2L双行星分散混合机",qty:1,status:"已完成",sales:"方步森",sign:"2026-04-30",deliver:"2026-06-05",designer:"李工",drawStart:"2026-05-04",drawEnd:"2026-05-10",drawUse:6,elec:"周瑞",dur:36,elapsed:37,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true}},
   ],
@@ -610,44 +612,74 @@ function pageMsg(){
 }
 
 /* ========== 🆕 销售部 ========== */
+function fmtMoney(n){ n=Number(n)||0; return '¥'+n.toLocaleString('en-US'); }
+function nextSalesCode(){ let mx=0; state.projects.forEach(p=>{ const m=/^2026-0*(\d+)/.exec(p.code); if(m) mx=Math.max(mx,+m[1]); }); return "2026-"+String(mx+1).padStart(3,"0"); }
+function salesFilterSet(k,v){ state.salesFilter=state.salesFilter||{}; state.salesFilter[k]=v; render(); }
 function pageSales(){
-  const u=cu(); const all = u.type==="salelead"||u.type==="manager"||u.type==="admin";
-  const mine=state.orders.filter(o=>o.by && (all||o.by===state.userId));
-  const codes=[...new Set(mine.map(o=>o.code))];   // 项目编号唯一，一项目一行
-  const rows=codes.map(code=>{ const os=mine.filter(o=>o.code===code); const p=state.projects.find(x=>x.code===code)||{}; const by=os[0].by;
-    const depts=os.map(o=>`${DEPTS[o.dept].ico} ${DEPTS[o.dept].name}`).join("、");
-    let agg; if(os.some(o=>o.status==="待派")) agg='<span class="pill p-pending">待分派</span>'; else if(os.every(o=>o.status==="done")) agg='<span class="pill p-done">全部完成</span>'; else agg='<span class="pill p-drawing">进行中</span>';
-    return `<tr><td><span class="code" onclick="openDetail('${code}')">${code}</span></td><td>${p.name||os[0].name}</td><td>${depts}</td><td>${uName(by)}</td><td>${agg}</td><td><button class="btn btn-ghost btn-sm" onclick="openWfModal('${code}')">🔍 查看全览节点</button></td></tr>`;
+  const u=cu(); const all=u.type==="salelead"||u.type==="manager"||u.type==="admin"; const f=state.salesFilter||{};
+  let list=state.projects.filter(p=>p.salesUid && (all||p.salesUid===state.userId));
+  if(f.kw) list=list.filter(p=>(p.code+p.name+(p.customer||'')).indexOf(f.kw)>=0);
+  if(f.ct) list=list.filter(p=>p.custType===f.ct);
+  if(f.ct2) list=list.filter(p=>p.contract===f.ct2);
+  const rows=list.map((p,i)=>{
+    const inv=p.invoiceApplied?'<span class="pill p-done">已申请 · 0</span>':(p.invoiceStatus?`<span class="pill p-pending">未开 ${fmtMoney(p.invoiceStatus)}</span>`:'<span class="muted">—</span>');
+    return `<tr><td>${i+1}</td><td><span class="code" onclick="openDetail('${p.code}')">${p.code}</span></td><td>${p.name}</td><td>${p.customer||'—'}</td><td>${p.custType?`<span class="pill ${p.custType==='经销商'?'p-drawing':'p-on'}">${p.custType}</span>`:'—'}</td><td>${p.sales||'—'}</td><td>${p.sign||'—'}</td><td>${p.deliver||'—'}</td><td>${p.contract||'—'}</td><td class="num">${p.amount?fmtMoney(p.amount):'—'}</td><td>${p.taxRate||'—'}</td><td>${inv}</td><td><button class="btn btn-ghost btn-sm" onclick="openInvoice('${p.code}')">🧾 开票申请</button> <button class="btn btn-ghost btn-sm" onclick="openWfModal('${p.code}')">🔍 全览</button></td></tr>`;
   }).join("");
   const canSell=u.type==="sales"||u.type==="salelead"||u.type==="manager";
-  return `<div class="page-h"><h1>💼 销售部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${all?'全部项目':'我的项目'} · ${u.name}</span><div class="spacer"></div>${canSell?`<button class="btn btn-primary btn-sm" onclick="openSalesOrder()">＋ 销售下单</button>`:''}</div>
-    <div class="page-desc">下单链起点：销售下单 → 设计/电工部负责人分派。<b>销售员只看自己的项目</b>，销售主管/管理层看全部。<b>每个项目编号唯一一行</b>；点「查看全览节点」看该项目的全流程工作流。</div>
-    <div class="card"><table><thead><tr><th>项目编号</th><th>项目名称</th><th>派往部门</th><th>下单销售</th><th>整体状态</th><th>全流程</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="empty">暂无项目（点右上「＋ 销售下单」）</td></tr>'}</tbody></table></div>`;
+  return `<div class="page-h"><h1>💼 销售部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">销售项目统计 · ${all?'全部':'我的'} · ${u.name}</span><div class="spacer"></div>${canSell?`<button class="btn btn-primary btn-sm" onclick="openSalesOrder()">＋ 销售下单</button>`:''}</div>
+    <div class="page-desc">销售项目统计台账：项目编号自动生成、可筛选；客户分类/合同/税票下拉；每项目支持「开票申请」（传开票申请表→发票情况自动跳 0）。一项目一行。</div>
+    <div class="wh-help"><span class="i">💡</span><div><b>销售下单</b>＝建项目（编号自动生成）+ 填台账（客户单位/客户分类/合同/金额/税票）+ 派部门（设计/电工）。<b>🧾 开票申请</b>＝上传开票申请表，提交后该项目「发票情况」自动跳为 0。表头三个控件可<b>筛选</b>。</div></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <input type="text" placeholder="🔍 搜索 编号/设备/客户" value="${f.kw||''}" onchange="salesFilterSet('kw',this.value)" style="padding:8px 11px;border:1px solid var(--bd);border-radius:8px;font-size:13px">
+      <select onchange="salesFilterSet('ct',this.value)" style="padding:8px 11px;border:1px solid var(--bd);border-radius:8px;font-size:13px"><option value="">客户分类(全部)</option><option ${f.ct==='经销商'?'selected':''}>经销商</option><option ${f.ct==='终端客户'?'selected':''}>终端客户</option></select>
+      <select onchange="salesFilterSet('ct2',this.value)" style="padding:8px 11px;border:1px solid var(--bd);border-radius:8px;font-size:13px"><option value="">合同(全部)</option><option ${f.ct2==='有'?'selected':''}>有</option><option ${f.ct2==='无'?'selected':''}>无</option></select>
+      <span class="muted" style="align-self:center">共 ${list.length} 个项目</span>
+    </div>
+    <div class="card"><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>设备名称</th><th>客户单位</th><th>客户分类</th><th>销售</th><th>下单日期</th><th>交货日期</th><th>合同</th><th>金额</th><th>税票</th><th>发票情况</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="13" class="empty">暂无项目（点右上「＋ 销售下单」）</td></tr>'}</tbody></table></div></div>`;
 }
 function openWfModal(code){ const p=state.projects.find(x=>x.code===code); modal(`<div class="d-h"><b>🔀 ${code}${p?' · '+p.name:''} · 全流程节点</b><span class="x" onclick="closeModal()">×</span></div><div class="d-b">${p?workflowGraph(p):'<div class="empty">项目不存在</div>'}</div><div class="d-f"><button class="btn btn-ghost" onclick="openDetail('${code}')">进入项目详情</button><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>`,'wide'); }
-function openSalesOrder(){ state.upFiles=[];
+function openSalesOrder(){ state.upFiles=[]; const code=nextSalesCode();
   modal(`<div class="d-h"><b>💼 销售下单</b><span class="x" onclick="closeModal()">×</span></div>
-   <div class="d-b"><div class="hint" style="margin-bottom:14px">💡 下单后自动建项目+发货待办，并推送所选部门负责人分派。</div>
-    <div class="fg"><label>项目编号 <span class="req-star">*</span></label><input type="text" id="so_code" placeholder="如 2026-053"></div>
-    <div class="fg"><label>项目名称 <span class="req-star">*</span></label><input type="text" id="so_name" placeholder="如 300L真空乳化机"></div>
+   <div class="d-b">
+    <div class="hint" style="margin-bottom:16px">💡 项目编号自动生成；填台账信息 + 派部门，下单后自动建项目、发货待办并推送部门负责人分派。</div>
+    <div class="fsec">📋 项目信息</div>
+    <div class="frow"><div class="fg"><label>项目编号（自动生成 · 可加后缀字母，选填）</label><div style="display:flex;gap:8px"><input type="text" id="so_code" value="${code}" readonly style="background:#f1f5f9;color:#475569;flex:1"><input type="text" id="so_suffix" placeholder="后缀如 A" maxlength="2" style="width:120px;text-transform:uppercase" title="同一编号的变体/批次可加 A/B/C…，不加留空"></div></div><div class="fg"><label>设备名称 <span class="req-star">*</span></label><input type="text" id="so_name" placeholder="如 300L真空乳化机"></div></div>
+    <div class="fsec">🤝 客户与合同</div>
+    <div class="frow"><div class="fg"><label>客户单位</label><input type="text" id="so_customer" placeholder="客户单位"></div><div class="fg"><label>客户分类</label><select id="so_ct"><option>经销商</option><option>终端客户</option></select></div></div>
+    <div class="frow"><div class="fg"><label>交货日期</label><input type="date" id="so_deliver"></div><div class="fg"><label>合同</label><select id="so_contract"><option>有</option><option>无</option></select></div></div>
+    <div class="frow"><div class="fg"><label>金额(元)</label><input type="number" id="so_amount" placeholder="如 93000"></div><div class="fg"><label>税票</label><select id="so_tax"><option>13%</option><option>/（不开票）</option></select></div></div>
+    <div class="fsec">🛠 派单与资料</div>
     <div class="fg"><label>派往部门（可多选）<span class="req-star">*</span></label><div class="seg"><label><input type="checkbox" name="sod" value="design" checked><span class="opt">📐 设计部</span></label><label><input type="checkbox" name="sod" value="electric" checked><span class="opt">⚡ 电工部</span></label></div></div>
-    <div class="fg"><label>要求说明</label><textarea id="so_req" placeholder="技术交底、要点、材料要求"></textarea></div>
-    <div class="fg"><label>资料（PDF / Word / Excel）</label><label class="uploader" for="so_file">📎 选择文件上传<small>可多选</small></label><input type="file" id="so_file" multiple style="display:none" onchange="onPick(this)"><div class="filelist" id="f_list"></div></div>
-    <div class="fg"><label>收货信息（销售填写 🆕）</label><input type="text" id="so_rname" placeholder="收货人 / 单位" style="margin-bottom:6px"><input type="text" id="so_rphone" placeholder="联系电话" style="margin-bottom:6px"><input type="text" id="so_raddr" placeholder="收货地址"></div>
+    <div class="frow"><div class="fg"><label>要求说明</label><textarea id="so_req" placeholder="技术交底、要点、材料要求"></textarea></div><div class="fg"><label>资料（PDF / Word / Excel）</label><label class="uploader" for="so_file">📎 选择文件上传<small>可多选</small></label><input type="file" id="so_file" multiple style="display:none" onchange="onPick(this)"><div class="filelist" id="f_list"></div></div></div>
+    <div class="fsec">📍 收货信息</div>
+    <div class="frow"><div class="fg"><label>收货人 / 单位</label><input type="text" id="so_rname" placeholder="收货人 / 单位"></div><div class="fg"><label>联系电话</label><input type="text" id="so_rphone" placeholder="联系电话"></div></div>
+    <div class="fg"><label>收货地址</label><input type="text" id="so_raddr" placeholder="省市区 + 详细地址"></div>
    </div>
-   <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitSalesOrder()">下单</button></div>`);
+   <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitSalesOrder()">下单</button></div>`,'mid');
 }
-function submitSalesOrder(){ const code=val("so_code").trim(),name=val("so_name").trim(),req=val("so_req").trim();
+function submitSalesOrder(){ const sfx=(document.getElementById("so_suffix")?val("so_suffix").trim().toUpperCase():""); const code=val("so_code").trim()+sfx,name=val("so_name").trim(),req=val("so_req").trim();
   const depts=[...document.querySelectorAll('input[name="sod"]:checked')].map(x=>x.value);
-  if(!code||!name){ toast("请填编号和名称","warn"); return; }
+  if(!name){ toast("请填设备名称","warn"); return; }
   if(!depts.length){ toast("请至少选择一个派往部门","warn"); return; }
+  const amount=+val("so_amount")||0;
   if(!state.projects.find(x=>x.code===code)){ const rn=val("so_rname").trim();
-    state.projects.unshift({code,name,qty:1,status:"进行中",sales:cu().name,sign:today(),deliver:"—",designer:"—",drawStart:null,drawEnd:null,drawUse:"",elec:"—",dur:"-",elapsed:"-",remain:"-",sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false}});
+    state.projects.unshift({code,name,qty:1,status:"进行中",sales:cu().name,salesUid:state.userId,sign:today(),deliver:val("so_deliver")||"—",customer:val("so_customer").trim(),custType:val("so_ct"),contract:val("so_contract"),amount,taxRate:val("so_tax"),invoiceStatus:amount,invoiceApplied:false,designer:"—",drawStart:null,drawEnd:null,drawUse:"",elec:"—",dur:"-",elapsed:"-",remain:"-",sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false}});
     state.shipments.unshift({code,name,materials:[],status:"待发货",invoice:null,receiver: rn?{name:rn,phone:val("so_rphone").trim(),addr:val("so_raddr").trim()}:null});
     pushWx("lo1",`新项目 ${code} ${name} 已创建发货待办。`); }
   depts.forEach(dept=>{ state.orders.unshift({id:"o"+(++seq),dept,code,name,wid:null,by:state.userId,req:req||"（无特殊说明）",files:state.upFiles.slice(),status:"待派",start:null,dueEnd:null,done:null,outputs:[],notify:null}); pushWx(dept==="design"?"dlead":"elead",`【销售下单】${code} ${name} 已下单到${DEPTS[dept].name}，请分派负责人。`); });
-  closeModal(); toast(`已下单到 ${depts.map(d=>DEPTS[d].name).join("、")}，等待负责人分派`,"ok"); render();
+  closeModal(); toast(`已建项目 ${code} 并下单到 ${depts.map(d=>DEPTS[d].name).join("、")}`,"ok"); render();
 }
+function openInvoice(code){ const p=state.projects.find(x=>x.code===code); if(!p) return; state.ivFile=null;
+  modal(`<div class="d-h"><b>🧾 开票申请 · ${code}</b><span class="x" onclick="closeModal()">×</span></div>
+   <div class="d-b"><div class="hint" style="margin-bottom:14px">上传「开票申请表」附件并提交，该项目「发票情况」将自动跳为 <b>0</b>（已申请开票）。</div>
+    <div class="frow"><div class="fg"><label>金额</label><input type="text" value="${p.amount?fmtMoney(p.amount):'—'}" disabled style="background:#f1f5f9"></div><div class="fg"><label>税票</label><input type="text" value="${p.taxRate||'—'}" disabled style="background:#f1f5f9"></div></div>
+    <div class="fg"><label>开票申请表 <span class="req-star">*</span></label><label class="uploader" for="iv_file">📎 上传开票申请表<small>.pdf .xlsx .doc</small></label><input type="file" id="iv_file" style="display:none" onchange="ivPick(this)"><div class="filelist" id="iv_list"></div></div>
+    ${p.invoiceApplied?'<div class="hint" style="background:#f0fdf4;color:#166534">✅ 该项目已申请开票，发票情况＝0。</div>':''}
+   </div>
+   <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitInvoice('${code}')">提交开票申请</button></div>`);
+}
+function ivPick(input){ const fl=input.files[0]; if(!fl) return; state.ivFile={n:fl.name}; document.getElementById("iv_list").innerHTML=`<div class="f">${fico('xls')} ${fl.name}<span class="rm" onclick="state.ivFile=null;this.parentNode.remove()">✕</span></div>`; }
+function submitInvoice(code){ if(!state.ivFile){ toast("请先上传开票申请表","warn"); return; } const p=state.projects.find(x=>x.code===code); if(p){ p.invoiceApplied=true; p.invoiceStatus=0; } pushWx("mgr",`${code} 开票申请已提交：${state.ivFile.n}`); closeModal(); toast("开票申请已提交，发票情况已跳为 0","ok"); render(); }
 function val(id){ return document.getElementById(id).value; }
 
 /* ========== 🆕 钣金组 ========== */
