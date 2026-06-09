@@ -256,7 +256,7 @@ const state={ userId:"mgr", menu:"catalog", detailCode:null, detailTab:0, detail
     {code:"2026-039",name:"2L双行星分散混合机",qty:1,status:"已完成",sales:"代文飞",sign:"2026-04-30",deliver:"2026-06-05",designer:"李工",drawStart:"2026-05-04",drawEnd:"2026-05-10",drawUse:6,elec:"周瑞",dur:36,elapsed:37,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},salesUid:"sale2",customer:"科伦药业",custType:"经销商",contract:"有",amount:76000,taxRate:"13%",invoiceStatus:76000,invoiceApplied:false,prepay:22800,beforeShip:45600,shipReceivable:0,balance:7600,shipDate:"",balDate:""},
   ],
   shipments:[
-    {code:"2026-041M",name:"1100L强力分散混合机",materials:[{from:"设计部",name:"装配图.dwg",t:"cad"},{from:"电工部",name:"电路图.pdf",t:"pdf"}],status:"待发货",invoice:null,receiver:{name:"华东制药·王主管",phone:"139-0000-1234",addr:"江苏省无锡市惠山区工业园8号"}},
+    {code:"2026-041M",name:"1100L强力分散混合机",materials:[{from:"设计部",name:"装配图.dwg",t:"cad"},{from:"电工部",name:"电路图.pdf",t:"pdf"}],status:"已发货",invoice:{n:"041M-发货单.pdf",t:"pdf"},receiver:{name:"华东制药·王主管",phone:"139-0000-1234",addr:"江苏省无锡市惠山区工业园8号"}},
     {code:"2026-043A",name:"5L双行星压料一体机",materials:[],status:"待发货",invoice:null,receiver:{name:"广药集团·李经理",phone:"138-0000-5678",addr:"广东省广州市白云区大道12号"}},
     {code:"2026-050",name:"100L真空均质乳化机",materials:[],status:"待发货",invoice:null,receiver:null},
     {code:"2026-039",name:"2L双行星分散混合机",materials:[{from:"设计部",name:"整机图.pdf",t:"pdf"}],status:"已发货",invoice:{n:"发货单039.pdf",t:"pdf"},receiver:{name:"科伦药业·赵采购",phone:"136-0000-3456",addr:"四川省成都市温江区科技街9号"}},
@@ -653,7 +653,7 @@ function pageSales(){
       <select onchange="salesFilterSet('ct2',this.value)" style="padding:8px 11px;border:1px solid var(--bd);border-radius:8px;font-size:13px"><option value="">合同(全部)</option><option ${f.ct2==='有'?'selected':''}>有</option><option ${f.ct2==='无'?'selected':''}>无</option></select>
       <span class="muted" style="align-self:center">共 ${list.length} 个项目</span>
     </div>
-    <div class="card"><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>设备名称</th><th>客户单位</th><th>客户分类</th><th>销售</th><th>下单日期</th><th>交货日期</th><th>合同</th><th>金额</th><th>税票</th><th>发票情况</th><th>预付</th><th>发货前付</th><th>发货款应收</th><th>尾款</th><th>发货日期</th><th>尾款日期</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="19" class="empty">暂无项目（点右上「＋ 销售下单」）</td></tr>'}</tbody>${foot}</table></div></div>`;
+    <div class="card"><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>设备名称</th><th>客户单位</th><th>客户分类</th><th>销售</th><th>下单日期</th><th>交货日期</th><th>合同</th><th>金额</th><th>税票</th><th>发票情况</th><th>预付</th><th>发货前付</th><th>发货款应收</th><th>尾款</th><th title="物流发货部确认发货时自动回传，销售不可填">发货日期 📦</th><th>尾款日期</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="19" class="empty">暂无项目（点右上「＋ 销售下单」）</td></tr>'}</tbody>${foot}</table></div></div>`;
 }
 function openWfModal(code){ const p=state.projects.find(x=>x.code===code); modal(`<div class="d-h"><b>🔀 ${code}${p?' · '+p.name:''} · 全流程节点</b><span class="x" onclick="closeModal()">×</span></div><div class="d-b">${p?workflowGraph(p):'<div class="empty">项目不存在</div>'}</div><div class="d-f"><button class="btn btn-ghost" onclick="openDetail('${code}')">进入项目详情</button><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>`,'wide'); }
 function openSalesOrder(){ state.upFiles=[]; const code=nextSalesCode();
