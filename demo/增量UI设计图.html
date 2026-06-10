@@ -352,7 +352,9 @@ function lastOrder(k,code){ return state.orders.filter(o=>o.dept===k&&o.code===c
 
 function openDetail(code){ state.detailCode=code; state.detailTab=0; state.detailTop="data"; state.menu="detail"; render(); }
 function detailTop(t){ state.detailTop=t; render(); }
-function onImportExcel(){ const p=state.projects.find(x=>x.code===state.detailCode); const s=REQUIRED_SHEETS[state.detailTab]; if(p) p.sheets[s]=true; toast('已导入「'+s+'」Excel（按当前选中的进度表）',"ok"); render(); }
+// 上传一个 Excel（含四个 sheet）→ 一次性导入四个数据表（项目详单与设计师待办共用）
+function importFourSheets(code){ const p=state.projects.find(x=>x.code===code); if(!p) return; REQUIRED_SHEETS.forEach(s=>p.sheets[s]=true); toast("已导入 Excel：一个文件 → 四个数据表全部导入","ok"); render(); }
+function onImportExcel(){ importFourSheets(state.detailCode); }
 /* ===== 工作流图（并行/串行 DAG） ===== */
 function wfNode(ico,name,pill,lines,cls){ return `<div class="wf-node ${cls||''}"><h5>${ico} ${name}<span class="sp">${pill||''}</span></h5>${lines.map(l=>`<div class="ln"><span>${l[0]}</span><b>${l[1]}</b></div>`).join("")}</div>`; }
 function wfDep(p,k){ const o=p?lastOrder(k,p.code):null; if(!o) return {pill:'<span class="pill p-pending">未下单</span>',cls:'idle',o:null};
@@ -416,7 +418,7 @@ function pageDetail(){
     const slots=REQUIRED_SHEETS.map(s=>`<div class="slot ${p.sheets[s]?'up':''}"><div class="nm">${s}</div>${p.sheets[s]?'<div class="st" style="color:var(--ok)">✅ 已导入</div>':'<div class="st" style="color:var(--tx3)">⬜ 未导入</div>'}</div>`).join("");
     body=`<div class="hint" style="margin-bottom:14px">🆕 本 tab 为<b>增量新增</b>，不改动原「进度表 / 成员」。集中放：项目状态、四表校验、<b>全流程工作流</b>。</div>
       <div class="card" style="margin-bottom:14px"><div class="card-h">项目状态 / 发货</div><div style="padding:14px;display:flex;align-items:center;gap:18px;flex-wrap:wrap"><span>项目状态：${stPill}</span><span>发货：${sh?(sh.status==="已发货"?'<span class="pill p-done">已发货</span>':'<span class="pill p-ship">待发货</span>'):'—'}</span>${u.type==="manager"?`<span style="margin-left:auto;font-size:13px;color:var(--tx2)">管理层手动改状态：<select onchange="setProjStatus('${p.code}',this.value)" style="padding:6px 9px;border:1px solid var(--bd);border-radius:7px">${["进行中","已完成","已归档"].map(s=>`<option ${p.status===s?'selected':''}>${s}</option>`).join("")}</select></span>`:''}</div></div>
-      <div class="card" style="margin-bottom:14px"><div class="card-h">📑 四个数据表（设计完成前置校验）<span class="inc">🆕</span></div><div style="padding:14px"><div class="sheet-slots">${slots}</div><div class="page-desc" style="margin:10px 2px 0">数据表统一通过页头「⬆ 导入 Excel」上传；此处仅显示完成校验状态，不单独提供上传入口。</div></div></div>
+      <div class="card" style="margin-bottom:14px"><div class="card-h">📑 四个数据表（设计完成前置校验）<span class="inc">🆕</span></div><div style="padding:14px"><div class="sheet-slots">${slots}</div><div class="page-desc" style="margin:10px 2px 0">上传一个 Excel（含四个 sheet）即一次性导入四个数据表；通过页头「⬆ 导入 Excel」上传，此处仅显示完成校验状态。设计师也可在「设计部」待办里同样一键导入。</div></div></div>
       <div class="card"><div class="card-h">🔀 全流程工作流（并行 / 串行）<span class="inc">🆕</span></div><div style="padding:6px 14px 14px;overflow-x:auto">${workflowGraph(p)}</div></div>${fbArchive(p.code)}`;
   }
   return header + topbar + `<div style="margin-top:0">${body}</div>`;
@@ -461,11 +463,13 @@ function todoCard(o,d){
     const listed=arr.length?`<div class="kv" style="color:var(--ok);margin-top:6px">✅ ${so.label} 已推送${DOWN[so.to].name}（${arr.length}个）：</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">${arr.map((f,i)=>`<span class="file-chip"><span class="fn" onclick="viewFile('${f.n}','${f.t}')" title="预览">${fico(f.t)} ${f.n}</span><span class="dl" onclick="removeStart('${o.id}','${so.k}',${i})" title="移除" style="color:var(--danger)">×</span></span>`).join("")}</div>`:'';
     const adder=`<div class="kv" style="margin-top:6px"><label style="color:var(--primary);cursor:pointer"><input type="file" multiple style="display:none" onchange="uploadStart('${o.id}','${so.k}',this)">📎 ${arr.length?'继续添加':'接单后上传'}${so.label}（可多选）→ 推${DOWN[so.to].name}</label></div>`;
     return listed+adder; }).join("");
-  // 🆕 设计师待办内置「四个数据表」导入入口（同项目详单「导入Excel」功能，完成前置校验）
+  // 🆕 设计师待办内置「四个数据表」导入（同项目详单：上传一个 Excel → 一次性导入四个表，完成前置校验）
   const pj=state.projects.find(p=>p.code===o.code);
+  const allSheet=pj&&REQUIRED_SHEETS.every(s=>pj.sheets&&pj.sheets[s]);
   const sheetImp=(o.dept==="design")?`<div style="margin-top:8px;padding:10px 12px;border:1px dashed var(--bd);border-radius:8px;background:#fafbfc">
-      <div style="font-size:13px;font-weight:600;margin-bottom:7px">📑 四个数据表导入 <span class="muted" style="font-weight:400">（同项目详单「导入Excel」，完成前需齐备）</span></div>
-      <div style="display:flex;flex-wrap:wrap;gap:7px">${REQUIRED_SHEETS.map(s=>{ const up=pj&&pj.sheets&&pj.sheets[s]; return up?`<span class="pill p-done">${s} ✅</span>`:`<label style="cursor:pointer;border:1px solid var(--primary);color:var(--primary);border-radius:6px;padding:4px 10px;font-size:12px"><input type="file" accept=".xls,.xlsx" style="display:none" onchange="uploadSheet('${o.code}','${s}')">⬆ ${s}</label>`; }).join("")}</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:7px">📑 四个数据表导入 <span class="muted" style="font-weight:400">（同项目详单：上传一个 Excel → 一次性导入四个表，完成前需齐备）</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center">${REQUIRED_SHEETS.map(s=>{ const up=pj&&pj.sheets&&pj.sheets[s]; return `<span class="pill ${up?'p-done':'p-pending'}">${s} ${up?'✅':'⬜'}</span>`; }).join("")}
+        <label style="cursor:pointer;background:var(--primary);color:#fff;font-weight:600;border-radius:6px;padding:5px 12px;font-size:12px"><input type="file" accept=".xls,.xlsx" style="display:none" onchange="importFourSheets('${o.code}')">⬆ ${allSheet?'重新导入 Excel':'导入 Excel（四表）'}</label></div>
     </div>`:'';
   return `<div class="t ${over?'urgent':''}"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span> ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div><div class="files">${o.files.map(fileChip).join("")}</div>
     <div class="kv">${d.sl}：<b>${o.start}</b> ｜ ${d.el}：<b>${o.dueEnd}</b> ${over?'<span class="pill p-overdue" style="margin-left:6px">已超预计</span>':''}</div>${uw}
