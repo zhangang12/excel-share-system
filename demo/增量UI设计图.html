@@ -266,7 +266,7 @@ const state={ userId:"mgr", menu:"catalog", detailCode:null, detailTab:0, detail
   projects:[
     {code:"2026-043A",name:"5L双行星压料一体机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-09",deliver:"2026-06-05",designer:"张工",drawStart:"2026-05-11",drawEnd:null,drawUse:"",elec:"宋朴",dur:57,elapsed:58,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":false,"原料下料单":false},salesUid:"sale1",customer:"涿州市腾源阁机械厂",custType:"经销商",contract:"有",amount:93000,taxRate:"13%",invoiceStatus:93000,invoiceApplied:false,prepay:27900,beforeShip:55800,shipReceivable:0,balance:9300,shipDate:"",balDate:"2026-02-17",contractFile:{n:"2026-043A-合同.pdf",t:"pdf"}},
     {code:"2026-050",name:"100L真空均质乳化机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-16",deliver:"2026-06-16",designer:"张工",drawStart:null,drawEnd:null,drawUse:"",elec:"周瑞",dur:61,elapsed:51,remain:10,sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false},salesUid:"sale1",customer:"华东制药",custType:"终端客户",contract:"有",amount:128000,taxRate:"13%",invoiceStatus:128000,invoiceApplied:false,prepay:38400,beforeShip:76800,shipReceivable:0,balance:12800,shipDate:"",balDate:""},
-    {code:"2026-041M",name:"1100L强力分散混合机",qty:1,status:"已完成",sales:"文艺",sign:"2026-05-08",deliver:"2026-06-18",designer:"李工",drawStart:"2026-05-20",drawEnd:"2026-05-26",drawUse:6,elec:"宋朴",dur:41,elapsed:29,remain:12,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},sheetPkg:{n:"041M-钣金图纸包.pdf",t:"pdf"},salesUid:"sale3",customer:"广药集团",custType:"终端客户",contract:"有",amount:156000,taxRate:"13%",invoiceStatus:0,invoiceState:"已开票",invoiceFile:{n:"041M-增值税发票.pdf",t:"pdf"},prepay:46800,beforeShip:93600,shipReceivable:0,balance:15600,shipDate:"2026-06-15",balDate:""},
+    {code:"2026-041M",name:"1100L强力分散混合机",qty:1,status:"已完成",sales:"文艺",sign:"2026-05-08",deliver:"2026-06-18",designer:"李工",drawStart:"2026-05-20",drawEnd:"2026-05-26",drawUse:6,elec:"宋朴",dur:41,elapsed:29,remain:12,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},sheetPkg:[{n:"041M-总装图.pdf",t:"pdf"},{n:"041M-钣金件图.pdf",t:"pdf"}],salesUid:"sale3",customer:"广药集团",custType:"终端客户",contract:"有",amount:156000,taxRate:"13%",invoiceStatus:0,invoiceState:"已开票",invoiceFile:{n:"041M-增值税发票.pdf",t:"pdf"},prepay:46800,beforeShip:93600,shipReceivable:0,balance:15600,shipDate:"2026-06-15",balDate:""},
     {code:"2026-039",name:"2L双行星分散混合机",qty:1,status:"已完成",sales:"代文飞",sign:"2026-04-30",deliver:"2026-06-05",designer:"李工",drawStart:"2026-05-04",drawEnd:"2026-05-10",drawUse:6,elec:"周瑞",dur:36,elapsed:37,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},salesUid:"sale2",customer:"科伦药业",custType:"经销商",contract:"有",amount:76000,taxRate:"13%",invoiceStatus:76000,invoiceApplied:false,prepay:22800,beforeShip:45600,shipReceivable:0,balance:7600,shipDate:"",balDate:""},
   ],
   shipments:[
@@ -364,8 +364,8 @@ function workflowGraph(p){
   const saleN=wfNode('💼','销售下单', live?'<span class="pill p-done">已下单</span>':'', [['下单销售',live?(saleBy?uName(saleBy):'—'):'销售员'],['动作','建项目 + 派部门']], live?'done':'');
   const mk=k=>{ const s=wfDep(p,k); const d=DEPTS[k]; const lines=[]; lines.push(['下单方','销售派单']); lines.push(['负责人',live?(s.o&&s.o.wid?workerName(k,s.o.wid):(s.o?'待分派':'—')):'负责人分派']); lines.push(['预计完成',live?(s.o&&s.o.dueEnd?s.o.dueEnd:'—'):'—']); lines.push([d.dl,live?(s.o&&s.o.done?s.o.done:'—'):'—']); lines.push(['效率',live?(effOf(s.o)!=null?effOf(s.o)+'%':'—'):'—']); return wfNode(d.ico,d.name,live?s.pill:'',lines,live?s.cls:''); };
   const design=mk('design'),electric=mk('electric'),produce=mk('produce');
-  const pkg=p?p.sheetPkg:null;
-  const sheetN=wfNode('🔧','钣金组',live?(pkg?'<span class="pill p-done">已接收</span>':'<span class="pill p-pending">待图纸包</span>'):'',[['来源','设计 PDF 图纸包'],['钣金装配',live?(p.sheets['钣金装配']?'已上传':'未上传'):'引用四表']],live?(pkg?'done':'wait'):'');
+  const pkg=p?pkgFiles(p):[];
+  const sheetN=wfNode('🔧','钣金组',live?(pkg.length?`<span class="pill p-done">已接收·${pkg.length}</span>`:'<span class="pill p-pending">待图纸包</span>'):'',[['来源','设计 PDF 图纸包'],['钣金装配',live?(p.sheets['钣金装配']?'已上传':'未上传'):'引用四表']],live?(pkg.length?'done':'wait'):'');
   const pur=p?state.purchaseInbox.filter(it=>it.code===p.code):[];
   const purN=wfNode('🛒','采购部',live?(pur.length?'<span class="pill p-done">已收清单</span>':'<span class="pill p-pending">待清单</span>'):'',[['来源','电工 采购清单'],['采购清单',live?(pur.length?pur[0].name:'待推送'):'电工推送']],live?(pur.length?'done':'wait'):'');
   const whOut=p?whTxns.filter(t=>t.party===p.code&&t.dir==='out'):[]; const whShip=p&&sh?sh.materials.filter(m=>m.from==='仓库组'):[];
@@ -457,7 +457,10 @@ function todoCard(o,d){
     <div class="field-row"><div class="field"><label>${d.sl}</label><input type="date" id="s_${o.id}" value="${today()}"></div><div class="field"><label>${d.el}</label><input type="date" id="e_${o.id}" value="${addDays(7)}"></div></div>${uw}
     <div class="t-actions"><button class="btn btn-primary btn-sm" onclick="startTask('${o.id}')">开始</button></div></div>`; }
   const over=o.dueEnd&&today()>o.dueEnd;
-  const startUp = (d.startOutputs||[]).map(so=>{ const up=o.startUploaded&&o.startUploaded[so.k]; return up?`<div class="kv" style="color:var(--ok);margin-top:6px">✅ ${so.label} 已推送${DOWN[so.to].name}（${up.n}）</div>`:`<div class="kv" style="margin-top:6px"><label style="color:var(--primary);cursor:pointer"><input type="file" style="display:none" onchange="uploadStart('${o.id}','${so.k}',this)">📎 接单后上传${so.label} → 推${DOWN[so.to].name}</label></div>`; }).join("");
+  const startUp = (d.startOutputs||[]).map(so=>{ const arr=(o.startUploaded&&o.startUploaded[so.k])||[];
+    const listed=arr.length?`<div class="kv" style="color:var(--ok);margin-top:6px">✅ ${so.label} 已推送${DOWN[so.to].name}（${arr.length}个）：</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">${arr.map((f,i)=>`<span class="file-chip"><span class="fn" onclick="viewFile('${f.n}','${f.t}')" title="预览">${fico(f.t)} ${f.n}</span><span class="dl" onclick="removeStart('${o.id}','${so.k}',${i})" title="移除" style="color:var(--danger)">×</span></span>`).join("")}</div>`:'';
+    const adder=`<div class="kv" style="margin-top:6px"><label style="color:var(--primary);cursor:pointer"><input type="file" multiple style="display:none" onchange="uploadStart('${o.id}','${so.k}',this)">📎 ${arr.length?'继续添加':'接单后上传'}${so.label}（可多选）→ 推${DOWN[so.to].name}</label></div>`;
+    return listed+adder; }).join("");
   // 🆕 设计师待办内置「四个数据表」导入入口（同项目详单「导入Excel」功能，完成前置校验）
   const pj=state.projects.find(p=>p.code===o.code);
   const sheetImp=(o.dept==="design")?`<div style="margin-top:8px;padding:10px 12px;border:1px dashed var(--bd);border-radius:8px;background:#fafbfc">
@@ -473,8 +476,22 @@ function startTask(id){ const o=state.orders.find(x=>x.id===id); const s=documen
 function reopenTask(id){ const o=state.orders.find(x=>x.id===id); const names=(o.outputs||[]).map(f=>f.n); const dn=DEPTS[o.dept].name;
   const sh=shipmentOf(o.code); if(sh) sh.materials=sh.materials.filter(m=>!(m.from===dn && names.includes(m.name)));
   state.purchaseInbox=state.purchaseInbox.filter(it=>!(it.code===o.code && it.from===dn && names.includes(it.name)));
-  o.status="drawing"; o.done=null; o.outputs=[]; if(o.dept==="design"){const p=state.projects.find(p=>p.code===o.code);if(p){p.drawEnd=null; if(p.sheetPkg&&names.includes(p.sheetPkg.n)) p.sheetPkg=null;}} toast("已改回进行中（已撤回推送给下游的资料）","ok"); render(); }
-function uploadStart(id,k,input){ const f=input.files[0]; if(!f) return; const o=state.orders.find(x=>x.id===id); const d=DEPTS[o.dept]; const so=(d.startOutputs||[]).find(x=>x.k===k); if(!so) return; o.startUploaded=o.startUploaded||{}; o.startUploaded[k]={n:f.name,t:so.t}; if(so.to==="purchase"){ state.purchaseInbox.unshift({code:o.code,from:d.name,name:f.name,t:so.t,time:new Date().toLocaleString("zh-CN")}); } else if(so.to==="logistics"){ const sh=shipmentOf(o.code); if(sh) sh.materials.push({from:d.name,name:f.name,t:so.t}); } else if(so.to==="sheet"){ const p=state.projects.find(x=>x.code===o.code); if(p) p.sheetPkg={n:f.name,t:so.t}; pushWx("sm1",`设计部已上传 ${o.code} PDF图纸包，请下载：${f.name}`); } toast(`${so.label} 已推送${DOWN[so.to].name}`,"ok"); render(); }
+  o.status="drawing"; o.done=null; o.outputs=[]; if(o.dept==="design"){const p=state.projects.find(p=>p.code===o.code);if(p){p.drawEnd=null; if(p.sheetPkg) p.sheetPkg=pkgFiles(p).filter(f=>!names.includes(f.n));}} toast("已改回进行中（已撤回推送给下游的资料）","ok"); render(); }
+// 图纸包归一化：兼容旧单对象 / 新数组，统一返回文件数组
+function pkgFiles(p){ const x=p&&p.sheetPkg; return Array.isArray(x)?x:(x?[x]:[]); }
+function uploadStart(id,k,input){ const files=[...(input.files||[])]; if(!files.length) return; const o=state.orders.find(x=>x.id===id); const d=DEPTS[o.dept]; const so=(d.startOutputs||[]).find(x=>x.k===k); if(!so) return; o.startUploaded=o.startUploaded||{}; const arr=(o.startUploaded[k]=o.startUploaded[k]||[]);
+  files.forEach(f=>{ const item={n:f.name,t:so.t}; arr.push(item);
+    if(so.to==="purchase"){ state.purchaseInbox.unshift({code:o.code,from:d.name,name:f.name,t:so.t,time:new Date().toLocaleString("zh-CN")}); }
+    else if(so.to==="logistics"){ const sh=shipmentOf(o.code); if(sh) sh.materials.push({from:d.name,name:f.name,t:so.t}); }
+    else if(so.to==="sheet"){ const p=state.projects.find(x=>x.code===o.code); if(p){ if(!Array.isArray(p.sheetPkg)) p.sheetPkg=pkgFiles(p); p.sheetPkg.push(item); } }
+  });
+  if(so.to==="sheet") pushWx("sm1",`设计部已上传 ${o.code} PDF图纸包 ${files.length} 个文件，请下载`);
+  toast(`${so.label} 已推送${DOWN[so.to].name}（${files.length}个）`,"ok"); render(); }
+function removeStart(id,k,idx){ const o=state.orders.find(x=>x.id===id); if(!o||!o.startUploaded||!o.startUploaded[k]) return; const so=(DEPTS[o.dept].startOutputs||[]).find(x=>x.k===k); const rm=o.startUploaded[k].splice(idx,1)[0]; if(!rm) return;
+  if(so&&so.to==="sheet"){ const p=state.projects.find(x=>x.code===o.code); if(p&&Array.isArray(p.sheetPkg)){ const i=p.sheetPkg.findIndex(f=>f.n===rm.n); if(i>=0) p.sheetPkg.splice(i,1); } }
+  else if(so&&so.to==="purchase"){ state.purchaseInbox=state.purchaseInbox.filter(it=>!(it.code===o.code&&it.name===rm.n&&it.from===DEPTS[o.dept].name)); }
+  else if(so&&so.to==="logistics"){ const sh=shipmentOf(o.code); if(sh) sh.materials=sh.materials.filter(m=>!(m.from===DEPTS[o.dept].name&&m.name===rm.n)); }
+  toast(`已移除 ${rm.n}`,"ok"); render(); }
 
 function openComplete(id){
   const o=state.orders.find(x=>x.id===id); const d=DEPTS[o.dept]; state.completeId=id; state.completeFiles={};
@@ -546,10 +563,10 @@ function submitProject(){ const c=document.getElementById("np_code").value.trim(
   state.shipments.unshift({code:c,name:nm,materials:[],status:"待发货",invoice:null,receiver: rn?{name:rn,phone:rp,addr:ra}:null}); pushWx("lo1",`新项目 ${c} ${nm} 已创建，已为你建立发货待办。`); closeModal(); toast(`已新建项目 ${c}，并推送发货待办给物流发货部`,"ok"); render(); }
 
 function pagePurchase(){
-  const rows=state.purchaseInbox.map(it=>{ const pj=state.projects.find(p=>p.code===it.code); return `<tr><td><span class="code" onclick="openDetail('${it.code}')">${it.code}</span></td><td>${pj?pj.name:'—'}</td><td>${it.from}</td><td>${fileChip(it)}</td><td>${it.time}</td></tr>`;}).join("");
+  const rows=state.purchaseInbox.map((it,i)=>{ const pj=state.projects.find(p=>p.code===it.code); return `<tr><td>${i+1}</td><td><span class="code" onclick="openDetail('${it.code}')">${it.code}</span></td><td>${pj?pj.name:'—'}</td><td>${it.from}</td><td>${fileChip(it)}</td><td>${it.time}</td></tr>`;}).join("");
   return `<div class="page-h"><h1>🛒 采购部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">采购清单收件箱</span><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="tryExport('采购清单')">⬇ 导出</button></div>
     <div class="page-desc">电工部完成后推送的「采购清单(Excel)」汇总到这里。</div>
-    <div class="card"><table><thead><tr><th>项目编号</th><th>项目名称</th><th>来源</th><th>采购清单</th><th>收到时间</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">暂无采购清单</td></tr>'}</tbody></table></div>`;
+    <div class="card"><table><thead><tr><th>序号</th><th>项目编号</th><th>项目名称</th><th>来源</th><th>采购清单</th><th>收到时间</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="empty">暂无采购清单</td></tr>'}</tbody></table></div>`;
 }
 function deptDoneState(code,k){ const os=state.orders.filter(o=>o.dept===k&&o.code===code&&o.status!=="作废"); if(!os.length) return {t:"未下单",ok:false,na:true}; return {t:os.every(o=>o.status==="done")?"已完成":"进行中",ok:os.every(o=>o.status==="done"),na:false}; }
 function shipReady(code){ let any=false; for(const k of ["design","electric","produce"]){ const st=deptDoneState(code,k); if(!st.na){ any=true; if(!st.ok) return false; } } return any; }
@@ -795,14 +812,14 @@ function val(id){ return document.getElementById(id).value; }
 /* ========== 🆕 钣金组 ========== */
 function pageSheet(){
   const u=cu();
-  const rows=state.projects.map(p=>{ const pkg=p.sheetPkg; const bj=p.sheets&&p.sheets["钣金装配"];
-    return `<tr><td><span class="code" onclick="openDetail('${p.code}')">${p.code}</span></td><td>${p.name}</td><td>${p.designer}</td><td>${bj?`<span class="code" onclick="viewSheet('${p.code}','钣金装配')">钣金装配表 ✅</span>`:'<span class="pill p-pending">未上传</span>'}</td><td>${pkg?fileChip(pkg):'<span class="muted">待设计部上传</span>'}</td><td>${pkg?'<span class="pill p-done">可下载</span>':'<span class="pill p-pending">待图纸包</span>'}</td></tr>`;}).join("");
+  const rows=state.projects.map(p=>{ const pkg=pkgFiles(p); const bj=p.sheets&&p.sheets["钣金装配"];
+    return `<tr><td><span class="code" onclick="openDetail('${p.code}')">${p.code}</span></td><td>${p.name}</td><td>${p.designer}</td><td>${bj?`<span class="code" onclick="viewSheet('${p.code}','钣金装配')">钣金装配表 ✅</span>`:'<span class="pill p-pending">未上传</span>'}</td><td>${pkg.length?`<div style="display:flex;flex-wrap:wrap;gap:6px">${pkg.map(fileChip).join("")}</div>`:'<span class="muted">待设计部上传</span>'}</td><td>${pkg.length?`<span class="pill p-done">可下载·${pkg.length}个</span>`:'<span class="pill p-pending">待图纸包</span>'}</td></tr>`;}).join("");
   return `<div class="page-h"><h1>🔧 钣金组</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${u.name}</span></div>
     <div class="page-desc"><b>PDF 图纸文件包由设计部在其工作台上传推送</b>（设计接单后上传 → 推钣金组），<b>钣金组在此下载</b>；「钣金装配」表为设计四表的只读引用。</div>
     <div class="hint" style="margin-bottom:14px">📌 演示：切「陈工·设计负责人」把 2026-050 分派给张工 → 切「张工·设计师」在设计部待办里「📎 接单后上传PDF图纸包 → 推钣金组」→ 回本页点文件名/⬇ 下载。</div>
     <div class="card"><div class="card-h">📥 项目图纸包（下载）+ 钣金装配表（引用）</div><div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>名称</th><th>设计师</th><th>钣金装配表(引用)</th><th>PDF 图纸包(下载)</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
-function uploadSheetPkg(code,input){ const f=input.files[0]; if(!f) return; const p=state.projects.find(x=>x.code===code); p.sheetPkg={n:f.name,t:"pdf"}; pushWx("sm1",`设计部已上传 ${code} 钣金图纸包：${f.name}`); toast("图纸包已关联并推送钣金组","ok"); render(); }
+function uploadSheetPkg(code,input){ const files=[...(input.files||[])]; if(!files.length) return; const p=state.projects.find(x=>x.code===code); if(!Array.isArray(p.sheetPkg)) p.sheetPkg=pkgFiles(p); files.forEach(f=>p.sheetPkg.push({n:f.name,t:(f.name.split(".").pop()||"pdf").toLowerCase()})); pushWx("sm1",`设计部已上传 ${code} 钣金图纸包 ${files.length} 个文件`); toast(`图纸包已关联并推送钣金组（${files.length}个）`,"ok"); render(); }
 
 /* ========== 🆕 仓库组（仓库管理 + 发货清单） ========== */
 let whMID=0;
