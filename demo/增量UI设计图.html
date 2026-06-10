@@ -311,12 +311,18 @@ function pageCatalog(){
   const projs=myProjects();  // 销售员/设计师按本人过滤
   const rows=projs.map(p=>{
     const st=p.status==="已完成"?"st-done":(p.status==="已归档"?"":"st-doing");
+    // 货期/已过/剩余 由 签订日期、交货日期、当天 实时计算（两日期齐备才算）
+    const hasD=p.sign&&p.deliver;
+    const dur=hasD?days(p.sign,p.deliver):null;                 // 货期=交货-签订
+    const done=p.status==="已完成";
+    const elapsed=hasD?(done?dur:days(p.sign,today())):null;    // 已过时间=今天-签订（完成则=货期）
+    const remain=hasD?(done?0:days(today(),p.deliver)):null;    // 剩余制作时间=交货-今天
     return `<tr>
       <td class="code-cell"><span class="code-wrap"><span class="code" onclick="openDetail('${p.code}')">${p.code}</span>${canOrder?`<button class="float-order" onclick="event.stopPropagation();openOrderForProject('${p.code}')">＋ 下单</button>`:""}</span></td>
       <td>${p.name}</td><td>${p.qty}</td><td class="${st}">${p.status}</td><td>${p.sales}</td>
       <td>${p.sign||'-'}</td><td>${p.deliver||'-'}</td><td>${p.designer}</td>
-      <td>${p.elec||'-'}</td><td>${p.dur??'-'}</td><td>${p.elapsed??'-'}</td>
-      <td class="${(typeof p.remain==='number'&&p.remain<0)?'cell-overdue':''}">${p.remain??'-'}</td></tr>`;
+      <td>${p.elec||'-'}</td><td>${dur!=null?dur+'天':'-'}</td><td>${elapsed!=null?elapsed+'天':'-'}</td>
+      <td class="${(typeof remain==='number'&&remain<0)?'cell-overdue':''}">${remain!=null?(remain<0?'逾期'+(-remain)+'天':remain+'天'):'-'}</td></tr>`;
   }).join("");
   return `<div class="page-h"><h1>项目目录</h1><span class="inc ed">✏️ 叠加下单</span><div class="spacer"></div>${mgr?`<button class="btn btn-primary btn-sm" onclick="openNewProject()">＋ 新建项目</button>`:""}<button class="btn btn-ghost btn-sm" onclick="tryExport('项目目录')">⬇ 导出</button></div>
     <div class="page-desc">现有页保持原样；增量＝鼠标移到项目编号上浮出「＋下单」给部门派单 🆕。</div>
