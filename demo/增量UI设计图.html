@@ -453,9 +453,15 @@ function todoCard(o,d){
     <div class="t-actions"><button class="btn btn-primary btn-sm" onclick="startTask('${o.id}')">开始</button></div></div>`; }
   const over=o.dueEnd&&today()>o.dueEnd;
   const startUp = (d.startOutputs||[]).map(so=>{ const up=o.startUploaded&&o.startUploaded[so.k]; return up?`<div class="kv" style="color:var(--ok);margin-top:6px">✅ ${so.label} 已推送${DOWN[so.to].name}（${up.n}）</div>`:`<div class="kv" style="margin-top:6px"><label style="color:var(--primary);cursor:pointer"><input type="file" style="display:none" onchange="uploadStart('${o.id}','${so.k}',this)">📎 接单后上传${so.label} → 推${DOWN[so.to].name}</label></div>`; }).join("");
+  // 🆕 设计师待办内置「四个数据表」导入入口（同项目详单「导入Excel」功能，完成前置校验）
+  const pj=state.projects.find(p=>p.code===o.code);
+  const sheetImp=(o.dept==="design")?`<div style="margin-top:8px;padding:10px 12px;border:1px dashed var(--bd);border-radius:8px;background:#fafbfc">
+      <div style="font-size:13px;font-weight:600;margin-bottom:7px">📑 四个数据表导入 <span class="muted" style="font-weight:400">（同项目详单「导入Excel」，完成前需齐备）</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:7px">${REQUIRED_SHEETS.map(s=>{ const up=pj&&pj.sheets&&pj.sheets[s]; return up?`<span class="pill p-done">${s} ✅</span>`:`<label style="cursor:pointer;border:1px solid var(--primary);color:var(--primary);border-radius:6px;padding:4px 10px;font-size:12px"><input type="file" accept=".xls,.xlsx" style="display:none" onchange="uploadSheet('${o.code}','${s}')">⬆ ${s}</label>`; }).join("")}</div>
+    </div>`:'';
   return `<div class="t ${over?'urgent':''}"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span> ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div><div class="files">${o.files.map(fileChip).join("")}</div>
     <div class="kv">${d.sl}：<b>${o.start}</b> ｜ ${d.el}：<b>${o.dueEnd}</b> ${over?'<span class="pill p-overdue" style="margin-left:6px">已超预计</span>':''}</div>${uw}
-    ${startUp}
+    ${startUp}${sheetImp}
     <div class="t-actions"><button class="btn btn-ok btn-sm" onclick="openComplete('${o.id}')">✓ 完成…</button></div></div>`;
 }
 function startTask(id){ const o=state.orders.find(x=>x.id===id); const s=document.getElementById("s_"+id).value,e=document.getElementById("e_"+id).value; if(!s||!e){toast("请填时间","warn");return;} if(e<s){toast("预计完成不能早于开始","warn");return;} o.start=s;o.dueEnd=e;o.status="drawing"; const pj=state.projects.find(p=>p.code===o.code); if(pj){ if(o.dept==="design"){ pj.drawStart=s; pj.designer=workerName("design",o.wid); } else if(o.dept==="electric"){ pj.elec=workerName("electric",o.wid); } } toast("已开始，已回传"+(o.dept==="design"?"设计师":(o.dept==="electric"?"电工":"负责人"))+"到项目目录","ok"); render(); }
