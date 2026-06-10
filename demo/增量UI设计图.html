@@ -542,10 +542,10 @@ function submitProject(){ const c=document.getElementById("np_code").value.trim(
   state.shipments.unshift({code:c,name:nm,materials:[],status:"待发货",invoice:null,receiver: rn?{name:rn,phone:rp,addr:ra}:null}); pushWx("lo1",`新项目 ${c} ${nm} 已创建，已为你建立发货待办。`); closeModal(); toast(`已新建项目 ${c}，并推送发货待办给物流发货部`,"ok"); render(); }
 
 function pagePurchase(){
-  const rows=state.purchaseInbox.map(it=>`<tr><td><span class="code" onclick="openDetail('${it.code}')">${it.code}</span></td><td>${it.from}</td><td>${fileChip(it)}</td><td>${it.time}</td></tr>`).join("");
+  const rows=state.purchaseInbox.map(it=>{ const pj=state.projects.find(p=>p.code===it.code); return `<tr><td><span class="code" onclick="openDetail('${it.code}')">${it.code}</span></td><td>${pj?pj.name:'—'}</td><td>${it.from}</td><td>${fileChip(it)}</td><td>${it.time}</td></tr>`;}).join("");
   return `<div class="page-h"><h1>🛒 采购部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">采购清单收件箱</span><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="tryExport('采购清单')">⬇ 导出</button></div>
     <div class="page-desc">电工部完成后推送的「采购清单(Excel)」汇总到这里。</div>
-    <div class="card"><table><thead><tr><th>项目</th><th>来源</th><th>采购清单</th><th>收到时间</th></tr></thead><tbody>${rows||'<tr><td colspan="4" class="empty">暂无采购清单</td></tr>'}</tbody></table></div>`;
+    <div class="card"><table><thead><tr><th>项目编号</th><th>项目名称</th><th>来源</th><th>采购清单</th><th>收到时间</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">暂无采购清单</td></tr>'}</tbody></table></div>`;
 }
 function deptDoneState(code,k){ const os=state.orders.filter(o=>o.dept===k&&o.code===code&&o.status!=="作废"); if(!os.length) return {t:"未下单",ok:false,na:true}; return {t:os.every(o=>o.status==="done")?"已完成":"进行中",ok:os.every(o=>o.status==="done"),na:false}; }
 function shipReady(code){ let any=false; for(const k of ["design","electric","produce"]){ const st=deptDoneState(code,k); if(!st.na){ any=true; if(!st.ok) return false; } } return any; }
