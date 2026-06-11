@@ -308,7 +308,7 @@ const ADMIN=[{k:"perm",t:"权限管理",ico:"🔒"},{k:"approve",t:"导出审批
 function menuVisible(k){ const u=cu(), t=u.type; // A3：本部门成员 + 管理层可见
   if(t==="manager"||t==="admin") return true;
   if(k==="catalog") return true;                              // 项目目录：全员可见
-  if(k==="list") return !(t==="sales"||t==="salelead"||u.dept==="electric"||t==="aslead"||t==="asworker");  // 项目详单：销售部 + 整个电工部(含电工主管) + 售后部 无权；设计部可见
+  if(k==="list") return !(t==="sales"||t==="salelead"||u.dept==="electric"||u.dept==="produce"||t==="aslead"||t==="asworker");  // 项目详单：销售部 + 电工部 + 装配组 + 售后部 无权（只保留本部门菜单+项目目录）；设计部、生产主管可见
   const tag=u.dept?(t+":"+u.dept):t, dn="down:"+(u.down||"");
   const map={ sales:["sales","salelead"], design:["deptlead:design","worker:design"], electric:["deptlead:electric","worker:electric"],
     produce:["pmlead","worker:produce"], sheet:["sheet"], purchase:["down:purchase"],
@@ -323,7 +323,7 @@ function renderTop(){ let o=""; Object.keys(USERS).forEach(id=>o+=`<option value
   const n=unread(); const d=document.getElementById("bellDot"); d.style.display=n?'grid':'none'; d.textContent=n; }
 function go(k){ state.menu=k; render(); }
 function switchUser(id){ state.userId=id; render(); }
-function render(){ if(!menuVisible(state.menu)&&!["detail","msg"].includes(state.menu)) state.menu="catalog"; renderNav(); renderTop(); const map={catalog:pageCatalog,list:pageList,detail:pageDetail,sales:pageSales,design:()=>pageDept("design"),electric:()=>pageDept("electric"),produce:()=>pageDept("produce"),sheet:pageSheet,purchase:pagePurchase,warehouse:pageWarehouse,logistics:pageLogistics,finance:pageFinance,aftersales:pageAftersales,report:pageReport,perm:pagePerm,approve:pageApprove,wxbind:pageWxBind,msg:pageMsg,audit:pagePlaceholder}; document.getElementById("content").innerHTML=(map[state.menu]||pagePlaceholder)(); }
+function render(){ if(state.menu==="detail"&&!menuVisible("list")) state.menu="catalog"; if(!menuVisible(state.menu)&&!["detail","msg"].includes(state.menu)) state.menu="catalog"; renderNav(); renderTop(); const map={catalog:pageCatalog,list:pageList,detail:pageDetail,sales:pageSales,design:()=>pageDept("design"),electric:()=>pageDept("electric"),produce:()=>pageDept("produce"),sheet:pageSheet,purchase:pagePurchase,warehouse:pageWarehouse,logistics:pageLogistics,finance:pageFinance,aftersales:pageAftersales,report:pageReport,perm:pagePerm,approve:pageApprove,wxbind:pageWxBind,msg:pageMsg,audit:pagePlaceholder}; document.getElementById("content").innerHTML=(map[state.menu]||pagePlaceholder)(); }
 
 function myProjects(){ const u=cu();
   if(u.type==="sales") return state.projects.filter(p=>p.salesUid===state.userId);  // 销售员只看自己下单的
@@ -335,6 +335,7 @@ function myProjects(){ const u=cu();
 function pageCatalog(){
   const mgr=cu().type==="manager";
   const canOrder = mgr;   // 项目目录下单仅管理层(设计/电工)；生产部改由销售派单
+  const canDetail = menuVisible("list");  // 有项目详单权限者，编号才可点进详单；销售/电工/装配/售后 仅展示不可点
   const projs=myProjects();  // 销售员/设计师按本人过滤
   const rows=projs.map(p=>{
     const st=p.status==="已完成"?"st-done":(p.status==="已归档"?"":"st-doing");
@@ -345,7 +346,7 @@ function pageCatalog(){
     const elapsed=hasD?(done?dur:days(p.sign,today())):null;    // 已过时间=今天-签订（完成则=货期）
     const remain=hasD?(done?0:days(today(),p.deliver)):null;    // 剩余制作时间=交货-今天
     return `<tr>
-      <td class="code-cell"><span class="code-wrap"><span class="code" onclick="openDetail('${p.code}')">${p.code}</span>${canOrder?`<button class="float-order" onclick="event.stopPropagation();openOrderForProject('${p.code}')">＋ 下单</button>`:""}</span></td>
+      <td class="code-cell"><span class="code-wrap">${canDetail?`<span class="code" onclick="openDetail('${p.code}')">${p.code}</span>`:`<span style="font-weight:700;color:var(--tx1)">${p.code}</span>`}${canOrder?`<button class="float-order" onclick="event.stopPropagation();openOrderForProject('${p.code}')">＋ 下单</button>`:""}</span></td>
       <td>${p.name}</td><td>${p.qty}</td><td class="${st}">${p.status}</td><td>${p.sales}</td>
       <td>${p.sign||'-'}</td><td>${p.deliver||'-'}</td><td>${p.designer}</td>
       <td>${p.elec||'-'}</td><td>${dur!=null?dur+'天':'-'}</td><td>${elapsed!=null?elapsed+'天':'-'}</td>
@@ -372,7 +373,9 @@ function pageList(){
 }
 function lastOrder(k,code){ return state.orders.filter(o=>o.dept===k&&o.code===code).slice(-1)[0]; }
 
-function openDetail(code){ state.detailCode=code; state.detailTab=0; state.detailTop="data"; state.menu="detail"; render(); }
+function openDetail(code){ if(!menuVisible("list")){ toast("你没有项目详单权限","warn"); return; } state.detailCode=code; state.detailTab=0; state.detailTop="data"; state.menu="detail"; render(); }
+// 项目编号单元格：有详单权限才可点进详单，否则纯文本
+function codeCell(code){ return menuVisible("list")?`<span class="code" onclick="openDetail('${code}')">${code}</span>`:`<span style="font-weight:700;color:var(--tx1)">${code}</span>`; }
 function detailTop(t){ state.detailTop=t; render(); }
 // 上传一个 Excel（含四个 sheet）→ 一次性导入四个数据表（项目详单与设计师待办共用）
 function importFourSheets(code){ const p=state.projects.find(x=>x.code===code); if(!p) return; REQUIRED_SHEETS.forEach(s=>p.sheets[s]=true); toast("已导入 Excel：一个文件 → 四个数据表全部导入","ok"); render(); }
@@ -467,7 +470,7 @@ function pageDept(deptKey){
     const done=state.orders.filter(o=>o.dept===deptKey&&o.wid===u.wid&&o.status==="done");
     const wtb=subTabs('dept_'+deptKey,[{k:'todo',label:`📥 我的待办 (${mine.length})`},{k:'done',label:`✅ 已完成 (${done.length})`}]);
     const panTodo=`<div class="card" style="border-radius:0 10px 10px 10px">${mine.length?`<div class="todo">${mine.map(o=>todoCard(o,d)).join("")}</div>`:`<div class="empty">暂无待办</div>`}</div>`;
-    const panDone=`<div class="card" style="border-radius:0 10px 10px 10px">${done.length?`<div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>${d.sl}</th><th>${d.el}</th><th>完成</th><th>完成效率</th><th>上传资料/产物 🆕</th><th>通知</th><th>操作</th></tr></thead><tbody>${done.map(o=>`<tr><td><span class="code" onclick="openDetail('${o.code}')">${o.code}</span></td><td>${o.start}</td><td>${o.dueEnd}</td><td>${o.done}</td><td>${effCell(o)}</td><td>${orderFilesCell(o)}</td><td>${o.notify?'📲'+uName(o.notify):'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回进行中</button></td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">暂无已完成</div>`}</div>`;
+    const panDone=`<div class="card" style="border-radius:0 10px 10px 10px">${done.length?`<div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>${d.sl}</th><th>${d.el}</th><th>完成</th><th>完成效率</th><th>上传资料/产物 🆕</th><th>通知</th><th>操作</th></tr></thead><tbody>${done.map(o=>`<tr><td>${codeCell(o.code)}</td><td>${o.start}</td><td>${o.dueEnd}</td><td>${o.done}</td><td>${effCell(o)}</td><td>${orderFilesCell(o)}</td><td>${o.notify?'📲'+uName(o.notify):'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回进行中</button></td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">暂无已完成</div>`}</div>`;
     const fbCards=`${deptKey==="produce"?produceFeedbackCard(u):''}${deptKey==="design"?designFbReceiveCard(u):''}`;
     return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${d.wrole}工作台 · ${u.name}</span>${stockBtn}</div>
       <div class="page-desc">填「${d.sl}/${d.el}」并开始；完成时${d.sheetCheck?'校验四表→':''}选通知人（企业微信）${d.outputs.length?'+上传产物→推送下游':''}。逾期提醒主管。<b>时间本人不可改，仅管理层可改</b>（B5）。</div>${flow}
@@ -476,7 +479,7 @@ function pageDept(deptKey){
   if((u.type==="deptlead" && u.dept===deptKey) || (deptKey==="produce" && u.type==="pmlead")){
     const todo=state.orders.filter(o=>o.dept===deptKey&&o.status==="待派");
     const wopts=d.workers.map(w=>`<option value="${w.id}">${w.name}</option>`).join("");
-    const cards=todo.map(o=>`<div class="t assign"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span><span class="spacer"></span>${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req} <span class="muted">· 销售：${o.by?uName(o.by):'—'}</span></div>${o.files.length?`<div class="files">${o.files.map(fileChip).join("")}</div>`:''}<div class="assign-bar"><div class="field"><label>分派给 ${d.wrole}</label>${ddAssign(o,d)}</div><button class="btn btn-primary btn-sm" onclick="assignOrder('${o.id}')">✓ 分派</button><button class="btn btn-ghost btn-sm" onclick="voidOrder('${o.id}')">作废单号</button></div></div>`).join("");
+    const cards=todo.map(o=>`<div class="t assign"><div class="t-h">${codeCell(o.code)}<span class="spacer"></span>${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req} <span class="muted">· 销售：${o.by?uName(o.by):'—'}</span></div>${o.files.length?`<div class="files">${o.files.map(fileChip).join("")}</div>`:''}<div class="assign-bar"><div class="field"><label>分派给 ${d.wrole}</label>${ddAssign(o,d)}</div><button class="btn btn-primary btn-sm" onclick="assignOrder('${o.id}')">✓ 分派</button><button class="btn btn-ghost btn-sm" onclick="voidOrder('${o.id}')">作废单号</button></div></div>`).join("");
     const ltb=subTabs('deptlead_'+deptKey,[{k:'assign',label:`📥 待分派 (${todo.length})`},{k:'track',label:`📋 任务跟踪`}]);
     const panAssign=`<div class="card" style="border-radius:0 10px 10px 10px">${todo.length?`<div class="todo">${cards}</div>`:`<div class="empty">暂无待分派</div>`}</div>`;
     return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${d.name}负责人 · ${u.name}</span>${stockBtn}</div>
@@ -492,7 +495,7 @@ function pageDept(deptKey){
 function workerName(k,wid){ const w=DEPTS[k].workers.find(x=>x.id===wid); return w?w.name:"-"; }
 function todoCard(o,d){
   const uw=(o.dept!=="design"&&!deptDoneState(o.code,"design").ok)?`<div class="kv" style="color:var(--warn);margin-top:6px">⚠ 上游「设计」未完成 —— 可并行赶工，注意返工风险（软提示，不拦截）</div>`:'';
-  if(o.status==="pending"){ return `<div class="t"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span> ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div><div class="files">${o.files.map(fileChip).join("")}</div>
+  if(o.status==="pending"){ return `<div class="t"><div class="t-h">${codeCell(o.code)} ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div><div class="files">${o.files.map(fileChip).join("")}</div>
     <div class="field-row"><div class="field"><label>${d.sl}</label><input type="date" id="s_${o.id}" value="${today()}"></div><div class="field"><label>${d.el}</label><input type="date" id="e_${o.id}" value="${addDays(7)}"></div></div>${uw}
     <div class="t-actions"><button class="btn btn-primary btn-sm" onclick="startTask('${o.id}')">开始</button></div></div>`; }
   const over=o.dueEnd&&today()>o.dueEnd;
@@ -511,7 +514,7 @@ function todoCard(o,d){
         <label class="up-btn solid"><input type="file" accept=".xls,.xlsx" style="display:none" onchange="importFourSheets('${o.code}')">⬆ ${allSheet?'重新导入 Excel':'上传一个 Excel 导入四表'}</label>
         <div class="up-empty">同项目详单：上传一个 Excel（含四个 sheet）一次性导入</div></div>
     </div>`:'';
-  return `<div class="t ${over?'urgent':''}"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span> ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div>${o.files.length?`<div class="files">${o.files.map(fileChip).join("")}</div>`:''}
+  return `<div class="t ${over?'urgent':''}"><div class="t-h">${codeCell(o.code)} ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div>${o.files.length?`<div class="files">${o.files.map(fileChip).join("")}</div>`:''}
     <div class="kv">${d.sl}：<b>${o.start}</b> ｜ ${d.el}：<b>${o.dueEnd}</b> ${over?'<span class="pill p-overdue" style="margin-left:6px">已超预计</span>':''}</div>${uw}
     ${startUp}${sheetImp}
     <div class="t-actions"><button class="btn btn-ok btn-sm" onclick="openComplete('${o.id}')">✓ 完成…</button></div></div>`;
@@ -667,7 +670,7 @@ function pageReport(){
   const maxT=Math.max(1,...people.map(r=>r.total));
   const taskBars=people.map(r=>`<div class="barrow"><span class="bl">${DEPTS[r.dept].ico} ${workerName(r.dept,r.wid)}</span><div class="bt"><div class="bf" style="width:${Math.max(r.total/maxT*100,8)}%;background:linear-gradient(90deg,#60a5fa,#2563eb)">${r.total}</div></div></div>`).join("");
   const od=done.filter(o=>o.done>o.dueEnd);
-  const odRows=od.map(o=>`<tr><td>${DEPTS[o.dept].ico} ${DEPTS[o.dept].name}</td><td>${workerName(o.dept,o.wid)}</td><td><span class="code" onclick="openDetail('${o.code}')">${o.code}</span></td><td>${o.dueEnd}</td><td>${o.done}</td><td><span class="pill p-overdue">超 ${days(o.dueEnd,o.done)} 天</span></td><td>${effCell(o)}</td></tr>`).join("");
+  const odRows=od.map(o=>`<tr><td>${DEPTS[o.dept].ico} ${DEPTS[o.dept].name}</td><td>${workerName(o.dept,o.wid)}</td><td>${codeCell(o.code)}</td><td>${o.dueEnd}</td><td>${o.done}</td><td><span class="pill p-overdue">超 ${days(o.dueEnd,o.done)} 天</span></td><td>${effCell(o)}</td></tr>`).join("");
   const allAvg=(()=>{ const es=done.map(effOf).filter(x=>x!=null); return es.length?Math.round(es.reduce((a,b)=>a+b,0)/es.length):null; })();
   return `<div class="page-h"><h1>📊 月度工作报表</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${thisMonth()}</span><div class="spacer"></div>
       <select class="btn btn-ghost btn-sm" style="padding:7px 10px"><option>全部部门</option><option>设计部</option><option>电工部</option><option>生产部</option></select>
@@ -746,7 +749,7 @@ function pageSales(){
     </div>
     <div class="card"><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>设备名称</th><th>客户单位</th><th>客户分类</th><th>销售</th><th>下单日期</th><th>交货日期</th><th>合同</th><th>金额</th><th>税票</th><th>发票情况</th><th>预付</th><th>发货前付</th><th>发货款应收</th><th>尾款</th><th title="物流发货部确认发货时自动回传，销售不可填">发货日期 📦</th><th>尾款日期</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="19" class="empty">暂无项目（点右上「＋ 销售下单」）</td></tr>'}</tbody>${foot}</table></div></div>`;
 }
-function openWfModal(code){ const p=state.projects.find(x=>x.code===code); modal(`<div class="d-h"><b>🔀 ${code}${p?' · '+p.name:''} · 全流程节点</b><span class="x" onclick="closeModal()">×</span></div><div class="d-b">${p?workflowGraph(p):'<div class="empty">项目不存在</div>'}</div><div class="d-f"><button class="btn btn-ghost" onclick="openDetail('${code}')">进入项目详情</button><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>`,'wide'); }
+function openWfModal(code){ const p=state.projects.find(x=>x.code===code); modal(`<div class="d-h"><b>🔀 ${code}${p?' · '+p.name:''} · 全流程节点</b><span class="x" onclick="closeModal()">×</span></div><div class="d-b">${p?workflowGraph(p):'<div class="empty">项目不存在</div>'}</div><div class="d-f">${menuVisible("list")?`<button class="btn btn-ghost" onclick="openDetail('${code}')">进入项目详情</button>`:''}<button class="btn btn-primary" onclick="closeModal()">关闭</button></div>`,'wide'); }
 function openSalesOrder(){ state.upFiles=[]; const code=nextSalesCode();
   modal(`<div class="d-h"><b>💼 销售下单</b><span class="x" onclick="closeModal()">×</span></div>
    <div class="d-b">
@@ -1019,7 +1022,7 @@ function whUploadShip(code,input){ const f=input.files[0]; if(!f) return; const 
 /* ========== 共用：部门跟踪表 / 分派 / 作废 / 列显隐 ========== */
 function deptTrackCard(deptKey,d){
   const list=state.orders.filter(o=>o.dept===deptKey);
-  const rows=list.map(o=>`<tr><td><span class="code" onclick="openDetail('${o.code}')">${o.code}</span></td><td>${o.wid?workerName(deptKey,o.wid):'<span class="back-tag">待分派</span>'}</td><td>${files(o.files)}</td><td>${o.status==="done"?orderFilesCell(o):'<span class="muted">—</span>'}</td><td>${statusPill(o)}</td><td>${o.start||'<span class="muted">—</span>'}</td><td>${o.dueEnd||'<span class="muted">—</span>'}</td><td>${o.done||'<span class="muted">—</span>'}</td><td>${effCell(o)}</td><td>${o.status==="done"?`<button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回</button>`:(o.status==="drawing"?`<button class="btn btn-ok btn-sm" onclick="openComplete('${o.id}')">✓ 完成</button>`:'<span class="muted">—</span>')}</td></tr>`).join("");
+  const rows=list.map(o=>`<tr><td>${codeCell(o.code)}</td><td>${o.wid?workerName(deptKey,o.wid):'<span class="back-tag">待分派</span>'}</td><td>${files(o.files)}</td><td>${o.status==="done"?orderFilesCell(o):'<span class="muted">—</span>'}</td><td>${statusPill(o)}</td><td>${o.start||'<span class="muted">—</span>'}</td><td>${o.dueEnd||'<span class="muted">—</span>'}</td><td>${o.done||'<span class="muted">—</span>'}</td><td>${effCell(o)}</td><td>${o.status==="done"?`<button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回</button>`:(o.status==="drawing"?`<button class="btn btn-ok btn-sm" onclick="openComplete('${o.id}')">✓ 完成</button>`:'<span class="muted">—</span>')}</td></tr>`).join("");
   return `<div class="card"><div class="card-h">📋 任务跟踪（含完成效率）</div><div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>${d.wrole}</th><th>下发资料</th><th>上传产物 🆕</th><th>状态</th><th>${d.sl}</th><th>${d.el}</th><th>完成</th><th>完成效率 🆕</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">暂无任务</td></tr>'}</tbody></table></div></div>`;
 }
 function assignOrder(id){ const o=state.orders.find(x=>x.id===id); const wid=(state.assignSel&&state.assignSel[id])||DEPTS[o.dept].workers[0].id; o.wid=wid; o.status="pending"; pushWx(wid,`【分派】${o.code} ${o.name} 已分派给你，请到${DEPTS[o.dept].name}接单填写时间。`); toast(`已分派给 ${workerName(o.dept,wid)}`,"ok"); render(); }
@@ -1043,7 +1046,7 @@ function openDeptReport(deptKey){ const d=DEPTS[deptKey];
   const od=done.filter(o=>o.dueEnd&&o.done>o.dueEnd);
   const allAvg=(()=>{ const es=done.map(effOf).filter(x=>x!=null); return es.length?Math.round(es.reduce((a,b)=>a+b,0)/es.length):null; })();
   const prows=people.map(r=>{ const avg=avgOf(r),rate=rateOf(r); return `<tr><td><b>${workerName(deptKey,r.wid)}</b></td><td>${r.total}</td><td>${r.done}</td><td>${r.ontime}</td><td>${r.over?`<span style="color:var(--danger)">${r.over}</span>`:0}</td><td>${r.done?rate+'%':'—'}</td><td>${avg!=null?`<span class="eff ${avg<=100?'eff-good':'eff-bad'}">${avg}%</span>`:'—'}</td></tr>`; }).join("");
-  const odrows=od.map(o=>`<tr><td>${workerName(deptKey,o.wid)}</td><td><span class="code" onclick="openDetail('${o.code}')">${o.code}</span></td><td>${o.dueEnd}</td><td>${o.done}</td><td><span class="pill p-overdue">超 ${days(o.dueEnd,o.done)} 天</span></td><td>${effCell(o)}</td></tr>`).join("");
+  const odrows=od.map(o=>`<tr><td>${workerName(deptKey,o.wid)}</td><td>${codeCell(o.code)}</td><td>${o.dueEnd}</td><td>${o.done}</td><td><span class="pill p-overdue">超 ${days(o.dueEnd,o.done)} 天</span></td><td>${effCell(o)}</td></tr>`).join("");
   modal(`<div class="d-h"><b>📊 ${d.name}报表（仅${d.name}数据）· ${thisMonth()}</b><span class="x" onclick="closeModal()">×</span></div>
    <div class="d-b">
     <div class="hint" style="margin-bottom:14px">${d.name}负责人/管理层可见，仅统计<b>${d.name}</b>任务（${d.wrole}任务量、按时率、平均完成效率、逾期）。</div>
