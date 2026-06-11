@@ -102,6 +102,16 @@
   .fg input[type=text],.fg textarea,.fg select{ width:100%; padding:9px 11px; border:1px solid var(--bd); border-radius:8px; font-size:14px; font-family:inherit; } .fg textarea{ resize:vertical; min-height:60px; }
   .seg{ display:flex; gap:8px; } .seg label{ flex:1; } .seg input{ display:none; } .seg .opt{ display:block; text-align:center; padding:9px; border:1px solid var(--bd); border-radius:9px; cursor:pointer; font-size:13.5px; } .seg input:checked + .opt{ border-color:var(--primary); background:var(--primary-l); color:var(--primary); font-weight:700; }
   .uploader{ border:2px dashed #cbd5e1; border-radius:9px; padding:13px; text-align:center; cursor:pointer; color:var(--tx2); font-size:13px; } .uploader:hover{ border-color:var(--primary); background:#f8fbff; } .uploader small{ display:block; color:var(--tx3); margin-top:3px; }
+  /* 🆕 待办卡片内统一的上传分区，替代杂乱堆叠 */
+  .up-sec{ margin-top:10px; border:1px solid var(--bd); border-radius:10px; background:#fafbfc; overflow:hidden; }
+  .up-sec-h{ display:flex; align-items:center; gap:6px; padding:7px 12px; background:#f1f5f9; font-size:12.5px; font-weight:700; color:var(--tx1); border-bottom:1px solid var(--bd); }
+  .up-sec-b{ padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
+  .up-files{ display:flex; flex-wrap:wrap; gap:6px; }
+  .up-btn{ display:inline-flex; align-items:center; gap:6px; align-self:flex-start; border:1.5px dashed var(--primary); color:var(--primary); background:#fff; border-radius:8px; padding:6px 12px; font-size:12px; font-weight:600; cursor:pointer; transition:background .15s,border-color .15s; }
+  .up-btn:hover{ background:#eff6ff; }
+  .up-btn.solid{ border-style:solid; background:var(--primary); color:#fff; }
+  .up-btn.solid:hover{ background:#1d4ed8; }
+  .up-empty{ font-size:11.5px; color:var(--tx3); }
   .filelist{ margin-top:8px; display:flex; flex-direction:column; gap:6px; } .filelist .f{ display:flex; align-items:center; gap:8px; background:#f8fafc; border:1px solid var(--bd); border-radius:7px; padding:6px 10px; font-size:13px; } .filelist .f .rm{ margin-left:auto; color:var(--tx3); cursor:pointer; }
   .hint{ background:var(--info-l); color:var(--info); border-radius:8px; padding:9px 12px; font-size:12.5px; text-align:left; }
   .out-row{ display:flex; align-items:center; gap:10px; border:1px solid var(--bd); border-radius:8px; padding:9px 11px; margin-bottom:8px; } .out-row .ol{ font-size:13px; flex:1; text-align:left; } .out-row .to{ font-size:11px; color:#6d28d9; background:#ede9fe; padding:1px 7px; border-radius:10px; } .out-row .st{ font-size:12px; color:var(--ok); }
@@ -486,19 +496,22 @@ function todoCard(o,d){
     <div class="field-row"><div class="field"><label>${d.sl}</label><input type="date" id="s_${o.id}" value="${today()}"></div><div class="field"><label>${d.el}</label><input type="date" id="e_${o.id}" value="${addDays(7)}"></div></div>${uw}
     <div class="t-actions"><button class="btn btn-primary btn-sm" onclick="startTask('${o.id}')">开始</button></div></div>`; }
   const over=o.dueEnd&&today()>o.dueEnd;
-  const startUp = (d.startOutputs||[]).map(so=>{ const arr=(o.startUploaded&&o.startUploaded[so.k])||[];
-    const listed=arr.length?`<div class="kv" style="color:var(--ok);margin-top:6px">✅ ${so.label} 已推送${DOWN[so.to].name}（${arr.length}个）：</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">${arr.map((f,i)=>`<span class="file-chip"><span class="fn" onclick="viewFile('${f.n}','${f.t}')" title="预览">${fico(f.t)} ${f.n}</span><span class="dl" onclick="removeStart('${o.id}','${so.k}',${i})" title="移除" style="color:var(--danger)">×</span></span>`).join("")}</div>`:'';
-    const adder=`<div class="kv" style="margin-top:6px"><label style="color:var(--primary);cursor:pointer"><input type="file" multiple style="display:none" onchange="uploadStart('${o.id}','${so.k}',this)">📎 ${arr.length?'继续添加':'接单后上传'}${so.label}（可多选）→ 推${DOWN[so.to].name}</label></div>`;
-    return listed+adder; }).join("");
+  const startUp = (d.startOutputs||[]).map(so=>{ const arr=(o.startUploaded&&o.startUploaded[so.k])||[]; const done=arr.length>0;
+    return `<div class="up-sec">
+      <div class="up-sec-h">📎 ${so.label}<span class="pill ${done?'p-done':'p-pending'}" style="margin-left:auto;font-size:11px">${done?`已推送${DOWN[so.to].name} · ${arr.length}个`:`待上传 → 推${DOWN[so.to].name}`}</span></div>
+      <div class="up-sec-b">${done?`<div class="up-files">${arr.map((f,i)=>`<span class="file-chip"><span class="fn" onclick="viewFile('${f.n}','${f.t}')" title="预览">${fico(f.t)} ${f.n}</span><span class="dl" onclick="removeStart('${o.id}','${so.k}',${i})" title="移除" style="color:var(--danger)">×</span></span>`).join("")}</div>`:`<div class="up-empty">上传后自动推送${DOWN[so.to].name}（可多选）</div>`}
+        <label class="up-btn"><input type="file" multiple style="display:none" onchange="uploadStart('${o.id}','${so.k}',this)">⬆ ${done?'继续添加':'上传'}${so.label}</label></div>
+    </div>`; }).join("");
   // 🆕 设计师待办内置「四个数据表」导入（同项目详单：上传一个 Excel → 一次性导入四个表，完成前置校验）
   const pj=state.projects.find(p=>p.code===o.code);
   const allSheet=pj&&REQUIRED_SHEETS.every(s=>pj.sheets&&pj.sheets[s]);
-  const sheetImp=(o.dept==="design")?`<div style="margin-top:8px;padding:10px 12px;border:1px dashed var(--bd);border-radius:8px;background:#fafbfc">
-      <div style="font-size:13px;font-weight:600;margin-bottom:7px">📑 四个数据表导入 <span class="muted" style="font-weight:400">（同项目详单：上传一个 Excel → 一次性导入四个表，完成前需齐备）</span></div>
-      <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center">${REQUIRED_SHEETS.map(s=>{ const up=pj&&pj.sheets&&pj.sheets[s]; return `<span class="pill ${up?'p-done':'p-pending'}">${s} ${up?'✅':'⬜'}</span>`; }).join("")}
-        <label style="cursor:pointer;background:var(--primary);color:#fff;font-weight:600;border-radius:6px;padding:5px 12px;font-size:12px"><input type="file" accept=".xls,.xlsx" style="display:none" onchange="importFourSheets('${o.code}')">⬆ ${allSheet?'重新导入 Excel':'导入 Excel（四表）'}</label></div>
+  const sheetImp=(o.dept==="design")?`<div class="up-sec">
+      <div class="up-sec-h">📑 四个数据表导入<span class="pill ${allSheet?'p-done':'p-pending'}" style="margin-left:auto;font-size:11px">${allSheet?'已齐全':'未齐全'}</span></div>
+      <div class="up-sec-b"><div class="up-files">${REQUIRED_SHEETS.map(s=>{ const up=pj&&pj.sheets&&pj.sheets[s]; return `<span class="pill ${up?'p-done':'p-pending'}" style="font-weight:600">${s} ${up?'✅':'⬜'}</span>`; }).join("")}</div>
+        <label class="up-btn solid"><input type="file" accept=".xls,.xlsx" style="display:none" onchange="importFourSheets('${o.code}')">⬆ ${allSheet?'重新导入 Excel':'上传一个 Excel 导入四表'}</label>
+        <div class="up-empty">同项目详单：上传一个 Excel（含四个 sheet）一次性导入</div></div>
     </div>`:'';
-  return `<div class="t ${over?'urgent':''}"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span> ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div><div class="files">${o.files.map(fileChip).join("")}</div>
+  return `<div class="t ${over?'urgent':''}"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span> ${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req}</div>${o.files.length?`<div class="files">${o.files.map(fileChip).join("")}</div>`:''}
     <div class="kv">${d.sl}：<b>${o.start}</b> ｜ ${d.el}：<b>${o.dueEnd}</b> ${over?'<span class="pill p-overdue" style="margin-left:6px">已超预计</span>':''}</div>${uw}
     ${startUp}${sheetImp}
     <div class="t-actions"><button class="btn btn-ok btn-sm" onclick="openComplete('${o.id}')">✓ 完成…</button></div></div>`;
