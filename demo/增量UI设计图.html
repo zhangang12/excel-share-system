@@ -272,8 +272,8 @@ function thisMonth(){ return new Date().toISOString().slice(0,7); }
 let seq=20;
 const state={ userId:"mgr", menu:"catalog", detailCode:null, detailTab:0, detailTop:"data", openDD:null, assignSel:{}, feedbacks:[{id:"fb1",code:"2026-041M",text:"B02机架孔位与图纸偏差约2mm，已现场修配，建议设计核对图纸尺寸。",by:"a1",byName:"赵师傅·装配组1",designer:"李工",state:"已存档",time:"2026-06-01 10:20"}], upFiles:[], orderFor:null, orderDept:"design", completeId:null, completeFiles:{}, shipFor:null, shipFile:null, whTab:"ov", whKw:"", whPeriod:"2026-05", whIo:"", whIoEdit:null,
   aftersales:[
-    {id:"as1",code:"2026-039",problem:"出厂后机封轻微渗漏，上门更换机械密封并加固。",cost:1200,status:"已审批",by:"as1",time:"2026-06-08 09:30"},
-    {id:"as2",code:"2026-041M",problem:"变频器偶发过载报警，现场重调参数并升级固件。",cost:800,status:"待审批",by:"as1",time:"2026-06-10 14:00"},
+    {id:"as1",code:"2026-039",problem:"出厂后机封轻微渗漏，上门更换机械密封并加固。",cost:1200,status:"已审批",by:"as1",time:"2026-06-08 09:30",matFile:{n:"039-售后物料清单.xlsx",t:"xls"}},
+    {id:"as2",code:"2026-041M",problem:"变频器偶发过载报警，现场重调参数并升级固件。",cost:800,status:"待审批",by:"as1",time:"2026-06-10 14:00",matFile:{n:"041M-售后物料清单.xlsx",t:"xls"}},
   ],
   orders:[
     {id:"o1",dept:"design",code:"2026-043A",name:"5L双行星压料一体机",wid:"d1",req:"出钣金件加工图，材料304。",files:[{n:"设计任务书.pdf",t:"pdf"}],status:"drawing",start:"2026-05-11",dueEnd:"2026-06-01",done:null,outputs:[],notify:null},
@@ -286,10 +286,10 @@ const state={ userId:"mgr", menu:"catalog", detailCode:null, detailTab:0, detail
     {id:"o8",dept:"electric",code:"2026-050",name:"100L真空均质乳化机",wid:null,by:"sale1",req:"销售下单：电气接线，出采购清单。",files:[],status:"待派",start:null,dueEnd:null,done:null,outputs:[],notify:null},
   ],
   projects:[
-    {code:"2026-043A",name:"5L双行星压料一体机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-09",deliver:"2026-06-05",designer:"张工",drawStart:"2026-05-11",drawEnd:null,drawUse:"",elec:"宋朴",dur:57,elapsed:58,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":false,"原料下料单":false},salesUid:"sale1",customer:"涿州市腾源阁机械厂",custType:"经销商",contract:"有",amount:93000,taxRate:"13%",invoiceStatus:93000,invoiceApplied:false,prepay:27900,beforeShip:55800,shipReceivable:0,balance:9300,shipDate:"",balDate:"2026-02-17",contractFile:{n:"2026-043A-合同.pdf",t:"pdf"}},
-    {code:"2026-050",name:"100L真空均质乳化机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-16",deliver:"2026-06-16",designer:"张工",drawStart:null,drawEnd:null,drawUse:"",elec:"周瑞",dur:61,elapsed:51,remain:10,sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false},salesUid:"sale1",customer:"华东制药",custType:"终端客户",contract:"有",amount:128000,taxRate:"13%",invoiceStatus:128000,invoiceApplied:false,prepay:38400,beforeShip:76800,shipReceivable:0,balance:12800,shipDate:"",balDate:""},
-    {code:"2026-041M",name:"1100L强力分散混合机",qty:1,status:"已完成",sales:"文艺",sign:"2026-05-08",deliver:"2026-06-18",designer:"李工",drawStart:"2026-05-20",drawEnd:"2026-05-26",drawUse:6,elec:"宋朴",dur:41,elapsed:29,remain:12,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},sheetPkg:[{n:"041M-总装图.pdf",t:"pdf"},{n:"041M-钣金件图.pdf",t:"pdf"}],salesUid:"sale3",customer:"广药集团",custType:"终端客户",contract:"有",amount:156000,taxRate:"13%",invoiceStatus:0,invoiceState:"已开票",invoiceFile:{n:"041M-增值税发票.pdf",t:"pdf"},prepay:46800,beforeShip:93600,shipReceivable:0,balance:15600,shipDate:"2026-06-15",balDate:""},
-    {code:"2026-039",name:"2L双行星分散混合机",qty:1,status:"已完成",sales:"代文飞",sign:"2026-04-30",deliver:"2026-06-05",designer:"李工",drawStart:"2026-05-04",drawEnd:"2026-05-10",drawUse:6,elec:"周瑞",dur:36,elapsed:37,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},elecPOFile:{n:"039-电工采购单.xlsx",t:"xls"},elecPO:[{spec:"变频器 G120 7.5kW",qty:1,brand:"西门子",buyer:"林采购",orderDate:"2026-05-13",arriveDate:"2026-05-20",progress:"已到货",sign:"孙仓管",note:""},{spec:"交流接触器 3RT 25A",qty:3,brand:"施耐德",buyer:"林采购",orderDate:"2026-05-13",arriveDate:"2026-05-19",progress:"已到货",sign:"孙仓管",note:""},{spec:"按钮开关 22mm",qty:6,brand:"正泰",buyer:"陈采购",orderDate:"2026-05-13",arriveDate:"",progress:"在途",sign:"",note:"催货"}],salesUid:"sale2",customer:"科伦药业",custType:"经销商",contract:"有",amount:76000,taxRate:"13%",invoiceStatus:76000,invoiceApplied:false,prepay:22800,beforeShip:45600,shipReceivable:0,balance:7600,shipDate:"",balDate:""},
+    {code:"2026-043A",name:"5L双行星压料一体机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-09",deliver:"2026-06-05",designer:"张工",drawStart:"2026-05-11",drawEnd:null,drawUse:"",elec:"宋朴",dur:57,elapsed:58,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":false,"原料下料单":false},sheetDone:{"钣金装配":true,"标准件清单":false,"外协外购":false},salesUid:"sale1",customer:"涿州市腾源阁机械厂",custType:"经销商",contract:"有",amount:93000,taxRate:"13%",invoiceStatus:93000,invoiceApplied:false,prepay:27900,beforeShip:55800,shipReceivable:0,balance:9300,shipDate:"",balDate:"2026-02-17",contractFile:{n:"2026-043A-合同.pdf",t:"pdf"}},
+    {code:"2026-050",name:"100L真空均质乳化机",qty:1,status:"进行中",sales:"赵仁辉",sign:"2026-04-16",deliver:"2026-06-16",designer:"张工",drawStart:null,drawEnd:null,drawUse:"",elec:"周瑞",dur:61,elapsed:51,remain:10,sheets:{"钣金装配":false,"标准件清单":false,"外协外购":false,"原料下料单":false},sheetDone:{"钣金装配":false,"标准件清单":false,"外协外购":false},salesUid:"sale1",customer:"华东制药",custType:"终端客户",contract:"有",amount:128000,taxRate:"13%",invoiceStatus:128000,invoiceApplied:false,prepay:38400,beforeShip:76800,shipReceivable:0,balance:12800,shipDate:"",balDate:""},
+    {code:"2026-041M",name:"1100L强力分散混合机",qty:1,status:"已完成",sales:"文艺",sign:"2026-05-08",deliver:"2026-06-18",designer:"李工",drawStart:"2026-05-20",drawEnd:"2026-05-26",drawUse:6,elec:"宋朴",dur:41,elapsed:29,remain:12,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},sheetDone:{"钣金装配":true,"标准件清单":true,"外协外购":true},sheetPkg:[{n:"041M-总装图.pdf",t:"pdf"},{n:"041M-钣金件图.pdf",t:"pdf"}],salesUid:"sale3",customer:"广药集团",custType:"终端客户",contract:"有",amount:156000,taxRate:"13%",invoiceStatus:0,invoiceState:"已开票",invoiceFile:{n:"041M-增值税发票.pdf",t:"pdf"},prepay:46800,beforeShip:93600,shipReceivable:0,balance:15600,shipDate:"2026-06-15",balDate:""},
+    {code:"2026-039",name:"2L双行星分散混合机",qty:1,status:"已完成",sales:"代文飞",sign:"2026-04-30",deliver:"2026-06-05",designer:"李工",drawStart:"2026-05-04",drawEnd:"2026-05-10",drawUse:6,elec:"周瑞",dur:36,elapsed:37,remain:-1,sheets:{"钣金装配":true,"标准件清单":true,"外协外购":true,"原料下料单":true},sheetDone:{"钣金装配":true,"标准件清单":true,"外协外购":true},elecPOFile:{n:"039-电工采购单.xlsx",t:"xls"},elecPO:[{spec:"变频器 G120 7.5kW",qty:1,brand:"西门子",buyer:"林采购",orderDate:"2026-05-13",arriveDate:"2026-05-20",progress:"已到货",sign:"孙仓管",note:""},{spec:"交流接触器 3RT 25A",qty:3,brand:"施耐德",buyer:"林采购",orderDate:"2026-05-13",arriveDate:"2026-05-19",progress:"已到货",sign:"孙仓管",note:""},{spec:"按钮开关 22mm",qty:6,brand:"正泰",buyer:"陈采购",orderDate:"2026-05-13",arriveDate:"",progress:"在途",sign:"",note:"催货"}],salesUid:"sale2",customer:"科伦药业",custType:"经销商",contract:"有",amount:76000,taxRate:"13%",invoiceStatus:76000,invoiceApplied:false,prepay:22800,beforeShip:45600,shipReceivable:0,balance:7600,shipDate:"",balDate:""},
   ],
   shipments:[
     {code:"2026-041M",name:"1100L强力分散混合机",materials:[{from:"设计部",name:"装配图.dwg",t:"cad"},{from:"电工部",name:"电路图.pdf",t:"pdf"}],status:"已发货",invoice:{n:"041M-发货单.pdf",t:"pdf"},receiver:{name:"华东制药·王主管",phone:"139-0000-1234",addr:"江苏省无锡市惠山区工业园8号"}},
@@ -307,7 +307,7 @@ const MENUS=[{k:"catalog",t:"项目目录",ico:"📋"},{k:"list",t:"项目详单
 const ADMIN=[{k:"perm",t:"权限管理",ico:"🔒"},{k:"approve",t:"导出审批",ico:"✅",isNew:1},{k:"wxbind",t:"企微绑定",ico:"📲",isNew:1},{k:"audit",t:"操作审计",ico:"📝"}];
 function menuVisible(k){ const u=cu(), t=u.type; // A3：本部门成员 + 管理层可见
   if(t==="manager"||t==="admin") return true;
-  if(k==="catalog") return true;                              // 项目目录：全员可见
+  if(k==="catalog") return !(t==="aslead"||t==="asworker");   // 项目目录：除售后部外全员可见（售后部只用售后菜单）
   if(k==="list") return !(t==="sales"||t==="salelead"||u.dept==="electric"||u.dept==="produce"||t==="aslead"||t==="asworker");  // 项目详单：销售部 + 电工部 + 装配组 + 售后部 无权（只保留本部门菜单+项目目录）；设计部、生产主管可见
   const tag=u.dept?(t+":"+u.dept):t, dn="down:"+(u.down||"");
   const map={ sales:["sales","salelead"], design:["deptlead:design","worker:design"], electric:["deptlead:electric","worker:electric"],
@@ -323,7 +323,7 @@ function renderTop(){ let o=""; Object.keys(USERS).forEach(id=>o+=`<option value
   const n=unread(); const d=document.getElementById("bellDot"); d.style.display=n?'grid':'none'; d.textContent=n; }
 function go(k){ state.menu=k; render(); }
 function switchUser(id){ state.userId=id; render(); }
-function render(){ if(state.menu==="detail"&&!menuVisible("list")) state.menu="catalog"; if(!menuVisible(state.menu)&&!["detail","msg"].includes(state.menu)) state.menu="catalog"; renderNav(); renderTop(); const map={catalog:pageCatalog,list:pageList,detail:pageDetail,sales:pageSales,design:()=>pageDept("design"),electric:()=>pageDept("electric"),produce:()=>pageDept("produce"),sheet:pageSheet,purchase:pagePurchase,warehouse:pageWarehouse,logistics:pageLogistics,finance:pageFinance,aftersales:pageAftersales,report:pageReport,perm:pagePerm,approve:pageApprove,wxbind:pageWxBind,msg:pageMsg,audit:pagePlaceholder}; document.getElementById("content").innerHTML=(map[state.menu]||pagePlaceholder)(); }
+function render(){ if(state.menu==="detail"&&!menuVisible("list")) state.menu="catalog"; if(!menuVisible(state.menu)&&!["detail","msg"].includes(state.menu)){ const fm=MENUS.find(m=>menuVisible(m.k)); state.menu=fm?fm.k:"catalog"; } renderNav(); renderTop(); const map={catalog:pageCatalog,list:pageList,detail:pageDetail,sales:pageSales,design:()=>pageDept("design"),electric:()=>pageDept("electric"),produce:()=>pageDept("produce"),sheet:pageSheet,purchase:pagePurchase,warehouse:pageWarehouse,logistics:pageLogistics,finance:pageFinance,aftersales:pageAftersales,report:pageReport,perm:pagePerm,approve:pageApprove,wxbind:pageWxBind,msg:pageMsg,audit:pagePlaceholder}; document.getElementById("content").innerHTML=(map[state.menu]||pagePlaceholder)(); }
 
 function myProjects(){ const u=cu();
   if(u.type==="sales") return state.projects.filter(p=>p.salesUid===state.userId);  // 销售员只看自己下单的
@@ -376,6 +376,14 @@ function lastOrder(k,code){ return state.orders.filter(o=>o.dept===k&&o.code===c
 function openDetail(code){ if(!menuVisible("list")){ toast("你没有项目详单权限","warn"); return; } state.detailCode=code; state.detailTab=0; state.detailTop="data"; state.menu="detail"; render(); }
 // 项目编号单元格：有详单权限才可点进详单，否则纯文本
 function codeCell(code){ return menuVisible("list")?`<span class="code" onclick="openDetail('${code}')">${code}</span>`:`<span style="font-weight:700;color:var(--tx1)">${code}</span>`; }
+// 🆕 装配前置：统计项目详单中 钣金装配/标准件清单/外协外购 三张 Excel 的完成情况
+const ASSY_SHEETS=["钣金装配","标准件清单","外协外购"];
+function sheetDoneOf(p,s){ return !!(p.sheetDone&&p.sheetDone[s]); }
+function sheetStatusCard(projs){
+  const rows=projs.map(p=>`<tr><td>${codeCell(p.code)}</td><td>${p.name}</td>${ASSY_SHEETS.map(s=>`<td>${sheetDoneOf(p,s)?'<span class="pill p-done">已完成</span>':'<span class="pill p-drawing">进行中</span>'}</td>`).join("")}</tr>`).join("");
+  return `<div class="card" style="margin-bottom:14px"><div class="card-h">📑 前置数据表完成情况（来自项目详单 · 装配前置）<span class="inc">🆕</span></div><div class="page-desc" style="padding:6px 14px 0">三张 Excel 的所有项都完成 → 该列「已完成」，否则「进行中」。</div><div style="overflow-x:auto"><table><thead><tr><th>项目编号</th><th>项目名称</th>${ASSY_SHEETS.map(s=>`<th>${s}</th>`).join("")}</tr></thead><tbody>${rows||`<tr><td colspan="${ASSY_SHEETS.length+2}" class="empty">暂无项目</td></tr>`}</tbody></table></div></div>`;
+}
+function setSheetDone(code,sheet,v){ const p=state.projects.find(x=>x.code===code); if(!p) return; p.sheetDone=p.sheetDone||{}; p.sheetDone[sheet]=v; toast(`「${sheet}」标记为${v?'已完成':'进行中'}`,"ok"); render(); }
 function detailTop(t){ state.detailTop=t; render(); }
 // 上传一个 Excel（含四个 sheet）→ 一次性导入四个数据表（项目详单与设计师待办共用）
 function importFourSheets(code){ const p=state.projects.find(x=>x.code===code); if(!p) return; REQUIRED_SHEETS.forEach(s=>p.sheets[s]=true); toast("已导入 Excel：一个文件 → 四个数据表全部导入","ok"); render(); }
@@ -433,8 +441,11 @@ function pageDetail(){
       <tr><td>1</td><td>${REQUIRED_SHEETS[state.detailTab]}</td><td>B01-总图</td><td>潘丽娜</td><td>顺鑫</td><td>2026-05-22</td><td><span class="pill p-done">完成</span></td></tr>
       <tr><td>2</td><td>${REQUIRED_SHEETS[state.detailTab]}</td><td>B02-机架</td><td>潘丽娜</td><td>越欣发</td><td>2026-05-22</td><td><span class="pill p-drawing">进行中</span></td></tr>
       </tbody></table>`;
-    body=`<div class="card" style="border-radius:0 10px 10px 10px"><div class="tabs">${dtabs}</div>${grid}</div>
-      <div class="page-desc" style="margin-top:10px">↑ 原系统「进度表」：项目自带 4 张数据表（DatasheetGrid）保持不变；<b>第 5 张「电工采购单」🆕</b> 由电工部上传采购单生成，固定列名。</div>`;
+    const curSheet=state.detailTab<4?REQUIRED_SHEETS[state.detailTab]:null;
+    const canMark=u.type==="manager"||u.type==="admin"||u.type==="pmlead"||(u.type==="worker"&&u.dept==="design");
+    const sheetBanner=(curSheet&&ASSY_SHEETS.includes(curSheet))?`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--bd);font-size:12.5px">🆕 本表完成状态：${sheetDoneOf(p,curSheet)?'<span class="pill p-done">已完成</span>':'<span class="pill p-drawing">进行中</span>'}<span class="muted">所有项完成即「已完成」，自动同步装配组前置表</span>${canMark?`<span style="flex:1"></span><button class="btn btn-ghost btn-sm" onclick="setSheetDone('${p.code}','${curSheet}',${!sheetDoneOf(p,curSheet)})">${sheetDoneOf(p,curSheet)?'↩ 标记为进行中':'✓ 标记为已完成'}</button>`:''}</div>`:'';
+    body=`<div class="card" style="border-radius:0 10px 10px 10px"><div class="tabs">${dtabs}</div>${sheetBanner}${grid}</div>
+      <div class="page-desc" style="margin-top:10px">↑ 原系统「进度表」：项目自带 4 张数据表（DatasheetGrid）保持不变；<b>第 5 张「电工采购单」🆕</b> 由电工部上传采购单生成，固定列名。其中<b>钣金装配/标准件清单/外协外购</b>的完成状态会汇总到<b>装配组</b>工作台。</div>`;
   } else if(top==="members"){ // —— 原「成员」tab（保持原样）——
     body=`<div class="card" style="border-radius:0 10px 10px 10px"><div class="card-h">👥 项目成员</div>
       <table><thead><tr><th>姓名</th><th>角色</th><th>项目权限</th></tr></thead><tbody>
@@ -474,7 +485,7 @@ function pageDept(deptKey){
     const fbCards=`${deptKey==="produce"?produceFeedbackCard(u):''}${deptKey==="design"?designFbReceiveCard(u):''}`;
     return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${d.wrole}工作台 · ${u.name}</span>${stockBtn}</div>
       <div class="page-desc">填「${d.sl}/${d.el}」并开始；完成时${d.sheetCheck?'校验四表→':''}选通知人（企业微信）${d.outputs.length?'+上传产物→推送下游':''}。逾期提醒主管。<b>时间本人不可改，仅管理层可改</b>（B5）。</div>${flow}
-      ${fbCards}${wtb.bar}${wtb.cur==='todo'?panTodo:panDone}`;
+      ${deptKey==="produce"?sheetStatusCard(myProjects()):''}${fbCards}${wtb.bar}${wtb.cur==='todo'?panTodo:panDone}`;
   }
   if((u.type==="deptlead" && u.dept===deptKey) || (deptKey==="produce" && u.type==="pmlead")){
     const todo=state.orders.filter(o=>o.dept===deptKey&&o.status==="待派");
@@ -484,13 +495,13 @@ function pageDept(deptKey){
     const panAssign=`<div class="card" style="border-radius:0 10px 10px 10px">${todo.length?`<div class="todo">${cards}</div>`:`<div class="empty">暂无待分派</div>`}</div>`;
     return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${d.name}负责人 · ${u.name}</span>${stockBtn}</div>
       <div class="page-desc">销售下单后由你<b>分派</b>给具体${d.wrole}；可<b>作废单号</b>（管理层收到信息后可重新下单）。</div>${flow}
-      ${deptKey==="produce"?produceFbApprovalCard():''}${ltb.bar}${ltb.cur==='assign'?panAssign:deptTrackCard(deptKey,d)}`;
+      ${deptKey==="produce"?produceFbApprovalCard()+sheetStatusCard(state.projects.filter(p=>state.orders.some(o=>o.dept==="produce"&&o.code===p.code))):''}${ltb.bar}${ltb.cur==='assign'?panAssign:deptTrackCard(deptKey,d)}`;
   }
   const canOrder = (d.orderBy==="manager"&&u.type==="manager")||(d.orderBy==="pmlead"&&u.type==="pmlead");
   return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">下单跟踪</span>${stockBtn}</div>
     <div class="page-desc">下单链：<b>销售下单 → ${d.name}负责人分派 → ${d.wrole}执行</b>。本页跟踪进度与<b>完成效率（实际用时÷预计用时）</b>。</div>${flow}
     <div class="hint" style="margin-bottom:14px">📌 ${(canOrder&&!isProd)?`你也可在「项目目录」编号上「＋下单」选「${d.name}」。`:`销售下单后由「${d.name}负责人」分派（切到对应负责人身份可操作）。`}</div>
-    ${deptKey==="produce"&&(cu().type==="pmlead"||cu().type==="manager")?produceFbApprovalCard():''}${deptTrackCard(deptKey,d)}`;
+    ${deptKey==="produce"&&(cu().type==="pmlead"||cu().type==="manager")?produceFbApprovalCard():''}${deptKey==="produce"?sheetStatusCard(state.projects.filter(p=>state.orders.some(o=>o.dept==="produce"&&o.code===p.code))):''}${deptTrackCard(deptKey,d)}`;
 }
 function workerName(k,wid){ const w=DEPTS[k].workers.find(x=>x.id===wid); return w?w.name:"-"; }
 function todoCard(o,d){
@@ -811,11 +822,11 @@ function pageFinance(){ const u=cu();
   const rows=list.map(p=>`<tr><td><b>${p.code}</b></td><td>${p.name}</td><td>${p.customer||'—'}</td><td>${p.sales||'—'}</td><td class="num">${p.amount?fmtMoney(p.amount):'—'}</td><td>${p.taxRate||'—'}</td><td>${p.invoiceApplyFile?`<span class="code" onclick="viewFile('${p.invoiceApplyFile.n}','${p.invoiceApplyFile.t}')">${p.invoiceApplyFile.n}</span>`:'—'}</td><td><label class="btn btn-primary btn-sm" style="cursor:pointer"><input type="file" style="display:none" accept=".pdf,.jpg,.png,.ofd" onchange="uploadInvoice('${p.code}',this)">📎 上传发票</label></td></tr>`).join("");
   const drows=doneList.map(p=>`<tr><td><b>${p.code}</b></td><td>${p.name}</td><td>${p.sales||'—'}</td><td class="num">${p.amount?fmtMoney(p.amount):'—'}</td><td>${p.invoiceFile?fileChip(p.invoiceFile):'—'}</td></tr>`).join("");
   const as=state.aftersales.filter(r=>r.status==="已审批"); const asum=as.reduce((a,r)=>a+(Number(r.cost)||0),0);
-  const arows=as.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r.code}</b></td><td>${projName(r.code)}</td><td>${r.problem}</td><td class="num">${fmtMoney(r.cost)}</td></tr>`).join("");
+  const arows=as.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r.code}</b></td><td>${projName(r.code)}</td><td>${r.problem}</td><td class="num">${fmtMoney(r.cost)}</td><td>${r.matFile?fileChip(r.matFile):'<span class="muted">—</span>'}</td></tr>`).join("");
   const tb=subTabs('finance',[{k:'todo',label:`📥 待开票 (${list.length})`},{k:'done',label:`✅ 已开票 (${doneList.length})`},{k:'after',label:`🛎️ 售后费用 (${as.length})`}]);
   const panTodo=`<div class="card" style="border-radius:0 10px 10px 10px"><div style="overflow-x:auto"><table><thead><tr><th>项目编号</th><th>设备名称</th><th>客户单位</th><th>销售</th><th>金额</th><th>税票</th><th>开票申请表</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">暂无待开票</td></tr>'}</tbody></table></div></div>`;
   const panDone=`<div class="card" style="border-radius:0 10px 10px 10px"><div style="overflow-x:auto"><table><thead><tr><th>项目编号</th><th>设备名称</th><th>销售</th><th>金额</th><th>发票</th></tr></thead><tbody>${drows||'<tr><td colspan="5" class="empty">暂无</td></tr>'}</tbody></table></div></div>`;
-  const panAfter=`<div class="card" style="border-radius:0 10px 10px 10px"><div style="padding:10px 14px 0;font-size:12px;color:var(--tx2)">🛎️ 售后部审批后自动同步（仅已审批）</div><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>项目名称</th><th>售后问题</th><th>售后费用</th></tr></thead><tbody>${arows||'<tr><td colspan="5" class="empty">暂无已审批售后费用</td></tr>'}${as.length?`<tr><td colspan="4" class="num"><b>合计</b></td><td class="num"><b>${fmtMoney(asum)}</b></td></tr>`:''}</tbody></table></div></div>`;
+  const panAfter=`<div class="card" style="border-radius:0 10px 10px 10px"><div style="padding:10px 14px 0;font-size:12px;color:var(--tx2)">🛎️ 售后部审批后自动同步（仅已审批，含售后物料清单）</div><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>项目名称</th><th>售后问题</th><th>售后费用</th><th>售后物料清单</th></tr></thead><tbody>${arows||'<tr><td colspan="6" class="empty">暂无已审批售后费用</td></tr>'}${as.length?`<tr><td colspan="4" class="num"><b>合计</b></td><td class="num"><b>${fmtMoney(asum)}</b></td><td></td></tr>`:''}</tbody></table></div></div>`;
   return `<div class="page-h"><h1>💰 财务部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">开票 · ${u.name}</span></div>
     <div class="page-desc">销售主管审批通过的开票申请汇到这里；财务开好票后<b>上传发票，自动回传到销售订单</b>（销售台账「发票情况」→ 0，可下载发票）。</div>
     <div class="wh-help"><span class="i">💡</span><div>开票流程：<b>销售开票申请 → 销售主管审批 → 财务部开票上传发票 → 发票回传销售台账</b>。多张表已分 <b>tab</b> 展示。</div></div>
@@ -830,32 +841,34 @@ function pageAftersales(){ const u=cu();
   const canReg=u.type==="asworker"||u.type==="manager"||u.type==="admin";
   const canApprove=u.type==="aslead"||u.type==="manager"||u.type==="admin";
   const pend=state.aftersales.filter(r=>r.status==="待审批").length;
-  const rows=state.aftersales.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r.code}</b></td><td>${projName(r.code)}</td><td>${r.problem}</td><td class="num">${fmtMoney(r.cost)}</td><td>${asPill(r.status)}</td><td>${(r.status==="待审批"&&canApprove)?`<button class="btn btn-ok btn-sm" onclick="approveAfterSales('${r.id}',1)">✓ 通过</button> <button class="btn btn-ghost btn-sm" onclick="approveAfterSales('${r.id}',0)">驳回</button>`:(r.status==="已审批"?'<span class="muted">已同步财务</span>':(r.status==="已驳回"?'<span class="muted">—</span>':'<span class="muted">待主管审批</span>'))}</td></tr>`).join("");
+  const rows=state.aftersales.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r.code}</b></td><td>${projName(r.code)}</td><td>${r.problem}</td><td class="num">${fmtMoney(r.cost)}</td><td>${r.matFile?fileChip(r.matFile):'<span class="muted">—</span>'}</td><td>${asPill(r.status)}</td><td>${(r.status==="待审批"&&canApprove)?`<button class="btn btn-ok btn-sm" onclick="approveAfterSales('${r.id}',1)">✓ 通过</button> <button class="btn btn-ghost btn-sm" onclick="approveAfterSales('${r.id}',0)">驳回</button>`:(r.status==="已审批"?'<span class="muted">已同步财务</span>':(r.status==="已驳回"?'<span class="muted">—</span>':'<span class="muted">待主管审批</span>'))}</td></tr>`).join("");
   const sumCost=state.aftersales.reduce((a,r)=>a+(Number(r.cost)||0),0);
   const apprCost=state.aftersales.filter(r=>r.status==="已审批").reduce((a,r)=>a+(Number(r.cost)||0),0);
   return `<div class="page-h"><h1>🛎️ 售后部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">售后问题 / 费用 · ${u.name}</span><div class="spacer"></div>${canReg?`<button class="btn btn-primary btn-sm" onclick="openAfterSales()">＋ 登记售后</button>`:''}</div>
     <div class="page-desc">售后部员工按项目登记<b>售后问题</b>与<b>售后费用</b>；售后主管审批后，费用与问题<b>自动同步财务部</b>。</div>
     <div class="wh-help"><span class="i">💡</span><div><b>登记</b>＝选项目 + 填售后问题 + 填售后费用（状态→待审批）。<b>售后主管审批</b>通过后自动推送财务部，财务部表单可见每个项目的售后费用与问题。</div></div>
     <div class="stat" style="margin-bottom:14px"><div class="sb"><div class="v" style="color:var(--primary)">${state.aftersales.length}</div><div class="l">售后记录</div></div><div class="sb"><div class="v" style="color:var(--warn)">${pend}</div><div class="l">待审批</div></div><div class="sb"><div class="v">${fmtMoney(apprCost)}</div><div class="l">已审批费用</div></div><div class="sb"><div class="v">${fmtMoney(sumCost)}</div><div class="l">累计售后费用</div></div></div>
-    <div class="card"><div class="card-h">📋 售后登记台账</div><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>项目名称</th><th>售后问题</th><th>售后费用</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="7" class="empty">暂无售后记录</td></tr>'}</tbody></table></div></div>`;
+    <div class="card"><div class="card-h">📋 售后登记台账</div><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>项目名称</th><th>售后问题</th><th>售后费用</th><th>售后物料清单</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">暂无售后记录</td></tr>'}</tbody></table></div></div>`;
 }
-function openAfterSales(){ const opts=state.projects.map(p=>`<option value="${p.code}">${p.code} · ${p.name}</option>`).join("");
+function openAfterSales(){ state.asMatFile=null; const opts=state.projects.map(p=>`<option value="${p.code}">${p.code} · ${p.name}</option>`).join("");
   modal(`<div class="d-h"><b>🛎️ 登记售后</b><span class="x" onclick="closeModal()">×</span></div>
    <div class="d-b">
-    <div class="hint" style="margin-bottom:14px">💡 选择项目 + 填写售后问题与费用，提交后状态为「待审批」，售后主管审批通过后自动同步财务部。</div>
+    <div class="hint" style="margin-bottom:14px">💡 选择项目 + 填写售后问题与费用 + 上传售后物料清单，提交后状态为「待审批」，售后主管审批通过后自动同步财务部（含物料清单）。</div>
     <div class="fg"><label>项目 <span class="req-star">*</span></label><select id="as_code">${opts}</select></div>
     <div class="fg"><label>售后问题 <span class="req-star">*</span></label><textarea id="as_problem" rows="3" placeholder="描述客户反馈的售后问题与处理情况" style="width:100%;padding:9px 11px;border:1px solid var(--bd);border-radius:8px;font-size:13px;box-sizing:border-box"></textarea></div>
     <div class="fg"><label>售后费用(元) <span class="req-star">*</span></label><input type="number" id="as_cost" placeholder="如 1200"></div>
+    <div class="fg"><label>售后物料清单（回传财务部）<span class="req-star">*</span></label><label class="uploader" for="as_mat">📎 上传售后物料清单<small>.xlsx .xls .pdf .doc</small></label><input type="file" id="as_mat" style="display:none" accept=".xlsx,.xls,.pdf,.doc,.docx" onchange="asMatPick(this)"><div class="filelist" id="as_mat_list"></div></div>
    </div>
    <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitAfterSales()">提交（待审批）</button></div>`,'mid');
 }
+function asMatPick(input){ const f=input.files[0]; if(!f) return; const ext=(f.name.split('.').pop()||'').toLowerCase(); state.asMatFile={n:f.name,t:ext.startsWith('xls')?'xls':(ext.startsWith('pdf')?'pdf':'doc')}; document.getElementById("as_mat_list").innerHTML=`<div class="f">${fico(state.asMatFile.t)} ${f.name}<span class="rm" onclick="state.asMatFile=null;this.parentNode.remove()">✕</span></div>`; }
 function submitAfterSales(){ const code=val("as_code"); const problem=val("as_problem").trim(); const cost=+val("as_cost")||0;
-  if(!code){ toast("请选择项目","warn"); return; } if(!problem){ toast("请填写售后问题","warn"); return; } if(!cost){ toast("请填写售后费用","warn"); return; }
-  state.aftersales.unshift({id:"as"+(++seq),code,problem,cost,status:"待审批",by:state.userId,time:new Date().toLocaleString("zh-CN")});
-  pushWx("aslead",`【售后待审批】${code} ${projName(code)}：${problem.slice(0,20)}… 费用 ${fmtMoney(cost)}`);
+  if(!code){ toast("请选择项目","warn"); return; } if(!problem){ toast("请填写售后问题","warn"); return; } if(!cost){ toast("请填写售后费用","warn"); return; } if(!state.asMatFile){ toast("请上传售后物料清单","warn"); return; }
+  state.aftersales.unshift({id:"as"+(++seq),code,problem,cost,status:"待审批",by:state.userId,time:new Date().toLocaleString("zh-CN"),matFile:state.asMatFile});
+  pushWx("aslead",`【售后待审批】${code} ${projName(code)}：${problem.slice(0,20)}… 费用 ${fmtMoney(cost)}`); state.asMatFile=null;
   closeModal(); toast("已登记，等待售后主管审批","ok"); render(); }
 function approveAfterSales(id,ok){ const r=state.aftersales.find(x=>x.id===id); if(!r) return;
-  if(ok){ r.status="已审批"; r.apprBy=state.userId; r.apprTime=new Date().toLocaleString("zh-CN"); state.financeAfterSales=true; ["fin1","fin2","fin3"].forEach(f=>pushWx(f,`【售后费用同步】${r.code} ${projName(r.code)} 售后费用 ${fmtMoney(r.cost)} 已审批，问题：${r.problem.slice(0,20)}…`)); toast("已通过，售后费用与问题已同步财务部","ok"); }
+  if(ok){ r.status="已审批"; r.apprBy=state.userId; r.apprTime=new Date().toLocaleString("zh-CN"); state.financeAfterSales=true; ["fin1","fin2","fin3"].forEach(f=>pushWx(f,`【售后费用同步】${r.code} ${projName(r.code)} 售后费用 ${fmtMoney(r.cost)} 已审批${r.matFile?`，物料清单：${r.matFile.n}`:''}，问题：${r.problem.slice(0,20)}…`)); toast("已通过，售后费用/问题/物料清单已同步财务部","ok"); }
   else { r.status="已驳回"; toast("已驳回","warn"); }
   render(); }
 function openContract(code){ const p=state.projects.find(x=>x.code===code); if(!p) return; state.ctFile=null;
@@ -1022,10 +1035,26 @@ function whUploadShip(code,input){ const f=input.files[0]; if(!f) return; const 
 /* ========== 共用：部门跟踪表 / 分派 / 作废 / 列显隐 ========== */
 function deptTrackCard(deptKey,d){
   const list=state.orders.filter(o=>o.dept===deptKey);
-  const rows=list.map(o=>`<tr><td>${codeCell(o.code)}</td><td>${o.wid?workerName(deptKey,o.wid):'<span class="back-tag">待分派</span>'}</td><td>${files(o.files)}</td><td>${o.status==="done"?orderFilesCell(o):'<span class="muted">—</span>'}</td><td>${statusPill(o)}</td><td>${o.start||'<span class="muted">—</span>'}</td><td>${o.dueEnd||'<span class="muted">—</span>'}</td><td>${o.done||'<span class="muted">—</span>'}</td><td>${effCell(o)}</td><td>${o.status==="done"?`<button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回</button>`:(o.status==="drawing"?`<button class="btn btn-ok btn-sm" onclick="openComplete('${o.id}')">✓ 完成</button>`:'<span class="muted">—</span>')}</td></tr>`).join("");
+  const rows=list.map(o=>`<tr><td>${codeCell(o.code)}</td><td>${o.wid?workerName(deptKey,o.wid):'<span class="back-tag">待分派</span>'}</td><td>${files(o.files)}</td><td>${o.status==="done"?orderFilesCell(o):'<span class="muted">—</span>'}</td><td>${statusPill(o)}</td><td>${o.start||'<span class="muted">—</span>'}</td><td>${o.dueEnd||'<span class="muted">—</span>'}</td><td>${o.done||'<span class="muted">—</span>'}</td><td>${effCell(o)}</td><td>${o.status==="done"?`<button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回</button>`:((o.status==="drawing"||o.status==="pending")?`<button class="btn btn-ghost btn-sm" onclick="reassignWorker('${o.id}')">🔄 换人</button>${o.status==="drawing"?` <button class="btn btn-ok btn-sm" onclick="openComplete('${o.id}')">✓ 完成</button>`:''}`:'<span class="muted">—</span>')}</td></tr>`).join("");
   return `<div class="card"><div class="card-h">📋 任务跟踪（含完成效率）</div><div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>${d.wrole}</th><th>下发资料</th><th>上传产物 🆕</th><th>状态</th><th>${d.sl}</th><th>${d.el}</th><th>完成</th><th>完成效率 🆕</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">暂无任务</td></tr>'}</tbody></table></div></div>`;
 }
 function assignOrder(id){ const o=state.orders.find(x=>x.id===id); const wid=(state.assignSel&&state.assignSel[id])||DEPTS[o.dept].workers[0].id; o.wid=wid; o.status="pending"; pushWx(wid,`【分派】${o.code} ${o.name} 已分派给你，请到${DEPTS[o.dept].name}接单填写时间。`); toast(`已分派给 ${workerName(o.dept,wid)}`,"ok"); render(); }
+// 🆕 主管更换进行中任务的负责人（防离职/请假）
+function reassignWorker(id){ const o=state.orders.find(x=>x.id===id); if(!o) return; const d=DEPTS[o.dept]; const opts=d.workers.filter(w=>w.id!==o.wid).map(w=>`<option value="${w.id}">${w.name}</option>`).join("");
+  modal(`<div class="d-h"><b>🔄 更换负责人 · ${o.code}</b><span class="x" onclick="closeModal()">×</span></div>
+   <div class="d-b">
+    <div class="hint" style="margin-bottom:14px">💡 用于<b>人员离职/请假</b>等情况，把<b>进行中</b>的任务转交给同部门其他${d.wrole}；开始/预计完成时间与已传产物保留，新负责人接续。</div>
+    <div class="fg"><label>任务</label><input type="text" value="${o.code} · ${o.name}" disabled style="background:#f1f5f9"></div>
+    <div class="fg"><label>当前负责人</label><input type="text" value="${workerName(o.dept,o.wid)}（${statusText(o)}）" disabled style="background:#f1f5f9"></div>
+    <div class="fg"><label>转交给 <span class="req-star">*</span></label><select id="rw_wid">${opts||'<option value="">无其他人员</option>'}</select></div>
+   </div>
+   <div class="d-f"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="doReassign('${id}')">确认转交</button></div>`,'mid');
+}
+function statusText(o){ const m={"待派":"待分派","pending":"待接单","drawing":"进行中","done":"已完成","作废":"已作废"}; return m[o.status]||o.status; }
+function doReassign(id){ const o=state.orders.find(x=>x.id===id); const wid=val("rw_wid"); if(!wid){ toast("请选择转交人员","warn"); return; } const oldN=workerName(o.dept,o.wid); o.wid=wid; const nw=workerName(o.dept,wid);
+  const p=state.projects.find(x=>x.code===o.code); if(p){ if(o.dept==="design") p.designer=nw; else if(o.dept==="electric") p.elec=nw; }
+  pushWx(wid,`【任务转交】${o.code} ${o.name} 由 ${oldN} 转交给你，请接续 ${DEPTS[o.dept].dl}。`); pushWx(leadOf(o.dept),`【已换人】${o.code} ${DEPTS[o.dept].name} 负责人由 ${oldN} → ${nw}。`);
+  closeModal(); toast(`已将 ${o.code} 由 ${oldN} 转交给 ${nw}，并回传项目目录`,"ok"); render(); }
 function ddAssign(o,d){ const sel=(state.assignSel&&state.assignSel[o.id])||d.workers[0].id; const open=state.openDD==="as_"+o.id; const av=n=>(n||'·').slice(0,1);
   return `<div class="dd ${open?'open':''}"><button class="dd-trigger" onclick="event.stopPropagation();toggleDD('as_${o.id}')"><span class="dd-av">${av(workerName(d.key,sel))}</span><span class="nm">${workerName(d.key,sel)}</span><span class="dd-caret">▼</span></button>${open?`<div class="dd-backdrop" onclick="closeDD()"></div><div class="dd-panel">${d.workers.map(w=>`<div class="dd-opt ${w.id===sel?'on':''}" onclick="pickAssign('${o.id}','${w.id}')"><span class="dd-av">${av(w.name)}</span>${w.name}</div>`).join("")}</div>`:''}</div>`; }
 function toggleDD(id){ state.openDD=state.openDD===id?null:id; render(); }
