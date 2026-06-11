@@ -437,6 +437,9 @@ function pageDetail(){
   return header + topbar + `<div style="margin-top:0">${body}</div>`;
 }
 function setTab(i){ state.detailTab=i; render(); }
+// 🆕 通用页内子 tab（多表格页统一用 tab，避免长页堆叠）
+function setSubTab(key,k){ state.subTab=state.subTab||{}; state.subTab[key]=k; render(); }
+function subTabs(key,tabs){ const cur=(state.subTab&&state.subTab[key]&&tabs.some(t=>t.k===state.subTab[key]))?state.subTab[key]:tabs[0].k; return {cur, bar:`<div class="tabs">${tabs.map(t=>`<span class="tb ${t.k===cur?'on':''}" onclick="setSubTab('${key}','${t.k}')">${t.label}</span>`).join("")}</div>`}; }
 // 🆕 电工采购单（第5张表）固定列名渲染
 function elecPOTable(p){ const cols=ELEC_PO_COLS;
   const rows=(p.elecPO||[]).map(r=>`<tr><td>${p.code}</td><td>${r.spec||'—'}</td><td class="num">${r.qty??'—'}</td><td>${r.brand||'—'}</td><td>${r.buyer||'<span class="muted">待填</span>'}</td><td>${r.orderDate||'<span class="muted">待填</span>'}</td><td>${r.arriveDate||'<span class="muted">待填</span>'}</td><td>${r.progress?`<span class="pill ${r.progress==='已到货'?'p-done':(r.progress==='在途'?'p-drawing':'p-pending')}">${r.progress}</span>`:'—'}</td><td>${r.sign||'<span class="muted">—</span>'}</td><td>${r.note||''}</td></tr>`).join("");
@@ -452,19 +455,23 @@ function pageDept(deptKey){
   if(u.type==="worker" && u.dept===deptKey){
     const mine=state.orders.filter(o=>o.dept===deptKey&&o.wid===u.wid&&o.status!=="done");
     const done=state.orders.filter(o=>o.dept===deptKey&&o.wid===u.wid&&o.status==="done");
+    const wtb=subTabs('dept_'+deptKey,[{k:'todo',label:`📥 我的待办 (${mine.length})`},{k:'done',label:`✅ 已完成 (${done.length})`}]);
+    const panTodo=`<div class="card" style="border-radius:0 10px 10px 10px">${mine.length?`<div class="todo">${mine.map(o=>todoCard(o,d)).join("")}</div>`:`<div class="empty">暂无待办</div>`}</div>`;
+    const panDone=`<div class="card" style="border-radius:0 10px 10px 10px">${done.length?`<div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>${d.sl}</th><th>${d.el}</th><th>完成</th><th>完成效率</th><th>上传资料/产物 🆕</th><th>通知</th><th>操作</th></tr></thead><tbody>${done.map(o=>`<tr><td><span class="code" onclick="openDetail('${o.code}')">${o.code}</span></td><td>${o.start}</td><td>${o.dueEnd}</td><td>${o.done}</td><td>${effCell(o)}</td><td>${orderFilesCell(o)}</td><td>${o.notify?'📲'+uName(o.notify):'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回进行中</button></td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">暂无已完成</div>`}</div>`;
+    const fbCards=`${deptKey==="produce"?produceFeedbackCard(u):''}${deptKey==="design"?designFbReceiveCard(u):''}`;
     return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${d.wrole}工作台 · ${u.name}</span>${stockBtn}</div>
       <div class="page-desc">填「${d.sl}/${d.el}」并开始；完成时${d.sheetCheck?'校验四表→':''}选通知人（企业微信）${d.outputs.length?'+上传产物→推送下游':''}。逾期提醒主管。<b>时间本人不可改，仅管理层可改</b>（B5）。</div>${flow}
-      <div class="card"><div class="card-h">📥 我的待办（${mine.length}）</div>${mine.length?`<div class="todo">${mine.map(o=>todoCard(o,d)).join("")}</div>`:`<div class="empty">暂无待办</div>`}</div>
-      ${done.length?`<div class="card"><div class="card-h">✅ 已完成</div><div style="overflow-x:auto"><table><thead><tr><th>项目</th><th>${d.sl}</th><th>${d.el}</th><th>完成</th><th>完成效率</th><th>上传资料/产物 🆕</th><th>通知</th><th>操作</th></tr></thead><tbody>${done.map(o=>`<tr><td><span class="code" onclick="openDetail('${o.code}')">${o.code}</span></td><td>${o.start}</td><td>${o.dueEnd}</td><td>${o.done}</td><td>${effCell(o)}</td><td>${orderFilesCell(o)}</td><td>${o.notify?'📲'+uName(o.notify):'—'}</td><td><button class="btn btn-ghost btn-sm" onclick="reopenTask('${o.id}')">↩ 改回进行中</button></td></tr>`).join("")}</tbody></table></div></div>`:""}${deptKey==="produce"?produceFeedbackCard(u):''}${deptKey==="design"?designFbReceiveCard(u):''}`;
+      ${fbCards}${wtb.bar}${wtb.cur==='todo'?panTodo:panDone}`;
   }
   if((u.type==="deptlead" && u.dept===deptKey) || (deptKey==="produce" && u.type==="pmlead")){
     const todo=state.orders.filter(o=>o.dept===deptKey&&o.status==="待派");
     const wopts=d.workers.map(w=>`<option value="${w.id}">${w.name}</option>`).join("");
     const cards=todo.map(o=>`<div class="t assign"><div class="t-h"><span class="code" onclick="openDetail('${o.code}')">${o.code}</span><span class="spacer"></span>${statusPill(o)}</div><div class="t-name">${o.name}</div><div class="req">📌 ${o.req} <span class="muted">· 销售：${o.by?uName(o.by):'—'}</span></div>${o.files.length?`<div class="files">${o.files.map(fileChip).join("")}</div>`:''}<div class="assign-bar"><div class="field"><label>分派给 ${d.wrole}</label>${ddAssign(o,d)}</div><button class="btn btn-primary btn-sm" onclick="assignOrder('${o.id}')">✓ 分派</button><button class="btn btn-ghost btn-sm" onclick="voidOrder('${o.id}')">作废单号</button></div></div>`).join("");
+    const ltb=subTabs('deptlead_'+deptKey,[{k:'assign',label:`📥 待分派 (${todo.length})`},{k:'track',label:`📋 任务跟踪`}]);
+    const panAssign=`<div class="card" style="border-radius:0 10px 10px 10px">${todo.length?`<div class="todo">${cards}</div>`:`<div class="empty">暂无待分派</div>`}</div>`;
     return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">${d.name}负责人 · ${u.name}</span>${stockBtn}</div>
       <div class="page-desc">销售下单后由你<b>分派</b>给具体${d.wrole}；可<b>作废单号</b>（管理层收到信息后可重新下单）。</div>${flow}
-      <div class="card"><div class="card-h">📥 待分派（${todo.length}）</div>${todo.length?`<div class="todo">${cards}</div>`:`<div class="empty">暂无待分派</div>`}</div>
-      ${deptKey==="produce"?produceFbApprovalCard():''}${deptTrackCard(deptKey,d)}`;
+      ${deptKey==="produce"?produceFbApprovalCard():''}${ltb.bar}${ltb.cur==='assign'?panAssign:deptTrackCard(deptKey,d)}`;
   }
   const canOrder = (d.orderBy==="manager"&&u.type==="manager")||(d.orderBy==="pmlead"&&u.type==="pmlead");
   return `<div class="page-h"><h1>${d.ico} ${d.name}</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">下单跟踪</span>${stockBtn}</div>
@@ -787,12 +794,16 @@ function pageFinance(){ const u=cu();
   const doneList=state.projects.filter(p=>p.invoiceState==="已开票");
   const rows=list.map(p=>`<tr><td><b>${p.code}</b></td><td>${p.name}</td><td>${p.customer||'—'}</td><td>${p.sales||'—'}</td><td class="num">${p.amount?fmtMoney(p.amount):'—'}</td><td>${p.taxRate||'—'}</td><td>${p.invoiceApplyFile?`<span class="code" onclick="viewFile('${p.invoiceApplyFile.n}','${p.invoiceApplyFile.t}')">${p.invoiceApplyFile.n}</span>`:'—'}</td><td><label class="btn btn-primary btn-sm" style="cursor:pointer"><input type="file" style="display:none" accept=".pdf,.jpg,.png,.ofd" onchange="uploadInvoice('${p.code}',this)">📎 上传发票</label></td></tr>`).join("");
   const drows=doneList.map(p=>`<tr><td><b>${p.code}</b></td><td>${p.name}</td><td>${p.sales||'—'}</td><td class="num">${p.amount?fmtMoney(p.amount):'—'}</td><td>${p.invoiceFile?fileChip(p.invoiceFile):'—'}</td></tr>`).join("");
+  const as=state.aftersales.filter(r=>r.status==="已审批"); const asum=as.reduce((a,r)=>a+(Number(r.cost)||0),0);
+  const arows=as.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r.code}</b></td><td>${projName(r.code)}</td><td>${r.problem}</td><td class="num">${fmtMoney(r.cost)}</td></tr>`).join("");
+  const tb=subTabs('finance',[{k:'todo',label:`📥 待开票 (${list.length})`},{k:'done',label:`✅ 已开票 (${doneList.length})`},{k:'after',label:`🛎️ 售后费用 (${as.length})`}]);
+  const panTodo=`<div class="card" style="border-radius:0 10px 10px 10px"><div style="overflow-x:auto"><table><thead><tr><th>项目编号</th><th>设备名称</th><th>客户单位</th><th>销售</th><th>金额</th><th>税票</th><th>开票申请表</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">暂无待开票</td></tr>'}</tbody></table></div></div>`;
+  const panDone=`<div class="card" style="border-radius:0 10px 10px 10px"><div style="overflow-x:auto"><table><thead><tr><th>项目编号</th><th>设备名称</th><th>销售</th><th>金额</th><th>发票</th></tr></thead><tbody>${drows||'<tr><td colspan="5" class="empty">暂无</td></tr>'}</tbody></table></div></div>`;
+  const panAfter=`<div class="card" style="border-radius:0 10px 10px 10px"><div style="padding:10px 14px 0;font-size:12px;color:var(--tx2)">🛎️ 售后部审批后自动同步（仅已审批）</div><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>项目名称</th><th>售后问题</th><th>售后费用</th></tr></thead><tbody>${arows||'<tr><td colspan="5" class="empty">暂无已审批售后费用</td></tr>'}${as.length?`<tr><td colspan="4" class="num"><b>合计</b></td><td class="num"><b>${fmtMoney(asum)}</b></td></tr>`:''}</tbody></table></div></div>`;
   return `<div class="page-h"><h1>💰 财务部</h1><span class="inc">🆕 新增模块</span><span class="tag-dept">开票 · ${u.name}</span></div>
     <div class="page-desc">销售主管审批通过的开票申请汇到这里；财务开好票后<b>上传发票，自动回传到销售订单</b>（销售台账「发票情况」→ 0，可下载发票）。</div>
-    <div class="wh-help"><span class="i">💡</span><div>开票流程：<b>销售开票申请 → 销售主管审批 → 财务部开票上传发票 → 发票回传销售台账</b>。</div></div>
-    <div class="card" style="margin-bottom:14px"><div class="card-h">📥 待开票（${list.length}）</div><div style="overflow-x:auto"><table><thead><tr><th>项目编号</th><th>设备名称</th><th>客户单位</th><th>销售</th><th>金额</th><th>税票</th><th>开票申请表</th><th>操作</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">暂无待开票</td></tr>'}</tbody></table></div></div>
-    <div class="card" style="margin-bottom:14px"><div class="card-h">✅ 已开票</div><div style="overflow-x:auto"><table><thead><tr><th>项目编号</th><th>设备名称</th><th>销售</th><th>金额</th><th>发票</th></tr></thead><tbody>${drows||'<tr><td colspan="5" class="empty">暂无</td></tr>'}</tbody></table></div></div>
-    ${(()=>{ const as=state.aftersales.filter(r=>r.status==="已审批"); const asum=as.reduce((a,r)=>a+(Number(r.cost)||0),0); const arows=as.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r.code}</b></td><td>${projName(r.code)}</td><td>${r.problem}</td><td class="num">${fmtMoney(r.cost)}</td></tr>`).join(""); return `<div class="card"><div class="card-h">🛎️ 售后费用（售后部审批后自动同步）<span class="inc">🆕</span></div><div style="overflow-x:auto"><table><thead><tr><th>序号</th><th>项目编号</th><th>项目名称</th><th>售后问题</th><th>售后费用</th></tr></thead><tbody>${arows||'<tr><td colspan="5" class="empty">暂无已审批售后费用</td></tr>'}${as.length?`<tr><td colspan="4" class="num"><b>合计</b></td><td class="num"><b>${fmtMoney(asum)}</b></td></tr>`:''}</tbody></table></div></div>`; })()}`;
+    <div class="wh-help"><span class="i">💡</span><div>开票流程：<b>销售开票申请 → 销售主管审批 → 财务部开票上传发票 → 发票回传销售台账</b>。多张表已分 <b>tab</b> 展示。</div></div>
+    ${tb.bar}${tb.cur==='todo'?panTodo:tb.cur==='done'?panDone:panAfter}`;
 }
 function uploadInvoice(code,input){ const f=input.files[0]; if(!f) return; const p=state.projects.find(x=>x.code===code); const ext=(f.name.split('.').pop()||'').toLowerCase(); if(p){ p.invoiceFile={n:f.name,t:ext.startsWith('pdf')?'pdf':'doc'}; p.invoiceState="已开票"; p.invoiceStatus=0; pushWx(p.salesUid||"sale1",`【发票已开】${code} 财务已开票并回传你的销售订单：${f.name}`); } toast("发票已上传，已回传销售订单（发票情况→0）","ok"); render(); }
 
