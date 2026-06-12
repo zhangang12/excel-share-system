@@ -755,9 +755,10 @@ onMounted(load)
                       @blur="saveEditTpl(row, col)"
                       @keyup.enter="saveEditTpl(row, col)"
                       @keyup.escape="cancelEditTpl" />
-            <!-- 项目编号链接 -->
-            <a v-else-if="col.source === 'code'" class="proj-link"
+            <!-- 项目编号链接（🆕 v3：无详单权限角色仅展示不可点） -->
+            <a v-else-if="col.source === 'code' && auth.canViewDetail" class="proj-link"
                @click.stop="openProject(row.id)">{{ row.code }}</a>
+            <span v-else-if="col.source === 'code'" class="proj-code-plain">{{ row.code }}</span>
             <!-- 其他列：值 + 可编辑高亮 -->
             <span v-else class="cell"
                   :class="[
@@ -872,6 +873,8 @@ onMounted(load)
   cursor: pointer; text-decoration: none;
 }
 .proj-link:hover { text-decoration: underline; }
+/* 🆕 v3：无详单权限角色的编号纯文本态 */
+.proj-code-plain { font-weight: 600; color: var(--text-1); }
 .proj-name { cursor: pointer; }
 .proj-name:hover { color: var(--primary); }
 

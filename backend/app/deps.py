@@ -48,6 +48,29 @@ async def require_not_viewer(current: models.User = Depends(get_current_user)) -
     return current
 
 
+def require_roles(*codes: str):
+    """🆕 依赖工厂：仅允许指定角色（admin/manager 始终放行）。
+    用法：Depends(require_roles("sales", "sales_lead"))"""
+    allowed = set(codes) | {"admin", "manager"}
+
+    async def _dep(current: models.User = Depends(get_current_user)) -> models.User:
+        if not current.role or current.role.code not in allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "无权操作")
+        return current
+
+    return _dep
+
+
+async def require_can_view_detail(
+    current: models.User = Depends(get_current_user),
+) -> models.User:
+    """🆕 项目详单闸门：销售/电工/装配/售后角色无详单权限（2026-06-12 收紧口径）。"""
+    from .menus import user_can_view_detail
+    if not user_can_view_detail(current):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "你没有项目详单权限")
+    return current
+
+
 async def user_can_view_project(
     db: AsyncSession, user: models.User, project: models.Project
 ) -> bool:

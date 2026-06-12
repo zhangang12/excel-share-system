@@ -86,6 +86,10 @@ async def list_datasheets(
     db: AsyncSession = Depends(get_db),
 ):
     p = await _get_project_or_404(db, pid)
+    # 🆕 v3 详单闸门：与项目详情同源（销售/电工/装配/售后角色 403）
+    from ..menus import user_can_view_detail
+    if not user_can_view_detail(current):
+        raise HTTPException(403, "你没有项目详单权限")
     if not await user_can_view_project(db, current, p):
         raise HTTPException(403, "无权访问")
     res = await db.execute(

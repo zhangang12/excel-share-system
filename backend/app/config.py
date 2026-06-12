@@ -36,8 +36,21 @@ class Settings(BaseSettings):
     # 前端静态目录（演示模式：由 backend 直接托管）
     static_dir: str = "../web"
 
+    # 🆕 v3：附件存储目录（合同/图纸包/产物/发票等业务文件）
+    files_dir: str = "data/files"
+    # 🆕 v3：单文件上传大小上限（字节，默认 50MB）
+    max_upload_size: int = 50 * 1024 * 1024
+
+    # 🆕 v3：企业微信推送凭证（留空=纯站内消息模式，F3 口径不阻塞）
+    wecom_corp_id: str = ""
+    wecom_agent_id: str = ""
+    wecom_secret: str = ""
+
 
 # 确保 data 目录存在（SQLite 文件会写到这里）
 Path("data").mkdir(exist_ok=True)
 
 settings = Settings()
+
+# 🆕 确保附件目录存在
+Path(settings.files_dir).mkdir(parents=True, exist_ok=True)

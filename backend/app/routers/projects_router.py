@@ -332,6 +332,10 @@ async def get_project(
     p = res.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "项目不存在")
+    # 🆕 v3 详单闸门：销售/电工/装配/售后角色无项目详情权限（菜单矩阵同源）
+    from ..menus import user_can_view_detail
+    if not user_can_view_detail(current):
+        raise HTTPException(403, "你没有项目详单权限")
     if not await user_can_view_project(db, current, p):
         raise HTTPException(403, "无权访问该项目")
     return await _project_to_out(p, db)

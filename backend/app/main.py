@@ -12,10 +12,11 @@ from .config import settings
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401
 from .seed import seed
-from .data_migration import run_all as run_data_migrations
+from .data_migration import run_all as run_data_migrations, ensure_schema_columns
 from .routers import (
     auth_router, admin_router, projects_router, datasheets_router,
     excel_router, overview_router, field_perm_router, ws_router,
+    attachments_router, messages_router,
 )
 from .errors import register_exception_handlers
 
@@ -30,6 +31,7 @@ log = logging.getLogger("main")
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await ensure_schema_columns(engine)  # 🆕 v3：给存量表补新增列（幂等）
     async with SessionLocal() as db:
         await seed(db)
         await run_data_migrations(db)
@@ -64,6 +66,9 @@ def create_app() -> FastAPI:
     app.include_router(overview_router.router)
     app.include_router(field_perm_router.router)
     app.include_router(ws_router.router)
+    # 🆕 v3 增量路由
+    app.include_router(attachments_router.router)
+    app.include_router(messages_router.router)
 
     @app.get("/api/health")
     async def health():

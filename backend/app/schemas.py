@@ -50,8 +50,56 @@ class UserOut(BaseModel):
     role_name: Optional[str] = None
     is_active: bool
     password_must_change: bool = False
+    wxid: Optional[str] = None  # 🆕 v3 企微绑定
     created_at: datetime
     last_login: Optional[datetime] = None
+
+
+# ---------- 🆕 菜单 ----------
+class MenuItem(BaseModel):
+    key: str
+    label: str
+
+
+class MenusOut(BaseModel):
+    menus: list[MenuItem]
+    can_view_detail: bool
+
+
+# ---------- 🆕 附件 ----------
+class AttachmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    biz_type: str
+    biz_id: Optional[int] = None
+    project_id: Optional[int] = None
+    name: str
+    ext: Optional[str] = None
+    size: int
+    uploaded_by: Optional[int] = None
+    created_at: datetime
+
+
+# ---------- 🆕 站内消息 ----------
+class MessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    kind: str
+    text: str
+    read: bool
+    biz_type: Optional[str] = None
+    biz_id: Optional[int] = None
+    created_at: datetime
+
+
+class UnreadCountOut(BaseModel):
+    count: int
+
+
+class WxidIn(BaseModel):
+    wxid: str = ""
 
 
 # ---------- 认证 ----------

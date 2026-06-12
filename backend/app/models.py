@@ -21,6 +21,8 @@ class Role(Base):
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(64))
     description: Mapped[Optional[str]] = mapped_column(String(255))
+    # 🆕 消息推送人标记：主管类角色收逾期/预警推送（权限管理页可改）
+    can_push: Mapped[bool] = mapped_column(default=False)
 
 
 
@@ -35,6 +37,8 @@ class User(Base):
     password_must_change: Mapped[bool] = mapped_column(default=False)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"))
     is_active: Mapped[bool] = mapped_column(default=True)
+    # 🆕 企业微信 userid（手动绑定，F1 口径；空=未绑定，推送降级站内）
+    wxid: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
@@ -162,6 +166,41 @@ class OverviewFieldPermission(Base):
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"))
     can_view: Mapped[bool] = mapped_column(default=True)
     can_edit: Mapped[bool] = mapped_column(default=True)
+
+
+# ---------- 🆕 统一附件（合同/图纸包/产物/发货单/物料清单等全系统复用） ----------
+class Attachment(Base):
+    """所有业务文件的统一存储索引。文件本体落 data/files/，按 ID 关联与撤回
+    （不按文件名匹配——同名文件不会误删）。biz_type+biz_id 标记归属业务对象。"""
+    __tablename__ = "attachments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # contract / invoice_apply / invoice / order_input / order_start_output /
+    # order_output / ship_doc / ship_list / aftersales_mat / purchase_list ...
+    biz_type: Mapped[str] = mapped_column(String(32), index=True)
+    biz_id: Mapped[Optional[int]] = mapped_column(index=True)  # 业务对象 id（如 order_id / ledger_id）
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(255))             # 原始文件名
+    ext: Mapped[Optional[str]] = mapped_column(String(16))
+    size: Mapped[int] = mapped_column(default=0)
+    path: Mapped[str] = mapped_column(String(512))             # 相对 files_dir 的存储路径
+    uploaded_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------- 🆕 站内消息（角色池路由；企微推送降级兜底） ----------
+class Message(Base):
+    """站内消息。to_role 推送在写入时按角色扇出成每用户一行（已读状态天然按人）。"""
+    __tablename__ = "messages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    to_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="info")  # wx / warn / info
+    text: Mapped[str] = mapped_column(Text)
+    read: Mapped[bool] = mapped_column(default=False, index=True)
+    biz_type: Mapped[Optional[str]] = mapped_column(String(32))
+    biz_id: Mapped[Optional[int]]
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
 
 
 # ---------- 操作审计 ----------

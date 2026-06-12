@@ -48,6 +48,32 @@ const router = createRouter({
           component: () => import('@/views/admin/AuditView.vue'),
           // admin 和 manager 都能访问（后端 /api/admin/audit 用 require_admin_or_manager）
         },
+        // ===== 🆕 v3 增量模块路由（菜单可见性由后端 /api/auth/menus 决定，meta.menuKey 守卫） =====
+        {
+          path: 'messages',
+          name: 'messages',
+          component: () => import('@/views/MessagesView.vue'),
+          meta: { menuKey: 'messages' },
+        },
+        {
+          path: 'admin/wxbind',
+          name: 'wxbind',
+          component: () => import('@/views/admin/WxBindView.vue'),
+          meta: { menuKey: 'wxbind' },
+        },
+        // 以下模块按开发顺序逐个落地，未实现前为占位页
+        ...([
+          ['sales', '销售部'], ['design', '设计部'], ['electric', '电工部'],
+          ['produce', '生产部'], ['sheet', '钣金组'], ['purchase', '采购部'],
+          ['warehouse', '仓库组'], ['logistics', '物流发货部'], ['finance', '财务部'],
+          ['aftersales', '售后部'], ['report', '月度工作报表'], ['approve', '导出审批'],
+        ] as [string, string][]).map(([key, title]) => ({
+          path: key,
+          name: key,
+          component: () => import('@/views/PlaceholderView.vue'),
+          props: { title },
+          meta: { menuKey: key },
+        })),
       ],
     },
   ],
@@ -58,7 +84,26 @@ router.beforeEach((to) => {
   if (to.meta.public) return true
   if (!auth.isLoggedIn) return { name: 'login' }
   if (to.meta.requireAdmin && !auth.isAdmin) return { name: 'overview' }
+  // 🆕 v3 菜单级守卫：菜单已加载且目标菜单不可见 → 跳第一个可见菜单
+  const mk = to.meta.menuKey as string | undefined
+  if (mk && auth.menus !== null && !auth.hasMenu(mk)) {
+    return fallbackRoute(auth)
+  }
+  // 🆕 v3 详单闸门：无详单权限不可进项目详情/详单页
+  if ((to.name === 'project-detail' || to.name === 'projects')
+      && auth.menus !== null && !auth.canViewDetail) {
+    return fallbackRoute(auth)
+  }
   return true
 })
+
+// 无权访问时跳到第一个可见菜单（仿原型 render 兜底）
+function fallbackRoute(auth: ReturnType<typeof useAuthStore>) {
+  const first = auth.menus?.[0]?.key
+  if (!first) return { name: 'overview' }
+  if (first === 'catalog') return { name: 'overview' }
+  if (first === 'list') return { name: 'projects' }
+  return { name: first }
+}
 
 export default router
