@@ -74,10 +74,16 @@ const router = createRouter({
           component: () => import('@/views/SalesView.vue'),
           meta: { menuKey: 'sales' },
         },
+        {
+          path: 'logistics',
+          name: 'logistics',
+          component: () => import('@/views/LogisticsView.vue'),
+          meta: { menuKey: 'logistics' },
+        },
         // 以下模块按开发顺序逐个落地，未实现前为占位页
         ...([
           ['sheet', '钣金组'], ['purchase', '采购部'],
-          ['warehouse', '仓库组'], ['logistics', '物流发货部'], ['finance', '财务部'],
+          ['warehouse', '仓库组'], ['finance', '财务部'],
           ['aftersales', '售后部'], ['report', '月度工作报表'], ['approve', '导出审批'],
         ] as [string, string][]).map(([key, title]) => ({
           path: key,
