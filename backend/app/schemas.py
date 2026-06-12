@@ -73,12 +73,80 @@ class AttachmentOut(BaseModel):
     id: int
     biz_type: str
     biz_id: Optional[int] = None
+    kind: Optional[str] = None
     project_id: Optional[int] = None
     name: str
     ext: Optional[str] = None
     size: int
     uploaded_by: Optional[int] = None
     created_at: datetime
+
+
+# ---------- 🆕 部门任务单 ----------
+class OrderCreate(BaseModel):
+    project_id: int
+    dept: str                      # design / electric / produce
+    req_text: Optional[str] = None
+    worker_id: Optional[int] = None  # 管理层目录下单可直接指派
+
+
+class OrderAssignIn(BaseModel):
+    worker_id: int
+
+
+class OrderStartIn(BaseModel):
+    start_date: str  # YYYY-MM-DD
+    due_date: str
+
+
+class OrderCompleteIn(BaseModel):
+    notify_user_id: int
+
+
+class OrderReassignIn(BaseModel):
+    worker_id: int
+
+
+class OrderOut(BaseModel):
+    id: int
+    project_id: int
+    project_code: str
+    project_name: str
+    dept: str
+    status: str
+    worker_id: Optional[int] = None
+    worker_name: Optional[str] = None
+    req_text: Optional[str] = None
+    start_date: Optional[str] = None
+    due_date: Optional[str] = None
+    done_date: Optional[str] = None
+    notify_user_id: Optional[int] = None
+    notify_user_name: Optional[str] = None
+    eff_pct: Optional[int] = None      # 完成效率%（C2/C3 口径）
+    on_time: Optional[bool] = None
+    overdue: bool = False              # 进行中且超预计 / 完成且逾期
+    created_at: datetime
+    input_files: list[AttachmentOut] = []
+    start_files: list[AttachmentOut] = []
+    output_files: list[AttachmentOut] = []
+
+
+class OrderOptionUser(BaseModel):
+    id: int
+    name: str
+
+
+class OrderOptionsOut(BaseModel):
+    workers: list[OrderOptionUser]
+    notify_pool: list[OrderOptionUser]
+    notify_label: str
+    dept_name: str
+    sheet_check: bool
+    start_outputs: list[dict]
+    outputs: list[dict]
+    start_label: str
+    end_label: str
+    done_label: str
 
 
 # ---------- 🆕 站内消息 ----------

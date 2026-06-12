@@ -18,6 +18,8 @@ log = logging.getLogger("data_migration")
 _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "roles": [("can_push", "BOOLEAN DEFAULT FALSE")],
     "users": [("wxid", "VARCHAR(64)")],
+    "datasheets": [("imported_at", "TIMESTAMP")],  # P-16 四表导入标记
+    "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
 }
 
 
@@ -921,6 +923,41 @@ async def merge_buyers_into_purchase(db: AsyncSession) -> dict:
     return {"users": len(users), "perms": merged}
 
 
+async def backfill_datasheet_imported_at(db: AsyncSession) -> dict:
+    """🆕 v3 P-16 存量回填：四表中已有数据行的 datasheet 视为"已导入"，
+    置 imported_at = updated_at（最佳近似）。
+
+    不回填的话，存量项目的设计任务完成会被 D1 校验（四表未导入）卡死。
+    幂等：已有 imported_at 的跳过；空表（无 records）不回填——保持"未导入"语义。
+    """
+    from .sheet_templates import SHEET_TEMPLATES
+    from sqlalchemy import func as _f
+
+    res = await db.execute(select(models.Datasheet))
+    sheets = [d for d in res.scalars().all()
+              if d.name in SHEET_TEMPLATES and d.imported_at is None]
+    if not sheets:
+        return {"filled": 0}
+
+    ds_ids = [d.id for d in sheets]
+    res = await db.execute(
+        select(models.Record.datasheet_id, _f.count(models.Record.id))
+        .where(models.Record.datasheet_id.in_(ds_ids))
+        .group_by(models.Record.datasheet_id)
+    )
+    counts = dict(res.all())
+
+    filled = 0
+    for d in sheets:
+        if counts.get(d.id, 0) > 0:
+            d.imported_at = d.updated_at or d.created_at
+            filled += 1
+    if filled:
+        await db.commit()
+        log.info("[backfill_datasheet_imported_at] 回填 %d 张有数据的模板表为'已导入'", filled)
+    return {"filled": filled}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -987,3 +1024,7 @@ async def run_all(db: AsyncSession) -> None:
         await merge_buyers_into_purchase(db)
     except Exception as e:
         log.warning("merge_buyers_into_purchase failed: %s", e)
+    try:
+        await backfill_datasheet_imported_at(db)
+    except Exception as e:
+        log.warning("backfill_datasheet_imported_at failed: %s", e)

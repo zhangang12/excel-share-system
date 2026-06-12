@@ -52,6 +52,7 @@ async def save_upload(
     *,
     biz_type: str,
     biz_id: Optional[int] = None,
+    kind: Optional[str] = None,
     project_id: Optional[int] = None,
     user: Optional[models.User] = None,
 ) -> models.Attachment:
@@ -72,7 +73,7 @@ async def save_upload(
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(content)
     a = models.Attachment(
-        biz_type=biz_type, biz_id=biz_id, project_id=project_id,
+        biz_type=biz_type, biz_id=biz_id, kind=kind, project_id=project_id,
         name=name, ext=ext, size=len(content), path=rel,
         uploaded_by=user.id if user else None,
     )
@@ -97,12 +98,14 @@ async def upload(
     file: UploadFile = File(...),
     biz_type: str = Form(...),
     biz_id: Optional[int] = Form(None),
+    kind: Optional[str] = Form(None),
     project_id: Optional[int] = Form(None),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     a = await save_upload(
-        db, file, biz_type=biz_type, biz_id=biz_id, project_id=project_id, user=current,
+        db, file, biz_type=biz_type, biz_id=biz_id, kind=kind,
+        project_id=project_id, user=current,
     )
     await db.commit()
     await db.refresh(a)

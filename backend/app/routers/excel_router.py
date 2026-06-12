@@ -446,10 +446,12 @@ async def import_excel(
         select(func.max(models.Datasheet.sort_order)).where(models.Datasheet.project_id == pid)
     )
     base_order = (res.scalar() or -1) + 1
+    from datetime import datetime as _dt, timezone as _tz
     for idx, (sname, headers, rows, preamble) in enumerate(sheets_meta):
         d = models.Datasheet(
             project_id=pid, name=sname, sort_order=base_order + idx,
             header_lines=json.dumps(preamble, ensure_ascii=False) if preamble else None,
+            imported_at=_dt.now(_tz.utc),  # 🆕 v3 P-16：导入标记（D1 四表校验依据）
         )
         db.add(d)
         await db.flush()  # 拿到 d.id

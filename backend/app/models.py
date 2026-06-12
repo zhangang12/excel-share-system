@@ -90,6 +90,8 @@ class Datasheet(Base):
     sort_order: Mapped[int] = mapped_column(default=0)
     # 表格上方的标题行（导入时保留 Excel 前 N 行作为只读标题）：JSON list[list[str]]
     header_lines: Mapped[Optional[str]] = mapped_column(Text)
+    # 🆕 v3 P-16：最近一次 Excel 导入时间（四表"已导入"以此判定，设计完成 D1 校验读它）
+    imported_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -168,6 +170,30 @@ class OverviewFieldPermission(Base):
     can_edit: Mapped[bool] = mapped_column(default=True)
 
 
+# ---------- 🆕 部门任务单（设计/电工/生产 派单→分派→接单→完成 状态机） ----------
+class DeptOrder(Base):
+    __tablename__ = "dept_orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    dept: Mapped[str] = mapped_column(String(16), index=True)   # design / electric / produce
+    # pending_assign 待分派 / assigned 待接单 / in_progress 进行中 / done 已完成 / voided 作废
+    status: Mapped[str] = mapped_column(String(20), default="pending_assign", index=True)
+    worker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    req_text: Mapped[Optional[str]] = mapped_column(Text)       # 下单要求
+    start_date: Mapped[Optional[str]] = mapped_column(String(10))  # YYYY-MM-DD（B5：本人不可改，仅管理层）
+    due_date: Mapped[Optional[str]] = mapped_column(String(10))
+    done_date: Mapped[Optional[str]] = mapped_column(String(10))
+    notify_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    worker: Mapped[Optional["User"]] = relationship(foreign_keys=[worker_id], lazy="joined")
+    project: Mapped["Project"] = relationship(lazy="joined")
+
+
 # ---------- 🆕 统一附件（合同/图纸包/产物/发货单/物料清单等全系统复用） ----------
 class Attachment(Base):
     """所有业务文件的统一存储索引。文件本体落 data/files/，按 ID 关联与撤回
@@ -178,6 +204,7 @@ class Attachment(Base):
     # order_output / ship_doc / ship_list / aftersales_mat / purchase_list ...
     biz_type: Mapped[str] = mapped_column(String(32), index=True)
     biz_id: Mapped[Optional[int]] = mapped_column(index=True)  # 业务对象 id（如 order_id / ledger_id）
+    kind: Mapped[Optional[str]] = mapped_column(String(32))    # 业务内细分（如产物 circuit/manual/sheetpkg）
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), index=True)
     name: Mapped[str] = mapped_column(String(255))             # 原始文件名
     ext: Mapped[Optional[str]] = mapped_column(String(16))
