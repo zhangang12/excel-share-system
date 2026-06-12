@@ -136,6 +136,100 @@ class OrderOptionUser(BaseModel):
     name: str
 
 
+# ---------- 🆕 销售台账 / 销售下单 ----------
+class SalesLedgerRow(BaseModel):
+    id: int
+    project_id: int
+    code: str
+    name: str
+    status: str
+    sales_uid: Optional[int] = None
+    sales_name: Optional[str] = None
+    customer: Optional[str] = None
+    cust_type: Optional[str] = None
+    sign_date: Optional[str] = None      # 下单日期=合同签订日期（读项目 __o__签订日期）
+    deliver_date: Optional[str] = None
+    contract: str = "无"
+    contract_file_id: Optional[int] = None
+    contract_file_name: Optional[str] = None
+    amount: float = 0
+    tax_rate: Optional[str] = None
+    invoice_state: Optional[str] = None
+    invoice_apply_file_id: Optional[int] = None
+    invoice_apply_file_name: Optional[str] = None
+    invoice_file_id: Optional[int] = None
+    invoice_file_name: Optional[str] = None
+    prepay: float = 0
+    before_ship: float = 0
+    ship_receivable: float = 0
+    balance: float = 0
+    balance_date: Optional[str] = None
+    ship_date: Optional[str] = None
+
+
+class SalesLedgerTotals(BaseModel):
+    count: int = 0
+    amount: float = 0
+    uninvoiced: float = 0      # 未开票金额合计（invoice_state != invoiced 的 amount）
+    prepay: float = 0
+    before_ship: float = 0
+    ship_receivable: float = 0
+    balance: float = 0
+
+
+class SalesLedgerListOut(BaseModel):
+    rows: list[SalesLedgerRow]
+    totals: Optional[SalesLedgerTotals] = None  # 仅主管/管理层视角返回
+
+
+class SalesReceiverIn(BaseModel):
+    name: str = ""
+    phone: str = ""
+    addr: str = ""
+
+
+class SalesOrderCreate(BaseModel):
+    code_suffix: str = ""                 # 编号后缀字母（可选，如 A）
+    name: str = Field(min_length=1, max_length=255)   # 设备名称
+    customer: str = ""
+    cust_type: str = "经销商"
+    contract: str = "有"
+    amount: float = 0
+    tax_rate: str = "13%"
+    prepay: float = 0
+    before_ship: float = 0
+    ship_receivable: float = 0
+    balance: float = 0
+    balance_date: str = ""
+    depts: list[str] = Field(default_factory=list)    # 派往部门（design/electric/produce）
+    req_text: str = ""
+    receiver: Optional[SalesReceiverIn] = None
+
+
+class SalesOrderOut(BaseModel):
+    project_id: int
+    code: str
+    order_ids: list[int]
+
+
+class SalesLedgerUpdate(BaseModel):
+    name: Optional[str] = None            # 设备名称（同步 Project.name）
+    customer: Optional[str] = None
+    cust_type: Optional[str] = None
+    contract: Optional[str] = None
+    amount: Optional[float] = None
+    tax_rate: Optional[str] = None
+    prepay: Optional[float] = None
+    before_ship: Optional[float] = None
+    ship_receivable: Optional[float] = None
+    balance: Optional[float] = None
+    balance_date: Optional[str] = None
+
+
+class NextCodeOut(BaseModel):
+    code: str
+
+
 class OrderOptionsOut(BaseModel):
     workers: list[OrderOptionUser]
     notify_pool: list[OrderOptionUser]

@@ -958,6 +958,78 @@ async def backfill_datasheet_imported_at(db: AsyncSession) -> dict:
     return {"filled": filled}
 
 
+async def backfill_sales_ledger(db: AsyncSession) -> dict:
+    """🆕 v3 M02 存量回填：给没有台账行的未删项目补 sales_ledger。
+
+    - sales_uid：按项目一览 __o__销售 的姓名与 users.full_name 唯一匹配，
+      匹配不到留空（业务后续在台账补录）
+    - 金额/客户等业务字段留空待补录；contract 按是否有签订日期粗推为 有/无
+    - 幂等：project_id 已有 ledger 跳过
+    """
+    res = await db.execute(
+        select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
+    )
+    projects = res.scalars().all()
+    if not projects:
+        return {"created": 0}
+
+    res = await db.execute(select(models.SalesLedger.project_id))
+    have = {r[0] for r in res.all()}
+
+    res = await db.execute(select(models.User).where(models.User.is_active == True))  # noqa: E712
+    by_name: dict[str, list[int]] = {}
+    for u in res.scalars().all():
+        if u.full_name:
+            by_name.setdefault(u.full_name.strip(), []).append(u.id)
+
+    created = 0
+    for p in projects:
+        if p.id in have:
+            continue
+        extra = p.extra or {}
+        sales_name = str(extra.get("__o__销售") or "").strip()
+        uid = None
+        if sales_name and len(by_name.get(sales_name, [])) == 1:
+            uid = by_name[sales_name][0]
+        sign = extra.get("__o__签订日期")
+        db.add(models.SalesLedger(
+            project_id=p.id, sales_uid=uid,
+            contract="有" if sign else "无",
+        ))
+        created += 1
+
+    if created:
+        await db.commit()
+        log.info("[backfill_sales_ledger] 为 %d 个存量项目补台账行", created)
+    return {"created": created}
+
+
+async def backfill_shipments(db: AsyncSession) -> dict:
+    """🆕 v3 M08 存量回填：给「进行中」未删项目补发货待办行（已完成/已归档视为历史已交付不补）。
+    幂等：project_id 已有 shipment 跳过。收货信息留空待补。"""
+    res = await db.execute(
+        select(models.Project).where(
+            models.Project.is_deleted == False,  # noqa: E712
+            models.Project.status == "进行中",
+        )
+    )
+    projects = res.scalars().all()
+    if not projects:
+        return {"created": 0}
+    res = await db.execute(select(models.Shipment.project_id))
+    have = {r[0] for r in res.all()}
+    created = 0
+    for p in projects:
+        if p.id in have:
+            continue
+        db.add(models.Shipment(project_id=p.id))
+        created += 1
+    if created:
+        await db.commit()
+        log.info("[backfill_shipments] 为 %d 个进行中存量项目补发货待办", created)
+    return {"created": created}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -1028,3 +1100,11 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_datasheet_imported_at(db)
     except Exception as e:
         log.warning("backfill_datasheet_imported_at failed: %s", e)
+    try:
+        await backfill_sales_ledger(db)
+    except Exception as e:
+        log.warning("backfill_sales_ledger failed: %s", e)
+    try:
+        await backfill_shipments(db)
+    except Exception as e:
+        log.warning("backfill_shipments failed: %s", e)

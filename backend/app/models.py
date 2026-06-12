@@ -194,6 +194,55 @@ class DeptOrder(Base):
     project: Mapped["Project"] = relationship(lazy="joined")
 
 
+# ---------- 🆕 销售台账（§十三 19 列；一项目一行；台账为权威、关键日期同步 __o__） ----------
+class SalesLedger(Base):
+    __tablename__ = "sales_ledger"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_ledger_project"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    sales_uid: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
+    customer: Mapped[Optional[str]] = mapped_column(String(128))     # 客户单位
+    cust_type: Mapped[Optional[str]] = mapped_column(String(16))     # 经销商 / 终端客户
+    contract: Mapped[str] = mapped_column(String(8), default="无")   # 有 / 无
+    contract_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
+    amount: Mapped[float] = mapped_column(default=0)                  # 合同金额(元)
+    tax_rate: Mapped[Optional[str]] = mapped_column(String(16))      # 13% / "/"(不开票)
+    # 开票状态机(M03)：None 未申请 / applying 待主管审批 / pending_invoice 待财务开票 / invoiced 已开票
+    invoice_state: Mapped[Optional[str]] = mapped_column(String(20), index=True)
+    invoice_apply_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
+    invoice_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
+    prepay: Mapped[float] = mapped_column(default=0)                  # 预付
+    before_ship: Mapped[float] = mapped_column(default=0)             # 发货前付
+    ship_receivable: Mapped[float] = mapped_column(default=0)         # 发货款应收
+    balance: Mapped[float] = mapped_column(default=0)                 # 尾款
+    balance_date: Mapped[Optional[str]] = mapped_column(String(10))   # 尾款日期
+    ship_date: Mapped[Optional[str]] = mapped_column(String(10))      # 发货日期（物流回传只读）
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    project: Mapped["Project"] = relationship(lazy="joined")
+    sales_user: Mapped[Optional["User"]] = relationship(foreign_keys=[sales_uid], lazy="joined")
+
+
+# ---------- 🆕 发货单（E1 一项目一单；M02 下单时建待发货行，M08 物流看板消费） ----------
+class Shipment(Base):
+    __tablename__ = "shipments"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_shipment_project"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending 待发货 / shipped 已发货
+    receiver_name: Mapped[Optional[str]] = mapped_column(String(128))
+    receiver_phone: Mapped[Optional[str]] = mapped_column(String(64))
+    receiver_addr: Mapped[Optional[str]] = mapped_column(String(255))
+    ship_doc_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
+    shipped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    shipped_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    project: Mapped["Project"] = relationship(lazy="joined")
+
+
 # ---------- 🆕 统一附件（合同/图纸包/产物/发货单/物料清单等全系统复用） ----------
 class Attachment(Base):
     """所有业务文件的统一存储索引。文件本体落 data/files/，按 ID 关联与撤回
