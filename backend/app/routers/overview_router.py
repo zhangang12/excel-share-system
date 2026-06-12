@@ -187,7 +187,9 @@ async def export_overview(
     fres = await db.execute(
         select(models.OverviewField).order_by(models.OverviewField.sort_order, models.OverviewField.id)
     )
-    fields = fres.scalars().all()
+    # 🆕 v3：逻辑删除列（制图*）不进导出（导出属 UI 范畴，与一览页同口径）
+    from ..sheet_templates import HIDDEN_OVERVIEW_LABELS
+    fields = [f for f in fres.scalars().all() if f.name not in HIDDEN_OVERVIEW_LABELS]
 
     pres = await db.execute(
         select(models.Project)

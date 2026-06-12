@@ -85,6 +85,10 @@ SHEET_TEMPLATES: dict[str, list[str]] = {
 # 项目一览的固定列（"# 序号"由表格自动生成，不在此列表）
 # 一览与项目详情数据"完全独立"——一览的 meta 列存 __o__<label>，
 # 项目详情存 __h__<label>，互不影响。
+#
+# 🆕 v3 hidden=True：逻辑删除列（§十二.19/P-19 口径：UI 不展示、无开关、业务无感知）。
+# 数据链路完整保留——__o__制图* key 照常存取、设计任务接单/完成仍回写；
+# 业务反悔把 hidden 改回 False 即恢复展示（这是保留定义而非删除条目的价值）。
 OVERVIEW_FIELDS: list[dict] = [
     {'label': '项目编号',     'source': 'code',    'editable': False},
     {'label': '项目名称',     'source': 'name',    'editable': True},
@@ -94,14 +98,19 @@ OVERVIEW_FIELDS: list[dict] = [
     {'label': '签订日期',     'source': 'meta',    'editable': True},
     {'label': '交货日期',     'source': 'meta',    'editable': True},
     {'label': '设计师',       'source': 'meta',    'editable': True},
-    {'label': '制图开始',     'source': 'meta',    'editable': True},
-    {'label': '制图结束',     'source': 'meta',    'editable': True},
-    {'label': '制图用时',     'source': 'derived', 'editable': False, 'derived': 'design_days'},
+    {'label': '制图开始',     'source': 'meta',    'editable': True,  'hidden': True},
+    {'label': '制图结束',     'source': 'meta',    'editable': True,  'hidden': True},
+    {'label': '制图用时',     'source': 'derived', 'editable': False, 'derived': 'design_days', 'hidden': True},
     {'label': '电工',         'source': 'meta',    'editable': True},
     {'label': '货期',         'source': 'derived', 'editable': False, 'derived': 'duration'},
     {'label': '已过时间',     'source': 'derived', 'editable': False, 'derived': 'elapsed'},
     {'label': '剩余制作时间', 'source': 'derived', 'editable': False, 'derived': 'remaining'},
 ]
+
+# 🆕 逻辑删除列名集合（导出/展示层统一引用，避免散落硬编码）
+HIDDEN_OVERVIEW_LABELS: set[str] = {
+    f['label'] for f in OVERVIEW_FIELDS if f.get('hidden')
+}
 
 
 # 一览字段 → 项目详情头表 key 的映射。

@@ -61,6 +61,10 @@ type OverviewTplCol = {
   editable: boolean
   widthPct: number
 }
+// 🆕 v3 逻辑删除列（§十二.19/P-19 口径：UI 不展示、无开关、业务无感知；
+// 后端 __o__制图* 数据与写入链路完整保留——设计任务接单/完成仍回写，业务反悔删掉本集合即恢复展示）
+const HIDDEN_LABELS = new Set(['制图开始', '制图结束', '制图用时'])
+
 const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '项目编号',     source: 'code',    editable: false, widthPct: 7 },
   { label: '项目名称',     source: 'name',    editable: true,  widthPct: 12 },
@@ -78,7 +82,7 @@ const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '货期',         source: 'derived', derived: 'duration',  editable: false, widthPct: 5 },
   { label: '已过时间',     source: 'derived', derived: 'elapsed',   editable: false, widthPct: 6 },
   { label: '剩余制作时间', source: 'meta', fallbackDerived: 'remaining', editable: true, widthPct: 6 },
-]
+].filter(f => !HIDDEN_LABELS.has(f.label)) as OverviewTplCol[]
 
 const STATUS_OPTIONS_NEW = ['进行中', '已完成']
 
