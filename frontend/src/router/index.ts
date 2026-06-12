@@ -61,10 +61,16 @@ const router = createRouter({
           component: () => import('@/views/admin/WxBindView.vue'),
           meta: { menuKey: 'wxbind' },
         },
+        // 🆕 部门工作台（设计/电工/生产共用一个视图，按路由名区分部门）
+        ...(['design', 'electric', 'produce'] as string[]).map((key) => ({
+          path: `dept/${key}`,
+          name: key,
+          component: () => import('@/views/DeptWorkbenchView.vue'),
+          meta: { menuKey: key },
+        })),
         // 以下模块按开发顺序逐个落地，未实现前为占位页
         ...([
-          ['sales', '销售部'], ['design', '设计部'], ['electric', '电工部'],
-          ['produce', '生产部'], ['sheet', '钣金组'], ['purchase', '采购部'],
+          ['sales', '销售部'], ['sheet', '钣金组'], ['purchase', '采购部'],
           ['warehouse', '仓库组'], ['logistics', '物流发货部'], ['finance', '财务部'],
           ['aftersales', '售后部'], ['report', '月度工作报表'], ['approve', '导出审批'],
         ] as [string, string][]).map(([key, title]) => ({
