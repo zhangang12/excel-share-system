@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ..database import get_db
 from .. import models, schemas
@@ -446,6 +446,9 @@ async def remove_order_attachment(
     o = await _order_or_404(db, oid)
     if not (_is_mgr(current) or o.worker_id == current.id or o.created_by == current.id):
         raise HTTPException(403, "无权移除")
+    # 🆕 #53 已完成/已作废单的附件不可移除（防止完成后删空必传产物形成非法终态；如需改先改回进行中）
+    if o.status in ("done", "voided"):
+        raise HTTPException(400, "任务已完成/作废，附件不可移除（如需修改请先改回进行中）")
     res = await db.execute(select(models.Attachment).where(
         models.Attachment.id == aid, models.Attachment.biz_id == oid,
         models.Attachment.biz_type.in_(
@@ -610,13 +613,21 @@ async def reopen_order(
     db: AsyncSession = Depends(get_db),
 ):
     """完成可逆（P-06）：done → in_progress，清完成日期；设计清一览制图结束。
-    下游（发货资料/采购收件箱）按附件 ID 关联，M08/M06 落地时在此联动撤回。"""
+    已上传的图纸包/采购清单(order_start_output)保留在下游收件箱（reopen=返工，资料仍有效）。
+    但若项目已发货则禁止改回，避免"已发货却闸门未通过"的不一致（#51）。"""
     o = await _order_or_404(db, oid)
     cfg = DEPTS[o.dept]
     if not (_is_mgr(current) or o.worker_id == current.id or _is_lead(current, o.dept)):
         raise HTTPException(403, "仅任务负责人/部门负责人可改回")
     if o.status != "done":
         raise HTTPException(400, "仅已完成任务可改回进行中")
+    # 🆕 #51 已发货项目不得改回（如需返工请先由物流撤回发货）
+    sr = await db.execute(select(models.Shipment).where(
+        models.Shipment.project_id == o.project_id,
+        models.Shipment.status == "shipped",
+    ))
+    if sr.scalar_one_or_none() is not None:
+        raise HTTPException(400, "该项目已发货，任务不可改回进行中（如需返工请先撤回发货）")
     o.status = "in_progress"
     o.done_date = None
     p = o.project
@@ -644,6 +655,15 @@ async def void_order(
     if o.status == "voided":
         raise HTTPException(400, "任务已作废")
     o.status = "voided"
+    # 🆕 #30 作废设计任务 → 其负责的「待设计接收」反馈置空归属，转入设计负责人待指派列表
+    if o.dept == "design" and o.worker_id:
+        await db.execute(
+            update(models.Feedback).where(
+                models.Feedback.project_id == o.project_id,
+                models.Feedback.status == "pending_design",
+                models.Feedback.designer_uid == o.worker_id,
+            ).values(designer_uid=None)
+        )
     await db.commit()
     p = o.project
     await push_message(db, to_role="manager", kind="warn",
@@ -674,12 +694,22 @@ async def reassign_order(
     if not w or not w.is_active or not _is_worker_role(w, o.dept):
         raise HTTPException(400, f"转交对象必须是{cfg['name']}工人角色")
 
+    old_wid = o.worker_id
     old_name = _uname(o.worker) or "—"
     o.worker_id = w.id
     p = o.project
     new_name = _uname(w)
     if cfg["writeback_worker"] and o.status == "in_progress":
         _writeback_overview(p, cfg["writeback_worker"], new_name)
+    # 🆕 #30 设计换人 → 该项目「待设计接收」反馈的归属同步到新设计师
+    if o.dept == "design" and old_wid:
+        await db.execute(
+            update(models.Feedback).where(
+                models.Feedback.project_id == o.project_id,
+                models.Feedback.status == "pending_design",
+                models.Feedback.designer_uid == old_wid,
+            ).values(designer_uid=w.id)
+        )
     await db.commit()
 
     await push_message(db, to_user_id=w.id, kind="info",

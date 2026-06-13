@@ -113,6 +113,16 @@ async def main():
         await c.delete(f"/api/orders/{oe}/attachments/{plist_id}", headers=He1)
         r = await c.get("/api/purchase/inbox", headers=Hbu)
         chk(len(r.json())==0, "撤回后收件箱清空")
+
+        # ===== 🆕 #7 作废电工单 → 采购收件箱清空(即使附件仍在,消除幻影数据) =====
+        await c.post(f"/api/orders/{oe}/start-upload?kind=plist", headers=He1,
+                     files=[("files", ("采购清单2.xlsx", io.BytesIO(b"XL"), "application/vnd.ms-excel"))])
+        r = await c.get("/api/purchase/inbox", headers=Hbu)
+        chk(len(r.json())==1, "重传后收件箱恢复1条")
+        r = await c.post(f"/api/orders/{oe}/void", headers=Hel)
+        chk(r.status_code==200, f"#7 作废电工单: {r.text[:80]}")
+        r = await c.get("/api/purchase/inbox", headers=Hbu)
+        chk(len(r.json())==0, f"#7 作废后采购收件箱清空: {len(r.json())}")
         # 管理层可见两者
         r = await c.get("/api/sheetmetal/projects", headers=H)
         chk(r.status_code==200, "管理层可见钣金列表")

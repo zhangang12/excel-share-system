@@ -43,11 +43,14 @@ async def sheetmetal_projects(
     if not pids:
         return []
 
-    # 图纸包附件
-    res = await db.execute(select(models.Attachment).where(
-        models.Attachment.biz_type == "order_start_output",
-        models.Attachment.kind == "sheetpkg",
-        models.Attachment.project_id.in_(pids)).order_by(models.Attachment.id))
+    # 图纸包附件（排除已作废来源单的图纸包 #7）
+    res = await db.execute(select(models.Attachment)
+        .join(models.DeptOrder, models.Attachment.biz_id == models.DeptOrder.id)
+        .where(
+            models.Attachment.biz_type == "order_start_output",
+            models.Attachment.kind == "sheetpkg",
+            models.Attachment.project_id.in_(pids),
+            models.DeptOrder.status != "voided").order_by(models.Attachment.id))
     pkg_by_pid: dict[int, list] = {}
     for a in res.scalars().all():
         pkg_by_pid.setdefault(a.project_id, []).append(schemas.AttachmentOut.model_validate(a))
@@ -90,10 +93,12 @@ async def purchase_inbox(
     res = await db.execute(
         select(models.Attachment, models.Project)
         .join(models.Project, models.Attachment.project_id == models.Project.id)
+        .join(models.DeptOrder, models.Attachment.biz_id == models.DeptOrder.id)
         .where(
             models.Attachment.biz_type == "order_start_output",
             models.Attachment.kind == "plist",
             models.Project.is_deleted == False,  # noqa: E712
+            models.DeptOrder.status != "voided",  # 🆕 #7 作废的电工单不再出现在采购收件箱
         ).order_by(models.Attachment.id.desc()).limit(300)
     )
     rows = []

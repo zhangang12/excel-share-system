@@ -177,6 +177,15 @@ async def main():
         r = await c.put(f"/api/sales/ledger/{lidA}", headers=Hsl, json={"amount": 95000})
         chk(r.status_code==200, "#105 金额改回原值(未变更)不拦截")
 
+        # ---- 🆕 #2 财务开票纠错出口：invoiced→作废→退回待开票→重新上传 ----
+        r = await c.post(f"/api/sales/ledger/{lidA}/invoice-revoke", headers=Hfin)
+        chk(r.status_code==200, f"#2 财务作废发票退回待开票: {r.text[:80]}")
+        rowA = [x for x in (await c.get("/api/sales/ledger", headers=Hsl)).json()["rows"] if x["id"]==lidA][0]
+        chk(rowA["invoice_state"]=="pending_invoice" and not rowA.get("invoice_file_name"), "#2 退回待开票且清原发票")
+        r = await c.post(f"/api/sales/ledger/{lidA}/invoice-upload", headers=Hfin,
+                         files={"file": ("重开发票.pdf", io.BytesIO(b"P"), "application/pdf")})
+        chk(r.status_code==200, "#2 重新上传发票(回到invoiced)")
+
         # ---- 存量回填迁移：手建一个无台账项目 → run_all 后补行 ----
         r = await c.post("/api/projects", headers=H, json={"code":"2025-099","name":"存量项目"})
         from app.data_migration import backfill_sales_ledger, backfill_shipments
@@ -204,6 +213,15 @@ async def main():
                      files={"file": ("发票.pdf", io.BytesIO(b"P"), "application/pdf")})  # → invoiced(非进行中)
         r = await c.delete(f"/api/projects/{lidB_pid}", headers=H)
         chk(r.status_code==200, f"#3 开票完成后可删除: {r.text[:80]}")
+
+        # ---- 🆕 #1/#104 不开票(税票=/)项目不得发起开票申请 ----
+        r = await place(Hs1, "不开票样机", ["design"], amount=5000)
+        np_pid = r.json()["project_id"]
+        nlid = [x for x in (await c.get("/api/sales/ledger", headers=Hsl)).json()["rows"] if x["project_id"]==np_pid][0]["id"]
+        await c.put(f"/api/sales/ledger/{nlid}", headers=Hsl, json={"tax_rate":"/"})
+        r = await c.post(f"/api/sales/ledger/{nlid}/invoice-apply", headers=Hs1,
+                         files={"file": ("申请.xlsx", io.BytesIO(b"X"), "application/vnd.ms-excel")})
+        chk(r.status_code==400 and "不开票" in r.text, f"#1/#104 不开票项目申请被拒: {r.status_code} {r.text[:80]}")
 
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")

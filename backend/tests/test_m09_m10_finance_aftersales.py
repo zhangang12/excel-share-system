@@ -111,9 +111,13 @@ async def main():
                          data={"project_id":str(pid),"problem":"测试驳回","cost":"500"},
                          files={"file":("x.pdf", io.BytesIO(b"P"), "application/pdf")})
         aid2 = (await c.get("/api/aftersales", headers=Haw)).json()["rows"][0]["id"]
-        await c.post(f"/api/aftersales/{aid2}/reject", headers=Hal)
+        await c.post(f"/api/aftersales/{aid2}/reject", headers=Hal, data={"reason":"费用与实际不符"})
         r = await c.get("/api/finance/aftersales", headers=Hfin)
         chk(len(r.json()["rows"])==1, "驳回的售后不进财务")
+        # 🆕 #97/#98 驳回通知登记人(含原因)
+        msgs = (await c.get("/api/messages", headers=Haw)).json()
+        chk(any("售后驳回" in m["text"] and "费用与实际不符" in m["text"] for m in msgs),
+            "#97/#98 登记人收驳回通知含原因")
 
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")

@@ -80,6 +80,10 @@ async def list_feedbacks(
         elif code == "designer":
             q = q.where(models.Feedback.status == "pending_design",
                         models.Feedback.designer_uid == current.id)
+        elif code == "design_lead":
+            # 🆕 #29 设计负责人看「待接收但无在岗设计师(死信)」的反馈，可指派
+            q = q.where(models.Feedback.status == "pending_design",
+                        models.Feedback.designer_uid.is_(None))
         else:
             return []
     r = await db.execute(q.order_by(models.Feedback.id.desc()).limit(300))
@@ -187,6 +191,31 @@ async def pm_reject(
                            biz_type="feedback", biz_id=fid)
     await write_audit(db, user=current, action="pm_reject", target_type="feedback", target_id=fid)
     return schemas.Msg(message="已驳回")
+
+
+@router.post("/{fid}/assign", response_model=schemas.Msg)
+async def assign_feedback(
+    fid: int,
+    worker_id: int = Query(...),
+    current: models.User = Depends(require_roles("design_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #29 设计负责人指派/改派 待接收反馈给某设计师（解决无在岗设计师的死信）。"""
+    fb = await _fb_or_404(db, fid)
+    if fb.status != "pending_design":
+        raise HTTPException(400, "仅待设计接收的反馈可指派")
+    r = await db.execute(select(models.User).where(models.User.id == worker_id))
+    u = r.scalar_one_or_none()
+    if not u or not u.role or u.role.code not in ("designer", "design_lead"):
+        raise HTTPException(400, "只能指派给设计人员")
+    p_code, p_name, content = fb.project.code, fb.project.name, fb.content
+    fb.designer_uid = worker_id
+    await db.commit()
+    await push_message(db, to_user_id=worker_id, kind="info",
+                       text=f"【问题反馈待接收】{p_code} {p_name}：{content[:24]}…（设计负责人指派），请接收或驳回。",
+                       biz_type="feedback", biz_id=fid)
+    await write_audit(db, user=current, action="assign", target_type="feedback", target_id=fid)
+    return schemas.Msg(message="已指派给设计师")
 
 
 @router.post("/{fid}/design-accept", response_model=schemas.Msg)

@@ -150,6 +150,7 @@ async def approve(
 @router.post("/{aid}/reject", response_model=schemas.Msg)
 async def reject(
     aid: int,
+    reason: str = Form(""),
     current: models.User = Depends(require_roles("as_lead")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -162,6 +163,16 @@ async def reject(
     a.status = "rejected"
     a.appr_by = current.id
     a.appr_at = datetime.now(timezone.utc)
+    a.reject_reason = (reason or "").strip() or None  # 🆕 #98
+    # 🆕 #97/#98 通知登记人(含原因)——commit 前捕获关系值避免 greenlet 失效
+    p_code = a.project.code if a.project else f"#{a.project_id}"
+    p_name = a.project.name if a.project else ""
+    creator_id, problem, rr = a.created_by, a.problem, a.reject_reason
     await db.commit()
+    if creator_id:
+        suffix = f"，原因：{rr}" if rr else ""
+        await push_message(db, to_user_id=creator_id, kind="warn",
+                           text=f"【售后驳回】{p_code} {p_name}：{problem[:20]}… 已被驳回{suffix}",
+                           biz_type="aftersales", biz_id=aid)
     await write_audit(db, user=current, action="reject", target_type="aftersales", target_id=aid)
     return schemas.Msg(message="已驳回")

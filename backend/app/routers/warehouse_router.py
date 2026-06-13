@@ -118,6 +118,13 @@ async def update_material(
     m = r.scalar_one_or_none()
     if not m:
         raise HTTPException(404, "物料不存在")
+    # 🆕 #85 改名/规格前查重(排除自身)，避免撞 uq_wh_material_name_spec 抛 500
+    dup = await db.execute(select(models.WhMaterial).where(
+        models.WhMaterial.name == data.name.strip(),
+        models.WhMaterial.spec == ((data.spec or "").strip() or None),
+        models.WhMaterial.id != mid))
+    if dup.scalar_one_or_none():
+        raise HTTPException(409, "同名同规格物料已存在")
     m.name = data.name.strip(); m.spec = (data.spec or "").strip() or None
     m.category = (data.category or "").strip() or None; m.unit = data.unit or "个"
     m.location = (data.location or "").strip() or None

@@ -318,6 +318,7 @@ class AfterSales(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     appr_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     appr_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text)  # 🆕 #98 售后驳回原因
 
     project: Mapped["Project"] = relationship(lazy="joined")
 

@@ -311,6 +311,9 @@ async def invoice_apply(
     led = await _ledger_or_404(db, lid)
     if _is_sales(current) and led.sales_uid != current.id:
         raise HTTPException(403, "只能操作自己的订单")
+    # 🆕 #1/#104 不开票项目(税票="/")不应进入开票流（只拦显式不开票，不误伤遗留空税率）
+    if (led.tax_rate or "").strip() == "/":
+        raise HTTPException(400, "该项目税票为「不开票」，无需开票申请")
     if led.invoice_state == "invoiced":
         raise HTTPException(400, "该项目已开票")
     if led.invoice_state in ("applying", "pending_invoice"):
@@ -414,3 +417,33 @@ async def invoice_upload(
     await write_audit(db, user=current, action="invoice_upload",
                       target_type="sales_ledger", target_id=lid)
     return schemas.Msg(message="发票已上传，已回传销售订单（发票情况→0）")
+
+
+@router.post("/ledger/{lid}/invoice-revoke", response_model=schemas.Msg)
+async def invoice_revoke(
+    lid: int,
+    current: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #2 财务开票纠错出口：已开票(invoiced)退回待开票(pending_invoice)，
+    删除错误发票文件，便于重新上传正确发票（开错票的闭环）。"""
+    led = await _ledger_or_404(db, lid)
+    if led.invoice_state != "invoiced":
+        raise HTTPException(400, "仅已开票项目可作废重开")
+    if led.invoice_file_id:
+        res = await db.execute(select(models.Attachment).where(
+            models.Attachment.id == led.invoice_file_id))
+        a = res.scalar_one_or_none()
+        if a:
+            await delete_attachment_file(db, a)
+    led.invoice_file_id = None
+    led.invoice_state = "pending_invoice"
+    await db.commit()
+    p = led.project
+    if led.sales_uid:
+        await push_message(db, to_user_id=led.sales_uid, kind="warn",
+                           text=f"【发票作废】{p.code} 财务作废了原发票并将重新开票，请留意。",
+                           biz_type="sales_ledger", biz_id=led.id)
+    await write_audit(db, user=current, action="invoice_revoke",
+                      target_type="sales_ledger", target_id=lid)
+    return schemas.Msg(message="已作废原发票，退回待开票，可重新上传")

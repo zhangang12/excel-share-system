@@ -118,6 +118,23 @@ async def main():
         r = await c.post(f"/api/feedbacks/{fid}/design-accept", headers=Hd1)
         chk(r.status_code==400, "已存档不可再接收")
 
+        # ===== 🆕 #29 无在岗设计师的死信 → 设计负责人指派 → 设计师接收 =====
+        await c.post(f"/api/orders/{od}/void", headers=Hdl)  # 作废设计任务=无在岗设计师
+        await c.post("/api/feedbacks", headers=Ha1, json={"project_id":pid,"content":"第四个问题(死信场景)"})
+        fid4 = (await c.get("/api/feedbacks?mine=true", headers=Hpm)).json()[0]["id"]
+        r = await c.post(f"/api/feedbacks/{fid4}/pm-approve", headers=Hpm)
+        chk(r.status_code==200, "#29 主管通过(项目无在岗设计师)")
+        dl_mine = (await c.get("/api/feedbacks?mine=true", headers=Hdl)).json()
+        chk(any(f["id"]==fid4 for f in dl_mine), f"#29 设计负责人待办看到无人认领反馈: {[f['id'] for f in dl_mine]}")
+        msgs = (await c.get("/api/messages", headers=Hdl)).json()
+        chk(any("无在岗设计师" in m["text"] for m in msgs), "#29 设计负责人收指派提示")
+        r = await c.post(f"/api/feedbacks/{fid4}/assign?worker_id={ids['d1']}", headers=Hdl)
+        chk(r.status_code==200, f"#29 指派给设计师: {r.text[:80]}")
+        d1_mine = (await c.get("/api/feedbacks?mine=true", headers=Hd1)).json()
+        chk(any(f["id"]==fid4 for f in d1_mine), "#29 被指派设计师看到待接收")
+        r = await c.post(f"/api/feedbacks/{fid4}/design-accept", headers=Hd1)
+        chk(r.status_code==200, f"#29 设计师接收存档: {r.text[:80]}")
+
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")
     shutil.rmtree(tmp, ignore_errors=True)

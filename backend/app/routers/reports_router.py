@@ -1,7 +1,10 @@
 """🆕 v3 M14 报表：月度工作报表（仅管理层）+ 部门报表（负责人+管理层）+ 销售报表（销售主管+管理层）。
 
-口径 C1-C5（与 dept_config.compute_efficiency 单一来源一致）：
-- 自然日；done==due 算按时；预计 0 天按 1 天；按下单时间(created_at)计当月；按时率=按时÷已完成
+口径（与 dept_config.compute_efficiency 单一来源一致）：
+- C1 自然日；C2 done==due 算按时；C3 预计 0 天按 1 天（效率%=实际÷预计×100）
+- C4 月度统计按「下单时间(created_at)」归月（即当月下单批次的最终状态，非交付月）
+- 按时率=按时÷已完成；平均效率为算术平均，不封顶（单条可>100，用于暴露严重超期，
+  考核口径如需封顶/中位数请业务确认后在 compute_efficiency 统一调整）
 报表为只读聚合，无新表。
 """
 from collections import defaultdict
@@ -11,7 +14,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from ..database import get_db
 from .. import models
@@ -137,13 +140,18 @@ async def monthly(
     # 其它部门工作量
     r = await db.execute(select(models.Project).where(models.Project.is_deleted == False))  # noqa: E712
     sales_cnt = sum(1 for p in r.scalars().all() if p.created_at and p.created_at.strftime("%Y-%m") == ym)
+    # 🆕 #22 仓库当月出入库笔数（biz_date=YYYY-MM-DD，按月前缀统计；含冲红反向单，反映实际作业量）
+    wr = await db.execute(
+        select(func.count(models.WhTxn.id)).where(models.WhTxn.biz_date.like(f"{ym}-%"))
+    )
+    wh_cnt = int(wr.scalar() or 0)
 
     return MonthlyReport(
         month=ym, total=len(orders), done=len(done), overdue=len(overdue_items),
         ontime_rate=round(ontime / len(done) * 100) if done else None,
         avg_eff=round(sum(effs) / len(effs)) if effs else None,
         dept_cards=dept_cards, workers=stats, overdue_items=overdue_items,
-        sales_order_count=sales_cnt, wh_txn_count=0,
+        sales_order_count=sales_cnt, wh_txn_count=wh_cnt,
     )
 
 
