@@ -236,21 +236,21 @@ async function openReport() {
         <el-table-column prop="tax_rate" label="税票" width="70">
           <template #default="{ row }">{{ row.tax_rate || '—' }}</template>
         </el-table-column>
-        <el-table-column label="发票情况" width="130">
+        <el-table-column label="发票情况" width="124" align="center">
           <template #default="{ row }">
-            <template v-if="row.invoice_state === 'invoiced'">
-              <el-tag type="success" effect="dark" size="small">✅ 已开票·0</el-tag>
-              <el-button v-if="row.invoice_file_id" size="small" type="primary" link
-                         @click="downloadAttachment({ id: row.invoice_file_id!, name: row.invoice_file_name || '发票' })">
-                ⬇ 发票
-              </el-button>
-            </template>
-            <el-tag v-else-if="row.invoice_state" size="small"
-                    :type="row.invoice_state === 'applying' ? 'warning' : 'primary'" effect="plain">
-              {{ INVOICE_TEXT[row.invoice_state] }}
-            </el-tag>
-            <el-tag v-else-if="row.amount" size="small" type="warning" effect="plain">未开 {{ fmtMoney(row.amount) }}</el-tag>
-            <span v-else>—</span>
+            <div class="inv-cell">
+              <template v-if="row.invoice_state === 'invoiced'">
+                <el-tag type="success" size="small" effect="light" round>已开票</el-tag>
+                <el-button v-if="row.invoice_file_id" size="small" link type="primary" class="inv-dl"
+                           @click="downloadAttachment({ id: row.invoice_file_id!, name: row.invoice_file_name || '发票' })">
+                  <el-icon><Download /></el-icon><span>下载发票</span>
+                </el-button>
+              </template>
+              <el-tag v-else-if="row.invoice_state === 'applying'" size="small" type="warning" effect="light" round>待主管审批</el-tag>
+              <el-tag v-else-if="row.invoice_state === 'pending_invoice'" size="small" type="primary" effect="light" round>待财务开票</el-tag>
+              <el-tag v-else-if="row.amount" size="small" type="info" effect="plain" round>未开票</el-tag>
+              <span v-else class="muted">—</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="预付" width="92" align="right">
@@ -542,4 +542,8 @@ async function openReport() {
 .rpt-stats .l { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .rcv-row { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 14px; background: var(--el-fill-color-light); border-radius: 8px; font-size: 13px; }
 .rcv-row b { color: var(--el-text-color-primary); }
+/* 发票情况单元格：标签 + 下载链接纵向居中、紧凑 */
+.inv-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.inv-dl { height: auto; padding: 0; font-size: 12px; }
+.inv-dl :deep(.el-icon) { margin-right: 2px; }
 </style>
