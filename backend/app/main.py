@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -22,6 +22,8 @@ from .routers import (
     warehouse_router, export_router,
 )
 from .errors import register_exception_handlers
+from .database import get_db
+from .deps import require_admin_or_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,6 +34,8 @@ log = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
+    from .overdue import overdue_scheduler
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await ensure_schema_columns(engine)  # 🆕 v3：给存量表补新增列（幂等）
@@ -39,7 +43,9 @@ async def lifespan(app: FastAPI):
         await seed(db)
         await run_data_migrations(db)
     log.info("启动完成 · DB=%s", settings.database_url.split("@")[-1])
+    task = asyncio.create_task(overdue_scheduler())  # 🆕 v3 M15 逾期每日提醒
     yield
+    task.cancel()
     await engine.dispose()
 
 
@@ -87,6 +93,15 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "app": settings.app_name, "version": "2.0.0"}
+
+    # 🆕 v3 M15：逾期扫描手动/cron 触发（管理层）
+    @app.post("/api/internal/overdue-scan")
+    async def overdue_scan_now(
+        current=Depends(require_admin_or_manager),
+        db=Depends(get_db),
+    ):
+        from .overdue import scan_overdue
+        return await scan_overdue(db)
 
     # ===== 演示模式：托管前端静态资源 =====
     static_path = Path(settings.static_dir).resolve()
