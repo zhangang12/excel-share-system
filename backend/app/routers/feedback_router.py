@@ -14,6 +14,7 @@ from sqlalchemy import select
 from ..database import get_db
 from .. import models, schemas
 from ..deps import get_current_user, require_roles
+from ..menus import user_can_view_detail
 from ..notify import push_message
 from ..utils import write_audit
 
@@ -65,6 +66,10 @@ async def list_feedbacks(
     """协作 tab 存档（按 project_id）/ 工作台卡片（mine=按角色取待我处理的）。"""
     q = select(models.Feedback)
     if project_id:
+        # 🆕 越权修复(#31)：协作存档(按 project_id)与项目详单同源闸门——
+        # 收紧角色(销售/电工/装配/售后)无详单权限，不得读取项目反馈内容
+        if not user_can_view_detail(current):
+            raise HTTPException(403, "你没有项目详单权限")
         q = q.where(models.Feedback.project_id == project_id)
     code = current.role.code if current.role else ""
     if mine:

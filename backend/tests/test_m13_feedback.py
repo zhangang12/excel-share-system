@@ -108,6 +108,12 @@ async def main():
         chk(len(r.json())==3, f"项目反馈存档3条: {len(r.json())}")
         statuses = {f["status"] for f in r.json()}
         chk(statuses=={"archived","rejected_by_design","rejected_by_pm"}, f"三种终态: {statuses}")
+        # 🆕 #31 越权修复：收紧角色(销售,无详单权限)不得读项目反馈协作存档
+        r = await c.get(f"/api/feedbacks?project_id={pid}", headers=Hs1)
+        chk(r.status_code==403, f"销售越权读反馈被拒(应403): {r.status_code}")
+        # 设计师(有详单权限)仍可读协作存档，不回归
+        r = await c.get(f"/api/feedbacks?project_id={pid}", headers=Hd1)
+        chk(r.status_code==200, f"设计师读协作存档仍放行: {r.status_code}")
         # 设计师不能处理别人的（无待接收时）
         r = await c.post(f"/api/feedbacks/{fid}/design-accept", headers=Hd1)
         chk(r.status_code==400, "已存档不可再接收")

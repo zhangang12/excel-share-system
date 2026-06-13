@@ -6,12 +6,23 @@
 """
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime, timezone, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import models
+
+# 业务时区(中国 UTC+8)；messages.created_at 由 func.now() 落 UTC。
+# 幂等与逾期判定统一用业务自然日，避免 UTC/本地日界错位导致重复推送(#78)。
+_CN_TZ = timezone(timedelta(hours=8))
+
+
+def _cn_date(ts: datetime) -> str:
+    """把存储的 created_at(UTC；SQLite 为 naive、PG 为 aware) 归一到业务(中国)自然日。"""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(_CN_TZ).date().isoformat()
 from .database import SessionLocal
 from .dept_config import DEPTS
 from .notify import push_message
@@ -21,7 +32,7 @@ log = logging.getLogger("overdue")
 
 async def scan_overdue(db: AsyncSession) -> dict:
     """扫描逾期任务并推送（幂等）。返回 {scanned, notified}。"""
-    today_s = date.today().isoformat()
+    today_s = datetime.now(_CN_TZ).date().isoformat()  # 业务(中国)今天
     r = await db.execute(
         select(models.DeptOrder).where(
             models.DeptOrder.status == "in_progress",
@@ -40,7 +51,7 @@ async def scan_overdue(db: AsyncSession) -> dict:
             )
         )
         already_today = any(
-            ts and ts.date().isoformat() == today_s for (ts,) in r.all()
+            ts and _cn_date(ts) == today_s for (ts,) in r.all()
         )
         if already_today:
             continue
