@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/api/sales'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 interface InvoiceRow {
   ledger_id: number; code: string; name: string; customer?: string | null
@@ -88,7 +89,7 @@ async function uploadInvoice(row: InvoiceRow) {
               </template>
             </el-table-column>
           </el-table>
-          <el-empty v-if="!pending.length" description="暂无待开票" />
+          <EmptyHint v-if="!pending.length" text="暂无待开票" />
         </el-tab-pane>
 
         <el-tab-pane :label="`✅ 已开票 (${invoiced.length})`" name="invoiced">
@@ -106,7 +107,7 @@ async function uploadInvoice(row: InvoiceRow) {
               </template>
             </el-table-column>
           </el-table>
-          <el-empty v-if="!invoiced.length" description="暂无已开票" />
+          <EmptyHint v-if="!invoiced.length" text="暂无已开票" />
         </el-tab-pane>
 
         <el-tab-pane :label="`🛎️ 售后费用 (${aftersales.length})`" name="aftersales">
@@ -126,7 +127,7 @@ async function uploadInvoice(row: InvoiceRow) {
               </template>
             </el-table-column>
           </el-table>
-          <el-empty v-if="!aftersales.length" description="暂无已审批售后费用（售后部审批后自动同步）" />
+          <EmptyHint v-if="!aftersales.length" text="暂无已审批售后费用（售后部审批后自动同步）" />
         </el-tab-pane>
       </el-tabs>
     </el-card>

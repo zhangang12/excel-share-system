@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment } from '@/api/orders'
 import { reportsApi, type SalesReport } from '@/api/reports'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 const auth = useAuthStore()
 const allView = computed(() => ['admin', 'manager', 'sales_lead'].includes(auth.user?.role_code || ''))
@@ -440,16 +441,20 @@ async function openReport() {
     <!-- ===== 销售报表 ===== -->
     <el-dialog v-model="reportVisible" title="📊 销售部报表" width="760px">
       <div v-if="report">
-        <div class="rpt-stats">
-          <div class="sc"><div class="v">{{ report.project_count }}</div><div class="l">项目总数</div></div>
-          <div class="sc"><div class="v">{{ fmtMoney(report.total_amount) }}</div><div class="l">合同总额</div></div>
-          <div class="sc"><div class="v ok">{{ fmtMoney(report.invoiced_amount) }}</div><div class="l">已开票额</div></div>
-          <div class="sc"><div class="v warn">{{ fmtMoney(report.uninvoiced_amount) }}</div><div class="l">待开票额</div></div>
-          <div class="sc"><div class="v">{{ report.shipped_count }}/{{ report.project_count }}</div><div class="l">已发货</div></div>
-          <div class="sc"><div class="v">{{ report.contract_rate ?? '—' }}%</div><div class="l">合同覆盖率</div></div>
-          <div class="sc"><div class="v">{{ report.invoice_rate ?? '—' }}%</div><div class="l">开票完成率</div></div>
+        <!-- 经营概览：合同总额为核心，已/待开票语义配色 -->
+        <div class="sec-title">经营概览</div>
+        <div class="kpi-grid">
+          <div class="kpi is-primary"><div class="kpi-v">{{ fmtMoney(report.total_amount) }}</div><div class="kpi-l">合同总额 · {{ report.project_count }} 个项目</div></div>
+          <div class="kpi is-good"><div class="kpi-v">{{ fmtMoney(report.invoiced_amount) }}</div><div class="kpi-l">已开票额</div></div>
+          <div class="kpi is-warn"><div class="kpi-v">{{ fmtMoney(report.uninvoiced_amount) }}</div><div class="kpi-l">待开票额</div></div>
+          <div class="kpi"><div class="kpi-v">{{ report.shipped_count }} / {{ report.project_count }}</div><div class="kpi-l">已发货项目</div></div>
         </div>
-        <h4 style="margin:14px 0 6px">👤 销售员业绩</h4>
+        <!-- 关键率用进度条而非干巴巴百分比 -->
+        <div style="margin-top:14px">
+          <div class="rate-bar"><span class="rb-label">开票完成率</span><div class="rb-track"><div class="rb-fill good" :style="{ width: (report.invoice_rate || 0) + '%' }"></div></div><span class="rb-val">{{ report.invoice_rate ?? 0 }}%</span></div>
+          <div class="rate-bar"><span class="rb-label">合同覆盖率</span><div class="rb-track"><div class="rb-fill" :style="{ width: (report.contract_rate || 0) + '%' }"></div></div><span class="rb-val">{{ report.contract_rate ?? 0 }}%</span></div>
+        </div>
+        <div class="sec-title">销售员业绩</div>
         <el-table :data="report.by_salesperson" size="small" stripe>
           <el-table-column prop="name" label="销售员" min-width="100" />
           <el-table-column prop="count" label="项目数" width="80" />
@@ -458,23 +463,23 @@ async function openReport() {
           <el-table-column label="已发货" width="80"><template #default="{ row }">{{ row.shipped }}</template></el-table-column>
           <el-table-column label="占比" width="70"><template #default="{ row }">{{ row.pct }}%</template></el-table-column>
         </el-table>
-        <el-row :gutter="14" style="margin-top:14px">
+        <el-row :gutter="14" style="margin-top:8px">
           <el-col :span="12">
-            <h4 style="margin:0 0 6px">🏷 客户分类</h4>
+            <div class="sec-title">客户分类</div>
             <el-table :data="report.by_cust_type" size="small">
               <el-table-column prop="type" label="分类" /><el-table-column prop="count" label="项目" width="70" />
               <el-table-column label="金额" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
             </el-table>
           </el-col>
           <el-col :span="12">
-            <h4 style="margin:0 0 6px">🧾 开票状态</h4>
+            <div class="sec-title">开票状态</div>
             <el-table :data="report.by_invoice_state" size="small">
               <el-table-column prop="label" label="状态" /><el-table-column prop="count" label="项目" width="70" />
               <el-table-column label="金额" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
             </el-table>
           </el-col>
         </el-row>
-        <h4 style="margin:14px 0 6px">💰 收款计划汇总</h4>
+        <div class="sec-title">收款计划汇总</div>
         <div class="rcv-row">
           <span>预付 <b>{{ fmtMoney(report.receivables.prepay) }}</b></span>
           <span>发货前付 <b>{{ fmtMoney(report.receivables.before_ship) }}</b></span>
@@ -486,7 +491,7 @@ async function openReport() {
 
     <!-- ===== 开票审批（主管） ===== -->
     <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="720px">
-      <el-empty v-if="!approvals.length" description="暂无待审批的开票申请" />
+      <EmptyHint v-if="!approvals.length" text="暂无待审批的开票申请" size="sm" />
       <el-table v-else :data="approvals" stripe>
         <el-table-column prop="code" label="项目编号" width="110" />
         <el-table-column prop="name" label="设备名称" min-width="140" />
@@ -535,11 +540,6 @@ async function openReport() {
 }
 .frow { display: flex; gap: 12px; }
 .frow > * { flex: 1; min-width: 0; }
-.rpt-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
-.rpt-stats .sc { background: var(--el-fill-color-light); border-radius: 8px; padding: 12px; text-align: center; }
-.rpt-stats .v { font-size: 18px; font-weight: 600; }
-.rpt-stats .v.ok { color: #16a34a; } .rpt-stats .v.warn { color: #d97706; }
-.rpt-stats .l { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .rcv-row { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 14px; background: var(--el-fill-color-light); border-radius: 8px; font-size: 13px; }
 .rcv-row b { color: var(--el-text-color-primary); }
 /* 发票情况单元格：标签 + 下载链接纵向居中、紧凑 */

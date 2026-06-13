@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 const auth = useAuthStore()
 const role = computed(() => auth.user?.role_code || '')
@@ -62,8 +63,8 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
       </div>
     </template>
 
-    <el-empty v-if="!loading && !list.length"
-              :description="isAssembler ? '暂无反馈，可对在手项目提交问题' : '暂无待处理反馈'" :image-size="60" />
+    <EmptyHint v-if="!loading && !list.length"
+              :text="isAssembler ? '暂无反馈，可对在手项目提交问题' : '暂无待处理反馈'" />
     <el-table v-else :data="list" v-loading="loading" size="small">
       <el-table-column label="项目" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
       <el-table-column prop="content" label="问题内容" min-width="220" show-overflow-tooltip />

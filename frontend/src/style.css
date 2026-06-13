@@ -181,6 +181,40 @@ a:hover { text-decoration: none; opacity: .85; }
 }
 .page-header .spacer { flex: 1; }
 
+/* ===== 🆕 v3 报表/看板：KPI 卡片(语义色+主次层级) ===== */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.kpi {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 18px;
+  position: relative; overflow: hidden;
+}
+.kpi::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--text-4); }
+.kpi .kpi-v { font-size: 24px; font-weight: 700; color: var(--text-1); line-height: 1.2; letter-spacing: .3px; }
+.kpi .kpi-l { font-size: 12.5px; color: var(--text-3); margin-top: 6px; }
+.kpi.is-primary { background: linear-gradient(180deg, var(--primary-light), var(--bg-card)); }
+.kpi.is-primary::before { background: var(--primary); }
+.kpi.is-primary .kpi-v { color: var(--primary-dark); font-size: 28px; }
+.kpi.is-good::before { background: var(--success); } .kpi.is-good .kpi-v { color: var(--success); }
+.kpi.is-warn::before { background: var(--warning); } .kpi.is-warn .kpi-v { color: var(--warning); }
+.kpi.is-bad::before  { background: var(--danger); }  .kpi.is-bad .kpi-v  { color: var(--danger); }
+
+/* 分区标题（左侧竖条强调，生产管理风） */
+.sec-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text-1); margin: 18px 0 10px; }
+.sec-title::before { content: ""; width: 3px; height: 14px; background: var(--primary); border-radius: 2px; }
+
+/* 进度条（覆盖率/完成率，替代干巴巴的百分比） */
+.rate-bar { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 12.5px; color: var(--text-2); }
+.rate-bar .rb-label { width: 88px; flex-shrink: 0; }
+.rate-bar .rb-track { flex: 1; height: 8px; background: var(--border-light); border-radius: 6px; overflow: hidden; }
+.rate-bar .rb-fill { height: 100%; border-radius: 6px; background: var(--primary); transition: width .4s; }
+.rate-bar .rb-fill.good { background: var(--success); }
+.rate-bar .rb-val { width: 44px; text-align: right; font-weight: 600; color: var(--text-1); }
+
+/* ===== 🆕 去卡通空状态：el-empty 默认插画太卡通，统一灰度淡化（未替换为 EmptyHint 的兜底） ===== */
+.el-empty__image { filter: grayscale(1); opacity: .28; }
+.el-empty { padding: 28px 0; }
+.el-empty__description { color: var(--text-3); }
+
 /* ===== 全局动画 ===== */
 @keyframes fadein {
   from { opacity: 0; transform: translateY(4px); }

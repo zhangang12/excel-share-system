@@ -2,10 +2,11 @@
 // 🆕 v3 M07 仓库组：总览/出入库/收发存/流水/物料主数据/发货清单 六 tab
 import { ref, onMounted, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search } from '@element-plus/icons-vue'
+import { Plus, Search, Lock } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow } from '@/api/warehouse'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 const auth = useAuthStore()
 const canWrite = computed(() => ['warehouse', 'warehouse_lead', 'admin', 'manager'].includes(auth.user?.role_code || ''))
@@ -152,7 +153,7 @@ function onTab(name: string) {
 
         <!-- 出入库登记 -->
         <el-tab-pane label="出入库登记" name="io">
-          <el-empty v-if="!canWrite" description="仅仓库角色可登记出入库" />
+          <EmptyHint v-if="!canWrite" text="仅仓库角色可登记出入库" :icon="Lock" />
           <template v-else>
             <el-button type="primary" :icon="Plus" @click="openIo('in')">入库登记</el-button>
             <el-button type="warning" :icon="Plus" @click="openIo('out')">出库登记</el-button>
@@ -225,7 +226,7 @@ function onTab(name: string) {
 
         <!-- 发货清单 -->
         <el-tab-pane label="发货清单" name="ship">
-          <el-empty v-if="!canWrite" description="仅仓库角色可上传发货清单" />
+          <EmptyHint v-if="!canWrite" text="仅仓库角色可上传发货清单" :icon="Lock" />
           <template v-else>
             <div style="display:flex;gap:10px;align-items:center">
               <el-select v-model="shipProj" filterable placeholder="选择项目" style="width:300px">

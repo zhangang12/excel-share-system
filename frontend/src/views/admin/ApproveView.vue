@@ -3,6 +3,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { http } from '@/api'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 interface Req {
   id: number; user_id: number; user_name?: string | null; user_role?: string | null
@@ -69,7 +70,7 @@ function fmt(s: string) {
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-if="!list.length" description="暂无导出申请" />
+      <EmptyHint v-if="!list.length" text="暂无导出申请" />
     </el-card>
   </div>
 </template>

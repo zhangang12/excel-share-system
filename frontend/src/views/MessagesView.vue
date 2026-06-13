@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Bell, Warning, ChatDotRound, InfoFilled } from '@element-plus/icons-vue'
 import { messagesApi, type Message } from '@/api/messages'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 const loading = ref(false)
 const list = ref<Message[]>([])
@@ -53,11 +54,7 @@ onMounted(async () => {
     </div>
 
     <el-card v-loading="loading" shadow="never">
-      <el-empty v-if="!loading && list.length === 0" description="暂无消息">
-        <template #image>
-          <el-icon style="font-size: 72px; color: var(--text-3)"><Bell /></el-icon>
-        </template>
-      </el-empty>
+      <EmptyHint v-if="!loading && list.length === 0" text="暂无消息" :icon="Bell" />
 
       <div v-else class="msg-list">
         <div v-for="m in list" :key="m.id" class="msg-item" :class="{ unread: !m.read }">

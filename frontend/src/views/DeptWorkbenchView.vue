@@ -6,7 +6,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Document, Download, Close, UploadFilled, Check, RefreshLeft, Switch as SwitchIcon,
+  Document, Download, Close, UploadFilled, Check, RefreshLeft, Switch as SwitchIcon, Lock,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -15,6 +15,7 @@ import {
 } from '@/api/orders'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
 import StockQueryDialog from '@/components/StockQueryDialog.vue'
+import EmptyHint from '@/components/EmptyHint.vue'
 import { reportsApi, type DeptReport } from '@/api/reports'
 
 const route = useRoute()
@@ -219,7 +220,7 @@ const stockVisible = ref(false)
     <template v-if="isWorker">
       <el-tabs v-model="activeTab">
         <el-tab-pane :label="`📥 我的待办 (${myTodo.length})`" name="todo">
-          <el-empty v-if="!loading && myTodo.length === 0" description="暂无待办" />
+          <EmptyHint v-if="!loading && myTodo.length === 0" text="暂无待办任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in myTodo" :key="o.id" shadow="hover"
                      class="todo-card" :class="{ urgent: o.overdue }">
@@ -327,7 +328,7 @@ const stockVisible = ref(false)
     <template v-else-if="isLead || isMgr">
       <el-tabs v-model="activeTab">
         <el-tab-pane :label="`📥 待分派 (${pendingAssign.length})`" name="assign">
-          <el-empty v-if="!loading && pendingAssign.length === 0" description="暂无待分派" />
+          <EmptyHint v-if="!loading && pendingAssign.length === 0" text="暂无待分派任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in pendingAssign" :key="o.id" shadow="hover" class="todo-card assign">
               <div class="tc-head">
@@ -409,7 +410,7 @@ const stockVisible = ref(false)
       </el-tabs>
     </template>
 
-    <el-empty v-else description="你没有本工作台权限" />
+    <EmptyHint v-else text="你没有本工作台权限" :icon="Lock" />
 
     <!-- 🆕 v3 M13 问题反馈面板（生产部=装配提交/主管审批；设计部=设计师接收） -->
     <FeedbackPanel v-if="dept === 'produce' || dept === 'design'" :key="dept" />
@@ -420,11 +421,11 @@ const stockVisible = ref(false)
     <!-- 🆕 M14 部门报表弹窗 -->
     <el-dialog v-model="reportVisible" :title="`📊 ${report?.dept_name || ''}报表（仅本部门数据）`" width="720px">
       <div v-if="report">
-        <div class="stat-row">
-          <div class="sc"><div class="v">{{ report.total }}</div><div class="l">任务总数</div></div>
-          <div class="sc"><div class="v ok">{{ report.done }}</div><div class="l">已完成</div></div>
-          <div class="sc"><div class="v bad">{{ report.overdue }}</div><div class="l">逾期</div></div>
-          <div class="sc"><div class="v">{{ report.ontime_rate ?? '—' }}%</div><div class="l">按时率｜均效率 {{ report.avg_eff ?? '—' }}%</div></div>
+        <div class="kpi-grid">
+          <div class="kpi is-primary"><div class="kpi-v">{{ report.total }}</div><div class="kpi-l">任务总数</div></div>
+          <div class="kpi is-good"><div class="kpi-v">{{ report.done }}</div><div class="kpi-l">已完成</div></div>
+          <div class="kpi" :class="report.overdue ? 'is-bad' : ''"><div class="kpi-v">{{ report.overdue }}</div><div class="kpi-l">逾期</div></div>
+          <div class="kpi"><div class="kpi-v">{{ report.ontime_rate ?? '—' }}%</div><div class="kpi-l">按时率 · 均效率 {{ report.avg_eff ?? '—' }}%</div></div>
         </div>
         <el-table :data="report.workers" size="small" stripe style="margin-top:10px">
           <el-table-column prop="worker_name" label="人员" min-width="100" />
@@ -435,7 +436,7 @@ const stockVisible = ref(false)
           <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate ?? '—' }}%</template></el-table-column>
           <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff != null && row.avg_eff <= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff ?? '—' }}%</span></template></el-table-column>
         </el-table>
-        <h4 style="margin:14px 0 6px">⏰ 逾期任务（{{ report.overdue_items.length }}）</h4>
+        <div class="sec-title" style="margin-top:16px">逾期任务（{{ report.overdue_items.length }}）</div>
         <el-table v-if="report.overdue_items.length" :data="report.overdue_items" size="small">
           <el-table-column prop="worker_name" label="人员" width="100" />
           <el-table-column prop="code" label="项目" width="120" />
@@ -443,7 +444,7 @@ const stockVisible = ref(false)
           <el-table-column prop="done_date" label="实际" width="110" />
           <el-table-column label="逾期" width="90"><template #default="{ row }">超 {{ row.over_days }} 天</template></el-table-column>
         </el-table>
-        <el-empty v-else description="无逾期 🎉" :image-size="44" />
+        <EmptyHint v-else text="本月无逾期任务" size="sm" />
       </div>
     </el-dialog>
 
@@ -536,11 +537,6 @@ const stockVisible = ref(false)
 .assign-bar { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 .eff-good { color: #16a34a; font-weight: 700; }
 .eff-bad { color: #dc2626; font-weight: 700; }
-.stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-.sc { background: var(--el-fill-color-light); border-radius: 8px; padding: 12px; text-align: center; }
-.sc .v { font-size: 22px; font-weight: 600; }
-.sc .v.ok { color: #16a34a; } .sc .v.bad { color: #dc2626; }
-.sc .l { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .out-rows { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .out-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .out-row .ol { font-size: 13px; min-width: 130px; }

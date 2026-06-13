@@ -6,6 +6,7 @@ import { Document, Download } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { datasheetsApi } from '@/api/datasheets'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 interface Att { id: number; name: string }
 interface Row {
@@ -103,7 +104,7 @@ function cellVal(rec: any, fid: number) {
             <template #default="{ row }">{{ cellVal(row, f.id) }}</template>
           </el-table-column>
         </el-table>
-        <el-empty v-if="!viewLoading && !viewRecords.length" description="钣金装配表暂无数据" />
+        <EmptyHint v-if="!viewLoading && !viewRecords.length" text="钣金装配表暂无数据" />
       </div>
     </el-dialog>
   </div>
