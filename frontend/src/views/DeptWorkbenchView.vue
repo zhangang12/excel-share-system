@@ -14,6 +14,7 @@ import {
   type DeptOrder, type DeptOptions, type OrderAttachment,
 } from '@/api/orders'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
+import StockQueryDialog from '@/components/StockQueryDialog.vue'
 import { reportsApi, type DeptReport } from '@/api/reports'
 
 const route = useRoute()
@@ -195,6 +196,9 @@ async function openReport() {
   report.value = await reportsApi.dept(dept.value)
   reportVisible.value = true
 }
+
+// 🆕 M07 设计部「查库存」只读
+const stockVisible = ref(false)
 </script>
 
 <template>
@@ -207,6 +211,7 @@ async function openReport() {
         </div>
       </div>
       <div class="spacer"></div>
+      <el-button v-if="dept === 'design'" @click="stockVisible = true">🔎 查库存(只读)</el-button>
       <el-button v-if="isLead || isMgr" type="primary" plain @click="openReport">📊 {{ deptName }}报表</el-button>
     </div>
 
@@ -408,6 +413,9 @@ async function openReport() {
 
     <!-- 🆕 v3 M13 问题反馈面板（生产部=装配提交/主管审批；设计部=设计师接收） -->
     <FeedbackPanel v-if="dept === 'produce' || dept === 'design'" :key="dept" />
+
+    <!-- 🆕 M07 设计师查库存 -->
+    <StockQueryDialog v-if="dept === 'design'" v-model="stockVisible" />
 
     <!-- 🆕 M14 部门报表弹窗 -->
     <el-dialog v-model="reportVisible" :title="`📊 ${report?.dept_name || ''}报表（仅本部门数据）`" width="720px">

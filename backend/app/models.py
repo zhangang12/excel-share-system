@@ -266,6 +266,43 @@ class Attachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+# ---------- 🆕 仓库组：物料主数据 + 出入库流水（实时库存=期初+Σ入−Σ出） ----------
+class WhMaterial(Base):
+    __tablename__ = "wh_materials"
+    __table_args__ = (UniqueConstraint("name", "spec", name="uq_wh_material_name_spec"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[Optional[str]] = mapped_column(String(64), index=True)   # 物料编码（可空，留扩展）
+    name: Mapped[str] = mapped_column(String(128), index=True)
+    spec: Mapped[Optional[str]] = mapped_column(String(128))              # 规格型号
+    category: Mapped[Optional[str]] = mapped_column(String(64))          # 类别（搅拌桨/标准件…）
+    unit: Mapped[str] = mapped_column(String(16), default="个")
+    location: Mapped[Optional[str]] = mapped_column(String(64))          # 库位（单仓仅文本）
+    safety_stock: Mapped[float] = mapped_column(default=0)               # 安全库存（低于预警）
+    init_stock: Mapped[float] = mapped_column(default=0)                 # 期初库存
+    status: Mapped[str] = mapped_column(String(16), default="正常")       # 正常/停用
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WhTxn(Base):
+    __tablename__ = "wh_txns"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("wh_materials.id"), index=True)
+    biz_date: Mapped[str] = mapped_column(String(10), index=True)        # YYYY-MM-DD
+    direction: Mapped[str] = mapped_column(String(4))                    # in / out
+    qty: Mapped[float] = mapped_column(default=0)                        # 正数
+    source: Mapped[Optional[str]] = mapped_column(String(32))           # 采购入库/领料出库/冲红…
+    party: Mapped[Optional[str]] = mapped_column(String(128))           # 供应商/领用方
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), index=True)
+    ref_no: Mapped[str] = mapped_column(String(32), index=True)         # 单据号 RK/CKyyyymmdd-NNN
+    operator_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    is_reversal: Mapped[bool] = mapped_column(default=False)            # 是否冲红单
+    reversal_of: Mapped[Optional[int]] = mapped_column(ForeignKey("wh_txns.id"))  # 冲红指向的原单
+    reversed: Mapped[bool] = mapped_column(default=False)              # 原单是否已被冲红
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    material: Mapped["WhMaterial"] = relationship(lazy="joined")
+
+
 # ---------- 🆕 售后部（登记→审批→同步财务；§十五） ----------
 class AfterSales(Base):
     __tablename__ = "aftersales"

@@ -287,6 +287,78 @@ class FeedbackProjOption(BaseModel):
     name: str
 
 
+# ---------- 🆕 仓库组 ----------
+class WhMaterialIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    spec: Optional[str] = None
+    category: Optional[str] = None
+    unit: str = "个"
+    location: Optional[str] = None
+    safety_stock: float = 0
+    init_stock: float = 0
+    code: Optional[str] = None
+
+
+class WhMaterialOut(BaseModel):
+    id: int
+    code: Optional[str] = None
+    name: str
+    spec: Optional[str] = None
+    category: Optional[str] = None
+    unit: str
+    location: Optional[str] = None
+    safety_stock: float
+    init_stock: float
+    status: str
+    stock: float = 0          # 实时库存
+    low: bool = False         # 是否低于安全库存
+
+
+class WhTxnIn(BaseModel):
+    material_id: int
+    biz_date: str
+    direction: str            # in / out
+    qty: float
+    source: Optional[str] = None
+    party: Optional[str] = None
+    project_id: Optional[int] = None
+
+
+class WhTxnOut(BaseModel):
+    id: int
+    material_id: int
+    material_name: str
+    spec: Optional[str] = None
+    biz_date: str
+    direction: str
+    qty: float
+    source: Optional[str] = None
+    party: Optional[str] = None
+    project_id: Optional[int] = None
+    project_code: Optional[str] = None
+    ref_no: str
+    is_reversal: bool = False
+    reversed: bool = False
+    created_at: datetime
+
+
+class WhSummaryRow(BaseModel):
+    material_id: int
+    name: str
+    spec: Optional[str] = None
+    unit: str
+    opening: float = 0        # 期初
+    in_qty: float = 0         # 本期入
+    out_qty: float = 0        # 本期出
+    closing: float = 0        # 期末
+
+
+class WhStockOut(BaseModel):
+    materials: list[WhMaterialOut]
+    total: int = 0
+    low_count: int = 0
+
+
 # ---------- 🆕 财务部 ----------
 class FinanceInvoiceRow(BaseModel):
     ledger_id: int
