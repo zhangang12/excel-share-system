@@ -6,6 +6,7 @@ import { Plus, Stamp, Download } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment } from '@/api/orders'
+import { reportsApi, type SalesReport } from '@/api/reports'
 
 const auth = useAuthStore()
 const allView = computed(() => ['admin', 'manager', 'sales_lead'].includes(auth.user?.role_code || ''))
@@ -154,6 +155,14 @@ async function approve(r: SalesLedgerRow, ok: boolean) {
 const INVOICE_TEXT: Record<string, string> = {
   applying: '待主管审批', pending_invoice: '待财务开票', invoiced: '✅ 已开票·0',
 }
+
+// 🆕 M14 销售报表
+const reportVisible = ref(false)
+const report = ref<SalesReport | null>(null)
+async function openReport() {
+  report.value = await reportsApi.sales()
+  reportVisible.value = true
+}
 </script>
 
 <template>
@@ -164,6 +173,7 @@ const INVOICE_TEXT: Record<string, string> = {
         <div class="desc">销售项目统计台账 · {{ allView ? '全部' : '我的' }} · 一项目一行；编号自动生成；开票申请→主管审批→财务开票回传</div>
       </div>
       <div class="spacer"></div>
+      <el-button v-if="allView" type="primary" plain @click="openReport">📊 销售报表</el-button>
       <el-button v-if="allView" :icon="Stamp" @click="openApprovals">开票审批</el-button>
       <el-button type="primary" :icon="Plus" @click="openOrder">销售下单</el-button>
     </div>
@@ -427,6 +437,53 @@ const INVOICE_TEXT: Record<string, string> = {
       </template>
     </el-dialog>
 
+    <!-- ===== 销售报表 ===== -->
+    <el-dialog v-model="reportVisible" title="📊 销售部报表" width="760px">
+      <div v-if="report">
+        <div class="rpt-stats">
+          <div class="sc"><div class="v">{{ report.project_count }}</div><div class="l">项目总数</div></div>
+          <div class="sc"><div class="v">{{ fmtMoney(report.total_amount) }}</div><div class="l">合同总额</div></div>
+          <div class="sc"><div class="v ok">{{ fmtMoney(report.invoiced_amount) }}</div><div class="l">已开票额</div></div>
+          <div class="sc"><div class="v warn">{{ fmtMoney(report.uninvoiced_amount) }}</div><div class="l">待开票额</div></div>
+          <div class="sc"><div class="v">{{ report.shipped_count }}/{{ report.project_count }}</div><div class="l">已发货</div></div>
+          <div class="sc"><div class="v">{{ report.contract_rate ?? '—' }}%</div><div class="l">合同覆盖率</div></div>
+          <div class="sc"><div class="v">{{ report.invoice_rate ?? '—' }}%</div><div class="l">开票完成率</div></div>
+        </div>
+        <h4 style="margin:14px 0 6px">👤 销售员业绩</h4>
+        <el-table :data="report.by_salesperson" size="small" stripe>
+          <el-table-column prop="name" label="销售员" min-width="100" />
+          <el-table-column prop="count" label="项目数" width="80" />
+          <el-table-column label="合同额" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+          <el-table-column label="已开票额" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.invoiced) }}</template></el-table-column>
+          <el-table-column label="已发货" width="80"><template #default="{ row }">{{ row.shipped }}</template></el-table-column>
+          <el-table-column label="占比" width="70"><template #default="{ row }">{{ row.pct }}%</template></el-table-column>
+        </el-table>
+        <el-row :gutter="14" style="margin-top:14px">
+          <el-col :span="12">
+            <h4 style="margin:0 0 6px">🏷 客户分类</h4>
+            <el-table :data="report.by_cust_type" size="small">
+              <el-table-column prop="type" label="分类" /><el-table-column prop="count" label="项目" width="70" />
+              <el-table-column label="金额" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+            </el-table>
+          </el-col>
+          <el-col :span="12">
+            <h4 style="margin:0 0 6px">🧾 开票状态</h4>
+            <el-table :data="report.by_invoice_state" size="small">
+              <el-table-column prop="label" label="状态" /><el-table-column prop="count" label="项目" width="70" />
+              <el-table-column label="金额" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+            </el-table>
+          </el-col>
+        </el-row>
+        <h4 style="margin:14px 0 6px">💰 收款计划汇总</h4>
+        <div class="rcv-row">
+          <span>预付 <b>{{ fmtMoney(report.receivables.prepay) }}</b></span>
+          <span>发货前付 <b>{{ fmtMoney(report.receivables.before_ship) }}</b></span>
+          <span>发货款应收 <b>{{ fmtMoney(report.receivables.ship_receivable) }}</b></span>
+          <span>尾款 <b>{{ fmtMoney(report.receivables.balance) }}</b></span>
+        </div>
+      </div>
+    </el-dialog>
+
     <!-- ===== 开票审批（主管） ===== -->
     <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="720px">
       <el-empty v-if="!approvals.length" description="暂无待审批的开票申请" />
@@ -478,4 +535,11 @@ const INVOICE_TEXT: Record<string, string> = {
 }
 .frow { display: flex; gap: 12px; }
 .frow > * { flex: 1; min-width: 0; }
+.rpt-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.rpt-stats .sc { background: var(--el-fill-color-light); border-radius: 8px; padding: 12px; text-align: center; }
+.rpt-stats .v { font-size: 18px; font-weight: 600; }
+.rpt-stats .v.ok { color: #16a34a; } .rpt-stats .v.warn { color: #d97706; }
+.rpt-stats .l { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
+.rcv-row { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 14px; background: var(--el-fill-color-light); border-radius: 8px; font-size: 13px; }
+.rcv-row b { color: var(--el-text-color-primary); }
 </style>

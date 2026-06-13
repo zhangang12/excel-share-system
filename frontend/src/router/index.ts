@@ -104,9 +104,15 @@ const router = createRouter({
           component: () => import('@/views/AfterSalesView.vue'),
           meta: { menuKey: 'aftersales' },
         },
+        {
+          path: 'report',
+          name: 'report',
+          component: () => import('@/views/ReportView.vue'),
+          meta: { menuKey: 'report' },
+        },
         // 以下模块按开发顺序逐个落地，未实现前为占位页
         ...([
-          ['warehouse', '仓库组'], ['report', '月度工作报表'], ['approve', '导出审批'],
+          ['warehouse', '仓库组'], ['approve', '导出审批'],
         ] as [string, string][]).map(([key, title]) => ({
           path: key,
           name: key,

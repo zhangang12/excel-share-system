@@ -14,6 +14,7 @@ import {
   type DeptOrder, type DeptOptions, type OrderAttachment,
 } from '@/api/orders'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
+import { reportsApi, type DeptReport } from '@/api/reports'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -186,6 +187,14 @@ function effClass(o: DeptOrder) {
   return o.eff_pct <= 100 ? 'eff-good' : 'eff-bad'
 }
 const deptName = computed(() => options.value?.dept_name || '')
+
+// 🆕 M14 部门报表（负责人/管理层）
+const reportVisible = ref(false)
+const report = ref<DeptReport | null>(null)
+async function openReport() {
+  report.value = await reportsApi.dept(dept.value)
+  reportVisible.value = true
+}
 </script>
 
 <template>
@@ -197,6 +206,8 @@ const deptName = computed(() => options.value?.dept_name || '')
           销售/管理层下单 → 负责人分派 → {{ isWorker ? '接单填时间 → 完成（' + (options?.sheet_check ? '四表校验/' : '') + '通知/产物）→ 推送下游' : '跟踪进度与完成效率' }}
         </div>
       </div>
+      <div class="spacer"></div>
+      <el-button v-if="isLead || isMgr" type="primary" plain @click="openReport">📊 {{ deptName }}报表</el-button>
     </div>
 
     <!-- ===== 工人视角 ===== -->
@@ -398,6 +409,36 @@ const deptName = computed(() => options.value?.dept_name || '')
     <!-- 🆕 v3 M13 问题反馈面板（生产部=装配提交/主管审批；设计部=设计师接收） -->
     <FeedbackPanel v-if="dept === 'produce' || dept === 'design'" :key="dept" />
 
+    <!-- 🆕 M14 部门报表弹窗 -->
+    <el-dialog v-model="reportVisible" :title="`📊 ${report?.dept_name || ''}报表（仅本部门数据）`" width="720px">
+      <div v-if="report">
+        <div class="stat-row">
+          <div class="sc"><div class="v">{{ report.total }}</div><div class="l">任务总数</div></div>
+          <div class="sc"><div class="v ok">{{ report.done }}</div><div class="l">已完成</div></div>
+          <div class="sc"><div class="v bad">{{ report.overdue }}</div><div class="l">逾期</div></div>
+          <div class="sc"><div class="v">{{ report.ontime_rate ?? '—' }}%</div><div class="l">按时率｜均效率 {{ report.avg_eff ?? '—' }}%</div></div>
+        </div>
+        <el-table :data="report.workers" size="small" stripe style="margin-top:10px">
+          <el-table-column prop="worker_name" label="人员" min-width="100" />
+          <el-table-column prop="total" label="任务数" width="80" />
+          <el-table-column prop="done" label="完成" width="70" />
+          <el-table-column prop="ontime" label="按时" width="70" />
+          <el-table-column label="逾期" width="70"><template #default="{ row }">{{ row.over }}</template></el-table-column>
+          <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate ?? '—' }}%</template></el-table-column>
+          <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff != null && row.avg_eff <= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff ?? '—' }}%</span></template></el-table-column>
+        </el-table>
+        <h4 style="margin:14px 0 6px">⏰ 逾期任务（{{ report.overdue_items.length }}）</h4>
+        <el-table v-if="report.overdue_items.length" :data="report.overdue_items" size="small">
+          <el-table-column prop="worker_name" label="人员" width="100" />
+          <el-table-column prop="code" label="项目" width="120" />
+          <el-table-column prop="due_date" label="预计" width="110" />
+          <el-table-column prop="done_date" label="实际" width="110" />
+          <el-table-column label="逾期" width="90"><template #default="{ row }">超 {{ row.over_days }} 天</template></el-table-column>
+        </el-table>
+        <el-empty v-else description="无逾期 🎉" :image-size="44" />
+      </div>
+    </el-dialog>
+
     <!-- ===== 完成弹窗 ===== -->
     <el-dialog v-model="completeVisible" :title="`✓ 完成任务 · ${completeOrder?.project_code || ''}（${deptName}）`" width="560px">
       <el-alert v-if="options?.sheet_check" type="info" :closable="false" style="margin-bottom: 14px"
@@ -487,6 +528,11 @@ const deptName = computed(() => options.value?.dept_name || '')
 .assign-bar { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 .eff-good { color: #16a34a; font-weight: 700; }
 .eff-bad { color: #dc2626; font-weight: 700; }
+.stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.sc { background: var(--el-fill-color-light); border-radius: 8px; padding: 12px; text-align: center; }
+.sc .v { font-size: 22px; font-weight: 600; }
+.sc .v.ok { color: #16a34a; } .sc .v.bad { color: #dc2626; }
+.sc .l { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .out-rows { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .out-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .out-row .ol { font-size: 13px; min-width: 130px; }

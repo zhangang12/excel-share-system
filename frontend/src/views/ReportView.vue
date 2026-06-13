@@ -1,0 +1,112 @@
+<script setup lang="ts">
+// 🆕 v3 M14 月度工作报表（仅管理层）
+import { ref, onMounted } from 'vue'
+import { reportsApi, type MonthlyReport } from '@/api/reports'
+
+const month = ref(new Date().toISOString().slice(0, 7))
+const loading = ref(false)
+const rep = ref<MonthlyReport | null>(null)
+
+async function load() {
+  loading.value = true
+  try { rep.value = await reportsApi.monthly(month.value) }
+  finally { loading.value = false }
+}
+onMounted(load)
+
+function effClass(v?: number | null) { return v == null ? '' : (v <= 100 ? 'good' : 'bad') }
+function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(v, 200) / 2, 8) }
+</script>
+
+<template>
+  <div>
+    <div class="page-header">
+      <div>
+        <h1>月度工作报表</h1>
+        <div class="desc">全公司任务量 / 按时率 / 完成效率 / 逾期清单（仅管理层）</div>
+      </div>
+      <div class="spacer"></div>
+      <el-date-picker v-model="month" type="month" value-format="YYYY-MM" @change="load" />
+    </div>
+
+    <div v-loading="loading">
+      <div class="stat-row" v-if="rep">
+        <div class="stat-card"><div class="v">{{ rep.total }}</div><div class="l">任务总数</div></div>
+        <div class="stat-card"><div class="v ok">{{ rep.done }}</div><div class="l">已完成</div></div>
+        <div class="stat-card"><div class="v bad">{{ rep.overdue }}</div><div class="l">逾期</div></div>
+        <div class="stat-card"><div class="v">{{ rep.ontime_rate ?? '—' }}%</div><div class="l">按时率｜均效率 {{ rep.avg_eff ?? '—' }}%</div></div>
+        <div class="stat-card"><div class="v">{{ rep.sales_order_count }}</div><div class="l">当月销售下单</div></div>
+      </div>
+
+      <el-row :gutter="14" v-if="rep">
+        <el-col :span="8" v-for="d in rep.dept_cards" :key="d.dept">
+          <el-card shadow="never" class="dc">
+            <div class="dc-h">{{ d.name }}</div>
+            <div class="dc-row"><span>任务 / 完成</span><b>{{ d.total }} / {{ d.done }}</b></div>
+            <div class="dc-row"><span>逾期</span><b :class="{ bad: d.over }">{{ d.over }}</b></div>
+            <div class="dc-row"><span>按时率</span><b>{{ d.rate ?? '—' }}%</b></div>
+            <div class="dc-row"><span>平均效率</span><b :class="effClass(d.avg_eff)">{{ d.avg_eff ?? '—' }}%</b></div>
+          </el-card>
+        </el-col>
+      </el-row>
+
+      <el-card shadow="never" style="margin-top:14px" v-if="rep">
+        <template #header>📈 人均完成效率（实际÷预计 · 越低越好，绿=按时）</template>
+        <div v-for="w in rep.workers.filter(x => x.avg_eff != null)" :key="w.dept + w.worker_name" class="bar-row">
+          <span class="bl">{{ w.dept_name }} · {{ w.worker_name }}</span>
+          <div class="bt"><div class="bf" :class="effClass(w.avg_eff)" :style="{ width: barWidth(w.avg_eff) + '%' }">{{ w.avg_eff }}%</div></div>
+        </div>
+        <el-empty v-if="!rep.workers.some(x => x.avg_eff != null)" description="本月暂无完成数据" :image-size="50" />
+      </el-card>
+
+      <el-card shadow="never" style="margin-top:14px" v-if="rep">
+        <template #header>👤 人员明细</template>
+        <el-table :data="rep.workers" size="small" stripe>
+          <el-table-column prop="dept_name" label="部门" width="90" />
+          <el-table-column prop="worker_name" label="人员" width="100" />
+          <el-table-column prop="total" label="任务数" width="80" />
+          <el-table-column prop="done" label="完成" width="70" />
+          <el-table-column prop="ontime" label="按时" width="70" />
+          <el-table-column label="逾期" width="70"><template #default="{ row }"><span :class="{ bad: row.over }">{{ row.over }}</span></template></el-table-column>
+          <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate ?? '—' }}%</template></el-table-column>
+          <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="effClass(row.avg_eff)">{{ row.avg_eff ?? '—' }}%</span></template></el-table-column>
+        </el-table>
+      </el-card>
+
+      <el-card shadow="never" style="margin-top:14px" v-if="rep">
+        <template #header>⏰ 逾期任务清单（{{ rep.overdue_items.length }}）</template>
+        <el-table v-if="rep.overdue_items.length" :data="rep.overdue_items" size="small">
+          <el-table-column prop="dept_name" label="部门" width="90" />
+          <el-table-column prop="worker_name" label="人员" width="100" />
+          <el-table-column prop="code" label="项目" width="120" />
+          <el-table-column prop="due_date" label="预计完成" width="110" />
+          <el-table-column prop="done_date" label="实际完成" width="110" />
+          <el-table-column label="逾期" width="90"><template #default="{ row }"><el-tag type="danger" size="small">超 {{ row.over_days }} 天</el-tag></template></el-table-column>
+          <el-table-column label="效率" width="80"><template #default="{ row }"><span class="bad">{{ row.eff ?? '—' }}%</span></template></el-table-column>
+        </el-table>
+        <el-empty v-else description="本月无逾期 🎉" :image-size="50" />
+      </el-card>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.stat-card { background: var(--el-fill-color-light); border-radius: 10px; padding: 16px; }
+.stat-card .v { font-size: 24px; font-weight: 600; }
+.stat-card .v.ok { color: #16a34a; }
+.stat-card .v.bad { color: #dc2626; }
+.stat-card .l { font-size: 12.5px; color: var(--el-text-color-secondary); margin-top: 4px; }
+.dc { margin-bottom: 14px; }
+.dc-h { font-weight: 600; margin-bottom: 8px; }
+.dc-row { display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0; color: var(--el-text-color-secondary); }
+.dc-row b { color: var(--el-text-color-primary); }
+.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.bl { width: 150px; font-size: 12.5px; flex-shrink: 0; }
+.bt { flex: 1; background: var(--el-fill-color); border-radius: 6px; height: 20px; overflow: hidden; }
+.bf { height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; color: #fff; font-size: 11px; border-radius: 6px; }
+.bf.good { background: linear-gradient(90deg, #34d399, #16a34a); }
+.bf.bad { background: linear-gradient(90deg, #f87171, #dc2626); }
+.good { color: #16a34a; font-weight: 600; }
+.bad { color: #dc2626; font-weight: 600; }
+</style>
