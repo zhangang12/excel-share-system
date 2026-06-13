@@ -230,6 +230,54 @@ class NextCodeOut(BaseModel):
     code: str
 
 
+# ---------- 🆕 售后部 ----------
+class AfterSalesRow(BaseModel):
+    id: int
+    project_id: int
+    code: str
+    name: str
+    problem: str
+    cost: float
+    status: str
+    mat_file_id: Optional[int] = None
+    mat_file_name: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+
+
+class AfterSalesStats(BaseModel):
+    total: int = 0
+    pending: int = 0
+    approved_cost: float = 0
+    total_cost: float = 0
+
+
+class AfterSalesListOut(BaseModel):
+    rows: list[AfterSalesRow]
+    stats: AfterSalesStats
+
+
+class AfterSalesProjOption(BaseModel):
+    id: int
+    code: str
+    name: str
+
+
+# ---------- 🆕 财务部 ----------
+class FinanceInvoiceRow(BaseModel):
+    ledger_id: int
+    code: str
+    name: str
+    customer: Optional[str] = None
+    sales_name: Optional[str] = None
+    amount: float = 0
+    tax_rate: Optional[str] = None
+    apply_file_id: Optional[int] = None
+    apply_file_name: Optional[str] = None
+    invoice_file_id: Optional[int] = None
+    invoice_file_name: Optional[str] = None
+
+
 class OrderOptionsOut(BaseModel):
     workers: list[OrderOptionUser]
     notify_pool: list[OrderOptionUser]

@@ -266,6 +266,23 @@ class Attachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+# ---------- 🆕 售后部（登记→审批→同步财务；§十五） ----------
+class AfterSales(Base):
+    __tablename__ = "aftersales"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    problem: Mapped[str] = mapped_column(Text)
+    cost: Mapped[float] = mapped_column(default=0)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/approved/rejected
+    mat_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))  # 售后物料清单（登记必传）
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    appr_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    appr_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    project: Mapped["Project"] = relationship(lazy="joined")
+
+
 # ---------- 🆕 站内消息（角色池路由；企微推送降级兜底） ----------
 class Message(Base):
     """站内消息。to_role 推送在写入时按角色扇出成每用户一行（已读状态天然按人）。"""
