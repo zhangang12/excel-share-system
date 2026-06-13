@@ -13,6 +13,7 @@ import {
   ordersApi, downloadAttachment, ORDER_STATUS_TEXT, ORDER_STATUS_TAG,
   type DeptOrder, type DeptOptions, type OrderAttachment,
 } from '@/api/orders'
+import FeedbackPanel from '@/components/FeedbackPanel.vue'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -393,6 +394,9 @@ const deptName = computed(() => options.value?.dept_name || '')
     </template>
 
     <el-empty v-else description="你没有本工作台权限" />
+
+    <!-- 🆕 v3 M13 问题反馈面板（生产部=装配提交/主管审批；设计部=设计师接收） -->
+    <FeedbackPanel v-if="dept === 'produce' || dept === 'design'" :key="dept" />
 
     <!-- ===== 完成弹窗 ===== -->
     <el-dialog v-model="completeVisible" :title="`✓ 完成任务 · ${completeOrder?.project_code || ''}（${deptName}）`" width="560px">

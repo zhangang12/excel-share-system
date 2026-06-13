@@ -18,7 +18,7 @@ from .routers import (
     excel_router, overview_router, field_perm_router, ws_router,
     attachments_router, messages_router, orders_router, sales_router,
     logistics_router, collab_router, downstream_router,
-    aftersales_router, finance_router,
+    aftersales_router, finance_router, feedback_router,
 )
 from .errors import register_exception_handlers
 
@@ -78,6 +78,7 @@ def create_app() -> FastAPI:
     app.include_router(downstream_router.router)
     app.include_router(aftersales_router.router)
     app.include_router(finance_router.router)
+    app.include_router(feedback_router.router)
 
     @app.get("/api/health")
     async def health():

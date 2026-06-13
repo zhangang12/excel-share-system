@@ -1,0 +1,114 @@
+<script setup lang="ts">
+// 🆕 v3 M13 问题反馈面板（按角色显示：装配提交 / 生产主管审批 / 设计师接收驳回）
+import { ref, onMounted, reactive, computed } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
+import { useAuthStore } from '@/stores/auth'
+import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
+
+const auth = useAuthStore()
+const role = computed(() => auth.user?.role_code || '')
+const isAssembler = computed(() => role.value === 'assembler')
+const isPm = computed(() => ['pm_lead', 'manager', 'admin'].includes(role.value))
+const isDesigner = computed(() => role.value === 'designer')
+
+const list = ref<Feedback[]>([])
+const loading = ref(false)
+async function load() {
+  loading.value = true
+  try { list.value = await feedbackApi.mine() }
+  finally { loading.value = false }
+}
+onMounted(load)
+
+const title = computed(() => {
+  if (isAssembler.value) return '📝 我的问题反馈'
+  if (isPm.value) return '📝 问题反馈审批'
+  if (isDesigner.value) return '📥 待接收的问题反馈'
+  return '问题反馈'
+})
+
+// 装配提交
+const submitVisible = ref(false)
+const form = reactive({ project_id: undefined as number | undefined, content: '' })
+const projOptions = ref<{ id: number; code: string; name: string }[]>([])
+async function openSubmit() {
+  projOptions.value = await feedbackApi.myProjects()
+  form.project_id = undefined; form.content = ''
+  submitVisible.value = true
+}
+async function submit() {
+  if (!form.project_id) { ElMessage.warning('请选择项目'); return }
+  if (!form.content.trim()) { ElMessage.warning('请填写问题内容'); return }
+  await feedbackApi.create(form.project_id, form.content)
+  ElMessage.success('已提交，等待生产主管审批')
+  submitVisible.value = false
+  await load()
+}
+
+async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' | 'designReject') {
+  const r: any = await feedbackApi[fn](fb.id)
+  ElMessage.success(r.message || '操作成功')
+  await load()
+}
+</script>
+
+<template>
+  <el-card v-if="isAssembler || isPm || isDesigner" shadow="never" class="fb-card">
+    <template #header>
+      <div class="fb-head">
+        <span>{{ title }} <el-tag v-if="list.length" size="small" type="warning">{{ list.length }}</el-tag></span>
+        <el-button v-if="isAssembler" size="small" type="primary" :icon="Plus" @click="openSubmit">提交反馈</el-button>
+      </div>
+    </template>
+
+    <el-empty v-if="!loading && !list.length"
+              :description="isAssembler ? '暂无反馈，可对在手项目提交问题' : '暂无待处理反馈'" :image-size="60" />
+    <el-table v-else :data="list" v-loading="loading" size="small">
+      <el-table-column label="项目" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+      <el-table-column prop="content" label="问题内容" min-width="220" show-overflow-tooltip />
+      <el-table-column v-if="!isAssembler" label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>
+      <el-table-column label="状态" width="100">
+        <template #default="{ row }"><el-tag size="small" :type="FB_STATUS_TAG[row.status]">{{ FB_STATUS_TXT[row.status] }}</el-tag></template>
+      </el-table-column>
+      <el-table-column label="操作" width="160">
+        <template #default="{ row }">
+          <template v-if="isPm && row.status === 'pending_pm'">
+            <el-button size="small" type="success" @click="act(row, 'pmApprove')">✓ 通过</el-button>
+            <el-button size="small" @click="act(row, 'pmReject')">驳回</el-button>
+          </template>
+          <template v-else-if="isDesigner && row.status === 'pending_design'">
+            <el-button size="small" type="success" @click="act(row, 'designAccept')">接收存档</el-button>
+            <el-button size="small" @click="act(row, 'designReject')">驳回</el-button>
+          </template>
+          <span v-else class="muted small">—</span>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <el-dialog v-model="submitVisible" title="📝 提交问题反馈" width="480px">
+      <el-form label-position="top">
+        <el-form-item label="项目（在手）" required>
+          <el-select v-model="form.project_id" filterable placeholder="选择在手项目" style="width: 100%">
+            <el-option v-for="p in projOptions" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="问题内容" required>
+          <el-input v-model="form.content" type="textarea" :rows="3" placeholder="描述装配中发现的问题，提交后经生产主管审批回馈设计师" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="submitVisible = false">取消</el-button>
+        <el-button type="primary" @click="submit">提交</el-button>
+      </template>
+    </el-dialog>
+  </el-card>
+</template>
+
+<style scoped>
+.fb-card { margin-top: 14px; }
+.fb-head { display: flex; align-items: center; justify-content: space-between; }
+.code { color: var(--primary, #2563eb); }
+.muted { color: var(--el-text-color-secondary); }
+.small { font-size: 12px; }
+</style>

@@ -283,6 +283,27 @@ class AfterSales(Base):
     project: Mapped["Project"] = relationship(lazy="joined")
 
 
+# ---------- 🆕 生产问题反馈流（装配组→生产主管→设计师；§十四） ----------
+class Feedback(Base):
+    __tablename__ = "feedbacks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    # pending_pm 待主管审批 / pending_design 待设计接收 / archived 已存档 /
+    # rejected_by_pm 主管驳回 / rejected_by_design 设计驳回
+    status: Mapped[str] = mapped_column(String(20), default="pending_pm", index=True)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    designer_uid: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))  # 反馈指向的设计师
+    appr_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    project: Mapped["Project"] = relationship(lazy="joined")
+    creator: Mapped[Optional["User"]] = relationship(foreign_keys=[created_by], lazy="joined")
+    designer: Mapped[Optional["User"]] = relationship(foreign_keys=[designer_uid], lazy="joined")
+
+
 # ---------- 🆕 站内消息（角色池路由；企微推送降级兜底） ----------
 class Message(Base):
     """站内消息。to_role 推送在写入时按角色扇出成每用户一行（已读状态天然按人）。"""

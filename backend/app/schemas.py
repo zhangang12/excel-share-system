@@ -263,6 +263,30 @@ class AfterSalesProjOption(BaseModel):
     name: str
 
 
+# ---------- 🆕 生产问题反馈 ----------
+class FeedbackCreate(BaseModel):
+    project_id: int
+    content: str
+
+
+class FeedbackRow(BaseModel):
+    id: int
+    project_id: int
+    code: str
+    name: str
+    content: str
+    status: str
+    created_by_name: Optional[str] = None
+    designer_name: Optional[str] = None
+    created_at: datetime
+
+
+class FeedbackProjOption(BaseModel):
+    id: int
+    code: str
+    name: str
+
+
 # ---------- 🆕 财务部 ----------
 class FinanceInvoiceRow(BaseModel):
     ledger_id: int

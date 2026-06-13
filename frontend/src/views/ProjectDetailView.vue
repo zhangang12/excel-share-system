@@ -12,6 +12,7 @@ import DatasheetGrid from '@/components/DatasheetGrid.vue'
 import ClonePermissionsDialog from '@/components/ClonePermissionsDialog.vue'
 import WorkflowGraph from '@/components/WorkflowGraph.vue'
 import { collabApi, ASSEMBLY_SHEETS, type Workflow } from '@/api/collab'
+import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
 import type { Project, ProjectMember, User, Datasheet } from '@/types'
 
 const route = useRoute()
@@ -100,10 +101,17 @@ const isPrecheckSheet = computed(() => !!activeSheet.value && ASSEMBLY_SHEETS.in
 const canMarkDone = computed(() =>
   ['admin', 'manager', 'pm_lead', 'designer', 'design_lead'].includes(auth.user?.role_code || ''))
 
+const feedbacks = ref<Feedback[]>([])
 async function loadWorkflow() {
   wfLoading.value = true
-  try { workflow.value = await collabApi.workflow(pid.value) }
-  catch { workflow.value = null }
+  try {
+    const [wf, fbs] = await Promise.all([
+      collabApi.workflow(pid.value),
+      feedbackApi.byProject(pid.value).catch(() => []),
+    ])
+    workflow.value = wf
+    feedbacks.value = fbs
+  } catch { workflow.value = null }
   finally { wfLoading.value = false }
 }
 
@@ -431,10 +439,24 @@ onMounted(async () => {
           <div class="muted small" style="margin-top:8px">通过页头「导入 Excel」上传四表（含四个 sheet 一次导入）；此处仅显示校验状态。</div>
         </el-card>
 
-        <el-card shadow="never" v-loading="wfLoading">
+        <el-card shadow="never" style="margin-bottom:14px" v-loading="wfLoading">
           <template #header>🔀 全流程工作流（并行 / 串行）</template>
           <WorkflowGraph v-if="workflow" :wf="workflow" />
           <el-empty v-else description="加载中…" :image-size="60" />
+        </el-card>
+
+        <!-- 🆕 v3 M13 问题反馈存档 -->
+        <el-card shadow="never">
+          <template #header>📝 问题反馈（装配组 → 生产主管 → 设计师 存档）</template>
+          <el-table v-if="feedbacks.length" :data="feedbacks" size="small">
+            <el-table-column prop="content" label="问题" min-width="240" show-overflow-tooltip />
+            <el-table-column label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>
+            <el-table-column label="设计师" width="90"><template #default="{ row }">{{ row.designer_name || '—' }}</template></el-table-column>
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }"><el-tag size="small" :type="FB_STATUS_TAG[row.status]">{{ FB_STATUS_TXT[row.status] }}</el-tag></template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-else description="暂无问题反馈" :image-size="50" />
         </el-card>
       </el-tab-pane>
     </el-tabs>
