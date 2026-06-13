@@ -18,7 +18,11 @@ log = logging.getLogger("data_migration")
 _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "roles": [("can_push", "BOOLEAN DEFAULT FALSE")],
     "users": [("wxid", "VARCHAR(64)")],
-    "datasheets": [("imported_at", "TIMESTAMP")],  # P-16 四表导入标记
+    "datasheets": [
+        ("imported_at", "TIMESTAMP"),       # P-16 四表导入标记
+        ("done_flag", "BOOLEAN DEFAULT FALSE"),  # §十七 装配前置完成标记
+        ("done_at", "TIMESTAMP"),
+    ],
     "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
 }
 
@@ -1030,6 +1034,44 @@ async def backfill_shipments(db: AsyncSession) -> dict:
     return {"created": created}
 
 
+async def backfill_elec_po_sheet(db: AsyncSession) -> dict:
+    """🆕 v3 M12：给已有数据表的存量活跃项目补建第 5 张「电工采购单」空表（§十六）。
+
+    backfill_template_sheets_for_empty_projects 只处理 0 表项目，不会给已有 4 表的
+    项目补第 5 张——故单独迁移。幂等：项目已有同名表跳过。
+    """
+    from .sheet_templates import ELEC_PO_SHEET_NAME, ELEC_PO_COLUMNS
+    from .routers.projects_router import _create_sheet_with_fields
+
+    res = await db.execute(
+        select(models.Project.id).where(models.Project.is_deleted == False)  # noqa: E712
+    )
+    active_pids = [r[0] for r in res.all()]
+    if not active_pids:
+        return {"created": 0}
+
+    # 已有电工采购单的项目集合
+    res = await db.execute(
+        select(models.Datasheet.project_id).where(
+            models.Datasheet.name == ELEC_PO_SHEET_NAME)
+    )
+    have = {r[0] for r in res.all()}
+    # 至少有 1 张表的项目才补（纯空项目交给 backfill_template_sheets_for_empty_projects 建全套）
+    res = await db.execute(select(models.Datasheet.project_id).distinct())
+    has_any = {r[0] for r in res.all()}
+
+    created = 0
+    for pid in active_pids:
+        if pid in have or pid not in has_any:
+            continue
+        await _create_sheet_with_fields(db, pid, ELEC_PO_SHEET_NAME, ELEC_PO_COLUMNS, 100)
+        created += 1
+    if created:
+        await db.commit()
+        log.info("[backfill_elec_po_sheet] 为 %d 个存量项目补建电工采购单第5表", created)
+    return {"created": created}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -1108,3 +1150,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_shipments(db)
     except Exception as e:
         log.warning("backfill_shipments failed: %s", e)
+    try:
+        await backfill_elec_po_sheet(db)
+    except Exception as e:
+        log.warning("backfill_elec_po_sheet failed: %s", e)

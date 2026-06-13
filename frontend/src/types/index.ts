@@ -42,6 +42,8 @@ export interface Datasheet {
   sort_order: number
   field_count: number; record_count: number
   header_lines?: string[][] | null
+  imported?: boolean      // 🆕 v3 四表校验：是否已导入 Excel
+  done_flag?: boolean     // 🆕 v3 装配前置完成标记
   created_at: string; updated_at: string
 }
 

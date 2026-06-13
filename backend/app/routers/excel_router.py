@@ -406,14 +406,26 @@ async def import_excel(
         aligned_meta.append((sname, headers, rows, preamble))
     sheets_meta = aligned_meta
 
-    # ===== 全量替换：先删本项目所有现有数据表（含字段、记录、字段权限） =====
+    # ===== 全量替换：先删本项目现有数据表（含字段、记录、字段权限） =====
+    # 🆕 v3：白名单保护「电工采购单」第 5 表——它由电工部上传生成、非用户导入文件的一部分，
+    # 重导四表 Excel 不应误删它（最小侵入：删除范围排除该表）。
     from sqlalchemy import delete as _del
-    # 先查出所有相关 field id（要删字段权限和确认数量）
-    fres = await db.execute(
-        select(models.Field.id).join(models.Datasheet, models.Field.datasheet_id == models.Datasheet.id)
-        .where(models.Datasheet.project_id == pid)
+    from ..sheet_templates import ELEC_PO_SHEET_NAME
+    PROTECT = (ELEC_PO_SHEET_NAME,)
+    # 待删 datasheet id（排除受保护表）
+    ds_ids_res = await db.execute(
+        select(models.Datasheet.id).where(
+            models.Datasheet.project_id == pid,
+            models.Datasheet.name.notin_(PROTECT),
+        )
     )
-    field_ids = [r[0] for r in fres.all()]
+    ds_ids_to_del = [r[0] for r in ds_ids_res.all()]
+    field_ids = []
+    if ds_ids_to_del:
+        fres = await db.execute(
+            select(models.Field.id).where(models.Field.datasheet_id.in_(ds_ids_to_del))
+        )
+        field_ids = [r[0] for r in fres.all()]
     # 数 records / datasheets 用于回显
     rres = await db.execute(
         select(func.count(models.Record.id))
@@ -421,31 +433,29 @@ async def import_excel(
         .where(models.Datasheet.project_id == pid)
     )
     old_record_count = rres.scalar() or 0
-    dres = await db.execute(
-        select(func.count(models.Datasheet.id)).where(models.Datasheet.project_id == pid)
-    )
-    old_ds_count = dres.scalar() or 0
-    # 显式删整链：records / field_permissions / fields / datasheets
+    old_ds_count = len(ds_ids_to_del)
+    # 显式删整链：field_permissions / fields / records / datasheets（仅非保护表）
     if field_ids:
         await db.execute(_del(models.FieldPermission).where(models.FieldPermission.field_id.in_(field_ids)))
         await db.execute(_del(models.Field).where(models.Field.id.in_(field_ids)))
-    # 再显式删 records（不依赖外键 CASCADE）
-    ds_ids_res = await db.execute(
-        select(models.Datasheet.id).where(models.Datasheet.project_id == pid)
-    )
-    ds_ids_to_del = [r[0] for r in ds_ids_res.all()]
     if ds_ids_to_del:
         await db.execute(_del(models.Record).where(models.Record.datasheet_id.in_(ds_ids_to_del)))
-    await db.execute(_del(models.Datasheet).where(models.Datasheet.project_id == pid))
+        await db.execute(_del(models.Datasheet).where(models.Datasheet.id.in_(ds_ids_to_del)))
+    # 受保护的电工采购单排到末尾（重导的四表占 0..N，它保持最后一个 tab）
+    from sqlalchemy import update as _upd
+    await db.execute(
+        _upd(models.Datasheet).where(
+            models.Datasheet.project_id == pid,
+            models.Datasheet.name.in_(PROTECT),
+        ).values(sort_order=100)
+    )
     await db.flush()
     # =====================================================================
 
     # 入库：每个 sheet 一个 datasheet
     total_records = 0
-    res = await db.execute(
-        select(func.max(models.Datasheet.sort_order)).where(models.Datasheet.project_id == pid)
-    )
-    base_order = (res.scalar() or -1) + 1
+    # 导入的表从 0 开始排（全量替换四表）；受保护的电工采购单已被置 sort_order=100 留在末尾
+    base_order = 0
     from datetime import datetime as _dt, timezone as _tz
     for idx, (sname, headers, rows, preamble) in enumerate(sheets_meta):
         d = models.Datasheet(

@@ -27,8 +27,74 @@ from ..utils import write_audit
 from ..sheet_templates import SHEET_TEMPLATES, OVERVIEW_HEADER_ALIAS
 from .attachments_router import save_upload, delete_attachment_file
 from .projects_router import OVERVIEW_KEY_PREFIX, HEADER_KEY_PREFIX
+from ..sheet_templates import ELEC_PO_SHEET_NAME
+from ..config import settings
 
 router = APIRouter(prefix="/api/orders", tags=["部门任务单"])
+
+
+async def _populate_elec_po_from_excel(db: AsyncSession, project_id: int, project_code: str, att: models.Attachment) -> int:
+    """电工首次上传采购清单 → 解析 Excel 自动填充项目「电工采购单」第5表（§十六）。
+
+    仅当第5表当前无数据行时填充（避免覆盖采购/仓库后续手填的列）。
+    按表头名与第5表列名交集映射；'项目'列自动填项目编号。解析失败静默跳过（仅留附件引用）。
+    返回写入行数。调用方负责 commit。
+    """
+    from pathlib import Path
+    from openpyxl import load_workbook
+    from sqlalchemy import func as _f
+
+    res = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.project_id == project_id,
+        models.Datasheet.name == ELEC_PO_SHEET_NAME,
+    ))
+    ds = res.scalar_one_or_none()
+    if not ds:
+        return 0
+    # 已有数据行则不覆盖
+    cnt = await db.execute(select(_f.count(models.Record.id)).where(models.Record.datasheet_id == ds.id))
+    if (cnt.scalar() or 0) > 0:
+        return 0
+
+    res = await db.execute(select(models.Field).where(models.Field.datasheet_id == ds.id)
+                           .order_by(models.Field.sort_order))
+    fields = list(res.scalars().all())
+    name_to_fid = {f.name: f.id for f in fields}
+
+    try:
+        wb = load_workbook(Path(settings.files_dir) / att.path, read_only=True, data_only=True)
+        ws = wb.active
+        rows = [[c for c in r] for r in ws.iter_rows(values_only=True)]
+    except Exception:
+        return 0
+    if not rows:
+        return 0
+    # 找表头行：前 5 行中非空单元格最多的一行
+    head_idx, best = 0, -1
+    for i, r in enumerate(rows[:5]):
+        n = sum(1 for c in r if c not in (None, ""))
+        if n > best:
+            best, head_idx = n, i
+    headers = [str(c).strip() if c is not None else "" for c in rows[head_idx]]
+    # 表头列名 → Excel 列下标（命中第5表列名的）
+    col_map = {h: i for i, h in enumerate(headers) if h in name_to_fid and h != "项目"}
+
+    written = 0
+    for r in rows[head_idx + 1:]:
+        if not any(c not in (None, "") for c in r):
+            continue
+        values: dict[str, str] = {str(name_to_fid["项目"]): project_code}
+        has_data = False
+        for h, ci in col_map.items():
+            v = r[ci] if ci < len(r) else None
+            if v not in (None, ""):
+                values[str(name_to_fid[h])] = str(v).strip()
+                has_data = True
+        if not has_data:
+            continue
+        db.add(models.Record(datasheet_id=ds.id, sort_order=written, values=values))
+        written += 1
+    return written
 
 
 # ==================== 工具 ====================
@@ -327,9 +393,15 @@ async def start_upload(
         a = await save_upload(db, f, biz_type="order_start_output", biz_id=o.id,
                               kind=kind, project_id=o.project_id, user=current)
         outs.append(a)
+    p = o.project
+    # 🆕 M12：电工采购清单 → 首次自动解析写入项目「电工采购单」第5表
+    if o.dept == "electric" and kind == "plist" and outs:
+        try:
+            await _populate_elec_po_from_excel(db, o.project_id, p.code, outs[0])
+        except Exception:  # noqa: BLE001  解析失败不阻塞上传
+            pass
     await db.commit()
 
-    p = o.project
     await push_message(db, to_role=so["to_role"], kind="info",
                        text=f"【{so['label']}】{cfg['name']}已上传 {p.code} {so['label']} {len(outs)} 个文件，请查收。",
                        biz_type="order", biz_id=o.id)

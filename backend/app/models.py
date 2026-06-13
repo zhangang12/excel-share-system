@@ -92,6 +92,9 @@ class Datasheet(Base):
     header_lines: Mapped[Optional[str]] = mapped_column(Text)
     # 🆕 v3 P-16：最近一次 Excel 导入时间（四表"已导入"以此判定，设计完成 D1 校验读它）
     imported_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # 🆕 v3 §十七：装配前置三表完成标记（管理层/生产主管/设计师标记；与 imported_at 独立）
+    done_flag: Mapped[bool] = mapped_column(default=False)
+    done_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

@@ -52,6 +52,8 @@ async def _datasheet_to_out(d: models.Datasheet, db: AsyncSession) -> schemas.Da
         id=d.id, project_id=d.project_id, name=d.name, sort_order=d.sort_order,
         field_count=fres.scalar() or 0, record_count=rres.scalar() or 0,
         header_lines=header_lines,
+        imported=d.imported_at is not None,  # 🆕 四表校验：是否已导入
+        done_flag=bool(d.done_flag),         # 🆕 装配前置完成标记
         created_at=d.created_at, updated_at=d.updated_at,
     )
 
