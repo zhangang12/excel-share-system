@@ -247,6 +247,12 @@ async def update_ledger(
 ):
     """台账编辑（仅销售主管/管理层）；编号与发货日期不可改。"""
     led = await _ledger_or_404(db, lid)
+    # 🆕 #105 已进入开票流程(待财务开票/已开票)后，禁改金额/税票——否则与已开发票及推送财务的快照金额脱节
+    if led.invoice_state in ("pending_invoice", "invoiced"):
+        amt_chg = data.amount is not None and data.amount != led.amount
+        tax_chg = data.tax_rate is not None and (data.tax_rate or "").strip() != (led.tax_rate or "")
+        if amt_chg or tax_chg:
+            raise HTTPException(400, "已进入开票流程，金额/税票不可修改（如需更正请先驳回/作废发票）")
     if data.name is not None and led.project:
         led.project.name = data.name.strip() or led.project.name
     for f in ("customer", "cust_type", "contract", "tax_rate"):

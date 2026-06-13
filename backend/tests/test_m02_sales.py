@@ -167,6 +167,16 @@ async def main():
         chk(rowA["invoice_state"]=="invoiced" and rowA["invoice_file_name"]=="增值税发票.pdf", "台账已开票+发票可下载")
         chk(j["totals"]["uninvoiced"]==j["totals"]["amount"]-95000, f"未开票合计扣除已开票: {j['totals']['uninvoiced']}")
 
+        # ---- 🆕 #105 已开票后禁改金额/税票，但其它字段(客户)仍可改 ----
+        r = await c.put(f"/api/sales/ledger/{lidA}", headers=Hsl, json={"amount": 88000})
+        chk(r.status_code==400 and "开票流程" in r.text, f"#105 已开票改金额被拒: {r.status_code} {r.text[:80]}")
+        r = await c.put(f"/api/sales/ledger/{lidA}", headers=Hsl, json={"tax_rate": "/"})
+        chk(r.status_code==400, "#105 已开票改税票被拒")
+        r = await c.put(f"/api/sales/ledger/{lidA}", headers=Hsl, json={"customer": "涿州腾源阁2"})
+        chk(r.status_code==200, f"#105 已开票仍可改非金额字段(客户): {r.text[:80]}")
+        r = await c.put(f"/api/sales/ledger/{lidA}", headers=Hsl, json={"amount": 95000})
+        chk(r.status_code==200, "#105 金额改回原值(未变更)不拦截")
+
         # ---- 存量回填迁移：手建一个无台账项目 → run_all 后补行 ----
         r = await c.post("/api/projects", headers=H, json={"code":"2025-099","name":"存量项目"})
         from app.data_migration import backfill_sales_ledger, backfill_shipments
@@ -182,6 +192,18 @@ async def main():
         # 任务出现在部门工作台（销售下单→设计待派）
         r = await c.get("/api/orders?dept=design", headers=Hdl)
         chk(len(r.json())==3 and all(x["status"]=="pending_assign" for x in r.json()), "设计部3条待派任务")
+
+        # ---- 🆕 #3 软删带进行中开票流(pending_invoice)的项目应被拦下(409) ----
+        lidB = [x for x in (await c.get("/api/sales/ledger", headers=Hsl)).json()["rows"] if x["project_id"]==lidB_pid][0]["id"]
+        await c.post(f"/api/sales/ledger/{lidB}/invoice-apply", headers=Hs2,
+                     files={"file": ("申请.xlsx", io.BytesIO(b"X"), "application/vnd.ms-excel")})
+        await c.post(f"/api/sales/ledger/{lidB}/invoice-approve", headers=Hsl)  # → pending_invoice
+        r = await c.delete(f"/api/projects/{lidB_pid}", headers=H)
+        chk(r.status_code==409 and "开票流程" in r.text, f"#3 软删pending_invoice项目被拒: {r.status_code} {r.text[:80]}")
+        await c.post(f"/api/sales/ledger/{lidB}/invoice-upload", headers=Hfin,
+                     files={"file": ("发票.pdf", io.BytesIO(b"P"), "application/pdf")})  # → invoiced(非进行中)
+        r = await c.delete(f"/api/projects/{lidB_pid}", headers=H)
+        chk(r.status_code==200, f"#3 开票完成后可删除: {r.text[:80]}")
 
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")

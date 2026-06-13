@@ -192,6 +192,12 @@ async def reverse_txn(
     if o.reversed:
         raise HTTPException(400, "该单已被冲红")
     rev_dir = "out" if o.direction == "in" else "in"
+    # 🆕 #83 冲红入库单(生成反向出库)需校验负库存：若该入库货已被领用，冲红会击穿“库存非负”
+    if rev_dir == "out":
+        cur = (await _stock_map(db, [o.material_id])).get(o.material_id, 0)
+        if o.qty > cur:
+            raise HTTPException(
+                400, f"该入库已被领用，现存 {cur} 不足冲红 {o.qty}，请先冲红相关出库单")
     bd = date.today().isoformat()
     ref = await _next_ref(db, rev_dir, bd)
     rev = models.WhTxn(

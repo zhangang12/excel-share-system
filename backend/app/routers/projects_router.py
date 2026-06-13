@@ -481,6 +481,17 @@ async def delete_project(
         raise HTTPException(404, "项目不存在")
     orig_code = p.code
 
+    # 🆕 #3 防止软删导致财务「待开票」工作项静默丢失：有进行中开票流的台账先拦下
+    lr = await db.execute(
+        select(models.SalesLedger).where(
+            models.SalesLedger.project_id == pid,
+            models.SalesLedger.invoice_state.in_(("applying", "pending_invoice")),
+        )
+    )
+    if lr.scalar_one_or_none() is not None:
+        raise HTTPException(
+            409, "该项目有进行中的开票流程（待审批/待开票），请先在销售或财务处理完成/驳回后再删除")
+
     # 清理所有派生数据（datasheets / fields / records / field_perms / members）
     counts = await _purge_project_derived_data(db, [pid])
 

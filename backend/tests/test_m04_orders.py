@@ -151,6 +151,10 @@ async def main():
         chk(r.status_code==200, "电路图上传")
         r = await c.post(f"/api/orders/{o_elec}/complete", headers=He1, json={"notify_user_id":ids["bu"]})
         chk(r.status_code==200, f"电工完成: {r.text[:150]}")
+        # 🆕 #50 完成(done)单不得再上传产物（状态守卫，避免改下游资料/破坏留痕）
+        r = await c.post(f"/api/orders/{o_elec}/output-upload?kind=circuit", headers=He1,
+                         files=[("files", ("追加.pdf", io.BytesIO(b"PDF"), "application/pdf"))])
+        chk(r.status_code==400 and "进行中" in r.text, f"#50 done单output-upload被拒: {r.status_code} {r.text[:80]}")
         # due=2026-06-05 < today → 逾期，主管+管理层收 warn
         msgs = (await c.get("/api/messages", headers=Hel)).json()
         chk(any("逾期完成" in m["text"] and "效率" in m["text"] for m in msgs), "电工主管收逾期推送")

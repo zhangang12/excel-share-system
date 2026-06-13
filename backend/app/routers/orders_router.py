@@ -425,6 +425,9 @@ async def output_upload(
         raise HTTPException(400, f"{cfg['name']}没有 {kind} 类型的产物")
     if not (_is_mgr(current) or o.worker_id == current.id):
         raise HTTPException(403, "仅任务负责人可上传")
+    # 🆕 #50 状态守卫：已完成/已作废单不得再挂产物（避免改下游资料/破坏留痕），与 start_upload 对齐
+    if o.status not in ("in_progress", "assigned"):
+        raise HTTPException(400, "任务未在进行中，不能上传产物")
     outs = []
     for f in files:
         a = await save_upload(db, f, biz_type="order_output", biz_id=o.id,
