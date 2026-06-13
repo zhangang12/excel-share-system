@@ -621,6 +621,8 @@ async def export_datasheet(
     db: AsyncSession = Depends(get_db),
 ):
     """导出单个数据表为 .xlsx"""
+    from ..deps import ensure_can_export
+    ensure_can_export(current)  # 🆕 M16 导出闸（默认关）
     res = await db.execute(select(models.Datasheet).where(models.Datasheet.id == did))
     d = res.scalar_one_or_none()
     if not d:
@@ -676,6 +678,8 @@ async def export_project(
     db: AsyncSession = Depends(get_db),
 ):
     """导出整个项目所有数据表为一个 .xlsx 多 sheet 文件"""
+    from ..deps import ensure_can_export
+    ensure_can_export(current)  # 🆕 M16 导出闸（默认关）
     res = await db.execute(
         select(models.Project).where(models.Project.id == pid, models.Project.is_deleted == False)
     )

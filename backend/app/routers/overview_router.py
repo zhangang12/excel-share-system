@@ -183,6 +183,8 @@ async def export_overview(
     from io import BytesIO
     from urllib.parse import quote
     from openpyxl import Workbook
+    from ..deps import ensure_can_export
+    ensure_can_export(current)  # 🆕 M16 导出闸（默认关，开启后非管理层需审批）
 
     fres = await db.execute(
         select(models.OverviewField).order_by(models.OverviewField.sort_order, models.OverviewField.id)

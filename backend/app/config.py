@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     wecom_agent_id: str = ""
     wecom_secret: str = ""
 
+    # 🆕 v3 M16：导出审批开关（默认关闭=所有导出行为与现状完全一致；
+    # 上线灰度后由管理层确认再打开，符合"动老页面用可逆开关"红线）
+    export_approval_enabled: bool = False
+
 
 # 确保 data 目录存在（SQLite 文件会写到这里）
 Path("data").mkdir(exist_ok=True)

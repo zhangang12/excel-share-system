@@ -408,6 +408,26 @@ class WxidIn(BaseModel):
     wxid: str = ""
 
 
+# ---------- 🆕 导出审批 ----------
+class ExportRequestIn(BaseModel):
+    scope: str = "数据导出"
+
+
+class ExportRequestOut(BaseModel):
+    id: int
+    user_id: int
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    scope: str
+    status: str
+    created_at: datetime
+
+
+class ExportConfigOut(BaseModel):
+    enabled: bool
+    can_export: bool   # 当前用户是否已可导出（管理层或已获权）
+
+
 # ---------- 认证 ----------
 class LoginIn(BaseModel):
     username: str

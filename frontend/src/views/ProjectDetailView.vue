@@ -13,6 +13,7 @@ import ClonePermissionsDialog from '@/components/ClonePermissionsDialog.vue'
 import WorkflowGraph from '@/components/WorkflowGraph.vue'
 import { collabApi, ASSEMBLY_SHEETS, type Workflow } from '@/api/collab'
 import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
+import { fetchExport } from '@/api/exportRequest'
 import type { Project, ProjectMember, User, Datasheet } from '@/types'
 
 const route = useRoute()
@@ -255,33 +256,11 @@ async function onImportFile(ev: Event) {
 
 async function exportCurrent() {
   if (!activeSheetId.value) { ElMessage.warning('请先选择数据表'); return }
-  const token = localStorage.getItem('pms_token') || ''
-  const res = await fetch(`/api/datasheets/${activeSheetId.value}/export`, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
-  if (!res.ok) { ElMessage.error('导出失败'); return }
-  const cd = res.headers.get('Content-Disposition') || ''
-  const m = cd.match(/filename\*?=(?:UTF-8'')?([^;\n]+)/i)
-  const fname = m ? decodeURIComponent(m[1].replace(/"/g,'')) : 'export.xlsx'
-  const blob = await res.blob()
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob); a.download = fname
-  document.body.appendChild(a); a.click(); a.remove()
+  await fetchExport(`/api/datasheets/${activeSheetId.value}/export`, 'export.xlsx', '数据表导出')
 }
 
 async function exportAll() {
-  const token = localStorage.getItem('pms_token') || ''
-  const res = await fetch(`/api/projects/${pid.value}/export`, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
-  if (!res.ok) { ElMessage.error('导出失败'); return }
-  const cd = res.headers.get('Content-Disposition') || ''
-  const m = cd.match(/filename\*?=(?:UTF-8'')?([^;\n]+)/i)
-  const fname = m ? decodeURIComponent(m[1].replace(/"/g,'')) : 'project.xlsx'
-  const blob = await res.blob()
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob); a.download = fname
-  document.body.appendChild(a); a.click(); a.remove()
+  await fetchExport(`/api/projects/${pid.value}/export`, 'project.xlsx', `项目导出 ${project.value?.code || ''}`)
 }
 
 onMounted(async () => {

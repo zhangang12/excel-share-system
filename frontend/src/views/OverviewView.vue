@@ -12,6 +12,7 @@ import { useRealtime } from '@/composables/useRealtime'
 import { useTableHeight } from '@/composables/useTableHeight'
 import { useDragFill } from '@/composables/useDragFill'
 import { useAuthStore } from '@/stores/auth'
+import { fetchExport } from '@/api/exportRequest'
 import type { OverviewField, OverviewRow } from '@/types'
 
 const router = useRouter()
@@ -379,23 +380,9 @@ async function changeStatus(row: OverviewRow, status: string) {
   } catch { /* */ }
 }
 
-// 导出项目一览为 Excel
+// 导出项目一览为 Excel（🆕 M16：经导出审批闸，403 引导申请）
 async function onExport() {
-  const token = localStorage.getItem('pms_token') || ''
-  try {
-    const res = await fetch('/api/overview/export', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) { ElMessage.error('导出失败'); return }
-    const blob = await res.blob()
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = '项目目录.xlsx'
-    document.body.appendChild(a); a.click(); a.remove()
-    URL.revokeObjectURL(a.href)
-  } catch (e: any) {
-    ElMessage.error(e.message || '导出失败')
-  }
+  await fetchExport('/api/overview/export', '项目目录.xlsx', '项目目录导出')
 }
 
 async function load() {

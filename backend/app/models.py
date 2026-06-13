@@ -39,6 +39,8 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     # 🆕 企业微信 userid（手动绑定，F1 口径；空=未绑定，推送降级站内）
     wxid: Mapped[Optional[str]] = mapped_column(String(64))
+    # 🆕 v3 M16：导出权限（审批通过后永久放行；管理层天然有）
+    can_export: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
@@ -355,6 +357,19 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+
+# ---------- 🆕 导出审批（M16；可逆开关 settings.export_approval_enabled 控制是否生效） ----------
+class ExportRequest(Base):
+    __tablename__ = "export_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    scope: Mapped[str] = mapped_column(String(64))                 # 导出范围描述
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/approved/rejected
+    appr_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship(foreign_keys=[user_id], lazy="joined")
 
 
 # ---------- 操作审计 ----------
