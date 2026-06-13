@@ -439,7 +439,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 销售报表 ===== -->
-    <el-dialog v-model="reportVisible" title="📊 销售部报表" width="760px">
+    <el-dialog v-model="reportVisible" title="📊 销售部报表" width="880px">
       <div v-if="report">
         <!-- 经营概览：合同总额为核心，已/待开票语义配色 -->
         <div class="sec-title">经营概览</div>

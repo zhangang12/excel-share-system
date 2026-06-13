@@ -189,11 +189,11 @@ a:hover { text-decoration: none; opacity: .85; }
   position: relative; overflow: hidden;
 }
 .kpi::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--text-4); }
-.kpi .kpi-v { font-size: 24px; font-weight: 700; color: var(--text-1); line-height: 1.2; letter-spacing: .3px; }
+.kpi .kpi-v { font-size: 23px; font-weight: 700; color: var(--text-1); line-height: 1.2; letter-spacing: .2px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .kpi .kpi-l { font-size: 12.5px; color: var(--text-3); margin-top: 6px; }
 .kpi.is-primary { background: linear-gradient(180deg, var(--primary-light), var(--bg-card)); }
 .kpi.is-primary::before { background: var(--primary); }
-.kpi.is-primary .kpi-v { color: var(--primary-dark); font-size: 28px; }
+.kpi.is-primary .kpi-v { color: var(--primary-dark); font-size: 25px; }
 .kpi.is-good::before { background: var(--success); } .kpi.is-good .kpi-v { color: var(--success); }
 .kpi.is-warn::before { background: var(--warning); } .kpi.is-warn .kpi-v { color: var(--warning); }
 .kpi.is-bad::before  { background: var(--danger); }  .kpi.is-bad .kpi-v  { color: var(--danger); }
