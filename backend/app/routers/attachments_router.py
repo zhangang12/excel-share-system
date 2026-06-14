@@ -27,6 +27,7 @@ ALLOWED_BIZ_TYPES = {
     "contract", "invoice_apply", "invoice",
     "order_input", "order_start_output", "order_output",
     "ship_doc", "ship_list", "aftersales_mat", "purchase_list", "misc",
+    "user_feedback",  # 🆕 用户反馈截图
 }
 
 # 统一允许的扩展名（按业务需要可在端点层再细化）

@@ -676,3 +676,20 @@ class AuditOut(BaseModel):
     detail: Optional[str] = None
     ip: Optional[str] = None
     created_at: datetime
+
+
+# ---------- 🆕 用户反馈小助手 ----------
+class UserFeedbackRow(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    kind: str
+    content: str
+    page_url: Optional[str] = None
+    user_agent: Optional[str] = None
+    status: str
+    created_at: datetime
+    user_id: Optional[int] = None
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    shot_file_id: Optional[int] = None
+    shot_file_name: Optional[str] = None

@@ -19,7 +19,7 @@ from .routers import (
     attachments_router, messages_router, orders_router, sales_router,
     logistics_router, collab_router, downstream_router,
     aftersales_router, finance_router, feedback_router, reports_router,
-    warehouse_router, export_router,
+    warehouse_router, export_router, user_feedback_router,
 )
 from .errors import register_exception_handlers
 from .database import get_db
@@ -89,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(reports_router.router)
     app.include_router(warehouse_router.router)
     app.include_router(export_router.router)
+    app.include_router(user_feedback_router.router)  # 🆕 用户反馈小助手
 
     @app.get("/api/health")
     async def health():

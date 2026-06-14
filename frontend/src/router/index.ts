@@ -122,6 +122,12 @@ const router = createRouter({
           component: () => import('@/views/admin/ApproveView.vue'),
           meta: { menuKey: 'approve' },
         },
+        {
+          path: 'admin/user-feedback',
+          name: 'user-feedback',  // 与 menuKey 一致以便 MainLayout.go('user-feedback') 直接跳
+          component: () => import('@/views/admin/UserFeedbackView.vue'),
+          meta: { menuKey: 'user-feedback' },
+        },
       ],
     },
   ],

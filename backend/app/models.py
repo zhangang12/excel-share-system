@@ -387,3 +387,22 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+
+# ---------- 🆕 用户反馈小助手（任意角色可提交，管理层汇总+导出） ----------
+class UserFeedback(Base):
+    __tablename__ = "user_feedback"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="bug", index=True)  # bug/suggest/other
+    content: Mapped[str] = mapped_column(Text)
+    page_url: Mapped[Optional[str]] = mapped_column(String(255))   # 用户当时所在的路径,便于复现
+    user_agent: Mapped[Optional[str]] = mapped_column(String(255))
+    shot_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)  # open/done
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    user: Mapped[Optional["User"]] = relationship(lazy="joined")
+    shot: Mapped[Optional["Attachment"]] = relationship(lazy="joined")

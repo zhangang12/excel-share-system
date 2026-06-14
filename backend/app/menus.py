@@ -32,11 +32,12 @@ MENU_DEFS: list[dict] = [
 
 # 管理组菜单（admin + manager 专属）
 ADMIN_MENU_DEFS: list[dict] = [
-    {"key": "admin-users", "label": "用户"},
-    {"key": "admin-perms", "label": "权限管理"},
-    {"key": "admin-audit", "label": "操作审计"},
-    {"key": "approve",     "label": "导出审批"},
-    {"key": "wxbind",      "label": "企微绑定"},
+    {"key": "admin-users",    "label": "用户"},
+    {"key": "admin-perms",    "label": "权限管理"},
+    {"key": "admin-audit",    "label": "操作审计"},
+    {"key": "approve",        "label": "导出审批"},
+    {"key": "wxbind",         "label": "企微绑定"},
+    {"key": "user-feedback",  "label": "用户反馈"},  # 🆕 收集所有用户提交的问题/建议
 ]
 
 _ALL_KEYS = [m["key"] for m in MENU_DEFS]

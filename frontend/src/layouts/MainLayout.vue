@@ -8,9 +8,10 @@ import {
   FolderOpened, User, OfficeBuilding, Document, DataLine,
   Key, SwitchButton, Grid, Lock,
   Suitcase, EditPen, Lightning, SetUp, Scissor, ShoppingCart,
-  Box, Van, Money, Service, TrendCharts, Bell, Stamp, ChatDotRound,
+  Box, Van, Money, Service, TrendCharts, Bell, Stamp, ChatDotRound, ChatLineRound,
 } from '@element-plus/icons-vue'
 import { messagesApi } from '@/api/messages'
+import HelperFloating from '@/components/HelperFloating.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -21,13 +22,14 @@ const MENU_ICONS: Record<string, any> = {
   sales: Suitcase, design: EditPen, electric: Lightning, produce: SetUp,
   sheet: Scissor, purchase: ShoppingCart, warehouse: Box, logistics: Van,
   finance: Money, aftersales: Service, report: TrendCharts, messages: Bell,
-  approve: Stamp, wxbind: ChatDotRound,
+  approve: Stamp, wxbind: ChatDotRound, 'user-feedback': ChatLineRound,
 }
-// 业务部门菜单（排除 messages 单独放底部、approve/wxbind 归管理组）
+const ADMIN_EXTRA = ['approve', 'wxbind', 'user-feedback']
+// 业务部门菜单（排除 messages 单独放底部、管理组的归管理组）
 const bizMenus = computed(() =>
-  auth.deptMenus.filter(m => !['messages', 'approve', 'wxbind'].includes(m.key)))
+  auth.deptMenus.filter(m => !['messages', ...ADMIN_EXTRA].includes(m.key)))
 const adminExtraMenus = computed(() =>
-  auth.deptMenus.filter(m => ['approve', 'wxbind'].includes(m.key)))
+  auth.deptMenus.filter(m => ADMIN_EXTRA.includes(m.key)))
 
 // 🆕 未读消息角标（轻量轮询，60s）
 const unread = ref(0)
@@ -221,6 +223,9 @@ onUnmounted(() => { if (unreadTimer) window.clearInterval(unreadTimer) })
         <el-button type="primary" :loading="pwdLoading" @click="submitChangePwd">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 🆕 全局用户反馈小助手（任意登录用户可见） -->
+    <HelperFloating />
   </div>
 </template>
 
