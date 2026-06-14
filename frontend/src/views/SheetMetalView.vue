@@ -94,10 +94,11 @@ function cellVal(rec: any, fid: number) {
           </template>
         </el-table-column>
       </el-table>
+      <EmptyHint v-if="!loading && !rows.length" text="暂无承接项目" />
     </el-card>
 
-    <el-dialog v-model="viewVisible" :title="viewTitle" width="80%" top="6vh">
-      <div v-loading="viewLoading" style="max-height:60vh;overflow:auto">
+    <el-dialog v-model="viewVisible" :title="viewTitle" width="880px" class="v3-scroll-dialog">
+      <div v-loading="viewLoading">
         <el-alert type="info" :closable="false" style="margin-bottom:10px"
                   title="只读引用——钣金装配表数据由设计部维护，钣金组不可编辑" />
         <el-table :data="viewRecords" border size="small">

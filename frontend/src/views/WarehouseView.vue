@@ -132,10 +132,10 @@ function onTab(name: string) {
       <el-tabs v-model="tab" @tab-change="onTab">
         <!-- 总览 -->
         <el-tab-pane label="库存总览" name="ov">
-          <div class="stat-row">
-            <div class="sc"><div class="v">{{ materials.length }}</div><div class="l">物料种类</div></div>
-            <div class="sc"><div class="v">{{ totalStock }}</div><div class="l">库存总量</div></div>
-            <div class="sc"><div class="v bad">{{ lowCount }}</div><div class="l">低于安全库存</div></div>
+          <div class="kpi-grid">
+            <div class="kpi"><div class="kpi-v">{{ materials.length }}</div><div class="kpi-l">物料种类</div></div>
+            <div class="kpi"><div class="kpi-v">{{ totalStock }}</div><div class="kpi-l">库存总量</div></div>
+            <div class="kpi" :class="lowCount ? 'is-bad' : ''"><div class="kpi-v">{{ lowCount }}</div><div class="kpi-l">低于安全库存</div></div>
           </div>
           <el-alert v-if="lowList.length" type="warning" :closable="false" style="margin:10px 0"
                     :title="`⚠ 低库存预警：${lowList.map(m => m.name + (m.spec ? '·' + m.spec : '')).join('、')}`" />
@@ -300,14 +300,9 @@ function onTab(name: string) {
 </template>
 
 <style scoped>
-.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.sc { background: var(--el-fill-color-light); border-radius: 10px; padding: 16px; }
-.sc .v { font-size: 24px; font-weight: 600; }
-.sc .v.bad { color: #dc2626; }
-.sc .l { font-size: 12.5px; color: var(--el-text-color-secondary); margin-top: 4px; }
-.bad { color: #dc2626; }
+.bad { color: var(--danger); }
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }
-.frow { display: flex; gap: 12px; }
-.frow > * { flex: 1; min-width: 0; }
+.frow { display: flex; gap: 12px; flex-wrap: wrap; }
+.frow > * { flex: 1; min-width: 140px; }
 </style>

@@ -2,11 +2,12 @@
 // 🆕 v3 M10 售后部：登记(物料清单必传)→主管审批→同步财务
 import { ref, onMounted, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Check } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/api/sales'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 interface Att { id: number; name: string }
 interface Row {
@@ -70,10 +71,17 @@ async function submitReg() {
   } finally { submitting.value = false }
 }
 
+const actingId = ref<number | null>(null)
 async function approve(r: Row, ok: boolean) {
   if (ok) {
-    await http.post(`/aftersales/${r.id}/approve`)
-    ElMessage.success('已通过，售后费用已同步财务部')
+    try {
+      await ElMessageBox.confirm('通过后将自动把售后费用同步到财务部，确认通过？', '审批通过', { type: 'warning' })
+    } catch { return }
+    actingId.value = r.id
+    try {
+      await http.post(`/aftersales/${r.id}/approve`)
+      ElMessage.success('已通过，售后费用已同步财务部')
+    } finally { actingId.value = null }
   } else {
     // #97/#98 驳回收集原因并通知登记人
     let reason = ''
@@ -83,10 +91,13 @@ async function approve(r: Row, ok: boolean) {
       })
       reason = res.value || ''
     } catch { return }
-    const fd = new FormData()
-    fd.append('reason', reason)
-    await http.post(`/aftersales/${r.id}/reject`, fd)
-    ElMessage.success('已驳回')
+    actingId.value = r.id
+    try {
+      const fd = new FormData()
+      fd.append('reason', reason)
+      await http.post(`/aftersales/${r.id}/reject`, fd)
+      ElMessage.success('已驳回')
+    } finally { actingId.value = null }
   }
   await load()
 }
@@ -103,11 +114,11 @@ async function approve(r: Row, ok: boolean) {
       <el-button v-if="canReg" type="primary" :icon="Plus" @click="openReg">登记售后</el-button>
     </div>
 
-    <div class="stat-row">
-      <div class="stat-card"><div class="v">{{ stats.total }}</div><div class="l">售后记录</div></div>
-      <div class="stat-card"><div class="v warn">{{ stats.pending }}</div><div class="l">待审批</div></div>
-      <div class="stat-card"><div class="v">{{ fmtMoney(stats.approved_cost) }}</div><div class="l">已审批费用</div></div>
-      <div class="stat-card"><div class="v">{{ fmtMoney(stats.total_cost) }}</div><div class="l">累计售后费用</div></div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-v">{{ stats.total }}</div><div class="kpi-l">售后记录</div></div>
+      <div class="kpi" :class="stats.pending ? 'is-warn' : ''"><div class="kpi-v">{{ stats.pending }}</div><div class="kpi-l">待审批</div></div>
+      <div class="kpi is-good"><div class="kpi-v">{{ fmtMoney(stats.approved_cost) }}</div><div class="kpi-l">已审批费用</div></div>
+      <div class="kpi"><div class="kpi-v">{{ fmtMoney(stats.total_cost) }}</div><div class="kpi-l">累计售后费用</div></div>
     </div>
 
     <el-card shadow="never">
@@ -139,14 +150,15 @@ async function approve(r: Row, ok: boolean) {
         <el-table-column label="操作" width="150">
           <template #default="{ row }">
             <template v-if="row.status === 'pending' && canApprove">
-              <el-button size="small" type="success" @click="approve(row, true)">✓ 通过</el-button>
-              <el-button size="small" @click="approve(row, false)">驳回</el-button>
+              <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="approve(row, true)">通过</el-button>
+              <el-button size="small" :loading="actingId === row.id" @click="approve(row, false)">驳回</el-button>
             </template>
             <span v-else-if="row.status === 'approved'" class="muted small">已同步财务</span>
             <span v-else class="muted small">—</span>
           </template>
         </el-table-column>
       </el-table>
+      <EmptyHint v-if="!loading && !rows.length" text="暂无售后记录" />
     </el-card>
 
     <el-dialog v-model="regVisible" title="🛎️ 登记售后" width="520px">
@@ -181,9 +193,5 @@ async function approve(r: Row, ok: boolean) {
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }
-.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 14px; }
-.stat-card { background: var(--el-fill-color-light); border-radius: 10px; padding: 16px; }
-.stat-card .v { font-size: 24px; font-weight: 600; }
-.stat-card .v.warn { color: #d97706; }
-.stat-card .l { font-size: 13px; color: var(--el-text-color-secondary); margin-top: 4px; }
+.kpi-grid { margin-bottom: 14px; }
 </style>

@@ -2,10 +2,11 @@
 // 🆕 v3 物流发货部：发货看板 + D5 闸门 + 收货信息 + 确认发货回传销售台账
 import { ref, onMounted, reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Van, Edit } from '@element-plus/icons-vue'
+import { Van, Edit, Clock } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 interface DeptState { state: string; label: string }
 interface AttOut { id: number; name: string }
@@ -60,12 +61,16 @@ function openReceiver(r: BoardRow) {
   rcvForm.addr = r.receiver_addr || ''
   rcvVisible.value = true
 }
+const savingRcv = ref(false)
 async function saveReceiver() {
   if (!rcvRow.value) return
-  await http.put(`/logistics/${rcvRow.value.id}/receiver`, { ...rcvForm })
-  ElMessage.success('收货信息已保存（修改留痕）')
-  rcvVisible.value = false
-  await load()
+  savingRcv.value = true
+  try {
+    await http.put(`/logistics/${rcvRow.value.id}/receiver`, { ...rcvForm })
+    ElMessage.success('收货信息已保存（修改留痕）')
+    rcvVisible.value = false
+    await load()
+  } finally { savingRcv.value = false }
 }
 
 // 确认发货
@@ -176,13 +181,14 @@ async function confirmShip(force = false) {
             </el-button>
             <el-tooltip v-else :content="`待部门完成：${row.gate_missing.join('、')}`" placement="top">
               <span>
-                <el-button size="small" disabled>⏳ 待部门完成</el-button>
+                <el-button size="small" disabled :icon="Clock">待部门完成</el-button>
                 <el-button v-if="isMgr" size="small" type="warning" plain @click="openShip(row)">强制</el-button>
               </span>
             </el-tooltip>
           </template>
         </el-table-column>
       </el-table>
+      <EmptyHint v-if="!loading && !rows.length" text="暂无待发货项目" />
     </el-card>
 
     <!-- 收货信息 -->
@@ -194,7 +200,7 @@ async function confirmShip(force = false) {
       </el-form>
       <template #footer>
         <el-button @click="rcvVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveReceiver">保存</el-button>
+        <el-button type="primary" :loading="savingRcv" @click="saveReceiver">保存</el-button>
       </template>
     </el-dialog>
 

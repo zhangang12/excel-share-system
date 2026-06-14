@@ -2,6 +2,7 @@
 // 🆕 v3 M09 财务部：待开票 / 已开票 / 售后费用 三 tab
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { UploadFilled } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/api/sales'
@@ -97,7 +98,7 @@ async function revokeInvoice(row: InvoiceRow) {
             </el-table-column>
             <el-table-column label="操作" width="120">
               <template #default="{ row }">
-                <el-button size="small" type="primary" @click="uploadInvoice(row)">📎 上传发票</el-button>
+                <el-button size="small" type="primary" :icon="UploadFilled" @click="uploadInvoice(row)">上传发票</el-button>
               </template>
             </el-table-column>
           </el-table>

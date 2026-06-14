@@ -8,9 +8,10 @@ import EmptyHint from '@/components/EmptyHint.vue'
 const loading = ref(false)
 const list = ref<Message[]>([])
 
+// 颜色对齐设计系统语义色 token（--warning/--success/--primary 实际取值）
 const KIND_META: Record<string, { icon: any; color: string; label: string }> = {
-  warn: { icon: Warning, color: '#d97706', label: '预警' },
-  wx: { icon: ChatDotRound, color: '#16a34a', label: '企微' },
+  warn: { icon: Warning, color: '#f59e0b', label: '预警' },
+  wx: { icon: ChatDotRound, color: '#10b981', label: '企微' },
   info: { icon: InfoFilled, color: '#2563eb', label: '通知' },
 }
 
@@ -50,6 +51,7 @@ onMounted(async () => {
         <h1>消息中心</h1>
         <div class="desc">企业微信通知、逾期提醒、审批结果汇总到这里</div>
       </div>
+      <div class="spacer"></div>
       <el-button @click="markAllRead">全部已读</el-button>
     </div>
 

@@ -3,6 +3,7 @@
 import { ref, watch } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { whApi, type WhMaterial } from '@/api/warehouse'
+import EmptyHint from '@/components/EmptyHint.vue'
 
 const visible = defineModel<boolean>({ required: true })
 const loading = ref(false)
@@ -27,9 +28,10 @@ watch(visible, (v) => { if (v) load() })
       <el-table-column label="现存" width="90"><template #default="{ row }"><b :class="{ low: row.low }">{{ row.stock }}</b></template></el-table-column>
       <el-table-column prop="location" label="库位" width="90"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
     </el-table>
+    <EmptyHint v-if="!loading && !materials.length" :text="kw ? '未找到匹配物料' : '暂无物料'" size="sm" />
   </el-dialog>
 </template>
 
 <style scoped>
-.low { color: #dc2626; }
+.low { color: var(--danger); }
 </style>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 🆕 v3 M13 问题反馈面板（按角色显示：装配提交 / 生产主管审批 / 设计师接收驳回）
 import { ref, onMounted, reactive, computed } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus, Check } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -38,19 +38,32 @@ async function openSubmit() {
   form.project_id = undefined; form.content = ''
   submitVisible.value = true
 }
+const submitting = ref(false)
 async function submit() {
   if (!form.project_id) { ElMessage.warning('请选择项目'); return }
   if (!form.content.trim()) { ElMessage.warning('请填写问题内容'); return }
-  await feedbackApi.create(form.project_id, form.content)
-  ElMessage.success('已提交，等待生产主管审批')
-  submitVisible.value = false
-  await load()
+  submitting.value = true
+  try {
+    await feedbackApi.create(form.project_id, form.content)
+    ElMessage.success('已提交，等待生产主管审批')
+    submitVisible.value = false
+    await load()
+  } finally { submitting.value = false }
 }
 
+const actingId = ref<number | null>(null)
 async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' | 'designReject') {
-  const r: any = await feedbackApi[fn](fb.id)
-  ElMessage.success(r.message || '操作成功')
-  await load()
+  if (fn === 'pmReject' || fn === 'designReject') {
+    try {
+      await ElMessageBox.confirm('确认驳回该问题反馈？提交人将收到驳回通知。', '驳回反馈', { type: 'warning' })
+    } catch { return }
+  }
+  actingId.value = fb.id
+  try {
+    const r: any = await feedbackApi[fn](fb.id)
+    ElMessage.success(r.message || '操作成功')
+    await load()
+  } finally { actingId.value = null }
 }
 </script>
 
@@ -75,12 +88,12 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
       <el-table-column label="操作" width="160">
         <template #default="{ row }">
           <template v-if="isPm && row.status === 'pending_pm'">
-            <el-button size="small" type="success" @click="act(row, 'pmApprove')">✓ 通过</el-button>
-            <el-button size="small" @click="act(row, 'pmReject')">驳回</el-button>
+            <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="act(row, 'pmApprove')">通过</el-button>
+            <el-button size="small" :loading="actingId === row.id" @click="act(row, 'pmReject')">驳回</el-button>
           </template>
           <template v-else-if="isDesigner && row.status === 'pending_design'">
-            <el-button size="small" type="success" @click="act(row, 'designAccept')">接收存档</el-button>
-            <el-button size="small" @click="act(row, 'designReject')">驳回</el-button>
+            <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="act(row, 'designAccept')">接收存档</el-button>
+            <el-button size="small" :loading="actingId === row.id" @click="act(row, 'designReject')">驳回</el-button>
           </template>
           <span v-else class="muted small">—</span>
         </template>
@@ -100,7 +113,7 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
       </el-form>
       <template #footer>
         <el-button @click="submitVisible = false">取消</el-button>
-        <el-button type="primary" @click="submit">提交</el-button>
+        <el-button type="primary" :loading="submitting" @click="submit">提交</el-button>
       </template>
     </el-dialog>
   </el-card>

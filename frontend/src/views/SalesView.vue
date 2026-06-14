@@ -2,7 +2,7 @@
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
 import { ref, computed, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Stamp, Download } from '@element-plus/icons-vue'
+import { Plus, Stamp, Download, Check } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment } from '@/api/orders'
@@ -389,7 +389,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 编辑台账 ===== -->
-    <el-dialog v-model="editVisible" :title="`✏️ 编辑台账 · ${editRow?.code || ''}`" width="560px">
+    <el-dialog v-model="editVisible" :title="`✏️ 编辑台账 · ${editRow?.code || ''}`" width="560px" class="v3-scroll-dialog">
       <el-form label-position="top">
         <div class="frow">
           <el-form-item label="设备名称" style="flex: 1"><el-input v-model="editForm.name" /></el-form-item>
@@ -502,7 +502,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 开票审批（主管） ===== -->
-    <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="720px">
+    <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="720px" class="v3-scroll-dialog">
       <EmptyHint v-if="!approvals.length" text="暂无待审批的开票申请" size="sm" />
       <el-table v-else :data="approvals" stripe>
         <el-table-column prop="code" label="项目编号" width="110" />
@@ -523,7 +523,7 @@ async function openReport() {
         </el-table-column>
         <el-table-column label="操作" width="160">
           <template #default="{ row }">
-            <el-button size="small" type="success" @click="approve(row, true)">✓ 通过</el-button>
+            <el-button size="small" type="success" :icon="Check" @click="approve(row, true)">通过</el-button>
             <el-button size="small" @click="approve(row, false)">驳回</el-button>
           </template>
         </el-table-column>
@@ -544,7 +544,7 @@ async function openReport() {
   font-size: 13px; color: var(--el-text-color-secondary);
 }
 .totals-bar b { color: var(--el-text-color-primary); }
-.totals-bar .warn { color: #d97706; }
+.totals-bar .warn { color: var(--warning); }
 .fsec {
   font-size: 13px; font-weight: 600; color: var(--el-text-color-primary);
   border-left: 3px solid var(--primary, #2563eb);

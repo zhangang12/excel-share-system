@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 🆕 v3 M16 导出审批（管理层）
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Check } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
 
@@ -28,10 +29,19 @@ onMounted(load)
 const STATUS_TXT: Record<string, string> = { pending: '待审批', approved: '已批准', rejected: '已驳回' }
 const STATUS_TAG: Record<string, any> = { pending: 'warning', approved: 'success', rejected: 'danger' }
 
+const actingId = ref<number | null>(null)
 async function act(r: Req, ok: boolean) {
-  await http.post(`/export-requests/${r.id}/${ok ? 'approve' : 'reject'}`)
-  ElMessage.success(ok ? '已批准，该用户获得导出权限' : '已驳回')
-  await load()
+  if (!ok) {
+    try {
+      await ElMessageBox.confirm('驳回后该用户不会获得导出权限，确认驳回？', '驳回导出申请', { type: 'warning' })
+    } catch { return }
+  }
+  actingId.value = r.id
+  try {
+    await http.post(`/export-requests/${r.id}/${ok ? 'approve' : 'reject'}`)
+    ElMessage.success(ok ? '已批准，该用户获得导出权限' : '已驳回')
+    await load()
+  } finally { actingId.value = null }
 }
 
 function fmt(s: string) {
@@ -63,8 +73,8 @@ function fmt(s: string) {
         <el-table-column label="操作" width="160">
           <template #default="{ row }">
             <template v-if="row.status === 'pending'">
-              <el-button size="small" type="success" @click="act(row, true)">批准</el-button>
-              <el-button size="small" @click="act(row, false)">驳回</el-button>
+              <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="act(row, true)">批准</el-button>
+              <el-button size="small" :loading="actingId === row.id" @click="act(row, false)">驳回</el-button>
             </template>
             <span v-else class="muted small">—</span>
           </template>

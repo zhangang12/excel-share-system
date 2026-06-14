@@ -152,12 +152,16 @@ async function doComplete() {
 
 // ---- 负责人：分派 / 作废 / 换人 / 改回 ----
 const assignSel = ref<Record<number, number | null>>({})
+const assigning = ref<number | null>(null)
 async function doAssign(o: DeptOrder) {
   const wid = assignSel.value[o.id]
   if (!wid) { ElMessage.warning('请选择分派对象'); return }
-  const r: any = await ordersApi.assign(o.id, wid)
-  ElMessage.success(r.message || '已分派')
-  await load()
+  assigning.value = o.id
+  try {
+    const r: any = await ordersApi.assign(o.id, wid)
+    ElMessage.success(r.message || '已分派')
+    await load()
+  } finally { assigning.value = null }
 }
 async function doVoid(o: DeptOrder) {
   await ElMessageBox.confirm(`确认作废 ${o.project_code} 的任务单？作废后留痕，管理层将收到通知。`, '作废单号', { type: 'warning' })
@@ -180,13 +184,17 @@ function openReassign(o: DeptOrder) {
   reassignWid.value = null
   reassignVisible.value = true
 }
+const reassigning = ref(false)
 async function doReassign() {
   const o = reassignOrder.value
   if (!o || !reassignWid.value) { ElMessage.warning('请选择转交对象'); return }
-  const r: any = await ordersApi.reassign(o.id, reassignWid.value)
-  ElMessage.success(r.message || '已转交')
-  reassignVisible.value = false
-  await load()
+  reassigning.value = true
+  try {
+    const r: any = await ordersApi.reassign(o.id, reassignWid.value)
+    ElMessage.success(r.message || '已转交')
+    reassignVisible.value = false
+    await load()
+  } finally { reassigning.value = false }
 }
 const reassignCandidates = computed(() =>
   (options.value?.workers || []).filter(w => w.id !== reassignOrder.value?.worker_id))
@@ -284,8 +292,8 @@ const stockVisible = ref(false)
                         <el-icon class="rm" @click="removeAtt(o, f)"><Close /></el-icon>
                       </el-tag>
                     </div>
-                    <el-button size="small" plain type="primary" @click="pickStartUpload(o, so.k)">
-                      ⬆ {{ startFilesOf(o, so.k).length ? '继续添加' : '上传' }}{{ so.label }}
+                    <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickStartUpload(o, so.k)">
+                      {{ startFilesOf(o, so.k).length ? '继续添加' : '上传' }}{{ so.label }}
                     </el-button>
                   </div>
                 </div>
@@ -354,7 +362,7 @@ const stockVisible = ref(false)
                 <el-select v-model="assignSel[o.id]" placeholder="分派给…" size="small" style="flex: 1">
                   <el-option v-for="w in options?.workers || []" :key="w.id" :label="w.name" :value="w.id" />
                 </el-select>
-                <el-button type="primary" size="small" @click="doAssign(o)">✓ 分派</el-button>
+                <el-button type="primary" size="small" :icon="Check" :loading="assigning === o.id" @click="doAssign(o)">分派</el-button>
                 <el-button size="small" @click="doVoid(o)">作废单号</el-button>
               </div>
             </el-card>
@@ -428,7 +436,7 @@ const stockVisible = ref(false)
     <StockQueryDialog v-if="dept === 'design'" v-model="stockVisible" />
 
     <!-- 🆕 M14 部门报表弹窗 -->
-    <el-dialog v-model="reportVisible" :title="`📊 ${report?.dept_name || ''}报表（仅本部门数据）`" width="720px">
+    <el-dialog v-model="reportVisible" :title="`📊 ${report?.dept_name || ''}报表（仅本部门数据）`" width="720px" class="v3-scroll-dialog">
       <div v-if="report">
         <div class="kpi-grid">
           <div class="kpi is-primary"><div class="kpi-v">{{ report.total }}</div><div class="kpi-l">任务总数</div></div>
@@ -471,8 +479,8 @@ const stockVisible = ref(false)
           <div class="out-rows">
             <div v-for="ot in options?.outputs || []" :key="ot.k" class="out-row">
               <span class="ol">{{ ot.label }}<span v-if="ot.required" class="req-star">*必传</span></span>
-              <el-tag v-for="f in outputFilesOf(ot.k)" :key="f.id" size="small" type="success" effect="plain">✓ {{ f.name }}</el-tag>
-              <el-button size="small" plain type="primary" @click="pickOutputUpload(ot.k)">📎 上传</el-button>
+              <el-tag v-for="f in outputFilesOf(ot.k)" :key="f.id" size="small" type="success" effect="plain"><el-icon><Check /></el-icon> {{ f.name }}</el-tag>
+              <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickOutputUpload(ot.k)">上传</el-button>
             </div>
           </div>
         </el-form-item>
@@ -499,7 +507,7 @@ const stockVisible = ref(false)
       </el-form>
       <template #footer>
         <el-button @click="reassignVisible = false">取消</el-button>
-        <el-button type="primary" @click="doReassign">确认转交</el-button>
+        <el-button type="primary" :loading="reassigning" @click="doReassign">确认转交</el-button>
       </template>
     </el-dialog>
   </div>
@@ -513,8 +521,8 @@ const stockVisible = ref(false)
   gap: 14px;
 }
 .todo-card { border-left: 4px solid var(--primary, #2563eb); border-radius: 10px; }
-.todo-card.urgent { border-left-color: #dc2626; }
-.todo-card.assign { border-left-color: #d97706; }
+.todo-card.urgent { border-left-color: var(--danger); }
+.todo-card.assign { border-left-color: var(--warning); }
 .tc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .tc-code { font-size: 16px; font-weight: 700; color: var(--primary, #2563eb); }
 .tc-name { color: var(--el-text-color-secondary); font-size: 13px; margin-bottom: 8px; }
@@ -526,7 +534,7 @@ const stockVisible = ref(false)
 .tc-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .file-chip { cursor: pointer; }
 .file-chip .dl, .file-chip .rm { margin-left: 4px; }
-.file-chip .rm { color: #dc2626; }
+.file-chip .rm { color: var(--danger); }
 .tc-dates { display: flex; gap: 10px; margin: 10px 0 4px; }
 .tc-dates .fd { flex: 1; }
 .tc-dates label { font-size: 12px; color: var(--el-text-color-secondary); display: block; margin-bottom: 4px; }
@@ -545,10 +553,10 @@ const stockVisible = ref(false)
 }
 .up-b { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .assign-bar { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
-.eff-good { color: #16a34a; font-weight: 700; }
-.eff-bad { color: #dc2626; font-weight: 700; }
+.eff-good { color: var(--success); font-weight: 700; }
+.eff-bad { color: var(--danger); font-weight: 700; }
 .out-rows { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .out-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .out-row .ol { font-size: 13px; min-width: 130px; }
-.req-star { color: #dc2626; font-size: 12px; margin-left: 4px; }
+.req-star { color: var(--danger); font-size: 12px; margin-left: 4px; }
 </style>

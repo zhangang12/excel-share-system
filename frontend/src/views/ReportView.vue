@@ -103,8 +103,8 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
 .bl { width: 150px; font-size: 12.5px; flex-shrink: 0; }
 .bt { flex: 1; background: var(--el-fill-color); border-radius: 6px; height: 20px; overflow: hidden; }
 .bf { height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; color: #fff; font-size: 11px; border-radius: 6px; }
-.bf.good { background: linear-gradient(90deg, #34d399, #16a34a); }
-.bf.bad { background: linear-gradient(90deg, #f87171, #dc2626); }
-.good { color: #16a34a; font-weight: 600; }
-.bad { color: #dc2626; font-weight: 600; }
+.bf.good { background: linear-gradient(90deg, #34d399, var(--success)); }
+.bf.bad { background: linear-gradient(90deg, #f87171, var(--danger)); }
+.good { color: var(--success); font-weight: 600; }
+.bad { color: var(--danger); font-weight: 600; }
 </style>
