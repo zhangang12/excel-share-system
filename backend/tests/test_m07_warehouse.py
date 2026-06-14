@@ -132,6 +132,10 @@ async def main():
         wrow = [x for x in board if x["code"]=="WH-1"][0]
         chk(len(wrow["ship_list_files"])==1, "物流看板出现仓库发货清单")
 
+        # ===== 🆕 #22 月度报表仓库出入库笔数(原为恒0死字段) =====
+        rep = (await c.get("/api/reports/monthly?month=2026-06", headers=H)).json()
+        chk(rep["wh_txn_count"] > 0, f"#22 月度报表wh_txn_count已实统计: {rep['wh_txn_count']}")
+
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")
     shutil.rmtree(tmp, ignore_errors=True)

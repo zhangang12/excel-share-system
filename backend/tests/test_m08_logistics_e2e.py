@@ -158,6 +158,32 @@ async def main():
         # 注：管理层非 logistics 角色，require_roles 放行 admin/manager → 200
         chk(r.status_code == 200, f"管理层 force 发货: {r.text[:120]}")
 
+        # ========== 🆕 #35 多部门闸门(含生产部)：未完成时多缺口拼接 ==========
+        r = await c.post("/api/sales/orders", headers=Hs1, json={
+            "name": "三部门机", "customer": "y", "cust_type": "经销商", "contract": "有", "amount": 50000,
+            "tax_rate": "13%", "prepay": 0, "before_ship": 0, "ship_receivable": 0, "balance": 0,
+            "balance_date": "", "depts": ["design", "electric", "produce"],
+            "receiver": {"name": "z", "phone": "1", "addr": "b"}})
+        code3 = r.json()["code"]
+        board = (await c.get("/api/logistics/board", headers=Hlo)).json()
+        row3 = [x for x in board if x["code"] == code3][0]
+        chk(not row3["can_ship"], "#35 三部门未完成不可发货")
+        chk(set(row3["gate_missing"]) == {"设计部", "电工部", "生产部"},
+            f"#35 多缺口拼接含生产部: {row3['gate_missing']}")
+
+        # ========== 🆕 #36 收货信息端点：不存在404；销售角色可改(E2权威初值可被销售改) ==========
+        r = await c.put("/api/logistics/999999/receiver", headers=Hlo,
+                        json={"name": "x", "phone": "1", "addr": "y"})
+        chk(r.status_code == 404, f"#36 不存在shipment改收货信息404: {r.status_code}")
+        r = await c.put(f"/api/logistics/{row3['id']}/receiver", headers=Hs1,
+                        json={"name": "销售改", "phone": "2", "addr": "z"})
+        chk(r.status_code == 200, f"#36 销售可改收货信息: {r.text[:80]}")
+
+        # ========== 🆕 #37 非物流/非管理层确认发货 403 ==========
+        r = await c.post(f"/api/logistics/{row3['id']}/ship", headers=Hd1,
+                         files={"file": ("x.pdf", io.BytesIO(b"P"), "application/pdf")})
+        chk(r.status_code == 403, f"#37 设计师(非物流)确认发货被拒: {r.status_code}")
+
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")
     shutil.rmtree(tmp, ignore_errors=True)
