@@ -1,7 +1,7 @@
 """数据表 / 字段 / 行（Sprint 3 核心）"""
 import json
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete as sql_delete
 
@@ -9,9 +9,18 @@ from ..database import get_db
 from .. import models, schemas
 from .ws_router import broadcast_cell_changed
 from ..deps import (
-    get_current_user, require_not_viewer,
+    get_current_user, require_can_view_detail,
     user_can_view_project, user_can_edit_project,
 )
+
+
+# 🆕 #91 详单子端点统一闸门：写端点串「详单闸门 + not_viewer」，与 list_datasheets/get_project 同源
+async def _detail_write_dep(
+    current: models.User = Depends(require_can_view_detail),
+) -> models.User:
+    if current.role and current.role.code == "viewer":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "只读账号不可操作")
+    return current
 
 router = APIRouter(prefix="/api", tags=["数据表"])
 
@@ -84,14 +93,10 @@ def _record_to_out(r: models.Record) -> schemas.RecordOut:
 @router.get("/projects/{pid}/datasheets", response_model=List[schemas.DatasheetOut])
 async def list_datasheets(
     pid: int,
-    current: models.User = Depends(get_current_user),
+    current: models.User = Depends(require_can_view_detail),  # 🆕 #91 统一闸门
     db: AsyncSession = Depends(get_db),
 ):
     p = await _get_project_or_404(db, pid)
-    # 🆕 v3 详单闸门：与项目详情同源（销售/电工/装配/售后角色 403）
-    from ..menus import user_can_view_detail
-    if not user_can_view_detail(current):
-        raise HTTPException(403, "你没有项目详单权限")
     if not await user_can_view_project(db, current, p):
         raise HTTPException(403, "无权访问")
     res = await db.execute(
@@ -105,7 +110,7 @@ async def list_datasheets(
 @router.post("/projects/{pid}/datasheets", response_model=schemas.DatasheetOut)
 async def create_datasheet(
     pid: int, data: schemas.DatasheetCreate,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     p = await _get_project_or_404(db, pid)
@@ -126,7 +131,7 @@ async def create_datasheet(
 @router.put("/datasheets/{did}", response_model=schemas.DatasheetOut)
 async def update_datasheet(
     did: int, data: schemas.DatasheetUpdate,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     d = await _get_datasheet_or_404(db, did)
@@ -145,7 +150,7 @@ async def update_datasheet(
 @router.delete("/datasheets/{did}", response_model=schemas.Msg)
 async def delete_datasheet(
     did: int,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     d = await _get_datasheet_or_404(db, did)
@@ -163,7 +168,7 @@ async def delete_datasheet(
 @router.get("/datasheets/{did}/fields", response_model=List[schemas.FieldOut])
 async def list_fields(
     did: int,
-    current: models.User = Depends(get_current_user),
+    current: models.User = Depends(require_can_view_detail),  # 🆕 #91 详单闸门
     db: AsyncSession = Depends(get_db),
 ):
     d = await _get_datasheet_or_404(db, did)
@@ -180,7 +185,7 @@ async def list_fields(
 @router.post("/datasheets/{did}/fields", response_model=schemas.FieldOut)
 async def create_field(
     did: int, data: schemas.FieldCreate,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     from ..sheet_templates import is_known_sheet
@@ -210,7 +215,7 @@ async def create_field(
 @router.put("/fields/{fid}", response_model=schemas.FieldOut)
 async def update_field(
     fid: int, data: schemas.FieldUpdate,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     from ..sheet_templates import is_known_sheet
@@ -242,7 +247,7 @@ async def update_field(
 @router.delete("/fields/{fid}", response_model=schemas.Msg)
 async def delete_field(
     fid: int,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     from ..sheet_templates import is_known_sheet
@@ -267,7 +272,7 @@ async def delete_field(
 @router.get("/datasheets/{did}/records", response_model=List[schemas.RecordOut])
 async def list_records(
     did: int,
-    current: models.User = Depends(get_current_user),
+    current: models.User = Depends(require_can_view_detail),  # 🆕 #91 详单闸门
     db: AsyncSession = Depends(get_db),
 ):
     d = await _get_datasheet_or_404(db, did)
@@ -284,7 +289,7 @@ async def list_records(
 @router.post("/datasheets/{did}/records", response_model=schemas.RecordOut)
 async def create_record(
     did: int, data: schemas.RecordCreate,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     d = await _get_datasheet_or_404(db, did)
@@ -308,7 +313,7 @@ async def create_record(
 @router.put("/records/{rid}", response_model=schemas.RecordOut)
 async def update_record(
     rid: int, data: schemas.RecordUpdate,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     res = await db.execute(select(models.Record).where(models.Record.id == rid))
@@ -332,7 +337,7 @@ async def update_record(
 @router.put("/records/{rid}/cell", response_model=schemas.RecordOut)
 async def update_cell(
     rid: int, data: schemas.RecordCellUpdate,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     """更新单个单元格。"""
@@ -375,7 +380,7 @@ async def update_cell(
 @router.delete("/records/{rid}", response_model=schemas.Msg)
 async def delete_record(
     rid: int,
-    current: models.User = Depends(require_not_viewer),
+    current: models.User = Depends(_detail_write_dep),  # 🆕 #91 详单闸门+not_viewer
     db: AsyncSession = Depends(get_db),
 ):
     res = await db.execute(select(models.Record).where(models.Record.id == rid))

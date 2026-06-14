@@ -78,6 +78,32 @@ async def main():
         r = await c.get(f"/api/projects/{pid}", headers=He)
         chk(r.status_code==403, "electrician detail 403")
 
+        # 🆕 #91 详单子端点统一闸门：被收紧角色直打 datasheet/field/record/cell 子端点均 403
+        Hd_early = await login("d1")  # 设计师(有详单)做非回归断言
+        ds = (await c.get(f"/api/projects/{pid}/datasheets", headers=H)).json()
+        did = ds[0]["id"] if isinstance(ds, list) and ds else None
+        if did:
+            recs = (await c.get(f"/api/datasheets/{did}/records", headers=H)).json()
+            rid_any = recs[0]["id"] if isinstance(recs, list) and recs else None
+            # GET fields / records — sales/electrician 应 403
+            for h, who in [(Hs, "sales"), (He, "electrician")]:
+                r = await c.get(f"/api/datasheets/{did}/fields", headers=h)
+                chk(r.status_code == 403, f"#91 {who} list_fields 403: {r.status_code}")
+                r = await c.get(f"/api/datasheets/{did}/records", headers=h)
+                chk(r.status_code == 403, f"#91 {who} list_records 403: {r.status_code}")
+                # PUT cell — 写端点也应 403(即使有 rid)
+                if rid_any:
+                    r = await c.put(f"/api/records/{rid_any}/cell", headers=h,
+                                    json={"field_id": 1, "value": "x"})
+                    chk(r.status_code == 403, f"#91 {who} update_cell 403: {r.status_code}")
+                # POST records — 写端点也应 403
+                r = await c.post(f"/api/datasheets/{did}/records", headers=h,
+                                 json={"values": {}})
+                chk(r.status_code == 403, f"#91 {who} create_record 403: {r.status_code}")
+            # 设计师(有详单权限)仍可读 fields/records, 不回归
+            r = await c.get(f"/api/datasheets/{did}/fields", headers=Hd_early)
+            chk(r.status_code == 200, f"designer 仍可读 fields(不回归): {r.status_code}")
+
         # 售后：仅 aftersales+messages，无 catalog
         Hw = await login("w1")
         ks = [m["key"] for m in (await c.get("/api/auth/menus", headers=Hw)).json()["menus"]]
