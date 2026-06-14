@@ -83,6 +83,9 @@ a:hover { text-decoration: none; opacity: .85; }
   font-weight: 500;
 }
 .el-button--small { padding: 6px 12px !important; font-size: 12.5px !important; }
+/* 🆕 link 按钮(表格操作列常用)紧凑化：原全局 padding 把无背景的文字按钮撑胖，导致操作列挤行 */
+.el-button.is-link { padding: 3px 6px !important; height: auto !important; }
+.el-button.is-link + .el-button.is-link { margin-left: 2px !important; }
 .el-button--large { padding: 10px 20px !important; font-size: 14.5px !important; }
 .el-button--primary {
   box-shadow: 0 2px 8px rgba(37, 99, 235, .25);
