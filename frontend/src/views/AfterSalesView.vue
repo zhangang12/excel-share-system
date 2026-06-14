@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 🆕 v3 M10 售后部：登记(物料清单必传)→主管审批→同步财务
 import { ref, onMounted, reactive, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
@@ -71,8 +71,23 @@ async function submitReg() {
 }
 
 async function approve(r: Row, ok: boolean) {
-  await http.post(`/aftersales/${r.id}/${ok ? 'approve' : 'reject'}`)
-  ElMessage.success(ok ? '已通过，售后费用已同步财务部' : '已驳回')
+  if (ok) {
+    await http.post(`/aftersales/${r.id}/approve`)
+    ElMessage.success('已通过，售后费用已同步财务部')
+  } else {
+    // #97/#98 驳回收集原因并通知登记人
+    let reason = ''
+    try {
+      const res = await ElMessageBox.prompt('请填写驳回原因（将通知登记人）：', '驳回售后', {
+        inputType: 'textarea', confirmButtonText: '确认驳回', type: 'warning',
+      })
+      reason = res.value || ''
+    } catch { return }
+    const fd = new FormData()
+    fd.append('reason', reason)
+    await http.post(`/aftersales/${r.id}/reject`, fd)
+    ElMessage.success('已驳回')
+  }
   await load()
 }
 </script>

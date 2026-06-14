@@ -38,15 +38,17 @@ function openIo(dir: string) {
     biz_date: new Date().toISOString().slice(0, 10), source: '', party: '' })
   ioVisible.value = true
 }
+const ioSubmitting = ref(false)
 async function submitIo() {
   if (!ioForm.material_id) { ElMessage.warning('请选择物料'); return }
   if (!ioForm.qty || ioForm.qty <= 0) { ElMessage.warning('数量须为正'); return }
+  ioSubmitting.value = true
   try {
     const r: any = await whApi.createTxn({ ...ioForm })
     ElMessage.success(r.message || '已登记')
     ioVisible.value = false
     await Promise.all([loadMaterials(), loadTxns()])
-  } catch { /* 超量等错误由拦截器提示 */ }
+  } catch { /* 超量等错误由拦截器提示 */ } finally { ioSubmitting.value = false }
 }
 function matLabel(m: WhMaterial) { return `${m.name}${m.spec ? '·' + m.spec : ''}（现存 ${m.stock}）` }
 
@@ -76,15 +78,17 @@ function openMat(m?: WhMaterial) {
   else Object.assign(matForm, { id: null, name: '', spec: '', category: '', unit: '个', location: '', safety_stock: 0, init_stock: 0 })
   matVisible.value = true
 }
+const matSubmitting = ref(false)
 async function submitMat() {
   if (!matForm.name.trim()) { ElMessage.warning('请填写物料名称'); return }
+  matSubmitting.value = true
   try {
     if (matForm.id) await whApi.updateMaterial(matForm.id, matForm)
     else await whApi.createMaterial(matForm)
     ElMessage.success('已保存')
     matVisible.value = false
     await loadMaterials()
-  } catch { /* 查重等错误由拦截器提示 */ }
+  } catch { /* 查重等错误由拦截器提示 */ } finally { matSubmitting.value = false }
 }
 
 // ===== 发货清单上传 =====
@@ -261,7 +265,7 @@ function onTab(name: string) {
       </el-form>
       <template #footer>
         <el-button @click="ioVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitIo">登记</el-button>
+        <el-button type="primary" :loading="ioSubmitting" @click="submitIo">登记</el-button>
       </template>
     </el-dialog>
 
@@ -285,7 +289,7 @@ function onTab(name: string) {
       </el-form>
       <template #footer>
         <el-button @click="matVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitMat">保存</el-button>
+        <el-button type="primary" :loading="matSubmitting" @click="submitMat">保存</el-button>
       </template>
     </el-dialog>
   </div>

@@ -90,6 +90,11 @@ async function pickStartUpload(o: DeptOrder, kind: string) {
   input.click()
 }
 async function removeAtt(o: DeptOrder, att: OrderAttachment) {
+  // #68 移除已上传资料（可能已推送下游）为破坏性操作，二次确认
+  try {
+    await ElMessageBox.confirm(
+      `移除已上传的「${att.name}」？该资料可能已推送下游部门。`, '移除文件', { type: 'warning' })
+  } catch { return }
   await ordersApi.removeAttachment(o.id, att.id)
   ElMessage.success('已移除')
   await load()

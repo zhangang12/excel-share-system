@@ -1,3 +1,4 @@
+import { ElMessage } from 'element-plus'
 import { http } from './index'
 
 // 🆕 v3 部门任务单
@@ -100,15 +101,23 @@ export const ordersApi = {
 
 // 附件下载（带鉴权的 blob 下载，沿用现有 fetch+blob 模式）
 export async function downloadAttachment(att: { id: number; name: string }) {
-  const r = await http.get(`/attachments/${att.id}/download`, { responseType: 'blob' })
-  const url = URL.createObjectURL(r.data as Blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = att.name
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  // #113 失败不再静默：404(已被上游撤回)/401(登录过期)/网络异常给出明确提示
+  try {
+    const r = await http.get(`/attachments/${att.id}/download`, { responseType: 'blob' })
+    const url = URL.createObjectURL(r.data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = att.name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (e: any) {
+    const code = e?.response?.status
+    ElMessage.error(code === 404 ? '文件不存在或已被上游撤回，请刷新后重试'
+      : code === 401 ? '登录已过期，请重新登录后再下载'
+      : '文件下载失败，请稍后重试')
+  }
 }
 
 // 状态中文映射（入库英文、展示中文的唯一前端来源）

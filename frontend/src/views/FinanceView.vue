@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 🆕 v3 M09 财务部：待开票 / 已开票 / 售后费用 三 tab
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/api/sales'
@@ -54,6 +54,18 @@ async function uploadInvoice(row: InvoiceRow) {
   }
   input.click()
 }
+
+// #2 财务开票纠错：作废原发票退回待开票，可重新上传正确发票
+async function revokeInvoice(row: InvoiceRow) {
+  try {
+    await ElMessageBox.confirm(
+      '作废原发票并退回「待开票」以便重新开具？原发票文件将删除。', '作废重开', { type: 'warning' })
+  } catch { return }
+  await http.post(`/sales/ledger/${row.ledger_id}/invoice-revoke`)
+  ElMessage.success('已作废原发票，退回待开票')
+  await load()
+  tab.value = 'pending'
+}
 </script>
 
 <template>
@@ -104,6 +116,11 @@ async function uploadInvoice(row: InvoiceRow) {
                            @click="downloadAttachment({ id: row.invoice_file_id, name: row.invoice_file_name || '发票' })">
                   📎 {{ row.invoice_file_name }}
                 </el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="110">
+              <template #default="{ row }">
+                <el-button size="small" link type="warning" @click="revokeInvoice(row)">作废重开</el-button>
               </template>
             </el-table-column>
           </el-table>

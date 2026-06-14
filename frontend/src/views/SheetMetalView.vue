@@ -2,7 +2,7 @@
 // 🆕 v3 M05 钣金组：项目图纸包下载 + 钣金装配表只读引用
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, Download } from '@element-plus/icons-vue'
+import { Document, Download, Refresh } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { datasheetsApi } from '@/api/datasheets'
@@ -56,6 +56,8 @@ function cellVal(rec: any, fid: number) {
         <h1>钣金组</h1>
         <div class="desc">设计部接单后上传的 PDF 图纸包在此下载；钣金装配表为设计数据表的只读引用</div>
       </div>
+      <div class="spacer"></div>
+      <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
     <el-card shadow="never">

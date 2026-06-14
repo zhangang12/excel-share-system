@@ -210,6 +210,12 @@ a:hover { text-decoration: none; opacity: .85; }
 .rate-bar .rb-fill.good { background: var(--success); }
 .rate-bar .rb-val { width: 44px; text-align: right; font-weight: 600; color: var(--text-1); }
 
+/* ===== 🆕 v3 长弹窗：矮屏(笔记本/平板)正文可滚动，避免撑破视口够不到页脚按钮(#13) ===== */
+.v3-scroll-dialog .el-dialog__body { max-height: 68vh; overflow-y: auto; }
+@media (max-height: 800px) {
+  .v3-scroll-dialog .el-dialog__body { max-height: 60vh; }
+}
+
 /* ===== 🆕 去卡通空状态：el-empty 默认插画太卡通，统一灰度淡化（未替换为 EmptyHint 的兜底） ===== */
 .el-empty__image { filter: grayscale(1); opacity: .28; }
 .el-empty { padding: 28px 0; }

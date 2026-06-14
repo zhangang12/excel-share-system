@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
 import { ref, computed, onMounted, reactive } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Stamp, Download } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
@@ -44,6 +44,7 @@ onMounted(load)
 // ===== 销售下单 =====
 const orderVisible = ref(false)
 const ordering = ref(false)
+const openingOrder = ref(false)
 const nextCode = ref('')
 const orderForm = reactive({
   code_suffix: '', name: '', customer: '', cust_type: '经销商', contract: '有',
@@ -52,14 +53,19 @@ const orderForm = reactive({
   receiver: { name: '', phone: '', addr: '' },
 })
 async function openOrder() {
-  nextCode.value = await salesApi.nextCode()
-  Object.assign(orderForm, {
-    code_suffix: '', name: '', customer: '', cust_type: '经销商', contract: '有',
-    amount: 0, tax_rate: '13%', prepay: 0, before_ship: 0, ship_receivable: 0,
-    balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
-    receiver: { name: '', phone: '', addr: '' },
-  })
-  orderVisible.value = true
+  openingOrder.value = true
+  try {
+    nextCode.value = await salesApi.nextCode()
+    Object.assign(orderForm, {
+      code_suffix: '', name: '', customer: '', cust_type: '经销商', contract: '有',
+      amount: 0, tax_rate: '13%', prepay: 0, before_ship: 0, ship_receivable: 0,
+      balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
+      receiver: { name: '', phone: '', addr: '' },
+    })
+    orderVisible.value = true
+  } finally {
+    openingOrder.value = false
+  }
 }
 async function submitOrder() {
   if (!orderForm.name.trim()) { ElMessage.warning('请填写设备名称'); return }
@@ -146,8 +152,16 @@ async function openApprovals() {
   approvalVisible.value = true
 }
 async function approve(r: SalesLedgerRow, ok: boolean) {
-  if (ok) await salesApi.invoiceApprove(r.id)
-  else await salesApi.invoiceReject(r.id)
+  if (ok) {
+    await salesApi.invoiceApprove(r.id)
+  } else {
+    // #14 驳回会删除已上传的开票申请表（不可逆），加二次确认
+    try {
+      await ElMessageBox.confirm(
+        '驳回后将删除该开票申请表，销售需重新申请。确认驳回？', '开票驳回', { type: 'warning' })
+    } catch { return }
+    await salesApi.invoiceReject(r.id)
+  }
   ElMessage.success(ok ? '已通过，已推送财务部开票' : '已驳回')
   approvals.value = approvals.value.filter((x) => x.id !== r.id)
   await load()
@@ -176,7 +190,7 @@ async function openReport() {
       <div class="spacer"></div>
       <el-button v-if="allView" type="primary" plain @click="openReport">📊 销售报表</el-button>
       <el-button v-if="allView" :icon="Stamp" @click="openApprovals">开票审批</el-button>
-      <el-button type="primary" :icon="Plus" @click="openOrder">销售下单</el-button>
+      <el-button type="primary" :icon="Plus" :loading="openingOrder" @click="openOrder">销售下单</el-button>
     </div>
 
     <el-card shadow="never" style="margin-bottom: 12px">
@@ -282,10 +296,12 @@ async function openReport() {
             <el-button size="small" link type="primary" @click="openContract(row)">
               {{ row.contract_file_id ? '合同✓' : '上传合同' }}
             </el-button>
-            <el-button v-if="!row.invoice_state" size="small" link type="primary" @click="applyInvoice(row)">开票申请</el-button>
+            <el-button v-if="!row.invoice_state && row.tax_rate !== '/'" size="small" link type="primary" @click="applyInvoice(row)">开票申请</el-button>
           </template>
         </el-table-column>
       </el-table>
+      <EmptyHint v-if="!loading && !rows.length"
+                 :text="filters.kw || filters.cust_type || filters.contract || filters.sales_uid ? '没有符合筛选条件的项目' : (allView ? '暂无销售项目' : '你还没有销售项目，点右上「销售下单」开始')" />
 
       <!-- 合计行（仅主管/管理层） -->
       <div v-if="totals" class="totals-bar">
@@ -300,7 +316,7 @@ async function openReport() {
     </el-card>
 
     <!-- ===== 销售下单 ===== -->
-    <el-dialog v-model="orderVisible" title="💼 销售下单" width="640px" :close-on-click-modal="false">
+    <el-dialog v-model="orderVisible" title="💼 销售下单" width="640px" :close-on-click-modal="false" class="v3-scroll-dialog">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
                 title="编号自动生成；下单日期/交货日期在「上传合同」时填写；发货日期由物流部确认发货时自动回传" />
       <el-form label-position="top">
@@ -439,7 +455,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 销售报表 ===== -->
-    <el-dialog v-model="reportVisible" title="📊 销售部报表" width="880px">
+    <el-dialog v-model="reportVisible" title="📊 销售部报表" width="880px" class="v3-scroll-dialog">
       <div v-if="report">
         <!-- 经营概览：合同总额为核心，已/待开票语义配色 -->
         <div class="sec-title">经营概览</div>

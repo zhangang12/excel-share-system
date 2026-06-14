@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 🆕 v3 M06 采购部：采购清单收件箱（电工接单上传的采购清单，撤回即消失）
 import { ref, onMounted } from 'vue'
-import { Document, Download } from '@element-plus/icons-vue'
+import { Document, Download, Refresh } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
@@ -40,7 +40,10 @@ function openDetail(pid: number) {
 
     <el-card shadow="never">
       <template #header>
-        <span><el-icon><Document /></el-icon> 采购清单收件箱</span>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span><el-icon><Document /></el-icon> 采购清单收件箱</span>
+          <el-button size="small" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+        </div>
       </template>
       <el-table :data="rows" stripe v-loading="loading">
         <el-table-column type="index" label="#" width="50" />
