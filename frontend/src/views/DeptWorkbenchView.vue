@@ -136,6 +136,9 @@ async function doComplete() {
   const o = completeOrder.value
   if (!o) return
   if (!notifyUserId.value) { ElMessage.warning(options.value?.notify_label || '请选择通知人'); return }
+  // #67 必传产物前端校验：完成前确认 required 产物都已上传，内联提示缺哪项
+  const miss = (options.value?.outputs || []).filter((ot: any) => ot.required && !outputFilesOf(ot.k).length)
+  if (miss.length) { ElMessage.warning('请先上传必传产物：' + miss.map((m: any) => m.label).join('、')); return }
   completing.value = true
   try {
     const r: any = await ordersApi.complete(o.id, notifyUserId.value)
@@ -325,6 +328,7 @@ const stockVisible = ref(false)
               </template>
             </el-table-column>
           </el-table>
+          <EmptyHint v-if="!loading && !myDone.length" text="还没有已完成的任务" size="sm" />
         </el-tab-pane>
       </el-tabs>
     </template>
@@ -504,7 +508,8 @@ const stockVisible = ref(false)
 <style scoped>
 .todo-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  /* #71 窄屏(<412px)不再横向溢出：min(380px,100%) 让单列可收缩 */
+  grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
   gap: 14px;
 }
 .todo-card { border-left: 4px solid var(--primary, #2563eb); border-radius: 10px; }

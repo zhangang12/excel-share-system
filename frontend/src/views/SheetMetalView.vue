@@ -2,7 +2,7 @@
 // 🆕 v3 M05 钣金组：项目图纸包下载 + 钣金装配表只读引用
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, Download, Refresh } from '@element-plus/icons-vue'
+import { Document, Download, Refresh, CircleCheck } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { datasheetsApi } from '@/api/datasheets'
@@ -72,7 +72,7 @@ function cellVal(rec: any, fid: number) {
         <el-table-column label="钣金装配表(引用)" width="150">
           <template #default="{ row }">
             <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" @click="viewSheet(row)">
-              钣金装配表 {{ row.sheetmetal_done ? '✅' : '' }}
+              钣金装配表<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:4px"><CircleCheck /></el-icon>
             </el-button>
             <span v-else class="muted">—</span>
           </template>

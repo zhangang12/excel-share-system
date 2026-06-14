@@ -153,6 +153,7 @@ function onTab(name: string) {
             <el-table-column prop="safety_stock" label="安全库存" width="90" />
             <el-table-column prop="location" label="库位" width="90"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
           </el-table>
+          <EmptyHint v-if="!materials.length" text="暂无物料，去「物料主数据」新增" size="sm" />
         </el-tab-pane>
 
         <!-- 出入库登记 -->
@@ -181,6 +182,7 @@ function onTab(name: string) {
             <el-table-column prop="out_qty" label="本期出" width="90" />
             <el-table-column prop="closing" label="期末" width="90"><template #default="{ row }"><b>{{ row.closing }}</b></template></el-table-column>
           </el-table>
+          <EmptyHint v-if="!summary.length" text="该月暂无收发存数据" size="sm" />
         </el-tab-pane>
 
         <!-- 流水 -->
@@ -211,6 +213,7 @@ function onTab(name: string) {
               </template>
             </el-table-column>
           </el-table>
+          <EmptyHint v-if="!txns.length" text="暂无出入库流水" size="sm" />
         </el-tab-pane>
 
         <!-- 物料主数据 -->
@@ -226,6 +229,7 @@ function onTab(name: string) {
             <el-table-column prop="location" label="库位" width="90"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
             <el-table-column v-if="canWrite" label="操作" width="80"><template #default="{ row }"><el-button size="small" link type="primary" @click="openMat(row)">编辑</el-button></template></el-table-column>
           </el-table>
+          <EmptyHint v-if="!materials.length" text="暂无物料主数据，点「新增物料」开始" size="sm" />
         </el-tab-pane>
 
         <!-- 发货清单 -->

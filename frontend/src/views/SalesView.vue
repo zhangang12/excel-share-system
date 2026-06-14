@@ -167,10 +167,6 @@ async function approve(r: SalesLedgerRow, ok: boolean) {
   await load()
 }
 
-const INVOICE_TEXT: Record<string, string> = {
-  applying: '待主管审批', pending_invoice: '待财务开票', invoiced: '✅ 已开票·0',
-}
-
 // 🆕 M14 销售报表
 const reportVisible = ref(false)
 const report = ref<SalesReport | null>(null)
@@ -554,8 +550,8 @@ async function openReport() {
   border-left: 3px solid var(--primary, #2563eb);
   padding-left: 8px; margin: 6px 0 12px;
 }
-.frow { display: flex; gap: 12px; }
-.frow > * { flex: 1; min-width: 0; }
+.frow { display: flex; gap: 12px; flex-wrap: wrap; }
+.frow > * { flex: 1; min-width: 140px; }
 .rcv-row { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 14px; background: var(--el-fill-color-light); border-radius: 8px; font-size: 13px; }
 .rcv-row b { color: var(--el-text-color-primary); }
 /* 发票情况单元格：标签 + 下载链接纵向居中、紧凑 */
