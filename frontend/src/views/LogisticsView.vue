@@ -163,7 +163,7 @@ async function confirmShip(force = false) {
             <el-button size="small" link type="primary" :icon="Edit" @click="openReceiver(row)">编辑</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <StatusPill
               :text="row.status === 'shipped' ? '已发货' : (row.can_ship ? '可发货' : '待齐')"

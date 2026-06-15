@@ -69,7 +69,7 @@ function fmt(s: string) {
         </el-table-column>
         <el-table-column prop="scope" label="导出范围" min-width="160" />
         <el-table-column label="申请时间" width="120"><template #default="{ row }">{{ fmtRelative(row.created_at) }}</template></el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <StatusPill :text="STATUS_TXT[row.status]"
                         :variant="row.status === 'approved' ? 'success' : row.status === 'pending' ? 'warn' : row.status === 'rejected' ? 'danger' : 'muted'" />

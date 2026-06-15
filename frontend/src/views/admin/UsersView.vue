@@ -168,7 +168,7 @@ onMounted(load)
             <span v-else class="muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <StatusPill v-if="row.is_active" text="启用" variant="success" />
             <StatusPill v-else text="停用" variant="danger" />

@@ -408,7 +408,7 @@ const stockVisible = ref(false)
                 <span v-else>—</span>
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="90">
+            <el-table-column label="状态" width="90" align="center">
               <template #default="{ row }">
                 <StatusPill :text="ORDER_STATUS_TEXT[row.status]" :variant="PILL_VARIANT[ORDER_STATUS_TAG[row.status]] || 'muted'" />
               </template>

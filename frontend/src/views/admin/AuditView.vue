@@ -87,7 +87,7 @@ onMounted(load)
             <span v-else class="muted">系统</span>
           </template>
         </el-table-column>
-        <el-table-column label="动作" width="120">
+        <el-table-column label="动作" width="120" align="center">
           <template #default="{ row }">
             <StatusPill
               :text="ACTION_LABEL[row.action] || row.action"

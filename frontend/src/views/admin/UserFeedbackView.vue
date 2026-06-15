@@ -139,7 +139,7 @@ function closePreview() {
         <el-table-column label="时间" width="150">
           <template #default="{ row }">{{ fmtRelative(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }"><StatusPill :text="STATUS_TXT[row.status]" :variant="row.status === 'done' ? 'success' : 'warn'" /></template>
         </el-table-column>
         <el-table-column label="操作" width="120">

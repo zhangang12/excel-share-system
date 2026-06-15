@@ -83,7 +83,7 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
       <el-table-column label="项目" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
       <el-table-column prop="content" label="问题内容" min-width="220" show-overflow-tooltip />
       <el-table-column v-if="!isAssembler" label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>
-      <el-table-column label="状态" width="100">
+      <el-table-column label="状态" width="100" align="center">
         <template #default="{ row }"><StatusPill :text="FB_STATUS_TXT[row.status]" :variant="FB_STATUS_TAG[row.status]" /></template>
       </el-table-column>
       <el-table-column label="操作" width="160">

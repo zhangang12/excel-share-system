@@ -145,7 +145,7 @@ async function approve(r: Row, ok: boolean) {
             <span v-else>—</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <StatusPill :text="STATUS_TXT[row.status]" :variant="STATUS_VARIANT[row.status] || 'muted'" />
           </template>

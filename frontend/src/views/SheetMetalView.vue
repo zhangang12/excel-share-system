@@ -87,7 +87,7 @@ function cellVal(rec: any, fid: number) {
             <span v-if="!row.pkg_files.length" class="muted">待设计部上传</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="120" align="center" fixed="right">
           <template #default="{ row }">
             <StatusPill :variant="row.pkg_files.length ? 'success' : 'muted'"
                         :text="row.pkg_files.length ? `可下载·${row.pkg_files.length}` : '待图纸包'" />
