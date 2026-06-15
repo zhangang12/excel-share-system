@@ -27,7 +27,10 @@ async def main():
         r = await c.post("/api/auth/login", json={"username":"admin","password":"admin123"})
         H = {"Authorization": f"Bearer {r.json()['access_token']}"}
         roles = (await c.get("/api/admin/roles", headers=H)).json()
-        assert len(roles) >= 21, f"角色数 {len(roles)}"
+        # 端点隐藏 admin + buyer_standard + buyer_outsource(并入采购部) 三个,故 >=19
+        assert len(roles) >= 19, f"角色数 {len(roles)}"
+        assert not any(r["code"] in ("buyer_standard","buyer_outsource") for r in roles), \
+            "标准件/外协采购员应已合并隐藏(A2)"
         menus = (await c.get("/api/auth/menus", headers=H)).json()["menus"]
         assert len(menus) >= 14, f"管理层菜单 {len(menus)}"
         # 关键端点可达

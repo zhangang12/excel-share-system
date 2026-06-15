@@ -19,9 +19,11 @@ async def list_roles(
     _: models.User = Depends(require_admin_or_manager),
     db: AsyncSession = Depends(get_db),
 ):
-    # admin 角色对 UI 隐身：不出现在角色下拉、字段权限对话框等任何地方
+    # admin 角色对 UI 隐身（不出现在角色下拉、字段权限对话框等任何地方）
+    # 🆕 A2: 标准件/外协采购员已并入「采购部 (buyer)」，对前端隐藏但保留数据(存量用户兼容)
+    HIDDEN_ROLE_CODES = ("admin", "buyer_standard", "buyer_outsource")
     res = await db.execute(
-        select(models.Role).where(models.Role.code != "admin").order_by(models.Role.id)
+        select(models.Role).where(models.Role.code.notin_(HIDDEN_ROLE_CODES)).order_by(models.Role.id)
     )
     return [schemas.RoleOut.model_validate(r) for r in res.scalars().all()]
 
