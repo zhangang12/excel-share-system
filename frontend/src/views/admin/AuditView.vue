@@ -3,6 +3,8 @@ import { ref, onMounted, computed } from 'vue'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { adminApi } from '@/api/admin'
 import type { AuditLog } from '@/types'
+import StatusPill from '@/components/StatusPill.vue'
+import { fmtRelative } from '@/utils/format'
 
 const list = ref<AuditLog[]>([])
 const loading = ref(false)
@@ -25,6 +27,14 @@ const ACTION_COLOR: Record<string, string> = {
   delete_project: 'danger',
   create_user: 'success',
   delete_user: 'danger',
+}
+
+const ACTION_VARIANT: Record<string, 'success' | 'warn' | 'info' | 'danger' | 'primary' | 'muted'> = {
+  success: 'success',
+  warning: 'warn',
+  info: 'info',
+  danger: 'danger',
+  primary: 'primary',
 }
 
 async function load() {
@@ -68,7 +78,7 @@ onMounted(load)
       <el-table :data="filtered" stripe size="large" :empty-text="loading ? '加载中' : '暂无记录'" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="时间" width="170">
           <template #default="{ row }">
-            <span class="muted small">{{ fmtTime(row.created_at) }}</span>
+            <span class="muted small">{{ fmtRelative(row.created_at) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="用户" width="140">
@@ -79,9 +89,10 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="动作" width="120">
           <template #default="{ row }">
-            <el-tag size="small" :type="(ACTION_COLOR[row.action] || 'info') as any" effect="light">
-              {{ ACTION_LABEL[row.action] || row.action }}
-            </el-tag>
+            <StatusPill
+              :text="ACTION_LABEL[row.action] || row.action"
+              :variant="ACTION_VARIANT[ACTION_COLOR[row.action] || 'info'] || 'muted'"
+            />
           </template>
         </el-table-column>
         <el-table-column label="对象" width="160">

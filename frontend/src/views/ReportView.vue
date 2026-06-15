@@ -3,6 +3,8 @@
 import { ref, onMounted } from 'vue'
 import { reportsApi, type MonthlyReport } from '@/api/reports'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
+import { fmtDate } from '@/utils/format'
 
 const month = ref(new Date().toISOString().slice(0, 7))
 const loading = ref(false)
@@ -82,9 +84,9 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
           <el-table-column prop="dept_name" label="部门" width="90" />
           <el-table-column prop="worker_name" label="人员" width="100" />
           <el-table-column prop="code" label="项目" width="120" />
-          <el-table-column prop="due_date" label="预计完成" width="110" />
-          <el-table-column prop="done_date" label="实际完成" width="110" />
-          <el-table-column label="逾期" width="90"><template #default="{ row }"><el-tag type="danger" size="small">超 {{ row.over_days }} 天</el-tag></template></el-table-column>
+          <el-table-column label="预计完成" width="110"><template #default="{ row }">{{ fmtDate(row.due_date) }}</template></el-table-column>
+          <el-table-column label="实际完成" width="110"><template #default="{ row }">{{ fmtDate(row.done_date) }}</template></el-table-column>
+          <el-table-column label="逾期" width="90"><template #default="{ row }"><StatusPill :text="`超 ${row.over_days} 天`" variant="danger" /></template></el-table-column>
           <el-table-column label="效率" width="80"><template #default="{ row }"><span class="bad">{{ row.eff ?? '—' }}%</span></template></el-table-column>
         </el-table>
         <EmptyHint v-else text="本月无逾期任务" size="sm" />

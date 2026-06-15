@@ -6,6 +6,7 @@ import { Plus, Check } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
 
 const auth = useAuthStore()
 const role = computed(() => auth.user?.role_code || '')
@@ -83,7 +84,7 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
       <el-table-column prop="content" label="问题内容" min-width="220" show-overflow-tooltip />
       <el-table-column v-if="!isAssembler" label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>
       <el-table-column label="状态" width="100">
-        <template #default="{ row }"><el-tag size="small" :type="FB_STATUS_TAG[row.status]">{{ FB_STATUS_TXT[row.status] }}</el-tag></template>
+        <template #default="{ row }"><StatusPill :text="FB_STATUS_TXT[row.status]" :variant="FB_STATUS_TAG[row.status]" /></template>
       </el-table-column>
       <el-table-column label="操作" width="160">
         <template #default="{ row }">

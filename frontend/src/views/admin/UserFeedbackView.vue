@@ -5,6 +5,8 @@ import { ElMessage } from 'element-plus'
 import { Check, Download, Refresh } from '@element-plus/icons-vue'
 import { userFeedbackApi, type UserFeedbackRow } from '@/api/userFeedback'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
+import { fmtRelative } from '@/utils/format'
 
 const loading = ref(false)
 const list = ref<UserFeedbackRow[]>([])
@@ -135,10 +137,10 @@ function closePreview() {
           </template>
         </el-table-column>
         <el-table-column label="时间" width="150">
-          <template #default="{ row }">{{ new Date(row.created_at).toLocaleString('zh-CN') }}</template>
+          <template #default="{ row }">{{ fmtRelative(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90">
-          <template #default="{ row }"><el-tag size="small" :type="STATUS_TAG[row.status]">{{ STATUS_TXT[row.status] }}</el-tag></template>
+          <template #default="{ row }"><StatusPill :text="STATUS_TXT[row.status]" :variant="row.status === 'done' ? 'success' : 'warn'" /></template>
         </el-table-column>
         <el-table-column label="操作" width="120">
           <template #default="{ row }">

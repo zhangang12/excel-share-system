@@ -8,6 +8,8 @@ import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from 
 import { downloadAttachment } from '@/api/orders'
 import { reportsApi, type SalesReport } from '@/api/reports'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
+import { fmtDate } from '@/utils/format'
 
 const auth = useAuthStore()
 const allView = computed(() => ['admin', 'manager', 'sales_lead'].includes(auth.user?.role_code || ''))
@@ -228,10 +230,10 @@ async function openReport() {
           <template #default="{ row }">{{ row.sales_name || '—' }}</template>
         </el-table-column>
         <el-table-column label="下单日期" width="100">
-          <template #default="{ row }">{{ row.sign_date || '—' }}</template>
+          <template #default="{ row }">{{ fmtDate(row.sign_date) }}</template>
         </el-table-column>
         <el-table-column label="交货日期" width="100">
-          <template #default="{ row }">{{ row.deliver_date || '—' }}</template>
+          <template #default="{ row }">{{ fmtDate(row.deliver_date) }}</template>
         </el-table-column>
         <el-table-column label="合同" width="80">
           <template #default="{ row }">
@@ -252,15 +254,15 @@ async function openReport() {
           <template #default="{ row }">
             <div class="inv-cell">
               <template v-if="row.invoice_state === 'invoiced'">
-                <el-tag type="success" size="small" effect="light" round>已开票</el-tag>
+                <StatusPill text="已开票" variant="success" />
                 <el-button v-if="row.invoice_file_id" size="small" link type="primary" class="inv-dl"
                            @click="downloadAttachment({ id: row.invoice_file_id!, name: row.invoice_file_name || '发票' })">
                   <el-icon><Download /></el-icon><span>下载发票</span>
                 </el-button>
               </template>
-              <el-tag v-else-if="row.invoice_state === 'applying'" size="small" type="warning" effect="light" round>待主管审批</el-tag>
-              <el-tag v-else-if="row.invoice_state === 'pending_invoice'" size="small" type="primary" effect="light" round>待财务开票</el-tag>
-              <el-tag v-else-if="row.amount" size="small" type="info" effect="plain" round>未开票</el-tag>
+              <StatusPill v-else-if="row.invoice_state === 'applying'" text="待主管审批" variant="warn" />
+              <StatusPill v-else-if="row.invoice_state === 'pending_invoice'" text="待财务开票" variant="primary" />
+              <StatusPill v-else-if="row.amount" text="未开票" variant="muted" />
               <span v-else class="muted">—</span>
             </div>
           </template>
@@ -280,12 +282,12 @@ async function openReport() {
         <el-table-column label="发货日期 📦" width="105">
           <template #default="{ row }">
             <el-tooltip content="物流发货部确认发货时自动回传，销售不可填" placement="top">
-              <span>{{ row.ship_date || '—' }}</span>
+              <span>{{ fmtDate(row.ship_date) }}</span>
             </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="尾款日期" width="100">
-          <template #default="{ row }">{{ row.balance_date || '—' }}</template>
+          <template #default="{ row }">{{ fmtDate(row.balance_date) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="250" fixed="right">
           <template #default="{ row }">

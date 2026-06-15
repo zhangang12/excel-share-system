@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
 
 interface Att { id: number; name: string }
 interface Row {
@@ -88,9 +89,8 @@ function cellVal(rec: any, fid: number) {
         </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.pkg_files.length ? 'success' : 'info'">
-              {{ row.pkg_files.length ? `可下载·${row.pkg_files.length}` : '待图纸包' }}
-            </el-tag>
+            <StatusPill :variant="row.pkg_files.length ? 'success' : 'muted'"
+                        :text="row.pkg_files.length ? `可下载·${row.pkg_files.length}` : '待图纸包'" />
           </template>
         </el-table-column>
       </el-table>

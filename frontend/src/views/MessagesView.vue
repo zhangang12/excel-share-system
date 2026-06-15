@@ -4,6 +4,8 @@ import { ElMessage } from 'element-plus'
 import { Bell, Warning, ChatDotRound, InfoFilled } from '@element-plus/icons-vue'
 import { messagesApi, type Message } from '@/api/messages'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
+import { fmtRelative } from '@/utils/format'
 
 const loading = ref(false)
 const list = ref<Message[]>([])
@@ -65,9 +67,9 @@ onMounted(async () => {
           </el-icon>
           <div class="msg-body">
             <div class="msg-text">{{ m.text }}</div>
-            <div class="msg-time">{{ fmtTime(m.created_at) }}</div>
+            <div class="msg-time">{{ fmtRelative(m.created_at) }}</div>
           </div>
-          <el-tag v-if="!m.read" type="danger" size="small" effect="plain">未读</el-tag>
+          <StatusPill v-if="!m.read" text="未读" variant="danger" />
         </div>
       </div>
     </el-card>

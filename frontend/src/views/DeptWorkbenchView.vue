@@ -16,7 +16,14 @@ import {
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
 import StockQueryDialog from '@/components/StockQueryDialog.vue'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
+import { fmtDate } from '@/utils/format'
 import { reportsApi, type DeptReport } from '@/api/reports'
+
+// el-tag type → StatusPill variant 映射（ORDER_STATUS_TAG 用）
+const PILL_VARIANT: Record<string, 'success' | 'warn' | 'info' | 'danger' | 'primary' | 'muted'> = {
+  success: 'success', warning: 'warn', info: 'info', danger: 'danger', primary: 'primary',
+}
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -240,10 +247,10 @@ const stockVisible = ref(false)
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in myTodo" :key="o.id" shadow="hover"
                      class="todo-card" :class="{ urgent: o.overdue }">
-              <div class="tc-head">
+              <div class="tc-head work-card-head">
                 <span class="tc-code">{{ o.project_code }}</span>
-                <el-tag :type="ORDER_STATUS_TAG[o.status]" size="small">{{ ORDER_STATUS_TEXT[o.status] }}</el-tag>
-                <el-tag v-if="o.overdue" type="danger" size="small" effect="dark">已超预计</el-tag>
+                <StatusPill :text="ORDER_STATUS_TEXT[o.status]" :variant="PILL_VARIANT[ORDER_STATUS_TAG[o.status]] || 'muted'" />
+                <StatusPill v-if="o.overdue" text="已超预计" variant="danger" />
               </div>
               <div class="tc-name">{{ o.project_name }}</div>
               <div v-if="o.req_text" class="tc-req">📌 {{ o.req_text }}</div>
@@ -274,16 +281,18 @@ const stockVisible = ref(false)
               <!-- 进行中：起始上传 + 完成 -->
               <template v-else-if="o.status === 'in_progress'">
                 <div class="tc-kv">
-                  {{ options?.start_label }}：<b>{{ o.start_date }}</b>
-                  ｜ {{ options?.end_label }}：<b>{{ o.due_date }}</b>
+                  {{ options?.start_label }}：<b>{{ fmtDate(o.start_date) }}</b>
+                  ｜ {{ options?.end_label }}：<b>{{ fmtDate(o.due_date) }}</b>
                 </div>
 
                 <div v-for="so in options?.start_outputs || []" :key="so.k" class="up-sec">
                   <div class="up-h">
                     <el-icon><UploadFilled /></el-icon> {{ so.label }}
-                    <el-tag size="small" :type="startFilesOf(o, so.k).length ? 'success' : 'warning'" style="margin-left: auto">
-                      {{ startFilesOf(o, so.k).length ? `已推送 ${startFilesOf(o, so.k).length} 个` : '待上传 → 推送下游' }}
-                    </el-tag>
+                    <span style="margin-left: auto">
+                      <StatusPill
+                        :text="startFilesOf(o, so.k).length ? `已推送 ${startFilesOf(o, so.k).length} 个` : '待上传 → 推送下游'"
+                        :variant="startFilesOf(o, so.k).length ? 'success' : 'warn'" />
+                    </span>
                   </div>
                   <div class="up-b">
                     <div v-if="startFilesOf(o, so.k).length" class="tc-files">
@@ -309,9 +318,15 @@ const stockVisible = ref(false)
             <el-table-column label="项目" min-width="120">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
             </el-table-column>
-            <el-table-column prop="start_date" :label="options?.start_label" width="105" />
-            <el-table-column prop="due_date" :label="options?.end_label" width="105" />
-            <el-table-column prop="done_date" label="完成" width="105" />
+            <el-table-column prop="start_date" :label="options?.start_label" width="105">
+              <template #default="{ row }">{{ fmtDate(row.start_date) }}</template>
+            </el-table-column>
+            <el-table-column prop="due_date" :label="options?.end_label" width="105">
+              <template #default="{ row }">{{ fmtDate(row.due_date) }}</template>
+            </el-table-column>
+            <el-table-column prop="done_date" label="完成" width="105">
+              <template #default="{ row }">{{ fmtDate(row.done_date) }}</template>
+            </el-table-column>
             <el-table-column label="完成效率" width="90">
               <template #default="{ row }">
                 <span v-if="row.eff_pct != null" :class="effClass(row)">{{ row.eff_pct }}%</span>
@@ -348,9 +363,9 @@ const stockVisible = ref(false)
           <EmptyHint v-if="!loading && pendingAssign.length === 0" text="暂无待分派任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in pendingAssign" :key="o.id" shadow="hover" class="todo-card assign">
-              <div class="tc-head">
+              <div class="tc-head work-card-head">
                 <span class="tc-code">{{ o.project_code }}</span>
-                <el-tag type="warning" size="small">待分派</el-tag>
+                <StatusPill text="待分派" variant="warn" />
               </div>
               <div class="tc-name">{{ o.project_name }}</div>
               <div v-if="o.req_text" class="tc-req">📌 {{ o.req_text }}</div>
@@ -395,17 +410,17 @@ const stockVisible = ref(false)
             </el-table-column>
             <el-table-column label="状态" width="90">
               <template #default="{ row }">
-                <el-tag :type="ORDER_STATUS_TAG[row.status]" size="small">{{ ORDER_STATUS_TEXT[row.status] }}</el-tag>
+                <StatusPill :text="ORDER_STATUS_TEXT[row.status]" :variant="PILL_VARIANT[ORDER_STATUS_TAG[row.status]] || 'muted'" />
               </template>
             </el-table-column>
             <el-table-column prop="start_date" :label="options?.start_label" width="100">
-              <template #default="{ row }">{{ row.start_date || '—' }}</template>
+              <template #default="{ row }">{{ row.start_date ? fmtDate(row.start_date) : '—' }}</template>
             </el-table-column>
             <el-table-column prop="due_date" :label="options?.end_label" width="100">
-              <template #default="{ row }">{{ row.due_date || '—' }}</template>
+              <template #default="{ row }">{{ row.due_date ? fmtDate(row.due_date) : '—' }}</template>
             </el-table-column>
             <el-table-column label="完成" width="100">
-              <template #default="{ row }">{{ row.done_date || '—' }}</template>
+              <template #default="{ row }">{{ row.done_date ? fmtDate(row.done_date) : '—' }}</template>
             </el-table-column>
             <el-table-column label="完成效率" width="85">
               <template #default="{ row }">
@@ -457,8 +472,12 @@ const stockVisible = ref(false)
         <el-table v-if="report.overdue_items.length" :data="report.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="worker_name" label="人员" width="100" />
           <el-table-column prop="code" label="项目" width="120" />
-          <el-table-column prop="due_date" label="预计" width="110" />
-          <el-table-column prop="done_date" label="实际" width="110" />
+          <el-table-column prop="due_date" label="预计" width="110">
+            <template #default="{ row }">{{ fmtDate(row.due_date) }}</template>
+          </el-table-column>
+          <el-table-column prop="done_date" label="实际" width="110">
+            <template #default="{ row }">{{ fmtDate(row.done_date) }}</template>
+          </el-table-column>
           <el-table-column label="逾期" width="90"><template #default="{ row }">超 {{ row.over_days }} 天</template></el-table-column>
         </el-table>
         <EmptyHint v-else text="本月无逾期任务" size="sm" />

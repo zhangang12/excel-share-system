@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>v4 UI 重设计原型 · 同辉智能项目管理</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.21.0/dist/tabler-icons.min.css">
+<style>
+:root {
+  /* 字体 */
+  --font: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-num: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+
+  /* 中性 (Slate-tinted, more modern than gray) */
+  --bg: #F8FAFC;
+  --bg-card: #FFFFFF;
+  --bg-hover: #F1F5F9;
+  --bg-active: #EEF2FF;
+  --line: #E2E8F0;
+  --line-soft: #F1F5F9;
+  --ink-1: #0F172A;
+  --ink-2: #334155;
+  --ink-3: #64748B;
+  --ink-4: #94A3B8;
+
+  /* 主色 (Indigo - 比纯蓝更深邃稳重) */
+  --primary: #4F46E5;
+  --primary-dim: #4338CA;
+  --primary-soft: #EEF2FF;
+  --primary-ink: #3730A3;
+
+  /* 语义色 */
+  --success: #10B981;
+  --success-soft: #D1FAE5;
+  --success-ink: #047857;
+  --warning: #F59E0B;
+  --warning-soft: #FEF3C7;
+  --warning-ink: #B45309;
+  --danger: #EF4444;
+  --danger-soft: #FEE2E2;
+  --danger-ink: #B91C1C;
+  --info: #3B82F6;
+  --info-soft: #DBEAFE;
+  --info-ink: #1E40AF;
+
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --sidebar-w: 232px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-1);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============ 整体布局 ============ */
+.app { display: flex; min-height: 100vh; }
+
+/* ============ 侧栏 (浅色 minimal, 替代原深蓝) ============ */
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  background: var(--bg-card);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.brand {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-logo {
+  width: 30px; height: 30px;
+  background: linear-gradient(135deg, var(--primary) 0%, #818CF8 100%);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-weight: 600; font-size: 13px;
+}
+.brand-name { font-weight: 600; font-size: 14px; letter-spacing: 0.2px; }
+.brand-sub { font-size: 11px; color: var(--ink-4); margin-top: 1px; }
+
+.nav { flex: 1; padding: 8px 8px; overflow-y: auto; }
+.nav-section { padding: 12px 10px 4px; font-size: 11px; font-weight: 500; color: var(--ink-4); text-transform: uppercase; letter-spacing: 0.5px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; margin: 1px 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 13px;
+  transition: all .12s;
+  user-select: none;
+}
+.nav-item:hover { background: var(--bg-hover); color: var(--ink-1); }
+.nav-item.active { background: var(--bg-active); color: var(--primary-ink); font-weight: 500; }
+.nav-item.active .ti { color: var(--primary); }
+.nav-item .ti { font-size: 16px; color: var(--ink-3); }
+.nav-item .badge {
+  margin-left: auto;
+  font-size: 10px; padding: 1px 6px;
+  background: var(--danger); color: white;
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+}
+
+.user-block {
+  border-top: 1px solid var(--line-soft);
+  padding: 12px;
+  display: flex; align-items: center; gap: 10px;
+}
+.avatar {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, var(--primary), #818CF8);
+  border-radius: 50%;
+  color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 500; font-size: 12px;
+}
+.user-info { flex: 1; min-width: 0; }
+.user-info .name { font-size: 13px; font-weight: 500; }
+.user-info .role { font-size: 11px; color: var(--ink-4); }
+
+/* ============ 主区 ============ */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* 顶 nav */
+.topbar {
+  height: 52px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  position: sticky; top: 0; z-index: 10;
+}
+.breadcrumb { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-3); }
+.breadcrumb .here { color: var(--ink-1); font-weight: 500; }
+.breadcrumb .sep { color: var(--ink-4); }
+
+.topbar-search {
+  flex: 1; max-width: 400px;
+  position: relative;
+}
+.topbar-search input {
+  width: 100%; height: 32px;
+  padding: 0 12px 0 32px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-family: var(--font);
+}
+.topbar-search input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+.topbar-search .ti { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--ink-4); font-size: 14px; }
+
+.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+  width: 32px; height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--ink-3);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--ink-1); }
+.icon-btn .ti { font-size: 18px; }
+.icon-btn .dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; background: var(--danger); border-radius: 50%; border: 2px solid var(--bg-card); }
+
+/* ============ 页面内容 ============ */
+.page { padding: 24px 28px 80px; }
+
+.page-head {
+  display: flex; align-items: flex-start; gap: 16px;
+  margin-bottom: 20px;
+}
+.page-head .title h1 {
+  margin: 0 0 4px;
+  font-size: 22px; font-weight: 600; letter-spacing: -0.2px;
+}
+.page-head .title p {
+  margin: 0; color: var(--ink-3); font-size: 13px;
+}
+.page-head .actions { margin-left: auto; display: flex; gap: 8px; }
+
+/* 按钮 */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all .15s;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-2);
+}
+.btn .ti { font-size: 15px; }
+.btn-secondary { background: var(--bg-card); border-color: var(--line); color: var(--ink-2); }
+.btn-secondary:hover { border-color: var(--ink-4); background: var(--bg-card); }
+.btn-primary { background: var(--primary); color: white; }
+.btn-primary:hover { background: var(--primary-dim); }
+.btn-ghost { color: var(--ink-3); }
+.btn-ghost:hover { background: var(--bg-hover); color: var(--ink-1); }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.btn-icon {
+  width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ink-3); border-radius: 6px;
+  background: transparent; border: none;
+  cursor: pointer;
+}
+.btn-icon:hover { background: var(--bg-hover); color: var(--primary); }
+.btn-icon .ti { font-size: 16px; }
+
+/* KPI grid */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  position: relative;
+  overflow: hidden;
+}
+.kpi-label {
+  font-size: 12px; color: var(--ink-3);
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 6px;
+}
+.kpi-label .ti { font-size: 14px; }
+.kpi-value {
+  font-size: 26px; font-weight: 600; color: var(--ink-1);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+}
+.kpi-delta {
+  font-size: 12px;
+  margin-top: 6px;
+  display: flex; align-items: center; gap: 4px;
+}
+.kpi-delta.up { color: var(--success); }
+.kpi-delta.down { color: var(--danger); }
+.kpi-card.is-primary { background: linear-gradient(135deg, var(--primary) 0%, #6366F1 100%); color: white; border-color: transparent; }
+.kpi-card.is-primary .kpi-label,
+.kpi-card.is-primary .kpi-value { color: white; }
+.kpi-card.is-primary .kpi-label { opacity: 0.85; }
+
+/* Toolbar */
+.toolbar {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.search-input {
+  position: relative; flex: 0 0 240px;
+}
+.search-input input {
+  width: 100%; height: 32px; padding: 0 12px 0 32px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13px; font-family: var(--font);
+}
+.search-input .ti { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--ink-4); font-size: 14px; }
+
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13px; color: var(--ink-2);
+  cursor: pointer;
+}
+.filter-chip:hover { border-color: var(--ink-4); }
+.filter-chip.active { background: var(--primary-soft); color: var(--primary-ink); border-color: var(--primary); }
+.filter-chip .ti { font-size: 13px; color: var(--ink-4); }
+.filter-chip .count { background: var(--bg); padding: 1px 6px; border-radius: var(--radius-pill); font-size: 11px; color: var(--ink-3); }
+
+.toolbar-spacer { flex: 1; }
+.toolbar-meta { font-size: 12px; color: var(--ink-3); }
+
+/* ============ 数据表 ============ */
+.data-table-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-table thead th {
+  background: var(--bg);
+  color: var(--ink-3);
+  font-weight: 500;
+  font-size: 12px;
+  text-align: left;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+.data-table tbody td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
+  color: var(--ink-2);
+}
+.data-table tbody tr:last-child td { border-bottom: 0; }
+.data-table tbody tr:hover { background: var(--bg-hover); }
+.data-table .code-link {
+  font-family: var(--font-num);
+  color: var(--primary);
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+}
+.data-table .code-link:hover { text-decoration: underline; }
+.data-table .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-1); font-weight: 500; }
+.data-table .muted { color: var(--ink-4); }
+.data-table .action-cell { text-align: right; }
+.data-table .action-cell .btn-icon + .btn-icon { margin-left: 2px; }
+
+/* Status pill (含色块圆点) */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  line-height: 18px;
+}
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+.pill-success { background: var(--success-soft); color: var(--success-ink); }
+.pill-success .dot { background: var(--success); }
+.pill-warn { background: var(--warning-soft); color: var(--warning-ink); }
+.pill-warn .dot { background: var(--warning); }
+.pill-info { background: var(--info-soft); color: var(--info-ink); }
+.pill-info .dot { background: var(--info); }
+.pill-danger { background: var(--danger-soft); color: var(--danger-ink); }
+.pill-danger .dot { background: var(--danger); }
+.pill-muted { background: var(--bg); color: var(--ink-4); border: 1px solid var(--line); }
+
+/* 部门工作台·卡片 */
+.workbench-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 14px;
+}
+.work-card {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex; flex-direction: column;
+  gap: 12px;
+}
+.work-card.urgent { border-left: 3px solid var(--danger); padding-left: 14px; }
+.work-card.new { border-left: 3px solid var(--warning); padding-left: 14px; }
+.work-card.normal { border-left: 3px solid var(--primary); padding-left: 14px; }
+.work-card-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.work-card-code { font-family: var(--font-num); font-weight: 600; font-size: 15px; color: var(--ink-1); }
+.work-card-name { color: var(--ink-3); font-size: 13px; }
+.work-card-progress { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--ink-3); }
+.dot-row { display: flex; gap: 4px; }
+.step-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.step-dot.done { background: var(--success); }
+.step-dot.active { background: var(--primary); }
+.work-card-meta {
+  font-size: 12.5px; color: var(--ink-3); display: flex; gap: 14px; flex-wrap: wrap;
+}
+.work-card-meta b { color: var(--ink-1); font-weight: 500; }
+.work-card-foot {
+  display: flex; gap: 6px;
+  padding-top: 10px; border-top: 1px solid var(--line-soft);
+}
+
+/* 浮动反馈按钮 (重设计 minimal 版) */
+.fab {
+  position: fixed; bottom: 22px; right: 22px;
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 38px; padding: 0 16px;
+  background: var(--ink-1); color: white;
+  border: none; border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px; font-weight: 500; font-family: var(--font);
+  z-index: 30;
+}
+.fab:hover { background: #1E293B; }
+.fab .ti { font-size: 16px; }
+
+/* Tab 切换演示页 */
+.demo-tabs {
+  display: flex; gap: 4px; padding: 14px 28px 0;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--line);
+}
+.demo-tab {
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--ink-3);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.demo-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+
+.page-body { display: none; }
+.page-body.active { display: block; }
+
+/* 表格右侧滚动条占位（演示长表） */
+.data-table-wrap.scrollable { overflow-x: auto; }
+
+/* 报表页 */
+.report-section {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  margin-bottom: 14px;
+}
+.section-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600;
+  margin: 0 0 12px;
+}
+.section-title::before {
+  content: "";
+  width: 3px; height: 14px;
+  background: var(--primary);
+  border-radius: 2px;
+}
+.rate-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 0;
+  font-size: 13px;
+}
+.rate-row .label { width: 90px; color: var(--ink-3); }
+.rate-row .track { flex: 1; height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.rate-row .fill { height: 100%; background: linear-gradient(90deg, var(--primary), #818CF8); border-radius: 999px; }
+.rate-row .fill.good { background: linear-gradient(90deg, var(--success), #34D399); }
+.rate-row .val { width: 40px; text-align: right; font-family: var(--font-num); font-weight: 500; color: var(--ink-1); }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- 侧栏 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">TH</div>
+      <div>
+        <div class="brand-name">同辉项目管理</div>
+        <div class="brand-sub">v4.0 · Production</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <div class="nav-section">业务</div>
+      <div class="nav-item"><i class="ti ti-layout-grid"></i> 项目目录</div>
+      <div class="nav-item"><i class="ti ti-clipboard-list"></i> 项目详单</div>
+      <div class="nav-item active"><i class="ti ti-briefcase"></i> 销售部</div>
+      <div class="nav-item"><i class="ti ti-pencil"></i> 设计部</div>
+      <div class="nav-item"><i class="ti ti-bolt"></i> 电工部</div>
+      <div class="nav-item"><i class="ti ti-tool"></i> 生产部</div>
+      <div class="nav-item"><i class="ti ti-cut"></i> 钣金组</div>
+      <div class="nav-item"><i class="ti ti-shopping-cart"></i> 采购部</div>
+      <div class="nav-item"><i class="ti ti-package"></i> 仓库组</div>
+      <div class="nav-item"><i class="ti ti-truck"></i> 物流发货部</div>
+      <div class="nav-item"><i class="ti ti-cash"></i> 财务部</div>
+      <div class="nav-item"><i class="ti ti-headset"></i> 售后部</div>
+      <div class="nav-item"><i class="ti ti-chart-line"></i> 月度报表</div>
+      <div class="nav-item"><i class="ti ti-bell"></i> 消息中心 <span class="badge">3</span></div>
+
+      <div class="nav-section">管理</div>
+      <div class="nav-item"><i class="ti ti-users"></i> 用户</div>
+      <div class="nav-item"><i class="ti ti-shield-lock"></i> 权限管理</div>
+      <div class="nav-item"><i class="ti ti-history"></i> 操作审计</div>
+      <div class="nav-item"><i class="ti ti-file-export"></i> 导出审批</div>
+      <div class="nav-item"><i class="ti ti-message-circle"></i> 用户反馈</div>
+    </nav>
+    <div class="user-block">
+      <div class="avatar">超</div>
+      <div class="user-info">
+        <div class="name">超级管理员</div>
+        <div class="role">admin</div>
+      </div>
+      <button class="icon-btn"><i class="ti ti-logout"></i></button>
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <div class="main">
+    <!-- 顶 nav -->
+    <div class="topbar">
+      <div class="breadcrumb">
+        <span>业务</span>
+        <i class="ti ti-chevron-right sep" style="font-size:12px"></i>
+        <span class="here">销售部</span>
+      </div>
+      <div style="flex:1"></div>
+      <div class="topbar-search">
+        <i class="ti ti-search"></i>
+        <input placeholder="全局搜索  ⌘K" />
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-btn"><i class="ti ti-bell"></i><span class="dot"></span></button>
+        <button class="icon-btn"><i class="ti ti-help-circle"></i></button>
+      </div>
+    </div>
+
+    <!-- Tab 切换 (这只是 demo,实际系统用路由) -->
+    <div class="demo-tabs">
+      <div class="demo-tab active" onclick="showTab('sales')">销售部 ← 当前最痛页</div>
+      <div class="demo-tab" onclick="showTab('workbench')">设计部工作台</div>
+      <div class="demo-tab" onclick="showTab('report')">月度报表</div>
+    </div>
+
+    <!-- ========== 页面1：销售部 ========== -->
+    <div id="page-sales" class="page-body active">
+      <div class="page">
+        <div class="page-head">
+          <div class="title">
+            <h1>销售项目台账</h1>
+            <p>全部 · 一项目一行；编号自动生成；开票申请 → 主管审批 → 财务开票回传</p>
+          </div>
+          <div class="actions">
+            <button class="btn btn-secondary"><i class="ti ti-chart-bar"></i> 销售报表</button>
+            <button class="btn btn-secondary"><i class="ti ti-stamp"></i> 开票审批</button>
+            <button class="btn btn-primary"><i class="ti ti-plus"></i> 销售下单</button>
+          </div>
+        </div>
+
+        <!-- KPI 横条 -->
+        <div class="kpi-grid">
+          <div class="kpi-card is-primary">
+            <div class="kpi-label"><i class="ti ti-file-invoice"></i> 合同总额</div>
+            <div class="kpi-value">¥4,283,000</div>
+            <div class="kpi-delta" style="color:rgba(255,255,255,0.8)"><i class="ti ti-arrow-up-right"></i> 本月新增 ¥320K</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label"><i class="ti ti-circle-check"></i> 已开票</div>
+            <div class="kpi-value" style="color:var(--success)">¥3,150,000</div>
+            <div class="kpi-delta up"><i class="ti ti-arrow-up-right"></i> 73.5% 完成率</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label"><i class="ti ti-clock"></i> 待开票</div>
+            <div class="kpi-value" style="color:var(--warning)">¥805,000</div>
+            <div class="kpi-delta" style="color:var(--ink-3)">3 笔待财务处理</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label"><i class="ti ti-truck-delivery"></i> 已发货</div>
+            <div class="kpi-value">38</div>
+            <div class="kpi-delta" style="color:var(--ink-3)">/ 82 项目</div>
+          </div>
+        </div>
+
+        <!-- 工具栏 -->
+        <div class="toolbar">
+          <div class="search-input">
+            <i class="ti ti-search"></i>
+            <input placeholder="搜索 编号 / 设备 / 客户" />
+          </div>
+          <button class="filter-chip"><i class="ti ti-user"></i> 销售员 <i class="ti ti-chevron-down"></i></button>
+          <button class="filter-chip active">客户分类 <span class="count">2</span> <i class="ti ti-x"></i></button>
+          <button class="filter-chip"><i class="ti ti-file"></i> 合同 <i class="ti ti-chevron-down"></i></button>
+          <button class="filter-chip"><i class="ti ti-receipt"></i> 发票状态 <i class="ti ti-chevron-down"></i></button>
+          <div class="toolbar-spacer"></div>
+          <span class="toolbar-meta">共 82 项 · 已筛选 12 项</span>
+          <button class="btn btn-ghost btn-sm"><i class="ti ti-download"></i> 导出</button>
+        </div>
+
+        <!-- 数据表 -->
+        <div class="data-table-wrap scrollable">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:48px">#</th>
+                <th>项目编号</th>
+                <th>设备名称</th>
+                <th>客户单位</th>
+                <th>客户分类</th>
+                <th>销售员</th>
+                <th>下单日期</th>
+                <th style="text-align:right">合同金额</th>
+                <th>发票情况</th>
+                <th>合同</th>
+                <th>发货日期</th>
+                <th style="text-align:right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="muted">1</td>
+                <td><a class="code-link">2026-021</a></td>
+                <td>100L 真空乳化机</td>
+                <td>华东制药</td>
+                <td><span class="pill pill-info"><span class="dot"></span>终端客户</span></td>
+                <td>赵销售</td>
+                <td>2026-03-19</td>
+                <td class="num">¥128,000</td>
+                <td><span class="pill pill-success"><span class="dot"></span>已开票</span></td>
+                <td><span class="pill pill-muted"><i class="ti ti-paperclip" style="font-size:11px"></i> 合同.pdf</span></td>
+                <td>2026-06-13</td>
+                <td class="action-cell">
+                  <button class="btn-icon" title="编辑"><i class="ti ti-edit"></i></button>
+                  <button class="btn-icon" title="上传合同"><i class="ti ti-file-upload"></i></button>
+                  <button class="btn-icon" title="下载发票"><i class="ti ti-download"></i></button>
+                </td>
+              </tr>
+              <tr>
+                <td class="muted">2</td>
+                <td><a class="code-link">2026-018M</a></td>
+                <td>100L 三轴乳化机</td>
+                <td>百联生物</td>
+                <td><span class="pill pill-info"><span class="dot"></span>终端客户</span></td>
+                <td>孙销售</td>
+                <td>2026-03-11</td>
+                <td class="num">¥95,000</td>
+                <td><span class="pill pill-warn"><span class="dot"></span>待财务开票</span></td>
+                <td><span class="pill pill-muted"><i class="ti ti-paperclip" style="font-size:11px"></i> 合同.pdf</span></td>
+                <td class="muted">—</td>
+                <td class="action-cell">
+                  <button class="btn-icon" title="编辑"><i class="ti ti-edit"></i></button>
+                  <button class="btn-icon" title="上传合同"><i class="ti ti-file-upload"></i></button>
+                  <button class="btn-icon" title="开票申请"><i class="ti ti-clipboard-text"></i></button>
+                </td>
+              </tr>
+              <tr>
+                <td class="muted">3</td>
+                <td><a class="code-link">2026-002A</a></td>
+                <td>100L 拉缸</td>
+                <td>同辉机械</td>
+                <td><span class="pill pill-info"><span class="dot"></span>终端客户</span></td>
+                <td>李销售</td>
+                <td>2026-01-14</td>
+                <td class="num">¥62,000</td>
+                <td><span class="pill pill-muted">未开票</span></td>
+                <td><span class="pill pill-danger"><span class="dot"></span>未签</span></td>
+                <td>2026-02-13</td>
+                <td class="action-cell">
+                  <button class="btn-icon" title="编辑"><i class="ti ti-edit"></i></button>
+                  <button class="btn-icon" title="上传合同"><i class="ti ti-file-upload"></i></button>
+                  <button class="btn-icon" title="开票申请"><i class="ti ti-clipboard-text"></i></button>
+                </td>
+              </tr>
+              <tr>
+                <td class="muted">4</td>
+                <td><a class="code-link">2026-020</a></td>
+                <td>15L 行星分散搅拌机</td>
+                <td>—</td>
+                <td><span class="pill pill-muted">—</span></td>
+                <td>赵销售</td>
+                <td>2026-03-18</td>
+                <td class="num">¥38,000</td>
+                <td><span class="pill pill-info"><span class="dot"></span>待主管审批</span></td>
+                <td><span class="pill pill-success"><span class="dot"></span>已签</span></td>
+                <td>2026-04-20</td>
+                <td class="action-cell">
+                  <button class="btn-icon" title="编辑"><i class="ti ti-edit"></i></button>
+                  <button class="btn-icon" title="上传合同"><i class="ti ti-file-upload"></i></button>
+                  <button class="btn-icon" title="查看进度"><i class="ti ti-eye"></i></button>
+                </td>
+              </tr>
+              <tr>
+                <td class="muted">5</td>
+                <td><a class="code-link">2026-027</a></td>
+                <td>300L 乳化罐</td>
+                <td>德邦化工</td>
+                <td><span class="pill pill-info"><span class="dot"></span>经销商</span></td>
+                <td>孙销售</td>
+                <td>2026-04-03</td>
+                <td class="num">¥158,000</td>
+                <td><span class="pill pill-muted">未开票</span></td>
+                <td><span class="pill pill-muted"><i class="ti ti-paperclip" style="font-size:11px"></i> 合同.pdf</span></td>
+                <td class="muted">—</td>
+                <td class="action-cell">
+                  <button class="btn-icon" title="编辑"><i class="ti ti-edit"></i></button>
+                  <button class="btn-icon" title="上传合同"><i class="ti ti-file-upload"></i></button>
+                  <button class="btn-icon" title="开票申请"><i class="ti ti-clipboard-text"></i></button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 页面2：设计部工作台 ========== -->
+    <div id="page-workbench" class="page-body">
+      <div class="page">
+        <div class="page-head">
+          <div class="title">
+            <h1>设计部工作台</h1>
+            <p>销售/管理层下单 → 负责人分派 → 跟踪进度与完成效率</p>
+          </div>
+          <div class="actions">
+            <button class="btn btn-secondary"><i class="ti ti-search"></i> 查库存</button>
+            <button class="btn btn-primary"><i class="ti ti-chart-bar"></i> 设计部报表</button>
+          </div>
+        </div>
+
+        <div class="demo-tabs" style="background:transparent;border:none;padding:0;margin-bottom:18px">
+          <div class="demo-tab active" style="border-color:var(--primary);color:var(--primary)">📥 我的待办 <span style="font-weight:400;color:var(--ink-3)">(4)</span></div>
+          <div class="demo-tab">✓ 已完成 <span style="font-weight:400;color:var(--ink-3)">(28)</span></div>
+        </div>
+
+        <div class="workbench-grid">
+          <!-- 紧急卡片 -->
+          <div class="work-card urgent">
+            <div class="work-card-head">
+              <span class="work-card-code">2026-021</span>
+              <span class="work-card-name">100L 真空乳化机</span>
+              <span style="flex:1"></span>
+              <span class="pill pill-danger"><span class="dot"></span>逾期 2 天</span>
+            </div>
+            <div class="work-card-meta">
+              <span><b>客户:</b>华东制药</span>
+              <span><b>预计:</b>2026-06-13</span>
+              <span><b>效率:</b>115%</span>
+            </div>
+            <div class="work-card-progress">
+              <span>接单</span>
+              <div class="dot-row">
+                <div class="step-dot done"></div>
+                <div class="step-dot done"></div>
+                <div class="step-dot active"></div>
+                <div class="step-dot"></div>
+                <div class="step-dot"></div>
+              </div>
+              <span>已上传产物 2/3</span>
+            </div>
+            <div class="work-card-foot">
+              <button class="btn btn-primary btn-sm"><i class="ti ti-check"></i> 完成</button>
+              <button class="btn btn-secondary btn-sm"><i class="ti ti-file-upload"></i> 上传产物</button>
+              <span style="flex:1"></span>
+              <button class="btn-icon" title="转交"><i class="ti ti-user-share"></i></button>
+            </div>
+          </div>
+
+          <!-- 新任务 -->
+          <div class="work-card new">
+            <div class="work-card-head">
+              <span class="work-card-code">2026-027</span>
+              <span class="work-card-name">300L 乳化罐</span>
+              <span style="flex:1"></span>
+              <span class="pill pill-warn"><span class="dot"></span>未开始</span>
+            </div>
+            <div class="work-card-meta">
+              <span><b>客户:</b>德邦化工</span>
+              <span><b>预计:</b>2026-07-15</span>
+              <span><b>派单:</b>2026-04-03</span>
+            </div>
+            <div class="work-card-progress">
+              <span>未接单</span>
+              <div class="dot-row">
+                <div class="step-dot active"></div>
+                <div class="step-dot"></div>
+                <div class="step-dot"></div>
+                <div class="step-dot"></div>
+                <div class="step-dot"></div>
+              </div>
+            </div>
+            <div class="work-card-foot">
+              <button class="btn btn-primary btn-sm"><i class="ti ti-player-play"></i> 接单开始</button>
+              <span style="flex:1"></span>
+              <button class="btn-icon" title="转交"><i class="ti ti-user-share"></i></button>
+            </div>
+          </div>
+
+          <!-- 正常进行中 -->
+          <div class="work-card normal">
+            <div class="work-card-head">
+              <span class="work-card-code">2026-018M</span>
+              <span class="work-card-name">100L 三轴乳化机</span>
+              <span style="flex:1"></span>
+              <span class="pill pill-info"><span class="dot"></span>进行中</span>
+            </div>
+            <div class="work-card-meta">
+              <span><b>客户:</b>百联生物</span>
+              <span><b>预计:</b>2026-06-25</span>
+              <span><b>剩余:</b>10 天</span>
+            </div>
+            <div class="work-card-progress">
+              <span>制图中</span>
+              <div class="dot-row">
+                <div class="step-dot done"></div>
+                <div class="step-dot done"></div>
+                <div class="step-dot active"></div>
+                <div class="step-dot"></div>
+                <div class="step-dot"></div>
+              </div>
+              <span>说明书已上传</span>
+            </div>
+            <div class="work-card-foot">
+              <button class="btn btn-secondary btn-sm"><i class="ti ti-file-upload"></i> 上传产物</button>
+              <button class="btn btn-secondary btn-sm"><i class="ti ti-check"></i> 完成</button>
+            </div>
+          </div>
+
+          <div class="work-card normal">
+            <div class="work-card-head">
+              <span class="work-card-code">2026-002A</span>
+              <span class="work-card-name">100L 拉缸</span>
+              <span style="flex:1"></span>
+              <span class="pill pill-success"><span class="dot"></span>资料齐</span>
+            </div>
+            <div class="work-card-meta">
+              <span><b>客户:</b>同辉机械</span>
+              <span><b>预计:</b>2026-02-13</span>
+              <span><b>效率:</b>92%</span>
+            </div>
+            <div class="work-card-progress">
+              <span>等待完成</span>
+              <div class="dot-row">
+                <div class="step-dot done"></div>
+                <div class="step-dot done"></div>
+                <div class="step-dot done"></div>
+                <div class="step-dot done"></div>
+                <div class="step-dot active"></div>
+              </div>
+            </div>
+            <div class="work-card-foot">
+              <button class="btn btn-primary btn-sm"><i class="ti ti-check"></i> 标记完成</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 页面3：月度报表 ========== -->
+    <div id="page-report" class="page-body">
+      <div class="page">
+        <div class="page-head">
+          <div class="title">
+            <h1>月度工作报表</h1>
+            <p>2026-06 · 全公司任务量 / 按时率 / 完成效率 / 逾期清单</p>
+          </div>
+          <div class="actions">
+            <button class="btn btn-secondary"><i class="ti ti-calendar"></i> 2026-06</button>
+            <button class="btn btn-secondary"><i class="ti ti-download"></i> 导出 Excel</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card is-primary">
+            <div class="kpi-label"><i class="ti ti-list-check"></i> 任务总数</div>
+            <div class="kpi-value">142</div>
+            <div class="kpi-delta" style="color:rgba(255,255,255,0.8)">本月下单 28</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label" style="color:var(--success)"><i class="ti ti-circle-check"></i> 已完成</div>
+            <div class="kpi-value" style="color:var(--success)">118</div>
+            <div class="kpi-delta up">83.1% 完成率</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label" style="color:var(--danger)"><i class="ti ti-alert-triangle"></i> 逾期</div>
+            <div class="kpi-value" style="color:var(--danger)">5</div>
+            <div class="kpi-delta down">3.5% 逾期率</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label" style="color:var(--info)"><i class="ti ti-trending-up"></i> 平均效率</div>
+            <div class="kpi-value" style="color:var(--info)">87%</div>
+            <div class="kpi-delta" style="color:var(--ink-3)">越低越好</div>
+          </div>
+        </div>
+
+        <div class="report-section">
+          <h3 class="section-title">人均完成效率（实际÷预计 · 越低越好，绿=按时）</h3>
+          <div class="rate-row"><span class="label">设计部 · 张设计</span><div class="track"><div class="fill good" style="width:42%"></div></div><span class="val">82%</span></div>
+          <div class="rate-row"><span class="label">设计部 · 李设计</span><div class="track"><div class="fill good" style="width:48%"></div></div><span class="val">93%</span></div>
+          <div class="rate-row"><span class="label">电工部 · 刘电工</span><div class="track"><div class="fill" style="width:58%;background:linear-gradient(90deg,var(--warning),#FBBF24)"></div></div><span class="val">115%</span></div>
+          <div class="rate-row"><span class="label">生产部 · 周装配</span><div class="track"><div class="fill good" style="width:45%"></div></div><span class="val">88%</span></div>
+          <div class="rate-row"><span class="label">设计部 · 陈设计</span><div class="track"><div class="fill" style="width:72%;background:linear-gradient(90deg,var(--danger),#F87171)"></div></div><span class="val">142%</span></div>
+        </div>
+
+        <div class="report-section">
+          <h3 class="section-title">部门概览</h3>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;font-size:13px">
+            <div style="padding:14px;border:1px solid var(--line);border-radius:var(--radius)">
+              <div style="display:flex;align-items:center;gap:6px;font-weight:500;margin-bottom:8px"><span style="width:8px;height:8px;border-radius:50%;background:var(--primary)"></span> 设计部</div>
+              <div style="display:flex;justify-content:space-between;color:var(--ink-3);padding:2px 0"><span>任务/完成</span><b style="color:var(--ink-1)">45 / 38</b></div>
+              <div style="display:flex;justify-content:space-between;color:var(--ink-3);padding:2px 0"><span>逾期</span><b style="color:var(--ink-1)">2</b></div>
+              <div style="display:flex;justify-content:space-between;color:var(--ink-3);padding:2px 0"><span>按时率</span><b style="color:var(--success)">94%</b></div>
+            </div>
+            <div style="padding:14px;border:1px solid var(--line);border-radius:var(--radius)">
+              <div style="display:flex;align-items:center;gap:6px;font-weight:500;margin-bottom:8px"><span style="width:8px;height:8px;border-radius:50%;background:var(--warning)"></span> 电工部</div>
+              <div style="display:flex;justify-content:space-between;color:var(--ink-3);padding:2px 0"><span>任务/完成</span><b style="color:var(--ink-1)">52 / 44</b></div>
+              <div style="display:flex;justify-content:space-between;color:var(--ink-3);padding:2px 0"><span>逾期</span><b style="color:var(--danger)">3</b></div>
+              <div style="display:flex;justify-content:space-between;color:var(--ink-3);padding:2px 0"><span>按时率</span><b style="color:var(--warning)">93%</b></div>
+            </div>
+            <div style="padding:14px;border:1px solid var(--line);border-radius:var(--radius)">
+              <div style="display:flex;align-items:center;gap:6px;font-weight:500;margin-bottom:8px"><span style="width:8px;height:8px;border-radius:50%;background:var(--success)"></span> 生产部</div>
+              <div style="display:flex;justify-content:space-between;color:var(--ink-3);padding:2px 0"><span>任务/完成</span><b style="color:var(--ink-1)">45 / 36</b></div>
+              <div style="display:flex;justify-content:space-between;color:var(--ink-3);padding:2px 0"><span>逾期</span><b style="color:var(--ink-1)">0</b></div>
+              <div style="display:flex;justify-content:space-between;color:var(--ink-3);padding:2px 0"><span>按时率</span><b style="color:var(--success)">100%</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 浮动反馈 -->
+<button class="fab"><i class="ti ti-message-circle"></i> 问题反馈</button>
+
+<script>
+function showTab(tab) {
+  document.querySelectorAll('.demo-tab').forEach(t => t.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+  document.querySelectorAll('.page-body').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + tab).classList.add('active');
+}
+</script>
+</body>
+</html>

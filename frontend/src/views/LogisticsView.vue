@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
 
 interface DeptState { state: string; label: string }
 interface AttOut { id: number; name: string }
@@ -140,7 +141,7 @@ async function confirmShip(force = false) {
         </el-table-column>
         <el-table-column label="生产状态" width="92">
           <template #default="{ row }">
-            <el-tag size="small" :type="stateTag(row.produce_state)" effect="plain">{{ row.produce_state.label }}</el-tag>
+            <StatusPill :text="row.produce_state.label" :variant="stateTag(row.produce_state)" />
           </template>
         </el-table-column>
         <el-table-column label="仓库发货清单" min-width="120">
@@ -163,9 +164,9 @@ async function confirmShip(force = false) {
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.status === 'shipped' ? 'success' : (row.can_ship ? 'primary' : 'warning')">
-              {{ row.status === 'shipped' ? '已发货' : (row.can_ship ? '可发货' : '待齐') }}
-            </el-tag>
+            <StatusPill
+              :text="row.status === 'shipped' ? '已发货' : (row.can_ship ? '可发货' : '待齐')"
+              :variant="row.status === 'shipped' ? 'success' : (row.can_ship ? 'primary' : 'warn')" />
           </template>
         </el-table-column>
         <el-table-column label="发货闸门" width="200" fixed="right">

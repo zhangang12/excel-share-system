@@ -6,6 +6,7 @@ import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
+import { fmtDateTime } from '@/utils/format'
 
 interface Att { id: number; name: string }
 interface InboxRow {
@@ -64,7 +65,9 @@ function openDetail(pid: number) {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="received_at" label="收到时间" width="150" />
+        <el-table-column prop="received_at" label="收到时间" width="150">
+          <template #default="{ row }">{{ fmtDateTime(row.received_at) }}</template>
+        </el-table-column>
       </el-table>
       <EmptyHint v-if="!loading && !rows.length" text="暂无采购清单（电工部完成接单上传后出现）" />
     </el-card>

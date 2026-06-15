@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { http } from '@/api'
 import type { User } from '@/types'
+import StatusPill from '@/components/StatusPill.vue'
 
 // 🆕 v3 企微绑定：用户 ↔ 企业微信 userid（手动绑定 F1 口径）
 interface BindUser extends User { wxid?: string | null }
@@ -49,7 +50,7 @@ onMounted(load)
         <el-table-column prop="role_name" label="角色" min-width="120" />
         <el-table-column label="当前绑定" min-width="140">
           <template #default="{ row }">
-            <el-tag v-if="row.wxid" size="small" type="success">{{ row.wxid }}</el-tag>
+            <StatusPill v-if="row.wxid" :text="row.wxid" variant="success" />
             <span v-else class="muted">未绑定</span>
           </template>
         </el-table-column>

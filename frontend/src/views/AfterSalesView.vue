@@ -6,8 +6,9 @@ import { Plus, Check } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
-import { fmtMoney } from '@/api/sales'
+import { fmtMoney } from '@/utils/format'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
 
 interface Att { id: number; name: string }
 interface Row {
@@ -37,6 +38,7 @@ onMounted(load)
 
 const STATUS_TXT: Record<string, string> = { pending: '待审批', approved: '已审批', rejected: '已驳回' }
 const STATUS_TAG: Record<string, any> = { pending: 'warning', approved: 'success', rejected: 'danger' }
+const STATUS_VARIANT: Record<string, 'warn' | 'success' | 'danger' | 'muted'> = { pending: 'warn', approved: 'success', rejected: 'danger' }
 
 // 登记
 const regVisible = ref(false)
@@ -144,7 +146,7 @@ async function approve(r: Row, ok: boolean) {
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag size="small" :type="STATUS_TAG[row.status]">{{ STATUS_TXT[row.status] }}</el-tag>
+            <StatusPill :text="STATUS_TXT[row.status]" :variant="STATUS_VARIANT[row.status] || 'muted'" />
           </template>
         </el-table-column>
         <el-table-column label="操作" width="150">

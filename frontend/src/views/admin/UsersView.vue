@@ -5,6 +5,7 @@ import { Plus, Edit, Delete, User as UserIcon } from '@element-plus/icons-vue'
 import { adminApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 import type { User, Role } from '@/types'
+import StatusPill from '@/components/StatusPill.vue'
 
 const auth = useAuthStore()
 const isAdmin = computed(() => ['admin', 'manager'].includes(auth.user?.role_code || ''))
@@ -169,8 +170,8 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag v-if="row.is_active" type="success" effect="light">启用</el-tag>
-            <el-tag v-else type="danger" effect="light">停用</el-tag>
+            <StatusPill v-if="row.is_active" text="启用" variant="success" />
+            <StatusPill v-else text="停用" variant="danger" />
           </template>
         </el-table-column>
         <el-table-column v-if="isAdmin" label="操作" width="180" align="right" fixed="right">

@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
+import { fmtRelative } from '@/utils/format'
 
 interface Req {
   id: number; user_id: number; user_name?: string | null; user_role?: string | null
@@ -66,9 +68,12 @@ function fmt(s: string) {
           <template #default="{ row }">{{ row.user_name }} <span class="muted small">{{ row.user_role }}</span></template>
         </el-table-column>
         <el-table-column prop="scope" label="导出范围" min-width="160" />
-        <el-table-column label="申请时间" width="120"><template #default="{ row }">{{ fmt(row.created_at) }}</template></el-table-column>
+        <el-table-column label="申请时间" width="120"><template #default="{ row }">{{ fmtRelative(row.created_at) }}</template></el-table-column>
         <el-table-column label="状态" width="90">
-          <template #default="{ row }"><el-tag size="small" :type="STATUS_TAG[row.status]">{{ STATUS_TXT[row.status] }}</el-tag></template>
+          <template #default="{ row }">
+            <StatusPill :text="STATUS_TXT[row.status]"
+                        :variant="row.status === 'approved' ? 'success' : row.status === 'pending' ? 'warn' : row.status === 'rejected' ? 'danger' : 'muted'" />
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="160">
           <template #default="{ row }">

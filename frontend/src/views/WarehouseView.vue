@@ -7,6 +7,8 @@ import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow } from '@/api/warehouse'
 import EmptyHint from '@/components/EmptyHint.vue'
+import StatusPill from '@/components/StatusPill.vue'
+import { fmtDate } from '@/utils/format'
 
 const auth = useAuthStore()
 const canWrite = computed(() => ['warehouse', 'warehouse_lead', 'admin', 'manager'].includes(auth.user?.role_code || ''))
@@ -197,10 +199,12 @@ function onTab(name: string) {
           </div>
           <el-table :data="txns" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="ref_no" label="单号" width="140" />
-            <el-table-column prop="biz_date" label="日期" width="110" />
+            <el-table-column prop="biz_date" label="日期" width="110">
+              <template #default="{ row }">{{ fmtDate(row.biz_date) }}</template>
+            </el-table-column>
             <el-table-column label="物料" min-width="130"><template #default="{ row }">{{ row.material_name }}{{ row.spec ? '·' + row.spec : '' }}</template></el-table-column>
             <el-table-column label="方向" width="70">
-              <template #default="{ row }"><el-tag size="small" :type="row.direction === 'in' ? 'success' : 'warning'">{{ row.direction === 'in' ? '入库' : '出库' }}</el-tag></template>
+              <template #default="{ row }"><StatusPill :text="row.direction === 'in' ? '入库' : '出库'" :variant="row.direction === 'in' ? 'success' : 'warn'" /></template>
             </el-table-column>
             <el-table-column prop="qty" label="数量" width="70" />
             <el-table-column prop="source" label="来源/用途" width="100"><template #default="{ row }">{{ row.source || '—' }}</template></el-table-column>
@@ -208,8 +212,8 @@ function onTab(name: string) {
             <el-table-column prop="project_code" label="项目" width="100"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>
             <el-table-column label="操作" width="90">
               <template #default="{ row }">
-                <el-tag v-if="row.is_reversal" size="small" type="info">冲红单</el-tag>
-                <el-tag v-else-if="row.reversed" size="small" type="danger" effect="plain">已冲红</el-tag>
+                <StatusPill v-if="row.is_reversal" text="冲红单" variant="muted" />
+                <StatusPill v-else-if="row.reversed" text="已冲红" variant="danger" />
                 <el-button v-else-if="canWrite" size="small" link type="danger" @click="reverseTxn(row)">冲红</el-button>
               </template>
             </el-table-column>
