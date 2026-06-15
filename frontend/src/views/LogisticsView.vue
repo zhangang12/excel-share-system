@@ -2,7 +2,7 @@
 // 🆕 v3 物流发货部：发货看板 + D5 闸门 + 收货信息 + 确认发货回传销售台账
 import { ref, onMounted, reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Van, Edit, Clock } from '@element-plus/icons-vue'
+import { Van, Edit, Clock, Phone, Location } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
@@ -152,15 +152,28 @@ async function confirmShip(force = false) {
             <span v-if="!row.ship_list_files.length" class="muted">暂无</span>
           </template>
         </el-table-column>
-        <el-table-column label="收货信息" min-width="190">
+        <el-table-column label="收货信息" min-width="240">
           <template #default="{ row }">
-            <div v-if="row.receiver_name" class="rcv">
-              <div><b>{{ row.receiver_name }}</b></div>
-              <div class="muted">📞 {{ row.receiver_phone || '—' }}</div>
-              <div class="muted">📍 {{ row.receiver_addr || '—' }}</div>
+            <div class="rcv-cell">
+              <template v-if="row.receiver_name">
+                <div class="rcv-info">
+                  <div class="rcv-name">{{ row.receiver_name }}</div>
+                  <div class="rcv-line">
+                    <el-icon class="rcv-ico"><Phone /></el-icon>{{ row.receiver_phone || '—' }}
+                  </div>
+                  <div class="rcv-line">
+                    <el-icon class="rcv-ico"><Location /></el-icon>{{ row.receiver_addr || '—' }}
+                  </div>
+                </div>
+                <el-tooltip content="编辑收货信息" placement="top">
+                  <el-button class="rcv-edit" size="small" link :icon="Edit" @click="openReceiver(row)" />
+                </el-tooltip>
+              </template>
+              <template v-else>
+                <StatusPill text="待完善" variant="warn" />
+                <el-button size="small" link type="primary" :icon="Edit" @click="openReceiver(row)">完善信息</el-button>
+              </template>
             </div>
-            <span v-else class="muted">待完善</span>
-            <el-button size="small" link type="primary" :icon="Edit" @click="openReceiver(row)">编辑</el-button>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
@@ -235,4 +248,36 @@ async function confirmShip(force = false) {
 .muted { color: var(--el-text-color-secondary); font-size: 12.5px; }
 .fc { cursor: pointer; margin: 2px 4px 2px 0; }
 .rcv { font-size: 12.5px; line-height: 1.5; }
+
+/* 🆕 v4 收货信息 cell: 已填→紧凑姓名/电话/地址 + 右上 hover 编辑;未填→pill+完善按钮 */
+.rcv-cell {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 2px 0;
+  position: relative;
+}
+.rcv-info { flex: 1; min-width: 0; line-height: 1.55; }
+.rcv-name {
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  font-size: 13.5px;
+  margin-bottom: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rcv-line {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rcv-ico {
+  font-size: 12px; color: var(--text-4, #cbd5e1); flex-shrink: 0;
+}
+.rcv-edit {
+  flex-shrink: 0;
+  opacity: 0; transition: opacity .15s;
+  color: var(--el-text-color-secondary);
+  align-self: flex-start;
+}
+.rcv-edit:hover { color: var(--primary, #2563eb); }
+.el-table__row:hover .rcv-edit { opacity: 1; }
 </style>
