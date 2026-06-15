@@ -52,6 +52,18 @@ async def me(current: models.User = Depends(get_current_user)):
     return _user_to_out(current)
 
 
+@router.get("/menus", response_model=schemas.MenusOut)
+async def my_menus(current: models.User = Depends(get_current_user)):
+    """🆕 v3：当前用户可见菜单（前端侧边栏渲染的唯一权威）+ 详单可点性。"""
+    from ..menus import user_menu_keys, user_can_view_detail, MENU_DEFS, ADMIN_MENU_DEFS
+    keys = user_menu_keys(current)
+    labels = {m["key"]: m["label"] for m in (MENU_DEFS + ADMIN_MENU_DEFS)}
+    return schemas.MenusOut(
+        menus=[schemas.MenuItem(key=k, label=labels.get(k, k)) for k in keys],
+        can_view_detail=user_can_view_detail(current),
+    )
+
+
 @router.post("/change-password", response_model=schemas.Msg)
 async def change_password(
     data: schemas.ChangePasswordIn,

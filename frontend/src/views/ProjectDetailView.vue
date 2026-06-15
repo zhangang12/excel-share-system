@@ -10,6 +10,10 @@ import { adminApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 import DatasheetGrid from '@/components/DatasheetGrid.vue'
 import ClonePermissionsDialog from '@/components/ClonePermissionsDialog.vue'
+import WorkflowGraph from '@/components/WorkflowGraph.vue'
+import { collabApi, ASSEMBLY_SHEETS, type Workflow } from '@/api/collab'
+import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
+import { fetchExport } from '@/api/exportRequest'
 import type { Project, ProjectMember, User, Datasheet } from '@/types'
 
 const route = useRoute()
@@ -78,6 +82,56 @@ async function loadDatasheets() {
   if (activeSheetId.value && !datasheets.value.find(d => d.id === activeSheetId.value)) {
     activeSheetId.value = datasheets.value[0]?.id || null
   }
+}
+
+// ========== 🆕 v3 M12 部门协作 tab ==========
+const workflow = ref<Workflow | null>(null)
+const wfLoading = ref(false)
+const STATUS_OPTIONS = ['进行中', '已完成', '已归档']
+// 四表校验 slots（钣金装配/标准件清单/外协外购/原料下料单 — 仅模板四表，不含电工采购单第5表）
+const FOUR_SHEETS = ['钣金装配', '标准件清单', '外协外购', '原料下料单']
+const fourSheetStatus = computed(() =>
+  FOUR_SHEETS.map(name => {
+    const d = datasheets.value.find(x => x.name === name)
+    return { name, imported: !!d?.imported, did: d?.id }
+  })
+)
+// 当前激活表是否为装配前置三表（显示 done-flag banner）
+const activeSheet = computed(() => datasheets.value.find(d => d.id === activeSheetId.value) || null)
+const isPrecheckSheet = computed(() => !!activeSheet.value && ASSEMBLY_SHEETS.includes(activeSheet.value.name))
+const canMarkDone = computed(() =>
+  ['admin', 'manager', 'pm_lead', 'designer', 'design_lead'].includes(auth.user?.role_code || ''))
+
+const feedbacks = ref<Feedback[]>([])
+async function loadWorkflow() {
+  wfLoading.value = true
+  try {
+    const [wf, fbs] = await Promise.all([
+      collabApi.workflow(pid.value),
+      feedbackApi.byProject(pid.value).catch(() => []),
+    ])
+    workflow.value = wf
+    feedbacks.value = fbs
+  } catch { workflow.value = null }
+  finally { wfLoading.value = false }
+}
+
+async function onCollabTab(name: string) {
+  if (name === 'collab' && !workflow.value) await loadWorkflow()
+}
+
+async function setProjStatus(status: string) {
+  if (!project.value || project.value.status === status) return
+  await projectsApi.update(pid.value, { status })
+  project.value = { ...project.value, status }
+  ElMessage.success('项目状态已更新')
+}
+
+async function toggleSheetDone(did?: number, cur?: boolean) {
+  if (!did) return
+  await collabApi.setDoneFlag(did, !cur)
+  ElMessage.success(!cur ? '已标记完成' : '已取消完成')
+  await loadDatasheets()
 }
 
 
@@ -202,33 +256,11 @@ async function onImportFile(ev: Event) {
 
 async function exportCurrent() {
   if (!activeSheetId.value) { ElMessage.warning('请先选择数据表'); return }
-  const token = localStorage.getItem('pms_token') || ''
-  const res = await fetch(`/api/datasheets/${activeSheetId.value}/export`, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
-  if (!res.ok) { ElMessage.error('导出失败'); return }
-  const cd = res.headers.get('Content-Disposition') || ''
-  const m = cd.match(/filename\*?=(?:UTF-8'')?([^;\n]+)/i)
-  const fname = m ? decodeURIComponent(m[1].replace(/"/g,'')) : 'export.xlsx'
-  const blob = await res.blob()
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob); a.download = fname
-  document.body.appendChild(a); a.click(); a.remove()
+  await fetchExport(`/api/datasheets/${activeSheetId.value}/export`, 'export.xlsx', '数据表导出')
 }
 
 async function exportAll() {
-  const token = localStorage.getItem('pms_token') || ''
-  const res = await fetch(`/api/projects/${pid.value}/export`, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
-  if (!res.ok) { ElMessage.error('导出失败'); return }
-  const cd = res.headers.get('Content-Disposition') || ''
-  const m = cd.match(/filename\*?=(?:UTF-8'')?([^;\n]+)/i)
-  const fname = m ? decodeURIComponent(m[1].replace(/"/g,'')) : 'project.xlsx'
-  const blob = await res.blob()
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob); a.download = fname
-  document.body.appendChild(a); a.click(); a.remove()
+  await fetchExport(`/api/projects/${pid.value}/export`, 'project.xlsx', `项目导出 ${project.value?.code || ''}`)
 }
 
 onMounted(async () => {
@@ -261,7 +293,7 @@ onMounted(async () => {
       <el-button :icon="Download" @click="exportAll">导出全部</el-button>
     </div>
 
-    <el-tabs v-model="activeTab" class="proj-tabs">
+    <el-tabs v-model="activeTab" class="proj-tabs" @tab-change="onCollabTab">
       <!-- 数据 tab -->
       <el-tab-pane label="进度表" name="data">
         <div class="datasheet-tabs" v-if="datasheets.length || canEdit">
@@ -272,11 +304,25 @@ onMounted(async () => {
           >
             <el-icon><Document /></el-icon>
             <span>{{ d.name }}</span>
-            <span v-if="canEdit && activeSheetId === d.id" class="ds-tab-actions" @click.stop>
+            <span v-if="canEdit && activeSheetId === d.id && d.name !== '电工采购单'" class="ds-tab-actions" @click.stop>
               <el-icon class="ds-action" @click="renameDatasheet(d)" title="重命名"><Edit /></el-icon>
               <el-icon class="ds-action danger" @click="deleteDatasheet(d)" title="删除"><Delete /></el-icon>
             </span>
           </div>
+        </div>
+
+        <!-- 🆕 v3 §十七 装配前置三表完成标记 banner（仅钣金装配/标准件清单/外协外购显示） -->
+        <div v-if="isPrecheckSheet && activeSheet" class="sheet-banner">
+          <span>🆕 本表完成状态：</span>
+          <el-tag :type="activeSheet.done_flag ? 'success' : 'primary'" size="small">
+            {{ activeSheet.done_flag ? '已完成' : '进行中' }}
+          </el-tag>
+          <span class="muted small">所有项完成即标「已完成」，自动同步装配组工作台</span>
+          <span class="spacer" style="flex:1"></span>
+          <el-button v-if="canMarkDone" size="small"
+                     @click="toggleSheetDone(activeSheet.id, activeSheet.done_flag)">
+            {{ activeSheet.done_flag ? '↩ 标记为进行中' : '✓ 标记为已完成' }}
+          </el-button>
         </div>
 
         <DatasheetGrid
@@ -337,6 +383,59 @@ onMounted(async () => {
               </template>
             </el-table-column>
           </el-table>
+        </el-card>
+      </el-tab-pane>
+
+      <!-- 🆕 v3 M12 部门协作 tab（叠加，不改原进度表/成员） -->
+      <el-tab-pane label="部门协作 🆕" name="collab">
+        <el-card style="margin-bottom:14px" shadow="never">
+          <template #header>📦 项目状态 / 发货</template>
+          <div class="collab-status">
+            <span>项目状态：<el-tag size="small" effect="light">{{ project.status }}</el-tag></span>
+            <span v-if="workflow">发货：
+              <el-tag size="small" :type="workflow.ship_status === 'shipped' ? 'success' : 'warning'">
+                {{ workflow.ship_status === 'shipped' ? '已发货' : '待发货' }}
+              </el-tag>
+            </span>
+            <span v-if="canManage" style="margin-left:auto">
+              管理层改状态：
+              <el-select :model-value="project.status" size="small" style="width:130px"
+                         @update:model-value="setProjStatus">
+                <el-option v-for="s in STATUS_OPTIONS" :key="s" :label="s" :value="s" />
+              </el-select>
+            </span>
+          </div>
+        </el-card>
+
+        <el-card style="margin-bottom:14px" shadow="never">
+          <template #header>📑 四个数据表（设计完成前置校验）</template>
+          <div class="sheet-slots">
+            <div v-for="s in fourSheetStatus" :key="s.name" class="slot" :class="{ up: s.imported }">
+              <div class="nm">{{ s.name }}</div>
+              <div class="st" :class="s.imported ? 'ok' : 'no'">{{ s.imported ? '✅ 已导入' : '⬜ 未导入' }}</div>
+            </div>
+          </div>
+          <div class="muted small" style="margin-top:8px">通过页头「导入 Excel」上传四表（含四个 sheet 一次导入）；此处仅显示校验状态。</div>
+        </el-card>
+
+        <el-card shadow="never" style="margin-bottom:14px" v-loading="wfLoading">
+          <template #header>🔀 全流程工作流（并行 / 串行）</template>
+          <WorkflowGraph v-if="workflow" :wf="workflow" />
+          <el-empty v-else description="加载中…" :image-size="60" />
+        </el-card>
+
+        <!-- 🆕 v3 M13 问题反馈存档 -->
+        <el-card shadow="never">
+          <template #header>📝 问题反馈（装配组 → 生产主管 → 设计师 存档）</template>
+          <el-table v-if="feedbacks.length" :data="feedbacks" size="small">
+            <el-table-column prop="content" label="问题" min-width="240" show-overflow-tooltip />
+            <el-table-column label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>
+            <el-table-column label="设计师" width="90"><template #default="{ row }">{{ row.designer_name || '—' }}</template></el-table-column>
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }"><el-tag size="small" :type="FB_STATUS_TAG[row.status]">{{ FB_STATUS_TXT[row.status] }}</el-tag></template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-else description="暂无问题反馈" :image-size="50" />
         </el-card>
       </el-tab-pane>
     </el-tabs>
@@ -429,4 +528,22 @@ onMounted(async () => {
   cursor: pointer;
 }
 .ds-add:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-light); }
+
+/* 🆕 v3 M12 协作 tab + 装配前置 banner */
+.sheet-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; margin-bottom: 10px;
+  background: var(--el-fill-color-light); border-radius: 8px; font-size: 13px;
+}
+.collab-status { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; font-size: 14px; }
+.sheet-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.slot {
+  border: 1px solid var(--el-border-color); border-radius: 10px;
+  padding: 14px; text-align: center; background: #fff;
+}
+.slot.up { background: #f0fdf4; border-color: #86efac; }
+.slot .nm { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.slot .st { font-size: 12px; }
+.slot .st.ok { color: #16a34a; }
+.slot .st.no { color: var(--text-3); }
 </style>

@@ -50,8 +50,382 @@ class UserOut(BaseModel):
     role_name: Optional[str] = None
     is_active: bool
     password_must_change: bool = False
+    wxid: Optional[str] = None  # 🆕 v3 企微绑定
     created_at: datetime
     last_login: Optional[datetime] = None
+
+
+# ---------- 🆕 菜单 ----------
+class MenuItem(BaseModel):
+    key: str
+    label: str
+
+
+class MenusOut(BaseModel):
+    menus: list[MenuItem]
+    can_view_detail: bool
+
+
+# ---------- 🆕 附件 ----------
+class AttachmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    biz_type: str
+    biz_id: Optional[int] = None
+    kind: Optional[str] = None
+    project_id: Optional[int] = None
+    name: str
+    ext: Optional[str] = None
+    size: int
+    uploaded_by: Optional[int] = None
+    created_at: datetime
+
+
+# ---------- 🆕 部门任务单 ----------
+class OrderCreate(BaseModel):
+    project_id: int
+    dept: str                      # design / electric / produce
+    req_text: Optional[str] = None
+    worker_id: Optional[int] = None  # 管理层目录下单可直接指派
+
+
+class OrderAssignIn(BaseModel):
+    worker_id: int
+
+
+class OrderStartIn(BaseModel):
+    start_date: str  # YYYY-MM-DD
+    due_date: str
+
+
+class OrderCompleteIn(BaseModel):
+    notify_user_id: int
+
+
+class OrderReassignIn(BaseModel):
+    worker_id: int
+
+
+class OrderOut(BaseModel):
+    id: int
+    project_id: int
+    project_code: str
+    project_name: str
+    dept: str
+    status: str
+    worker_id: Optional[int] = None
+    worker_name: Optional[str] = None
+    req_text: Optional[str] = None
+    start_date: Optional[str] = None
+    due_date: Optional[str] = None
+    done_date: Optional[str] = None
+    notify_user_id: Optional[int] = None
+    notify_user_name: Optional[str] = None
+    eff_pct: Optional[int] = None      # 完成效率%（C2/C3 口径）
+    on_time: Optional[bool] = None
+    overdue: bool = False              # 进行中且超预计 / 完成且逾期
+    created_at: datetime
+    input_files: list[AttachmentOut] = []
+    start_files: list[AttachmentOut] = []
+    output_files: list[AttachmentOut] = []
+
+
+class OrderOptionUser(BaseModel):
+    id: int
+    name: str
+
+
+# ---------- 🆕 销售台账 / 销售下单 ----------
+class SalesLedgerRow(BaseModel):
+    id: int
+    project_id: int
+    code: str
+    name: str
+    status: str
+    sales_uid: Optional[int] = None
+    sales_name: Optional[str] = None
+    customer: Optional[str] = None
+    cust_type: Optional[str] = None
+    sign_date: Optional[str] = None      # 下单日期=合同签订日期（读项目 __o__签订日期）
+    deliver_date: Optional[str] = None
+    contract: str = "无"
+    contract_file_id: Optional[int] = None
+    contract_file_name: Optional[str] = None
+    amount: float = 0
+    tax_rate: Optional[str] = None
+    invoice_state: Optional[str] = None
+    invoice_apply_file_id: Optional[int] = None
+    invoice_apply_file_name: Optional[str] = None
+    invoice_file_id: Optional[int] = None
+    invoice_file_name: Optional[str] = None
+    prepay: float = 0
+    before_ship: float = 0
+    ship_receivable: float = 0
+    balance: float = 0
+    balance_date: Optional[str] = None
+    ship_date: Optional[str] = None
+
+
+class SalesLedgerTotals(BaseModel):
+    count: int = 0
+    amount: float = 0
+    uninvoiced: float = 0      # 未开票金额合计（invoice_state != invoiced 的 amount）
+    prepay: float = 0
+    before_ship: float = 0
+    ship_receivable: float = 0
+    balance: float = 0
+
+
+class SalesLedgerListOut(BaseModel):
+    rows: list[SalesLedgerRow]
+    totals: Optional[SalesLedgerTotals] = None  # 仅主管/管理层视角返回
+
+
+class SalesReceiverIn(BaseModel):
+    name: str = ""
+    phone: str = ""
+    addr: str = ""
+
+
+class SalesOrderCreate(BaseModel):
+    code_suffix: str = ""                 # 编号后缀字母（可选，如 A）
+    name: str = Field(min_length=1, max_length=255)   # 设备名称
+    customer: str = ""
+    cust_type: str = "经销商"
+    contract: str = "有"
+    amount: float = 0
+    tax_rate: str = "13%"
+    prepay: float = 0
+    before_ship: float = 0
+    ship_receivable: float = 0
+    balance: float = 0
+    balance_date: str = ""
+    depts: list[str] = Field(default_factory=list)    # 派往部门（design/electric/produce）
+    req_text: str = ""
+    receiver: Optional[SalesReceiverIn] = None
+
+
+class SalesOrderOut(BaseModel):
+    project_id: int
+    code: str
+    order_ids: list[int]
+
+
+class SalesLedgerUpdate(BaseModel):
+    name: Optional[str] = None            # 设备名称（同步 Project.name）
+    customer: Optional[str] = None
+    cust_type: Optional[str] = None
+    contract: Optional[str] = None
+    amount: Optional[float] = None
+    tax_rate: Optional[str] = None
+    prepay: Optional[float] = None
+    before_ship: Optional[float] = None
+    ship_receivable: Optional[float] = None
+    balance: Optional[float] = None
+    balance_date: Optional[str] = None
+
+
+class NextCodeOut(BaseModel):
+    code: str
+
+
+# ---------- 🆕 售后部 ----------
+class AfterSalesRow(BaseModel):
+    id: int
+    project_id: int
+    code: str
+    name: str
+    problem: str
+    cost: float
+    status: str
+    mat_file_id: Optional[int] = None
+    mat_file_name: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+
+
+class AfterSalesStats(BaseModel):
+    total: int = 0
+    pending: int = 0
+    approved_cost: float = 0
+    total_cost: float = 0
+
+
+class AfterSalesListOut(BaseModel):
+    rows: list[AfterSalesRow]
+    stats: AfterSalesStats
+
+
+class AfterSalesProjOption(BaseModel):
+    id: int
+    code: str
+    name: str
+
+
+# ---------- 🆕 生产问题反馈 ----------
+class FeedbackCreate(BaseModel):
+    project_id: int
+    content: str
+
+
+class FeedbackRow(BaseModel):
+    id: int
+    project_id: int
+    code: str
+    name: str
+    content: str
+    status: str
+    created_by_name: Optional[str] = None
+    designer_name: Optional[str] = None
+    created_at: datetime
+
+
+class FeedbackProjOption(BaseModel):
+    id: int
+    code: str
+    name: str
+
+
+# ---------- 🆕 仓库组 ----------
+class WhMaterialIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    spec: Optional[str] = None
+    category: Optional[str] = None
+    unit: str = "个"
+    location: Optional[str] = None
+    safety_stock: float = 0
+    init_stock: float = 0
+    code: Optional[str] = None
+
+
+class WhMaterialOut(BaseModel):
+    id: int
+    code: Optional[str] = None
+    name: str
+    spec: Optional[str] = None
+    category: Optional[str] = None
+    unit: str
+    location: Optional[str] = None
+    safety_stock: float
+    init_stock: float
+    status: str
+    stock: float = 0          # 实时库存
+    low: bool = False         # 是否低于安全库存
+
+
+class WhTxnIn(BaseModel):
+    material_id: int
+    biz_date: str
+    direction: str            # in / out
+    qty: float
+    source: Optional[str] = None
+    party: Optional[str] = None
+    project_id: Optional[int] = None
+
+
+class WhTxnOut(BaseModel):
+    id: int
+    material_id: int
+    material_name: str
+    spec: Optional[str] = None
+    biz_date: str
+    direction: str
+    qty: float
+    source: Optional[str] = None
+    party: Optional[str] = None
+    project_id: Optional[int] = None
+    project_code: Optional[str] = None
+    ref_no: str
+    is_reversal: bool = False
+    reversed: bool = False
+    created_at: datetime
+
+
+class WhSummaryRow(BaseModel):
+    material_id: int
+    name: str
+    spec: Optional[str] = None
+    unit: str
+    opening: float = 0        # 期初
+    in_qty: float = 0         # 本期入
+    out_qty: float = 0        # 本期出
+    closing: float = 0        # 期末
+
+
+class WhStockOut(BaseModel):
+    materials: list[WhMaterialOut]
+    total: int = 0
+    low_count: int = 0
+
+
+# ---------- 🆕 财务部 ----------
+class FinanceInvoiceRow(BaseModel):
+    ledger_id: int
+    code: str
+    name: str
+    customer: Optional[str] = None
+    sales_name: Optional[str] = None
+    amount: float = 0
+    tax_rate: Optional[str] = None
+    apply_file_id: Optional[int] = None
+    apply_file_name: Optional[str] = None
+    invoice_file_id: Optional[int] = None
+    invoice_file_name: Optional[str] = None
+
+
+class OrderOptionsOut(BaseModel):
+    workers: list[OrderOptionUser]
+    notify_pool: list[OrderOptionUser]
+    notify_label: str
+    dept_name: str
+    sheet_check: bool
+    start_outputs: list[dict]
+    outputs: list[dict]
+    start_label: str
+    end_label: str
+    done_label: str
+
+
+# ---------- 🆕 站内消息 ----------
+class MessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    kind: str
+    text: str
+    read: bool
+    biz_type: Optional[str] = None
+    biz_id: Optional[int] = None
+    created_at: datetime
+
+
+class UnreadCountOut(BaseModel):
+    count: int
+
+
+class WxidIn(BaseModel):
+    wxid: str = ""
+
+
+# ---------- 🆕 导出审批 ----------
+class ExportRequestIn(BaseModel):
+    scope: str = "数据导出"
+
+
+class ExportRequestOut(BaseModel):
+    id: int
+    user_id: int
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    scope: str
+    status: str
+    created_at: datetime
+
+
+class ExportConfigOut(BaseModel):
+    enabled: bool
+    can_export: bool   # 当前用户是否已可导出（管理层或已获权）
 
 
 # ---------- 认证 ----------
@@ -159,6 +533,8 @@ class DatasheetOut(BaseModel):
     field_count: int = 0
     record_count: int = 0
     header_lines: Optional[list[list[str]]] = None
+    imported: bool = False      # 🆕 四表校验：是否已导入 Excel
+    done_flag: bool = False     # 🆕 装配前置完成标记
     created_at: datetime
     updated_at: datetime
 
@@ -300,3 +676,20 @@ class AuditOut(BaseModel):
     detail: Optional[str] = None
     ip: Optional[str] = None
     created_at: datetime
+
+
+# ---------- 🆕 用户反馈小助手 ----------
+class UserFeedbackRow(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    kind: str
+    content: str
+    page_url: Optional[str] = None
+    user_agent: Optional[str] = None
+    status: str
+    created_at: datetime
+    user_id: Optional[int] = None
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    shot_file_id: Optional[int] = None
+    shot_file_name: Optional[str] = None

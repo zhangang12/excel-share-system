@@ -9,29 +9,49 @@ from .config import settings
 
 log = logging.getLogger("seed")
 
+# (code, name, description, can_push 消息推送人默认值)
+# 老 8 角色保持不变（红线：只增不改）；🆕 v3 增量角色按《权限矩阵》补齐
 ROLES = [
-    ("admin", "超级管理员", "系统全部权限"),
-    ("manager", "管理层", "可配置字段权限，读写所有数据"),
-    ("designer", "设计师", "按字段权限读写"),
-    ("production_clerk", "生产文员", "按字段权限读写"),
-    ("warehouse", "仓库员", "按字段权限读写"),
-    ("buyer_standard", "标准件采购员", "按字段权限读写"),
-    ("buyer_outsource", "外协机加工采购员", "含原材料采购；按字段权限读写"),
-    ("hr", "人事行政", "按字段权限读写"),
+    ("admin", "超级管理员", "系统全部权限", False),
+    ("manager", "管理层", "可配置字段权限，读写所有数据", False),
+    ("designer", "设计师", "按字段权限读写", False),
+    ("production_clerk", "生产文员", "按字段权限读写", False),
+    ("warehouse", "仓库员", "按字段权限读写", False),
+    ("buyer_standard", "标准件采购员", "按字段权限读写（已并入采购部，保留兼容）", False),
+    ("buyer_outsource", "外协机加工采购员", "含原材料采购；已并入采购部，保留兼容", False),
+    ("hr", "人事行政", "按字段权限读写", False),
+    # ---- 🆕 v3 增量角色 ----
+    ("sales", "销售员", "销售台账（仅本人订单）/销售下单", False),
+    ("sales_lead", "销售主管", "销售台账全量+合计/编辑/开票审批", True),
+    ("design_lead", "设计部负责人", "设计任务分派/作废/部门报表", True),
+    ("electrician", "电工", "电工部工作台（本人任务）", False),
+    ("electric_lead", "电工部负责人", "电工任务分派/作废/部门报表", True),
+    ("assembler", "装配组", "生产部工作台（本人任务）/问题反馈", False),
+    ("pm_lead", "生产部主管", "生产任务分派/问题反馈审批/部门报表", True),
+    ("sheetmetal", "钣金组", "下载图纸包/只读钣金装配表", False),
+    ("buyer", "采购部", "采购清单收件箱/第5表采购列维护", False),
+    ("warehouse_lead", "仓库主管", "仓库管理全功能+低库存预警接收", True),
+    ("logistics", "物流发货部", "发货看板/确认发货/收货信息维护", False),
+    ("finance", "财务部", "开票/售后费用查看", False),
+    ("as_worker", "售后部员工", "售后问题/费用登记", False),
+    ("as_lead", "售后部主管", "售后费用审批→同步财务", True),
 ]
 
 
 async def seed(db: AsyncSession) -> None:
     # 角色
-    for code, name, desc in ROLES:
+    for code, name, desc, can_push in ROLES:
         res = await db.execute(select(models.Role).where(models.Role.code == code))
         existing = res.scalar_one_or_none()
         if existing is None:
-            db.add(models.Role(code=code, name=name, description=desc))
+            db.add(models.Role(code=code, name=name, description=desc, can_push=can_push))
         else:
-            # 同步名称/描述（角色配置变了用户重启就生效）
+            # 同步名称/描述（角色配置变了用户重启就生效）；can_push 仅在空值时初始化，
+            # 不覆盖管理层在权限页手动改过的标记
             existing.name = name
             existing.description = desc
+            if existing.can_push is None:
+                existing.can_push = can_push
     await db.commit()
 
     # admin 用户

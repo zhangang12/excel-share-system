@@ -82,9 +82,30 @@ SHEET_TEMPLATES: dict[str, list[str]] = {
 }
 
 
+# 🆕 v3 M12：电工采购单 = 项目详单第 5 张表（§十六）。
+# 刻意**不**放进 SHEET_TEMPLATES：
+#   - 避免污染设计完成的"四表校验"（D1 只校验上面 4 张）
+#   - 避免 cleanup_misaligned_known_sheets / align 误清这张含动态数据的表
+#   - 避免被用户「导入 Excel」全量替换误删（excel_router 白名单保护）
+# 来源：电工部接单后上传采购清单自动生成；采购负责人/订购日期/到货日期/仓库签字
+# 由采购、仓库后续在详单内补充（FieldPermission 控列级编辑）。
+ELEC_PO_SHEET_NAME = "电工采购单"
+ELEC_PO_COLUMNS: list[str] = [
+    '项目', '规格型号', '数量', '品牌', '采购负责人',
+    '订购日期', '到货日期', '进度', '仓库签字', '备注',
+]
+
+# 🆕 v3 §十七 装配前置三表：完成情况汇总到装配组工作台（done_flag 标记）
+ASSEMBLY_PRECHECK_SHEETS: list[str] = ['钣金装配', '标准件清单', '外协外购']
+
+
 # 项目一览的固定列（"# 序号"由表格自动生成，不在此列表）
 # 一览与项目详情数据"完全独立"——一览的 meta 列存 __o__<label>，
 # 项目详情存 __h__<label>，互不影响。
+#
+# 🆕 v3 hidden=True：逻辑删除列（§十二.19/P-19 口径：UI 不展示、无开关、业务无感知）。
+# 数据链路完整保留——__o__制图* key 照常存取、设计任务接单/完成仍回写；
+# 业务反悔把 hidden 改回 False 即恢复展示（这是保留定义而非删除条目的价值）。
 OVERVIEW_FIELDS: list[dict] = [
     {'label': '项目编号',     'source': 'code',    'editable': False},
     {'label': '项目名称',     'source': 'name',    'editable': True},
@@ -94,14 +115,19 @@ OVERVIEW_FIELDS: list[dict] = [
     {'label': '签订日期',     'source': 'meta',    'editable': True},
     {'label': '交货日期',     'source': 'meta',    'editable': True},
     {'label': '设计师',       'source': 'meta',    'editable': True},
-    {'label': '制图开始',     'source': 'meta',    'editable': True},
-    {'label': '制图结束',     'source': 'meta',    'editable': True},
-    {'label': '制图用时',     'source': 'derived', 'editable': False, 'derived': 'design_days'},
+    {'label': '制图开始',     'source': 'meta',    'editable': True,  'hidden': True},
+    {'label': '制图结束',     'source': 'meta',    'editable': True,  'hidden': True},
+    {'label': '制图用时',     'source': 'derived', 'editable': False, 'derived': 'design_days', 'hidden': True},
     {'label': '电工',         'source': 'meta',    'editable': True},
     {'label': '货期',         'source': 'derived', 'editable': False, 'derived': 'duration'},
     {'label': '已过时间',     'source': 'derived', 'editable': False, 'derived': 'elapsed'},
     {'label': '剩余制作时间', 'source': 'derived', 'editable': False, 'derived': 'remaining'},
 ]
+
+# 🆕 逻辑删除列名集合（导出/展示层统一引用，避免散落硬编码）
+HIDDEN_OVERVIEW_LABELS: set[str] = {
+    f['label'] for f in OVERVIEW_FIELDS if f.get('hidden')
+}
 
 
 # 一览字段 → 项目详情头表 key 的映射。

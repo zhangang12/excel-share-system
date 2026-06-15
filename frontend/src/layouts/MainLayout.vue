@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -7,11 +7,37 @@ import {
   Fold, Expand,
   FolderOpened, User, OfficeBuilding, Document, DataLine,
   Key, SwitchButton, Grid, Lock,
+  Suitcase, EditPen, Lightning, SetUp, Scissor, ShoppingCart,
+  Box, Van, Money, Service, TrendCharts, Bell, Stamp, ChatDotRound, ChatLineRound,
 } from '@element-plus/icons-vue'
+import { messagesApi } from '@/api/messages'
+import HelperFloating from '@/components/HelperFloating.vue'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+
+// 🆕 v3：新增部门菜单的图标映射（菜单本体由后端 /api/auth/menus 下发）
+const MENU_ICONS: Record<string, any> = {
+  sales: Suitcase, design: EditPen, electric: Lightning, produce: SetUp,
+  sheet: Scissor, purchase: ShoppingCart, warehouse: Box, logistics: Van,
+  finance: Money, aftersales: Service, report: TrendCharts, messages: Bell,
+  approve: Stamp, wxbind: ChatDotRound, 'user-feedback': ChatLineRound,
+}
+const ADMIN_EXTRA = ['approve', 'wxbind', 'user-feedback']
+// 业务部门菜单（排除 messages 单独放底部、管理组的归管理组）
+const bizMenus = computed(() =>
+  auth.deptMenus.filter(m => !['messages', ...ADMIN_EXTRA].includes(m.key)))
+const adminExtraMenus = computed(() =>
+  auth.deptMenus.filter(m => ADMIN_EXTRA.includes(m.key)))
+
+// 🆕 未读消息角标（轻量轮询，60s）
+const unread = ref(0)
+let unreadTimer: number | undefined
+async function refreshUnread() {
+  if (!auth.isLoggedIn || !auth.hasMenu('messages')) return
+  try { unread.value = await messagesApi.unreadCount() } catch { /* 静默 */ }
+}
 
 const collapsed = ref(localStorage.getItem('pms_sidebar_collapsed') === '1')
 function toggleCollapse() {
@@ -66,7 +92,13 @@ onMounted(async () => {
       confirmButtonText: '去修改', type: 'warning',
     }).then(() => { changePwdVisible.value = true })
   }
+  // 🆕 v3：拉取可见菜单 + 未读消息轮询
+  await auth.fetchMenus()
+  refreshUnread()
+  unreadTimer = window.setInterval(refreshUnread, 60_000)
 })
+
+onUnmounted(() => { if (unreadTimer) window.clearInterval(unreadTimer) })
 </script>
 
 <template>
@@ -91,13 +123,28 @@ onMounted(async () => {
 
       <!-- 导航 -->
       <nav>
-        <a :class="{ active: activeKey === 'overview' }" @click="go('overview')">
+        <a v-if="auth.hasMenu('catalog')" :class="{ active: activeKey === 'overview' }" @click="go('overview')">
           <el-icon class="nav-icon"><DataLine /></el-icon>
           <span v-if="!collapsed">项目目录</span>
         </a>
-        <a :class="{ active: activeKey === 'projects' }" @click="go('projects')">
+        <a v-if="auth.hasMenu('list')" :class="{ active: activeKey === 'projects' }" @click="go('projects')">
           <el-icon class="nav-icon"><FolderOpened /></el-icon>
           <span v-if="!collapsed">项目详单</span>
+        </a>
+
+        <!-- 🆕 v3 业务部门菜单（后端按角色下发） -->
+        <a v-for="m in bizMenus" :key="m.key"
+           :class="{ active: activeKey === m.key }" @click="go(m.key)">
+          <el-icon class="nav-icon"><component :is="MENU_ICONS[m.key] || Grid" /></el-icon>
+          <span v-if="!collapsed">{{ m.label }}</span>
+        </a>
+
+        <!-- 🆕 消息中心（带未读角标） -->
+        <a v-if="auth.hasMenu('messages')"
+           :class="{ active: activeKey === 'messages' }" @click="go('messages')">
+          <el-icon class="nav-icon"><Bell /></el-icon>
+          <span v-if="!collapsed">消息中心</span>
+          <span v-if="unread > 0" class="nav-badge">{{ unread > 99 ? '99+' : unread }}</span>
         </a>
 
         <template v-if="auth.isAdmin || auth.user?.role_code === 'manager'">
@@ -115,6 +162,12 @@ onMounted(async () => {
           <a :class="{ active: activeKey === 'admin-audit' }" @click="go('admin-audit')">
             <el-icon class="nav-icon"><Document /></el-icon>
             <span v-if="!collapsed">操作审计</span>
+          </a>
+          <!-- 🆕 v3 管理组新菜单（导出审批/企微绑定） -->
+          <a v-for="m in adminExtraMenus" :key="m.key"
+             :class="{ active: activeKey === m.key }" @click="go(m.key)">
+            <el-icon class="nav-icon"><component :is="MENU_ICONS[m.key] || Grid" /></el-icon>
+            <span v-if="!collapsed">{{ m.label }}</span>
           </a>
         </template>
       </nav>
@@ -170,6 +223,9 @@ onMounted(async () => {
         <el-button type="primary" :loading="pwdLoading" @click="submitChangePwd">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 🆕 全局用户反馈小助手（任意登录用户可见） -->
+    <HelperFloating />
   </div>
 </template>
 
@@ -261,6 +317,15 @@ nav a.active {
   box-shadow: 0 4px 12px rgba(37,99,235,.25);
 }
 .nav-icon { font-size: 18px !important; flex-shrink: 0; }
+
+/* 🆕 v3 未读消息角标 */
+.nav-badge {
+  margin-left: auto;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  background: #ef4444; color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 18px;
+  text-align: center; border-radius: 9px;
+}
 
 .section-title {
   padding: 16px 16px 6px;

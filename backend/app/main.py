@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -12,12 +12,18 @@ from .config import settings
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401
 from .seed import seed
-from .data_migration import run_all as run_data_migrations
+from .data_migration import run_all as run_data_migrations, ensure_schema_columns
 from .routers import (
     auth_router, admin_router, projects_router, datasheets_router,
     excel_router, overview_router, field_perm_router, ws_router,
+    attachments_router, messages_router, orders_router, sales_router,
+    logistics_router, collab_router, downstream_router,
+    aftersales_router, finance_router, feedback_router, reports_router,
+    warehouse_router, export_router, user_feedback_router,
 )
 from .errors import register_exception_handlers
+from .database import get_db
+from .deps import require_admin_or_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,13 +34,18 @@ log = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
+    from .overdue import overdue_scheduler
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await ensure_schema_columns(engine)  # 🆕 v3：给存量表补新增列（幂等）
     async with SessionLocal() as db:
         await seed(db)
         await run_data_migrations(db)
     log.info("启动完成 · DB=%s", settings.database_url.split("@")[-1])
+    task = asyncio.create_task(overdue_scheduler())  # 🆕 v3 M15 逾期每日提醒
     yield
+    task.cancel()
     await engine.dispose()
 
 
@@ -64,10 +75,34 @@ def create_app() -> FastAPI:
     app.include_router(overview_router.router)
     app.include_router(field_perm_router.router)
     app.include_router(ws_router.router)
+    # 🆕 v3 增量路由
+    app.include_router(attachments_router.router)
+    app.include_router(messages_router.router)
+    app.include_router(orders_router.router)
+    app.include_router(sales_router.router)
+    app.include_router(logistics_router.router)
+    app.include_router(collab_router.router)
+    app.include_router(downstream_router.router)
+    app.include_router(aftersales_router.router)
+    app.include_router(finance_router.router)
+    app.include_router(feedback_router.router)
+    app.include_router(reports_router.router)
+    app.include_router(warehouse_router.router)
+    app.include_router(export_router.router)
+    app.include_router(user_feedback_router.router)  # 🆕 用户反馈小助手
 
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "app": settings.app_name, "version": "2.0.0"}
+
+    # 🆕 v3 M15：逾期扫描手动/cron 触发（管理层）
+    @app.post("/api/internal/overdue-scan")
+    async def overdue_scan_now(
+        current=Depends(require_admin_or_manager),
+        db=Depends(get_db),
+    ):
+        from .overdue import scan_overdue
+        return await scan_overdue(db)
 
     # ===== 演示模式：托管前端静态资源 =====
     static_path = Path(settings.static_dir).resolve()

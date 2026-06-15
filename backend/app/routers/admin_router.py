@@ -37,6 +37,7 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         role_name=u.role.name if u.role else None,
         is_active=u.is_active,
         password_must_change=u.password_must_change,
+        wxid=u.wxid,
         created_at=u.created_at, last_login=u.last_login,
     )
 
@@ -120,6 +121,23 @@ async def update_user(
     res = await db.execute(select(models.User).where(models.User.id == uid))
     u = res.scalar_one()
     return _user_to_out(u)
+
+
+@router.put("/users/{uid}/wxid", response_model=schemas.Msg)
+async def bind_wxid(
+    uid: int,
+    data: schemas.WxidIn,
+    _: models.User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 v3：绑定/更新用户企业微信 userid（F1 手动绑定口径；空串=解绑）。"""
+    res = await db.execute(select(models.User).where(models.User.id == uid))
+    u = res.scalar_one_or_none()
+    if not u:
+        raise HTTPException(404, "用户不存在")
+    u.wxid = data.wxid.strip() or None
+    await db.commit()
+    return schemas.Msg(message="已绑定" if u.wxid else "已解绑")
 
 
 @router.delete("/users/{uid}", response_model=schemas.Msg)

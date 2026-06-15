@@ -48,6 +48,45 @@ async def require_not_viewer(current: models.User = Depends(get_current_user)) -
     return current
 
 
+def require_roles(*codes: str):
+    """🆕 依赖工厂：仅允许指定角色（admin/manager 始终放行）。
+    用法：Depends(require_roles("sales", "sales_lead"))"""
+    allowed = set(codes) | {"admin", "manager"}
+
+    async def _dep(current: models.User = Depends(get_current_user)) -> models.User:
+        if not current.role or current.role.code not in allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "无权操作")
+        return current
+
+    return _dep
+
+
+async def require_can_view_detail(
+    current: models.User = Depends(get_current_user),
+) -> models.User:
+    """🆕 项目详单闸门：销售/电工/装配/售后角色无详单权限（2026-06-12 收紧口径）。"""
+    from .menus import user_can_view_detail
+    if not user_can_view_detail(current):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "你没有项目详单权限")
+    return current
+
+
+def ensure_can_export(user: models.User) -> None:
+    """🆕 M16 导出闸门：开关关闭时 no-op（老导出行为不变）；
+    开关开启时仅管理层或已获导出权(can_export)放行，否则 403 引导申请。"""
+    from .config import settings
+    if not settings.export_approval_enabled:
+        return
+    if user.role and user.role.code in ("admin", "manager"):
+        return
+    if getattr(user, "can_export", False):
+        return
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        "导出需审批：请在「导出审批」申请，管理层通过后即可导出",
+    )
+
+
 async def user_can_view_project(
     db: AsyncSession, user: models.User, project: models.Project
 ) -> bool:

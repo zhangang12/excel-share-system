@@ -23,28 +23,34 @@ def _template_field_type(name: str) -> str:
     return 'text'
 
 
+async def _create_sheet_with_fields(
+    db: AsyncSession, project_id: int, name: str, field_names: list[str], sort_order: int,
+) -> models.Datasheet:
+    """建一张数据表 + 按字段名建表头字段（空表）。调用方负责 commit。"""
+    d = models.Datasheet(project_id=project_id, name=name, sort_order=sort_order, header_lines=None)
+    db.add(d)
+    await db.flush()
+    for f_idx, fname in enumerate(field_names):
+        config = json.dumps({'options': ['完成', '进行中']}, ensure_ascii=False) if fname == '进度' else None
+        db.add(models.Field(
+            datasheet_id=d.id, name=fname, type=_template_field_type(fname),
+            sort_order=f_idx, config=config,
+        ))
+    return d
+
+
 async def create_default_template_sheets(db: AsyncSession, project_id: int) -> int:
-    """为新建项目预置 4 个固定数据表（钣金装配/标准件清单/外协外购/原料下料单），
-    每张表按 SHEET_TEMPLATES 建好字段表头，但不插入任何数据行（空表）。
-    返回创建的数据表数量。调用方负责 commit。"""
+    """为新建项目预置 4 个固定数据表 + 🆕第 5 张「电工采购单」（§十六）。
+    每张表按模板建好字段表头，但不插入数据行（空表）。返回创建数量。调用方负责 commit。"""
+    from ..sheet_templates import ELEC_PO_SHEET_NAME, ELEC_PO_COLUMNS
     created = 0
     for s_idx, (sheet_name, field_names) in enumerate(SHEET_TEMPLATES.items()):
-        d = models.Datasheet(
-            project_id=project_id, name=sheet_name, sort_order=s_idx,
-            header_lines=None,
-        )
-        db.add(d)
-        await db.flush()  # 拿到 d.id
-        for f_idx, fname in enumerate(field_names):
-            ftype = _template_field_type(fname)
-            config = None
-            if fname == '进度':
-                config = json.dumps({'options': ['完成', '进行中']}, ensure_ascii=False)
-            db.add(models.Field(
-                datasheet_id=d.id, name=fname, type=ftype,
-                sort_order=f_idx, config=config,
-            ))
+        await _create_sheet_with_fields(db, project_id, sheet_name, list(field_names), s_idx)
         created += 1
+    # 第 5 张：电工采购单（不在 SHEET_TEMPLATES，单独建）
+    await _create_sheet_with_fields(
+        db, project_id, ELEC_PO_SHEET_NAME, ELEC_PO_COLUMNS, len(SHEET_TEMPLATES))
+    created += 1
     return created
 from ..deps import (
     get_current_user, require_admin, require_not_viewer,
@@ -332,6 +338,10 @@ async def get_project(
     p = res.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "项目不存在")
+    # 🆕 v3 详单闸门：销售/电工/装配/售后角色无项目详情权限（菜单矩阵同源）
+    from ..menus import user_can_view_detail
+    if not user_can_view_detail(current):
+        raise HTTPException(403, "你没有项目详单权限")
     if not await user_can_view_project(db, current, p):
         raise HTTPException(403, "无权访问该项目")
     return await _project_to_out(p, db)
@@ -470,6 +480,17 @@ async def delete_project(
     if not p:
         raise HTTPException(404, "项目不存在")
     orig_code = p.code
+
+    # 🆕 #3 防止软删导致财务「待开票」工作项静默丢失：有进行中开票流的台账先拦下
+    lr = await db.execute(
+        select(models.SalesLedger).where(
+            models.SalesLedger.project_id == pid,
+            models.SalesLedger.invoice_state.in_(("applying", "pending_invoice")),
+        )
+    )
+    if lr.scalar_one_or_none() is not None:
+        raise HTTPException(
+            409, "该项目有进行中的开票流程（待审批/待开票），请先在销售或财务处理完成/驳回后再删除")
 
     # 清理所有派生数据（datasheets / fields / records / field_perms / members）
     counts = await _purge_project_derived_data(db, [pid])

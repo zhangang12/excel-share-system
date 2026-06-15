@@ -12,6 +12,7 @@ import { useRealtime } from '@/composables/useRealtime'
 import { useTableHeight } from '@/composables/useTableHeight'
 import { useDragFill } from '@/composables/useDragFill'
 import { useAuthStore } from '@/stores/auth'
+import { fetchExport } from '@/api/exportRequest'
 import type { OverviewField, OverviewRow } from '@/types'
 
 const router = useRouter()
@@ -61,6 +62,10 @@ type OverviewTplCol = {
   editable: boolean
   widthPct: number
 }
+// 🆕 v3 逻辑删除列（§十二.19/P-19 口径：UI 不展示、无开关、业务无感知；
+// 后端 __o__制图* 数据与写入链路完整保留——设计任务接单/完成仍回写，业务反悔删掉本集合即恢复展示）
+const HIDDEN_LABELS = new Set(['制图开始', '制图结束', '制图用时'])
+
 const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '项目编号',     source: 'code',    editable: false, widthPct: 7 },
   { label: '项目名称',     source: 'name',    editable: true,  widthPct: 12 },
@@ -78,7 +83,7 @@ const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '货期',         source: 'derived', derived: 'duration',  editable: false, widthPct: 5 },
   { label: '已过时间',     source: 'derived', derived: 'elapsed',   editable: false, widthPct: 6 },
   { label: '剩余制作时间', source: 'meta', fallbackDerived: 'remaining', editable: true, widthPct: 6 },
-]
+].filter(f => !HIDDEN_LABELS.has(f.label)) as OverviewTplCol[]
 
 const STATUS_OPTIONS_NEW = ['进行中', '已完成']
 
@@ -375,23 +380,9 @@ async function changeStatus(row: OverviewRow, status: string) {
   } catch { /* */ }
 }
 
-// 导出项目一览为 Excel
+// 导出项目一览为 Excel（🆕 M16：经导出审批闸，403 引导申请）
 async function onExport() {
-  const token = localStorage.getItem('pms_token') || ''
-  try {
-    const res = await fetch('/api/overview/export', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) { ElMessage.error('导出失败'); return }
-    const blob = await res.blob()
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = '项目目录.xlsx'
-    document.body.appendChild(a); a.click(); a.remove()
-    URL.revokeObjectURL(a.href)
-  } catch (e: any) {
-    ElMessage.error(e.message || '导出失败')
-  }
+  await fetchExport('/api/overview/export', '项目目录.xlsx', '项目目录导出')
 }
 
 async function load() {
@@ -755,9 +746,10 @@ onMounted(load)
                       @blur="saveEditTpl(row, col)"
                       @keyup.enter="saveEditTpl(row, col)"
                       @keyup.escape="cancelEditTpl" />
-            <!-- 项目编号链接 -->
-            <a v-else-if="col.source === 'code'" class="proj-link"
+            <!-- 项目编号链接（🆕 v3：无详单权限角色仅展示不可点） -->
+            <a v-else-if="col.source === 'code' && auth.canViewDetail" class="proj-link"
                @click.stop="openProject(row.id)">{{ row.code }}</a>
+            <span v-else-if="col.source === 'code'" class="proj-code-plain">{{ row.code }}</span>
             <!-- 其他列：值 + 可编辑高亮 -->
             <span v-else class="cell"
                   :class="[
@@ -872,6 +864,8 @@ onMounted(load)
   cursor: pointer; text-decoration: none;
 }
 .proj-link:hover { text-decoration: underline; }
+/* 🆕 v3：无详单权限角色的编号纯文本态 */
+.proj-code-plain { font-weight: 600; color: var(--text-1); }
 .proj-name { cursor: pointer; }
 .proj-name:hover { color: var(--primary); }
 

@@ -5,12 +5,51 @@
 """
 import json
 import logging
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, inspect, text
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine
 
 from . import models
 
 log = logging.getLogger("data_migration")
+
+
+# ---------- 🆕 v3 schema 补列（create_all 只建新表、不给已有表加列） ----------
+# 表名 -> [(列名, DDL 类型片段)]；ADD COLUMN 在 SQLite 与 PostgreSQL 均支持，幂等：已存在跳过
+_NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "roles": [("can_push", "BOOLEAN DEFAULT FALSE")],
+    "users": [("wxid", "VARCHAR(64)"), ("can_export", "BOOLEAN DEFAULT FALSE")],
+    "datasheets": [
+        ("imported_at", "TIMESTAMP"),       # P-16 四表导入标记
+        ("done_flag", "BOOLEAN DEFAULT FALSE"),  # §十七 装配前置完成标记
+        ("done_at", "TIMESTAMP"),
+    ],
+    "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
+    "aftersales": [("reject_reason", "TEXT")],     # 🆕 #98 售后驳回原因
+}
+
+
+async def ensure_schema_columns(engine: AsyncEngine) -> int:
+    """启动时在 create_all 之后、seed 之前运行：给存量表补新增列。幂等。"""
+    added = 0
+
+    def _existing_cols(sync_conn, table: str) -> set[str]:
+        insp = inspect(sync_conn)
+        if table not in insp.get_table_names():
+            return set()
+        return {c["name"] for c in insp.get_columns(table)}
+
+    async with engine.begin() as conn:
+        for table, cols in _NEW_COLUMNS.items():
+            existing = await conn.run_sync(_existing_cols, table)
+            if not existing:
+                continue  # 表还不存在（全新库），create_all 已含新列
+            for col, ddl in cols:
+                if col in existing:
+                    continue
+                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+                added += 1
+                log.info("[ensure_schema_columns] %s.%s 已补列", table, col)
+    return added
 
 
 async def backfill_empty_project_members(db: AsyncSession) -> int:
@@ -825,6 +864,215 @@ async def align_overview_fields_to_template(db: AsyncSession) -> dict:
     return {"deleted": len(stale), "added": added}
 
 
+async def merge_buyers_into_purchase(db: AsyncSession) -> dict:
+    """🆕 v3 P-22：把 buyer_standard / buyer_outsource 两采购角色合并为单一 buyer（采购部）。
+
+    - 存量用户 role_id 改指向 buyer
+    - 两旧角色的 FieldPermission / OverviewFieldPermission 合并到 buyer：
+      同 field 已有 buyer 权限则取 OR（can_view/can_edit 任一为真则真），否则复制一条
+    - 旧角色记录保留（只增不改；seed 描述已标注"保留兼容"），不再分配新用户
+    - 幂等：用户已是 buyer 跳过；权限合并后再跑命中不到差异
+    """
+    res = await db.execute(select(models.Role).where(models.Role.code == "buyer"))
+    buyer = res.scalar_one_or_none()
+    if buyer is None:
+        return {"users": 0, "perms": 0}  # seed 未跑（理论不会发生）
+
+    res = await db.execute(
+        select(models.Role).where(models.Role.code.in_(("buyer_standard", "buyer_outsource")))
+    )
+    old_roles = res.scalars().all()
+    if not old_roles:
+        return {"users": 0, "perms": 0}
+    old_ids = [r.id for r in old_roles]
+
+    # 1) 用户迁移
+    res = await db.execute(select(models.User).where(models.User.role_id.in_(old_ids)))
+    users = res.scalars().all()
+    for u in users:
+        u.role_id = buyer.id
+
+    # 2) 字段权限合并（两套权限表同一套逻辑）
+    merged = 0
+    for PermModel in (models.FieldPermission, models.OverviewFieldPermission):
+        res = await db.execute(select(PermModel).where(PermModel.role_id.in_(old_ids)))
+        old_perms = res.scalars().all()
+        if not old_perms:
+            continue
+        res = await db.execute(select(PermModel).where(PermModel.role_id == buyer.id))
+        buyer_perms = {p.field_id: p for p in res.scalars().all()}
+        for p in old_perms:
+            bp = buyer_perms.get(p.field_id)
+            if bp is None:
+                db.add(PermModel(
+                    field_id=p.field_id, role_id=buyer.id,
+                    can_view=p.can_view, can_edit=p.can_edit,
+                ))
+                buyer_perms[p.field_id] = PermModel(
+                    field_id=p.field_id, role_id=buyer.id,
+                    can_view=p.can_view, can_edit=p.can_edit,
+                )
+                merged += 1
+            else:
+                nv, ne = bp.can_view or p.can_view, bp.can_edit or p.can_edit
+                if nv != bp.can_view or ne != bp.can_edit:
+                    bp.can_view, bp.can_edit = nv, ne
+                    merged += 1
+
+    if users or merged:
+        await db.commit()
+        log.info(
+            "[merge_buyers_into_purchase] %d 个采购用户并入采购部；合并/新增权限 %d 条",
+            len(users), merged,
+        )
+    return {"users": len(users), "perms": merged}
+
+
+async def backfill_datasheet_imported_at(db: AsyncSession) -> dict:
+    """🆕 v3 P-16 存量回填：四表中已有数据行的 datasheet 视为"已导入"，
+    置 imported_at = updated_at（最佳近似）。
+
+    不回填的话，存量项目的设计任务完成会被 D1 校验（四表未导入）卡死。
+    幂等：已有 imported_at 的跳过；空表（无 records）不回填——保持"未导入"语义。
+    """
+    from .sheet_templates import SHEET_TEMPLATES
+    from sqlalchemy import func as _f
+
+    res = await db.execute(select(models.Datasheet))
+    sheets = [d for d in res.scalars().all()
+              if d.name in SHEET_TEMPLATES and d.imported_at is None]
+    if not sheets:
+        return {"filled": 0}
+
+    ds_ids = [d.id for d in sheets]
+    res = await db.execute(
+        select(models.Record.datasheet_id, _f.count(models.Record.id))
+        .where(models.Record.datasheet_id.in_(ds_ids))
+        .group_by(models.Record.datasheet_id)
+    )
+    counts = dict(res.all())
+
+    filled = 0
+    for d in sheets:
+        if counts.get(d.id, 0) > 0:
+            d.imported_at = d.updated_at or d.created_at
+            filled += 1
+    if filled:
+        await db.commit()
+        log.info("[backfill_datasheet_imported_at] 回填 %d 张有数据的模板表为'已导入'", filled)
+    return {"filled": filled}
+
+
+async def backfill_sales_ledger(db: AsyncSession) -> dict:
+    """🆕 v3 M02 存量回填：给没有台账行的未删项目补 sales_ledger。
+
+    - sales_uid：按项目一览 __o__销售 的姓名与 users.full_name 唯一匹配，
+      匹配不到留空（业务后续在台账补录）
+    - 金额/客户等业务字段留空待补录；contract 按是否有签订日期粗推为 有/无
+    - 幂等：project_id 已有 ledger 跳过
+    """
+    res = await db.execute(
+        select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
+    )
+    projects = res.scalars().all()
+    if not projects:
+        return {"created": 0}
+
+    res = await db.execute(select(models.SalesLedger.project_id))
+    have = {r[0] for r in res.all()}
+
+    res = await db.execute(select(models.User).where(models.User.is_active == True))  # noqa: E712
+    by_name: dict[str, list[int]] = {}
+    for u in res.scalars().all():
+        if u.full_name:
+            by_name.setdefault(u.full_name.strip(), []).append(u.id)
+
+    created = 0
+    for p in projects:
+        if p.id in have:
+            continue
+        extra = p.extra or {}
+        sales_name = str(extra.get("__o__销售") or "").strip()
+        uid = None
+        if sales_name and len(by_name.get(sales_name, [])) == 1:
+            uid = by_name[sales_name][0]
+        sign = extra.get("__o__签订日期")
+        db.add(models.SalesLedger(
+            project_id=p.id, sales_uid=uid,
+            contract="有" if sign else "无",
+        ))
+        created += 1
+
+    if created:
+        await db.commit()
+        log.info("[backfill_sales_ledger] 为 %d 个存量项目补台账行", created)
+    return {"created": created}
+
+
+async def backfill_shipments(db: AsyncSession) -> dict:
+    """🆕 v3 M08 存量回填：给「进行中」未删项目补发货待办行（已完成/已归档视为历史已交付不补）。
+    幂等：project_id 已有 shipment 跳过。收货信息留空待补。"""
+    res = await db.execute(
+        select(models.Project).where(
+            models.Project.is_deleted == False,  # noqa: E712
+            models.Project.status == "进行中",
+        )
+    )
+    projects = res.scalars().all()
+    if not projects:
+        return {"created": 0}
+    res = await db.execute(select(models.Shipment.project_id))
+    have = {r[0] for r in res.all()}
+    created = 0
+    for p in projects:
+        if p.id in have:
+            continue
+        db.add(models.Shipment(project_id=p.id))
+        created += 1
+    if created:
+        await db.commit()
+        log.info("[backfill_shipments] 为 %d 个进行中存量项目补发货待办", created)
+    return {"created": created}
+
+
+async def backfill_elec_po_sheet(db: AsyncSession) -> dict:
+    """🆕 v3 M12：给已有数据表的存量活跃项目补建第 5 张「电工采购单」空表（§十六）。
+
+    backfill_template_sheets_for_empty_projects 只处理 0 表项目，不会给已有 4 表的
+    项目补第 5 张——故单独迁移。幂等：项目已有同名表跳过。
+    """
+    from .sheet_templates import ELEC_PO_SHEET_NAME, ELEC_PO_COLUMNS
+    from .routers.projects_router import _create_sheet_with_fields
+
+    res = await db.execute(
+        select(models.Project.id).where(models.Project.is_deleted == False)  # noqa: E712
+    )
+    active_pids = [r[0] for r in res.all()]
+    if not active_pids:
+        return {"created": 0}
+
+    # 已有电工采购单的项目集合
+    res = await db.execute(
+        select(models.Datasheet.project_id).where(
+            models.Datasheet.name == ELEC_PO_SHEET_NAME)
+    )
+    have = {r[0] for r in res.all()}
+    # 至少有 1 张表的项目才补（纯空项目交给 backfill_template_sheets_for_empty_projects 建全套）
+    res = await db.execute(select(models.Datasheet.project_id).distinct())
+    has_any = {r[0] for r in res.all()}
+
+    created = 0
+    for pid in active_pids:
+        if pid in have or pid not in has_any:
+            continue
+        await _create_sheet_with_fields(db, pid, ELEC_PO_SHEET_NAME, ELEC_PO_COLUMNS, 100)
+        created += 1
+    if created:
+        await db.commit()
+        log.info("[backfill_elec_po_sheet] 为 %d 个存量项目补建电工采购单第5表", created)
+    return {"created": created}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -887,3 +1135,23 @@ async def run_all(db: AsyncSession) -> None:
         await align_overview_fields_to_template(db)
     except Exception as e:
         log.warning("align_overview_fields_to_template failed: %s", e)
+    try:
+        await merge_buyers_into_purchase(db)
+    except Exception as e:
+        log.warning("merge_buyers_into_purchase failed: %s", e)
+    try:
+        await backfill_datasheet_imported_at(db)
+    except Exception as e:
+        log.warning("backfill_datasheet_imported_at failed: %s", e)
+    try:
+        await backfill_sales_ledger(db)
+    except Exception as e:
+        log.warning("backfill_sales_ledger failed: %s", e)
+    try:
+        await backfill_shipments(db)
+    except Exception as e:
+        log.warning("backfill_shipments failed: %s", e)
+    try:
+        await backfill_elec_po_sheet(db)
+    except Exception as e:
+        log.warning("backfill_elec_po_sheet failed: %s", e)
