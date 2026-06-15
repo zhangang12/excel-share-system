@@ -9,6 +9,7 @@ import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/utils/format'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import FilePicker from '@/components/FilePicker.vue'
 
 interface Att { id: number; name: string }
 interface Row {
@@ -179,8 +180,7 @@ async function approve(r: Row, ok: boolean) {
           <el-input-number v-model="regForm.cost" :min="0" :controls="false" style="width: 100%" />
         </el-form-item>
         <el-form-item label="售后物料清单（回传财务部）" required>
-          <input type="file" accept=".xlsx,.xls,.pdf,.doc,.docx" @change="pickFile" />
-          <span v-if="regForm.file" class="muted small" style="margin-left: 8px">{{ regForm.file.name }}</span>
+          <FilePicker v-model="regForm.file" accept=".xlsx,.xls,.pdf,.doc,.docx" placeholder="选择物料清单（Excel/PDF/Word）" />
         </el-form-item>
       </el-form>
       <template #footer>

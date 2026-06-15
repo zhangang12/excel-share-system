@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
+import FilePicker from '@/components/FilePicker.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
 interface DeptState { state: string; label: string }
@@ -215,8 +216,7 @@ async function confirmShip(force = false) {
                 :title="`闸门未通过（${shipRow.gate_missing.join('、')}未完成），管理层可强制发货`" />
       <el-form label-position="top">
         <el-form-item label="发货单（PDF/图片，必传）" required>
-          <input type="file" accept=".pdf,.jpg,.jpeg,.png" @change="pickShipFile" />
-          <span v-if="shipFile" class="muted" style="margin-left: 8px">{{ shipFile.name }}</span>
+          <FilePicker v-model="shipFile" accept=".pdf,.jpg,.jpeg,.png" placeholder="选择发货单（PDF/JPG/PNG）" />
         </el-form-item>
       </el-form>
       <template #footer>

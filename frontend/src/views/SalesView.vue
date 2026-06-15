@@ -9,6 +9,7 @@ import { downloadAttachment } from '@/api/orders'
 import { reportsApi, type SalesReport } from '@/api/reports'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import FilePicker from '@/components/FilePicker.vue'
 import { fmtDate } from '@/utils/format'
 
 const auth = useAuthStore()
@@ -235,13 +236,18 @@ async function openReport() {
         <el-table-column label="交货日期" width="100">
           <template #default="{ row }">{{ fmtDate(row.deliver_date) }}</template>
         </el-table-column>
-        <el-table-column label="合同" width="80">
+        <el-table-column label="合同" width="86">
           <template #default="{ row }">
-            {{ row.contract }}
-            <el-icon v-if="row.contract_file_id" class="dl-icon"
-                     @click="downloadAttachment({ id: row.contract_file_id!, name: row.contract_file_name || '合同' })">
-              <Download />
-            </el-icon>
+            <span v-if="row.contract_file_id" class="ct-cell">
+              <StatusPill text="已签" variant="success" />
+              <el-tooltip content="下载合同" placement="top">
+                <el-icon class="ct-dl" @click="downloadAttachment({ id: row.contract_file_id!, name: row.contract_file_name || '合同' })">
+                  <Download />
+                </el-icon>
+              </el-tooltip>
+            </span>
+            <StatusPill v-else-if="row.contract === '有'" text="有" variant="success" />
+            <StatusPill v-else text="无" variant="muted" />
           </template>
         </el-table-column>
         <el-table-column label="金额" width="100" align="right">
@@ -291,11 +297,17 @@ async function openReport() {
         </el-table-column>
         <el-table-column label="操作" width="250" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="allView" size="small" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" link type="primary" @click="openContract(row)">
-              {{ row.contract_file_id ? '合同✓' : '上传合同' }}
-            </el-button>
-            <el-button v-if="!row.invoice_state && row.tax_rate !== '/'" size="small" link type="primary" @click="applyInvoice(row)">开票申请</el-button>
+            <div class="op-cell">
+              <el-button v-if="allView" size="small" link type="primary" class="op-main" @click="openEdit(row)">编辑</el-button>
+              <span v-if="allView" class="op-sep">·</span>
+              <el-button size="small" link class="op-sub" @click="openContract(row)">
+                {{ row.contract_file_id ? '换合同' : '上传合同' }}
+              </el-button>
+              <template v-if="!row.invoice_state && row.tax_rate !== '/'">
+                <span class="op-sep">·</span>
+                <el-button size="small" link class="op-sub" @click="applyInvoice(row)">开票申请</el-button>
+              </template>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -443,8 +455,7 @@ async function openReport() {
           </el-form-item>
         </div>
         <el-form-item label="合同文件" required>
-          <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" @change="pickContractFile" />
-          <span v-if="contractForm.file" class="muted" style="margin-left: 8px">{{ contractForm.file.name }}</span>
+          <FilePicker v-model="contractForm.file" accept=".pdf,.doc,.docx,.jpg,.png" placeholder="选择合同文件（PDF/Word/图片）" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -540,6 +551,17 @@ async function openReport() {
 .muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .code { color: var(--primary, #2563eb); }
 .dl-icon { cursor: pointer; color: var(--primary, #2563eb); margin-left: 4px; vertical-align: -2px; }
+/* 🆕 v4 操作列: 主操作蓝色, 次操作灰色 hover 才蓝, 中点 · 分隔 */
+.op-cell { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.op-cell .el-button.is-link { padding: 3px 4px !important; height: auto !important; font-size: 13px; }
+.op-cell .op-main { color: var(--primary, #2563eb); font-weight: 500; }
+.op-cell .op-sub :deep(span) { color: var(--text-3, #9ca3af) !important; transition: color .12s; }
+.op-cell .op-sub:hover :deep(span) { color: var(--primary, #2563eb) !important; }
+.op-cell .op-sep { color: var(--text-4, #d1d5db); font-size: 11px; user-select: none; }
+/* 🆕 v4 合同列: pill + 旁挂下载图标 */
+.ct-cell { display: inline-flex; align-items: center; gap: 6px; }
+.ct-cell .ct-dl { cursor: pointer; color: var(--text-3, #9ca3af); font-size: 14px; transition: color .12s; }
+.ct-cell .ct-dl:hover { color: var(--primary, #2563eb); }
 .totals-bar {
   display: flex; gap: 22px; flex-wrap: wrap;
   padding: 12px 14px; margin-top: 8px;
