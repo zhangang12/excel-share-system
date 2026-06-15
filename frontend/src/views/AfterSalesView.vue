@@ -123,7 +123,7 @@ async function approve(r: Row, ok: boolean) {
 
     <el-card shadow="never">
       <template #header>📋 售后登记台账</template>
-      <el-table :data="rows" stripe v-loading="loading">
+      <el-table :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column type="index" label="#" width="50" />
         <el-table-column label="项目编号" width="110">
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>

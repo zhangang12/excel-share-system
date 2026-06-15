@@ -305,7 +305,7 @@ const stockVisible = ref(false)
         </el-tab-pane>
 
         <el-tab-pane :label="`✅ 已完成 (${myDone.length})`" name="done">
-          <el-table :data="myDone" stripe v-loading="loading">
+          <el-table :data="myDone" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目" min-width="120">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
             </el-table-column>
@@ -370,7 +370,7 @@ const stockVisible = ref(false)
         </el-tab-pane>
 
         <el-tab-pane label="📋 任务跟踪" name="track">
-          <el-table :data="orders" stripe v-loading="loading">
+          <el-table :data="orders" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目" min-width="130">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
             </el-table-column>
@@ -444,7 +444,7 @@ const stockVisible = ref(false)
           <div class="kpi" :class="report.overdue ? 'is-bad' : ''"><div class="kpi-v">{{ report.overdue }}</div><div class="kpi-l">逾期</div></div>
           <div class="kpi"><div class="kpi-v">{{ report.ontime_rate ?? '—' }}%</div><div class="kpi-l">按时率 · 均效率 {{ report.avg_eff ?? '—' }}%</div></div>
         </div>
-        <el-table :data="report.workers" size="small" stripe style="margin-top:10px">
+        <el-table :data="report.workers" size="small" stripe style="margin-top:10px" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="worker_name" label="人员" min-width="100" />
           <el-table-column prop="total" label="任务数" width="80" />
           <el-table-column prop="done" label="完成" width="70" />
@@ -454,7 +454,7 @@ const stockVisible = ref(false)
           <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff != null && row.avg_eff <= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff ?? '—' }}%</span></template></el-table-column>
         </el-table>
         <div class="sec-title" style="margin-top:16px">逾期任务（{{ report.overdue_items.length }}）</div>
-        <el-table v-if="report.overdue_items.length" :data="report.overdue_items" size="small">
+        <el-table v-if="report.overdue_items.length" :data="report.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="worker_name" label="人员" width="100" />
           <el-table-column prop="code" label="项目" width="120" />
           <el-table-column prop="due_date" label="预计" width="110" />

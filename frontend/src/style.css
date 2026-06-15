@@ -224,6 +224,19 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-empty { padding: 28px 0; }
 .el-empty__description { color: var(--text-3); }
 
+/* ===== 🆕 v3 表格：横向/纵向滚动条始终可见(配合表格设 max-height 生效) ===== */
+.el-table .el-scrollbar__bar.is-horizontal,
+.el-table .el-scrollbar__bar.is-vertical {
+  opacity: 1 !important;
+}
+.el-table .el-scrollbar__bar.is-horizontal { height: 10px !important; bottom: 0 !important; }
+.el-table .el-scrollbar__bar.is-vertical { width: 10px !important; right: 0 !important; }
+.el-table .el-scrollbar__thumb {
+  background-color: #b4bcc8 !important;
+  border-radius: 6px !important;
+}
+.el-table .el-scrollbar__thumb:hover { background-color: #8b94a3 !important; }
+
 /* ===== 全局动画 ===== */
 @keyframes fadein {
   from { opacity: 0; transform: translateY(4px); }

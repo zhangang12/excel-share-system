@@ -142,7 +142,7 @@ onMounted(load)
     </div>
 
     <el-card v-loading="loading">
-      <el-table :data="filtered" stripe size="large" :empty-text="loading ? '加载中…' : '暂无用户'">
+      <el-table :data="filtered" stripe size="large" :empty-text="loading ? '加载中…' : '暂无用户'" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="用户" min-width="220">
           <template #default="{ row }">
             <div style="display:flex;align-items:center;gap:10px">

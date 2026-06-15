@@ -61,7 +61,7 @@ function cellVal(rec: any, fid: number) {
     </div>
 
     <el-card shadow="never">
-      <el-table :data="rows" stripe v-loading="loading">
+      <el-table :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="项目" width="120">
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
@@ -101,7 +101,7 @@ function cellVal(rec: any, fid: number) {
       <div v-loading="viewLoading">
         <el-alert type="info" :closable="false" style="margin-bottom:10px"
                   title="只读引用——钣金装配表数据由设计部维护，钣金组不可编辑" />
-        <el-table :data="viewRecords" border size="small">
+        <el-table :data="viewRecords" border size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column type="index" label="#" width="50" />
           <el-table-column v-for="f in viewFields" :key="f.id" :label="f.name" min-width="110">
             <template #default="{ row }">{{ cellVal(row, f.id) }}</template>

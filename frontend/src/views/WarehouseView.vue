@@ -142,7 +142,7 @@ function onTab(name: string) {
           <div style="display:flex;gap:10px;margin-bottom:10px">
             <el-input v-model="kw" placeholder="搜索物料" :prefix-icon="Search" clearable style="width:240px" @change="loadMaterials" />
           </div>
-          <el-table :data="materials" stripe size="small">
+          <el-table :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="name" label="名称" min-width="120" />
             <el-table-column prop="spec" label="规格型号" min-width="120"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="category" label="类别" width="100"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
@@ -173,7 +173,8 @@ function onTab(name: string) {
             <span class="muted small">期初 + 本期入 − 本期出 = 期末</span>
           </div>
           <el-table :data="summary" stripe size="small" show-summary
-                    :summary-method="(p:any) => ['合计','','', summary.reduce((s,r)=>s+r.opening,0), summary.reduce((s,r)=>s+r.in_qty,0), summary.reduce((s,r)=>s+r.out_qty,0), summary.reduce((s,r)=>s+r.closing,0)]">
+                    :summary-method="(p:any) => ['合计','','', summary.reduce((s,r)=>s+r.opening,0), summary.reduce((s,r)=>s+r.in_qty,0), summary.reduce((s,r)=>s+r.out_qty,0), summary.reduce((s,r)=>s+r.closing,0)]"
+                    max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="name" label="物料" min-width="120" />
             <el-table-column prop="spec" label="规格" min-width="100"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="unit" label="单位" width="60" />
@@ -194,7 +195,7 @@ function onTab(name: string) {
               <el-radio-button value="out">出库</el-radio-button>
             </el-radio-group>
           </div>
-          <el-table :data="txns" stripe size="small">
+          <el-table :data="txns" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="ref_no" label="单号" width="140" />
             <el-table-column prop="biz_date" label="日期" width="110" />
             <el-table-column label="物料" min-width="130"><template #default="{ row }">{{ row.material_name }}{{ row.spec ? '·' + row.spec : '' }}</template></el-table-column>
@@ -219,7 +220,7 @@ function onTab(name: string) {
         <!-- 物料主数据 -->
         <el-tab-pane label="物料主数据" name="mat">
           <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openMat()" style="margin-bottom:10px">新增物料</el-button>
-          <el-table :data="materials" stripe size="small">
+          <el-table :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="name" label="名称" min-width="120" />
             <el-table-column prop="spec" label="规格型号" min-width="120"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="category" label="类别" width="100"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>

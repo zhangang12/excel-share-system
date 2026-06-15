@@ -78,7 +78,7 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
 
     <EmptyHint v-if="!loading && !list.length"
               :text="isAssembler ? '暂无反馈，可对在手项目提交问题' : '暂无待处理反馈'" />
-    <el-table v-else :data="list" v-loading="loading" size="small">
+    <el-table v-else :data="list" v-loading="loading" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
       <el-table-column label="项目" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
       <el-table-column prop="content" label="问题内容" min-width="220" show-overflow-tooltip />
       <el-table-column v-if="!isAssembler" label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>

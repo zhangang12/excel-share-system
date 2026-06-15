@@ -119,7 +119,7 @@ async function confirmShip(force = false) {
     </div>
 
     <el-card shadow="never">
-      <el-table :data="rows" stripe v-loading="loading">
+      <el-table :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="项目" width="110" fixed>
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>

@@ -65,7 +65,7 @@ onMounted(load)
     </div>
 
     <el-card v-loading="loading">
-      <el-table :data="filtered" stripe size="large" :empty-text="loading ? '加载中' : '暂无记录'">
+      <el-table :data="filtered" stripe size="large" :empty-text="loading ? '加载中' : '暂无记录'" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="时间" width="170">
           <template #default="{ row }">
             <span class="muted small">{{ fmtTime(row.created_at) }}</span>

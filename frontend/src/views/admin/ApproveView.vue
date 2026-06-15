@@ -61,7 +61,7 @@ function fmt(s: string) {
     <el-alert v-if="!enabled" type="info" :closable="false" style="margin-bottom:12px"
               title="导出审批当前为「关闭」状态：所有角色可直接导出（与上线前一致）。开启需在后端 export_approval_enabled 配置。" />
     <el-card shadow="never" v-loading="loading">
-      <el-table :data="list" stripe>
+      <el-table :data="list" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="申请人" min-width="120">
           <template #default="{ row }">{{ row.user_name }} <span class="muted small">{{ row.user_role }}</span></template>
         </el-table-column>

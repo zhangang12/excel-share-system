@@ -114,7 +114,7 @@ function closePreview() {
           </el-select>
         </div>
       </template>
-      <el-table :data="list" v-loading="loading" stripe>
+      <el-table :data="list" v-loading="loading" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column prop="id" label="#" width="60" />
         <el-table-column label="类型" width="100">
           <template #default="{ row }"><el-tag size="small" :type="KIND_TAG[row.kind]">{{ KIND_TXT[row.kind] }}</el-tag></template>

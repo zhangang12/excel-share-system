@@ -208,7 +208,8 @@ async function openReport() {
     </el-card>
 
     <el-card shadow="never">
-      <el-table :data="rows" stripe v-loading="loading" :show-summary="false">
+      <el-table :data="rows" stripe v-loading="loading" :show-summary="false"
+                max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column type="index" label="#" width="48" />
         <el-table-column label="项目编号" width="105" fixed>
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>

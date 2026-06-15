@@ -81,7 +81,7 @@ async function revokeInvoice(row: InvoiceRow) {
     <el-card shadow="never" v-loading="loading">
       <el-tabs v-model="tab">
         <el-tab-pane :label="`📥 待开票 (${pending.length})`" name="pending">
-          <el-table :data="pending" stripe>
+          <el-table :data="pending" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="设备名称" min-width="150" />
             <el-table-column prop="customer" label="客户单位" min-width="120"><template #default="{ row }">{{ row.customer || '—' }}</template></el-table-column>
@@ -106,7 +106,7 @@ async function revokeInvoice(row: InvoiceRow) {
         </el-tab-pane>
 
         <el-tab-pane :label="`✅ 已开票 (${invoiced.length})`" name="invoiced">
-          <el-table :data="invoiced" stripe>
+          <el-table :data="invoiced" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="设备名称" min-width="150" />
             <el-table-column prop="sales_name" label="销售" width="90"><template #default="{ row }">{{ row.sales_name || '—' }}</template></el-table-column>
@@ -129,7 +129,7 @@ async function revokeInvoice(row: InvoiceRow) {
         </el-tab-pane>
 
         <el-tab-pane :label="`🛎️ 售后费用 (${aftersales.length})`" name="aftersales">
-          <el-table :data="aftersales" stripe show-summary :summary-method="() => ['合计', '', '', fmtMoney(asTotal), '']">
+          <el-table :data="aftersales" stripe show-summary :summary-method="() => ['合计', '', '', fmtMoney(asTotal), '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="50" />
             <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="140" />
