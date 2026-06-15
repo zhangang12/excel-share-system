@@ -94,6 +94,7 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
             invoice_file_id=l.invoice_file_id,
             invoice_file_name=names.get(l.invoice_file_id),
             prepay=l.prepay or 0, before_ship=l.before_ship or 0,
+            prepay_note=l.prepay_note, before_ship_note=l.before_ship_note,
             ship_receivable=l.ship_receivable or 0, balance=l.balance or 0,
             balance_date=l.balance_date, ship_date=l.ship_date,
         ))
@@ -202,6 +203,8 @@ async def create_sales_order(
         contract=data.contract if data.contract in ("有", "无") else "无",
         amount=data.amount or 0, tax_rate=data.tax_rate,
         prepay=data.prepay or 0, before_ship=data.before_ship or 0,
+        prepay_note=(data.prepay_note or "").strip() or None,
+        before_ship_note=(data.before_ship_note or "").strip() or None,
         ship_receivable=data.ship_receivable or 0, balance=data.balance or 0,
         balance_date=normalize_date_str(data.balance_date) or None,
     )
@@ -263,11 +266,37 @@ async def update_ledger(
         v = getattr(data, f)
         if v is not None:
             setattr(led, f, v)
+    for f in ("prepay_note", "before_ship_note"):
+        v = getattr(data, f)
+        if v is not None:
+            setattr(led, f, v.strip() or None)
     if data.balance_date is not None:
         led.balance_date = normalize_date_str(data.balance_date) or None
     await db.commit()
     await write_audit(db, user=current, action="update", target_type="sales_ledger", target_id=lid)
     return schemas.Msg(message="已保存")
+
+
+@router.put("/ledger/{lid}/payment-note", response_model=schemas.Msg)
+async def update_payment_note(
+    lid: int, data: schemas.PaymentNoteUpdate,
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 收款批注（预付 / 发货前付）独立更新——销售本人即可记录收款时间等，
+    不受开票流程金额锁限制。行级隔离：销售员仅本人台账行。"""
+    if data.field not in ("prepay", "before_ship"):
+        raise HTTPException(400, "field 仅支持 prepay / before_ship")
+    led = await _ledger_or_404(db, lid)
+    # 销售员仅可批注本人台账行（主管/管理层全量）
+    if not _all_view(current) and led.sales_uid != current.id:
+        raise HTTPException(403, "只能批注本人负责的台账行")
+    col = "prepay_note" if data.field == "prepay" else "before_ship_note"
+    setattr(led, col, (data.note or "").strip() or None)
+    await db.commit()
+    await write_audit(db, user=current, action="update", target_type="sales_ledger",
+                      target_id=lid, detail=f"{data.field}_note")
+    return schemas.Msg(message="批注已保存")
 
 
 @router.post("/ledger/{lid}/contract", response_model=schemas.Msg)

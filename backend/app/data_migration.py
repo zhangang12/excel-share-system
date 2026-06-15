@@ -25,6 +25,10 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
     "aftersales": [("reject_reason", "TEXT")],     # 🆕 #98 售后驳回原因
+    "sales_ledger": [                              # 🆕 预付/发货前付收款批注(支持插入时间戳)
+        ("prepay_note", "TEXT"),
+        ("before_ship_note", "TEXT"),
+    ],
 }
 
 

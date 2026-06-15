@@ -119,6 +119,46 @@ async def main():
                          files={"file": ("x.pdf", io.BytesIO(b"P"), "application/pdf")})
         chk(r.status_code==403, "销售员不能动他人订单")
 
+        # ---- 🆕 收款批注（预付/发货前付，支持插入时间戳） ----
+        # 销售本人对自己的台账行可批注（不受开票锁限制）
+        r = await c.put(f"/api/sales/ledger/{lidA}/payment-note", headers=Hs1,
+                        json={"field":"prepay","note":"【2026-06-16 14:30】收到预付款1000元（微信）"})
+        chk(r.status_code==200, f"销售本人写预付批注: {r.text[:120]}")
+        r = await c.put(f"/api/sales/ledger/{lidA}/payment-note", headers=Hs1,
+                        json={"field":"before_ship","note":"发货前付待跟进\n【2026-06-16 15:00】口头确认"})
+        chk(r.status_code==200, "销售本人写发货前付批注(多行)")
+        rowA = [x for x in (await c.get("/api/sales/ledger", headers=Hs1)).json()["rows"] if x["id"]==lidA][0]
+        chk(rowA["prepay_note"].startswith("【2026-06-16 14:30】") and "微信" in rowA["prepay_note"], f"预付批注持久化: {rowA['prepay_note']!r}")
+        chk("\n" in rowA["before_ship_note"], "发货前付批注多行保留")
+        # 越权：s2 批注 s1 的行 → 403
+        r = await c.put(f"/api/sales/ledger/{lidA}/payment-note", headers=Hs2,
+                        json={"field":"prepay","note":"x"})
+        chk(r.status_code==403, "销售员不能批注他人台账行")
+        # 非法 field → 400
+        r = await c.put(f"/api/sales/ledger/{lidA}/payment-note", headers=Hs1,
+                        json={"field":"balance","note":"x"})
+        chk(r.status_code==400, "非法 field 被拒")
+        # 空串/空白 → 清空为 None
+        r = await c.put(f"/api/sales/ledger/{lidA}/payment-note", headers=Hs1,
+                        json={"field":"prepay","note":"   "})
+        chk(r.status_code==200, "清空批注")
+        rowA = [x for x in (await c.get("/api/sales/ledger", headers=Hs1)).json()["rows"] if x["id"]==lidA][0]
+        chk(rowA["prepay_note"] is None, f"空白批注归 None: {rowA['prepay_note']!r}")
+        # 主管可批注任意行
+        r = await c.put(f"/api/sales/ledger/{lidA}/payment-note", headers=Hsl,
+                        json={"field":"prepay","note":"主管复核：已到账"})
+        chk(r.status_code==200, "主管可批注任意台账行")
+        # 下单时即可带批注（create 路径写入 prepay_note/before_ship_note）
+        r = await c.post("/api/sales/orders", headers=Hs1, json={
+            "name":"带批注下单样机","customer":"客户C","cust_type":"经销商","contract":"有",
+            "amount":6000,"tax_rate":"13%","prepay":2000,"prepay_note":"【下单时】定金已收",
+            "before_ship":0,"before_ship_note":"","ship_receivable":0,"balance":0,
+            "depts":["produce"],"receiver":{"name":"李","phone":"138","addr":"苏州"}})  # produce 避免污染后续 design 计数
+        chk(r.status_code==200, f"带批注下单成功: {r.text[:120]}")
+        npid = r.json()["project_id"]
+        nrow = [x for x in (await c.get("/api/sales/ledger", headers=Hs1)).json()["rows"] if x["project_id"]==npid][0]
+        chk(nrow["prepay_note"]=="【下单时】定金已收", f"下单批注写入台账: {nrow['prepay_note']!r}")
+
         # ---- 主管编辑台账 ----
         r = await c.put(f"/api/sales/ledger/{lidA}", headers=Hs1, json={"amount": 95000})
         chk(r.status_code==403, "销售员不能编辑台账")

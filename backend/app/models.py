@@ -218,7 +218,9 @@ class SalesLedger(Base):
     invoice_apply_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     invoice_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     prepay: Mapped[float] = mapped_column(default=0)                  # 预付
+    prepay_note: Mapped[Optional[str]] = mapped_column(Text)          # 🆕 预付收款批注(支持插入时间戳)
     before_ship: Mapped[float] = mapped_column(default=0)             # 发货前付
+    before_ship_note: Mapped[Optional[str]] = mapped_column(Text)     # 🆕 发货前付收款批注(支持插入时间戳)
     ship_receivable: Mapped[float] = mapped_column(default=0)         # 发货款应收
     balance: Mapped[float] = mapped_column(default=0)                 # 尾款
     balance_date: Mapped[Optional[str]] = mapped_column(String(10))   # 尾款日期

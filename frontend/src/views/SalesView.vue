@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Stamp, Download, Check } from '@element-plus/icons-vue'
+import { Plus, Stamp, Download, Check, ChatLineSquare, Clock } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment } from '@/api/orders'
@@ -51,7 +51,8 @@ const openingOrder = ref(false)
 const nextCode = ref('')
 const orderForm = reactive({
   code_suffix: '', name: '', customer: '', cust_type: '经销商', contract: '有',
-  amount: 0, tax_rate: '13%', prepay: 0, before_ship: 0, ship_receivable: 0,
+  amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
+  ship_receivable: 0,
   balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
   receiver: { name: '', phone: '', addr: '' },
 })
@@ -61,7 +62,8 @@ async function openOrder() {
     nextCode.value = await salesApi.nextCode()
     Object.assign(orderForm, {
       code_suffix: '', name: '', customer: '', cust_type: '经销商', contract: '有',
-      amount: 0, tax_rate: '13%', prepay: 0, before_ship: 0, ship_receivable: 0,
+      amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
+      ship_receivable: 0,
       balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
       receiver: { name: '', phone: '', addr: '' },
     })
@@ -104,6 +106,58 @@ async function submitEdit() {
   ElMessage.success('已保存')
   editVisible.value = false
   await load()
+}
+
+// ===== 🆕 收款批注（预付 / 发货前付，支持插入时间戳） =====
+const noteVisible = ref(false)
+const noteRow = ref<SalesLedgerRow | null>(null)
+const noteField = ref<'prepay' | 'before_ship'>('prepay')
+const noteText = ref('')
+const noteSaving = ref(false)
+const noteInputRef = ref<any>(null)
+const noteFieldLabel = computed(() => (noteField.value === 'prepay' ? '预付' : '发货前付'))
+
+function openNote(r: SalesLedgerRow, field: 'prepay' | 'before_ship') {
+  noteRow.value = r
+  noteField.value = field
+  noteText.value = (field === 'prepay' ? r.prepay_note : r.before_ship_note) || ''
+  noteVisible.value = true
+}
+function nowStamp(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+function insertNow() {
+  const stamp = `【${nowStamp()}】`
+  const ta: HTMLTextAreaElement | undefined = noteInputRef.value?.textarea
+  if (ta && typeof ta.selectionStart === 'number') {
+    const s = ta.selectionStart, e = ta.selectionEnd
+    noteText.value = noteText.value.slice(0, s) + stamp + noteText.value.slice(e)
+    nextTick(() => {
+      ta.focus()
+      const pos = s + stamp.length
+      ta.setSelectionRange(pos, pos)
+    })
+  } else {
+    // 退化：追加到末尾（带换行分隔）
+    noteText.value = (noteText.value ? noteText.value.replace(/\s*$/, '') + '\n' : '') + stamp
+  }
+}
+async function saveNote() {
+  if (!noteRow.value) return
+  noteSaving.value = true
+  try {
+    await salesApi.paymentNote(noteRow.value.id, noteField.value, noteText.value)
+    // 本地同步，避免整表重载
+    const v = noteText.value.trim() || null
+    if (noteField.value === 'prepay') noteRow.value.prepay_note = v
+    else noteRow.value.before_ship_note = v
+    ElMessage.success('批注已保存')
+    noteVisible.value = false
+  } finally {
+    noteSaving.value = false
+  }
 }
 
 // ===== 上传合同 =====
@@ -273,11 +327,35 @@ async function openReport() {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="预付" width="92" align="right">
-          <template #default="{ row }">{{ fmtMoney(row.prepay) }}</template>
+        <el-table-column label="预付" width="106" align="right">
+          <template #default="{ row }">
+            <div class="pay-cell">
+              <span>{{ fmtMoney(row.prepay) }}</span>
+              <el-tooltip placement="top" :show-after="150">
+                <template #content>
+                  <div class="note-pop">{{ row.prepay_note || '点击添加收款批注（可插入时间）' }}</div>
+                </template>
+                <el-icon class="note-ico" :class="{ 'has-note': row.prepay_note }" @click="openNote(row, 'prepay')">
+                  <ChatLineSquare />
+                </el-icon>
+              </el-tooltip>
+            </div>
+          </template>
         </el-table-column>
-        <el-table-column label="发货前付" width="92" align="right">
-          <template #default="{ row }">{{ fmtMoney(row.before_ship) }}</template>
+        <el-table-column label="发货前付" width="106" align="right">
+          <template #default="{ row }">
+            <div class="pay-cell">
+              <span>{{ fmtMoney(row.before_ship) }}</span>
+              <el-tooltip placement="top" :show-after="150">
+                <template #content>
+                  <div class="note-pop">{{ row.before_ship_note || '点击添加收款批注（可插入时间）' }}</div>
+                </template>
+                <el-icon class="note-ico" :class="{ 'has-note': row.before_ship_note }" @click="openNote(row, 'before_ship')">
+                  <ChatLineSquare />
+                </el-icon>
+              </el-tooltip>
+            </div>
+          </template>
         </el-table-column>
         <el-table-column label="发货款应收" width="100" align="right">
           <template #default="{ row }">{{ fmtMoney(row.ship_receivable) }}</template>
@@ -441,6 +519,22 @@ async function openReport() {
       </template>
     </el-dialog>
 
+    <!-- ===== 🆕 收款批注（预付 / 发货前付） ===== -->
+    <el-dialog v-model="noteVisible" :title="`📝 ${noteFieldLabel}收款批注 · ${noteRow?.code || ''}`" width="480px" append-to-body>
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px"
+                title="记录该笔款项的收款时间、金额、方式等；点「插入当前时间」可在光标处快速插入时间戳" />
+      <el-input ref="noteInputRef" v-model="noteText" type="textarea" :rows="6" resize="none"
+                placeholder="如：【2026-06-16 14:30】收到预付款 3 万元（微信转账，已对账）" />
+      <div style="margin-top: 10px">
+        <el-button size="small" :icon="Clock" @click="insertNow">插入当前时间</el-button>
+        <span class="muted" style="margin-left: 8px; font-size: 12px">时间格式：YYYY-MM-DD HH:mm</span>
+      </div>
+      <template #footer>
+        <el-button @click="noteVisible = false">取消</el-button>
+        <el-button type="primary" :loading="noteSaving" @click="saveNote">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ===== 上传合同 ===== -->
     <el-dialog v-model="contractVisible" :title="`📄 上传合同 · ${contractRow?.code || ''}`" width="500px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
@@ -558,6 +652,15 @@ async function openReport() {
 .op-cell .op-sub :deep(span) { color: var(--text-3, #9ca3af) !important; transition: color .12s; }
 .op-cell .op-sub:hover :deep(span) { color: var(--primary, #2563eb) !important; }
 .op-cell .op-sep { color: var(--text-4, #d1d5db); font-size: 11px; user-select: none; }
+/* 🆕 预付/发货前付列: 金额 + 收款批注图标(有批注高亮蓝) */
+.pay-cell { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; width: 100%; }
+.pay-cell .note-ico {
+  font-size: 14px; color: var(--text-4, #cbd5e1); cursor: pointer;
+  flex-shrink: 0; transition: color .15s;
+}
+.pay-cell .note-ico:hover { color: var(--primary, #2563eb); }
+.pay-cell .note-ico.has-note { color: var(--primary, #2563eb); }
+.note-pop { max-width: 280px; white-space: pre-line; line-height: 1.6; font-size: 12.5px; }
 /* 🆕 v4 合同列: pill + 旁挂下载图标 */
 .ct-cell { display: inline-flex; align-items: center; gap: 6px; }
 .ct-cell .ct-dl { cursor: pointer; color: var(--text-3, #9ca3af); font-size: 14px; transition: color .12s; }

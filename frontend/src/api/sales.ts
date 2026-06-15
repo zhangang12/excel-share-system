@@ -24,7 +24,9 @@ export interface SalesLedgerRow {
   invoice_file_id?: number | null
   invoice_file_name?: string | null
   prepay: number
+  prepay_note?: string | null
   before_ship: number
+  before_ship_note?: string | null
   ship_receivable: number
   balance: number
   balance_date?: string | null
@@ -55,7 +57,9 @@ export interface SalesOrderForm {
   amount: number
   tax_rate: string
   prepay: number
+  prepay_note: string
   before_ship: number
+  before_ship_note: string
   ship_receivable: number
   balance: number
   balance_date: string
@@ -75,6 +79,10 @@ export const salesApi = {
 
   updateLedger: (id: number, data: Partial<SalesLedgerRow>) =>
     http.put(`/sales/ledger/${id}`, data).then((r) => r.data),
+
+  // 🆕 收款批注（预付/发货前付）独立更新，销售本人即可记录
+  paymentNote: (id: number, field: 'prepay' | 'before_ship', note: string) =>
+    http.put(`/sales/ledger/${id}/payment-note`, { field, note }).then((r) => r.data),
 
   uploadContract: (id: number, file: File, signDate: string, deliverDate: string) => {
     const fd = new FormData()

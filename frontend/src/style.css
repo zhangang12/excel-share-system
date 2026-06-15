@@ -47,7 +47,7 @@
 html, body {
   margin: 0; padding: 0;
   font-family: var(--font-base);
-  font-size: 14.5px;
+  font-size: 15.5px;
   line-height: 1.55;
   color: var(--text-1);
   background: var(--bg-page);
@@ -69,24 +69,24 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-card__header {
   padding: 18px 22px !important;
   font-weight: 600;
-  font-size: 15px;
+  font-size: 16px;
   border-bottom: 1px solid var(--border-light) !important;
 }
 .el-card__body { padding: 22px !important; }
 
 .el-button {
   border-radius: var(--radius-sm) !important;
-  font-size: 13.5px !important;
+  font-size: 14.5px !important;
   padding: 8px 16px !important;
   height: auto !important;
   transition: all .15s;
   font-weight: 500;
 }
-.el-button--small { padding: 6px 12px !important; font-size: 12.5px !important; }
+.el-button--small { padding: 6px 12px !important; font-size: 13.5px !important; }
 /* 🆕 link 按钮(表格操作列常用)紧凑化：原全局 padding 把无背景的文字按钮撑胖，导致操作列挤行 */
 .el-button.is-link { padding: 3px 6px !important; height: auto !important; }
 .el-button.is-link + .el-button.is-link { margin-left: 2px !important; }
-.el-button--large { padding: 10px 20px !important; font-size: 14.5px !important; }
+.el-button--large { padding: 10px 20px !important; font-size: 15.5px !important; }
 .el-button--primary {
   box-shadow: 0 2px 8px rgba(37, 99, 235, .25);
 }
@@ -100,24 +100,24 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-input__wrapper { border-radius: var(--radius-sm) !important; box-shadow: 0 0 0 1px var(--border) inset !important; }
 .el-input__wrapper:hover { box-shadow: 0 0 0 1px var(--text-3) inset !important; }
 .el-input.is-focus .el-input__wrapper { box-shadow: 0 0 0 1px var(--primary) inset !important; }
-.el-input__inner { font-size: 13.5px !important; }
+.el-input__inner { font-size: 14.5px !important; }
 
 .el-form-item__label {
-  font-size: 13px !important;
+  font-size: 14px !important;
   color: var(--text-2) !important;
   font-weight: 500 !important;
   padding: 0 0 6px !important;
 }
 
 .el-table {
-  font-size: 13.5px !important;
+  font-size: 14.5px !important;
   --el-table-border-color: var(--border-light);
 }
 .el-table th.el-table__cell {
   background: #fafbfc !important;
   color: var(--text-2) !important;
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 .el-table td.el-table__cell { padding: 11px 0 !important; }
 .el-table--striped .el-table__row.el-table__row--striped {
@@ -130,9 +130,9 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-tag {
   border-radius: 6px !important;
   padding: 0 8px !important;
-  height: 22px !important;
-  line-height: 22px !important;
-  font-size: 11.5px !important;
+  height: 24px !important;
+  line-height: 24px !important;
+  font-size: 12.5px !important;
   font-weight: 500;
 }
 
@@ -143,7 +143,7 @@ a:hover { text-decoration: none; opacity: .85; }
 }
 .el-dialog__header {
   padding: 20px 24px 12px !important;
-  font-size: 16px !important;
+  font-size: 17px !important;
   font-weight: 600 !important;
 }
 .el-dialog__body { padding: 12px 24px 8px !important; }
@@ -159,7 +159,7 @@ a:hover { text-decoration: none; opacity: .85; }
 
 .el-pagination {
   --el-pagination-button-bg-color: white !important;
-  font-size: 13px !important;
+  font-size: 14px !important;
 }
 
 /* ===== 通用页面头部 ===== */
@@ -172,14 +172,14 @@ a:hover { text-decoration: none; opacity: .85; }
 }
 .page-header h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 23px;
   font-weight: 600;
   color: var(--text-1);
   letter-spacing: .3px;
 }
 .page-header .desc {
   color: var(--text-3);
-  font-size: 12.5px;
+  font-size: 13.5px;
   margin-top: 2px;
 }
 .page-header .spacer { flex: 1; }

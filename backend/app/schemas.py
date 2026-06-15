@@ -160,7 +160,9 @@ class SalesLedgerRow(BaseModel):
     invoice_file_id: Optional[int] = None
     invoice_file_name: Optional[str] = None
     prepay: float = 0
+    prepay_note: Optional[str] = None        # 🆕 预付收款批注(支持插入时间戳)
     before_ship: float = 0
+    before_ship_note: Optional[str] = None   # 🆕 发货前付收款批注
     ship_receivable: float = 0
     balance: float = 0
     balance_date: Optional[str] = None
@@ -197,7 +199,9 @@ class SalesOrderCreate(BaseModel):
     amount: float = 0
     tax_rate: str = "13%"
     prepay: float = 0
+    prepay_note: str = ""                 # 🆕 预付收款批注(选填)
     before_ship: float = 0
+    before_ship_note: str = ""            # 🆕 发货前付收款批注(选填)
     ship_receivable: float = 0
     balance: float = 0
     balance_date: str = ""
@@ -220,10 +224,18 @@ class SalesLedgerUpdate(BaseModel):
     amount: Optional[float] = None
     tax_rate: Optional[str] = None
     prepay: Optional[float] = None
+    prepay_note: Optional[str] = None        # 🆕 预付收款批注
     before_ship: Optional[float] = None
+    before_ship_note: Optional[str] = None   # 🆕 发货前付收款批注
     ship_receivable: Optional[float] = None
     balance: Optional[float] = None
     balance_date: Optional[str] = None
+
+
+class PaymentNoteUpdate(BaseModel):
+    """🆕 单笔收款批注（预付 / 发货前付）独立更新——销售本人即可记录，不受开票锁限制。"""
+    field: str            # 'prepay' | 'before_ship'
+    note: str = ""
 
 
 class NextCodeOut(BaseModel):
