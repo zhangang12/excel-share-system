@@ -159,6 +159,29 @@ async def main():
         nrow = [x for x in (await c.get("/api/sales/ledger", headers=Hs1)).json()["rows"] if x["project_id"]==npid][0]
         chk(nrow["prepay_note"]=="【下单时】定金已收", f"下单批注写入台账: {nrow['prepay_note']!r}")
 
+        # ---- 🆕 销售下单·下单资料随附：下单后销售员把资料传到每个生成的部门任务单 ----
+        # 用 electric/produce 避免污染后续 design==3 计数
+        r = await place(Hs1, "带资料下单样机", ["electric", "produce"], amount=8000)
+        chk(r.status_code==200, "带资料下单建单")
+        oids = r.json()["order_ids"]
+        chk(len(oids)==2, f"两个部门任务: {oids}")
+        # 销售员(created_by)对自己下的单可传下发资料（input_files）—— 前端下单后正是这么回传
+        for oid in oids:
+            ru = await c.post(f"/api/orders/{oid}/input-files", headers=Hs1,
+                              files=[("files", ("技术交底.pdf", io.BytesIO(b"PDF"), "application/pdf")),
+                                     ("files", ("BOM.xlsx", io.BytesIO(b"X"), "application/vnd.ms-excel"))])
+            chk(ru.status_code==200 and len(ru.json())==2, f"销售员给 order#{oid} 传资料: {ru.text[:120]}")
+        # 部门负责人能在任务单看到下发资料
+        Hel = await login("el")
+        elecs = (await c.get("/api/orders?dept=electric", headers=Hel)).json()
+        tgt = [o for o in elecs if o["id"]==oids[0]][0]
+        chk(len(tgt["input_files"])==2 and {f["name"] for f in tgt["input_files"]}=={"技术交底.pdf","BOM.xlsx"},
+            f"电工任务单含2个下发资料: {[f['name'] for f in tgt['input_files']]}")
+        # 越权：他人(s2)不能给 s1 的单传资料
+        ru = await c.post(f"/api/orders/{oids[0]}/input-files", headers=Hs2,
+                          files=[("files", ("x.pdf", io.BytesIO(b"P"), "application/pdf"))])
+        chk(ru.status_code==403, "非下单方不能传下发资料")
+
         # ---- 主管编辑台账 ----
         r = await c.put(f"/api/sales/ledger/{lidA}", headers=Hs1, json={"amount": 95000})
         chk(r.status_code==403, "销售员不能编辑台账")

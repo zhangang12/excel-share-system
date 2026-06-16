@@ -2,10 +2,10 @@
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
 import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Stamp, Download, Check, ChatLineSquare, Clock } from '@element-plus/icons-vue'
+import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
-import { downloadAttachment } from '@/api/orders'
+import { downloadAttachment, ordersApi } from '@/api/orders'
 import { reportsApi, type SalesReport } from '@/api/reports'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -27,6 +27,22 @@ const salesOptions = computed(() => {
   return Array.from(m, ([id, name]) => ({ id, name }))
 })
 
+// 🆕 项目编号自然排序：标准编号(YYYY-NNN[后缀])按 年→序号→后缀 升序在前，其它(PCT-/SOFT-等)按字符串排其后
+function sortByCode(list: SalesLedgerRow[]): SalesLedgerRow[] {
+  const re = /^(\d{4})-0*(\d+)([A-Za-z]*)$/
+  return [...list].sort((a, b) => {
+    const ra = re.exec(a.code || ''), rb = re.exec(b.code || '')
+    if (ra && rb) {
+      if (ra[1] !== rb[1]) return +ra[1] - +rb[1]
+      if (+ra[2] !== +rb[2]) return +ra[2] - +rb[2]
+      return ra[3].localeCompare(rb[3])
+    }
+    if (ra) return -1
+    if (rb) return 1
+    return (a.code || '').localeCompare(b.code || '')
+  })
+}
+
 async function load() {
   loading.value = true
   try {
@@ -36,7 +52,7 @@ async function load() {
       contract: filters.contract || undefined,
       sales_uid: filters.sales_uid,
     })
-    rows.value = j.rows
+    rows.value = sortByCode(j.rows)
     totals.value = j.totals || null
   } finally {
     loading.value = false
@@ -67,18 +83,44 @@ async function openOrder() {
       balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
       receiver: { name: '', phone: '', addr: '' },
     })
+    orderFiles.value = []
     orderVisible.value = true
   } finally {
     openingOrder.value = false
   }
 }
+// 🆕 下单资料（多选，PDF/Word/Excel）——下单后随附给各派往部门任务单
+const orderFileInput = ref<HTMLInputElement | null>(null)
+const orderFiles = ref<File[]>([])
+function onPickOrderFiles(e: Event) {
+  const fs = Array.from((e.target as HTMLInputElement).files || [])
+  if (fs.length) orderFiles.value.push(...fs)
+  ;(e.target as HTMLInputElement).value = ''  // 允许再次选同名文件/追加
+}
+function fmtFileSize(n: number): string {
+  if (n < 1024) return n + ' B'
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+  return (n / 1024 / 1024).toFixed(2) + ' MB'
+}
+
 async function submitOrder() {
   if (!orderForm.name.trim()) { ElMessage.warning('请填写设备名称'); return }
   if (!orderForm.depts.length) { ElMessage.warning('请至少选择一个派往部门'); return }
   ordering.value = true
   try {
     const r = await salesApi.createOrder({ ...orderForm })
-    ElMessage.success(`已下单 ${r.code}，已推送各部门负责人分派`)
+    // 🆕 下单资料随附：传到每个生成的部门任务单(order_input)，接单负责人即可见
+    if (orderFiles.value.length && r.order_ids?.length) {
+      const files = orderFiles.value.slice()
+      try {
+        await Promise.all(r.order_ids.map(oid => ordersApi.inputUpload(oid, files)))
+        ElMessage.success(`已下单 ${r.code}，资料(${files.length})已随附给 ${r.order_ids.length} 个部门任务`)
+      } catch {
+        ElMessage.warning(`已下单 ${r.code}，但部分资料上传失败，可到对应部门任务单补传`)
+      }
+    } else {
+      ElMessage.success(`已下单 ${r.code}，已推送各部门负责人分派`)
+    }
     orderVisible.value = false
     await load()
   } finally {
@@ -268,7 +310,7 @@ async function openReport() {
       <el-table :data="rows" stripe v-loading="loading" :show-summary="false"
                 max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column type="index" label="#" width="48" />
-        <el-table-column label="项目编号" width="105" fixed>
+        <el-table-column label="项目编号" width="120" fixed>
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
         <el-table-column prop="name" label="设备名称" min-width="150" show-overflow-tooltip />
@@ -468,6 +510,25 @@ async function openReport() {
         <el-form-item label="下单要求">
           <el-input v-model="orderForm.req_text" type="textarea" :rows="2" placeholder="技术要求/交底说明" />
         </el-form-item>
+        <el-form-item label="下单资料（PDF / Word / Excel，可多选）">
+          <div style="width: 100%">
+            <div class="up-box" @click="orderFileInput?.click()">
+              <el-icon><Paperclip /></el-icon>
+              <span class="up-box-t">选择文件上传</span>
+              <small class="up-box-s">下单后随附给所选部门任务单，负责人接单即可见</small>
+            </div>
+            <input ref="orderFileInput" type="file" multiple
+                   accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" hidden @change="onPickOrderFiles" />
+            <div v-if="orderFiles.length" class="up-list">
+              <div v-for="(f, i) in orderFiles" :key="i" class="up-item">
+                <el-icon class="up-item-ico"><Document /></el-icon>
+                <span class="up-name" :title="f.name">{{ f.name }}</span>
+                <span class="up-size">{{ fmtFileSize(f.size) }}</span>
+                <el-icon class="up-rm" @click="orderFiles.splice(i, 1)"><Close /></el-icon>
+              </div>
+            </div>
+          </div>
+        </el-form-item>
         <div class="fsec">📍 收货信息</div>
         <div class="frow">
           <el-form-item label="收货人 / 单位" style="flex: 1"><el-input v-model="orderForm.receiver.name" /></el-form-item>
@@ -643,7 +704,7 @@ async function openReport() {
 <style scoped>
 .filter-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .muted { color: var(--el-text-color-secondary); font-size: 13px; }
-.code { color: var(--primary, #2563eb); }
+.code { color: var(--primary, #2563eb); white-space: nowrap; }
 .dl-icon { cursor: pointer; color: var(--primary, #2563eb); margin-left: 4px; vertical-align: -2px; }
 /* 🆕 v4 操作列: 主操作蓝色, 次操作灰色 hover 才蓝, 中点 · 分隔 */
 .op-cell { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -652,6 +713,27 @@ async function openReport() {
 .op-cell .op-sub :deep(span) { color: var(--text-3, #9ca3af) !important; transition: color .12s; }
 .op-cell .op-sub:hover :deep(span) { color: var(--primary, #2563eb) !important; }
 .op-cell .op-sep { color: var(--text-4, #d1d5db); font-size: 11px; user-select: none; }
+/* 🆕 销售下单·下单资料多选上传 */
+.up-box {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: 14px; width: 100%;
+  border: 1px dashed var(--border, #d1d5db); border-radius: 8px;
+  color: var(--text-3, #9ca3af); cursor: pointer; transition: all .15s;
+}
+.up-box:hover { border-color: var(--primary, #2563eb); color: var(--primary, #2563eb); background: rgba(37,99,235,.03); }
+.up-box-t { font-size: 13.5px; font-weight: 500; }
+.up-box-s { font-size: 12px; color: var(--text-4, #cbd5e1); }
+.up-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.up-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border: 1px solid var(--border-light, #eef0f3); border-radius: 6px;
+  background: var(--el-fill-color-light); font-size: 13px;
+}
+.up-item-ico { color: var(--primary, #2563eb); flex-shrink: 0; }
+.up-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-1); }
+.up-size { font-size: 12px; color: var(--text-3, #9ca3af); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.up-rm { color: var(--text-3, #9ca3af); cursor: pointer; flex-shrink: 0; padding: 2px; border-radius: 4px; transition: all .12s; }
+.up-rm:hover { background: rgba(239,68,68,.1); color: var(--danger, #ef4444); }
 /* 🆕 预付/发货前付列: 金额 + 收款批注图标(有批注高亮蓝) */
 .pay-cell { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; width: 100%; }
 .pay-cell .note-ico {
