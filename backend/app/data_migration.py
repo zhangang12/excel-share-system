@@ -1077,6 +1077,48 @@ async def backfill_elec_po_sheet(db: AsyncSession) -> dict:
     return {"created": created}
 
 
+async def backfill_elec_po_from_uploaded(db: AsyncSession) -> dict:
+    """🆕 对"已上传电工采购清单但第5表仍空"的项目，启动时用已存的 Excel 自动解析回填。
+
+    背景：早期 _populate_elec_po_from_excel 只支持 .xlsx，电工上传 .xls 时解析静默失败 →
+    第5表空。现解析已兼容 .xls/.xlsx，本迁移把那批已上传文件补解析入表，免去人工重传。
+    幂等：_populate_elec_po_from_excel 自带"第5表非空则跳过"保护；仅对仍为空的表生效。
+    """
+    from .routers.orders_router import _populate_elec_po_from_excel
+    from .sheet_templates import ELEC_PO_SHEET_NAME
+
+    res = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.name == ELEC_PO_SHEET_NAME))
+    sheets = list(res.scalars().all())
+    filled = 0
+    for ds in sheets:
+        # 该项目最近一次电工采购清单附件（电工接单上传：biz_type=order_start_output, kind=plist）
+        att = (await db.execute(
+            select(models.Attachment).where(
+                models.Attachment.project_id == ds.project_id,
+                models.Attachment.biz_type == "order_start_output",
+                models.Attachment.kind == "plist",
+            ).order_by(models.Attachment.id.desc()).limit(1)
+        )).scalar_one_or_none()
+        if not att:
+            continue
+        proj = (await db.execute(
+            select(models.Project).where(models.Project.id == ds.project_id))).scalar_one_or_none()
+        if not proj:
+            continue
+        try:
+            n = await _populate_elec_po_from_excel(db, ds.project_id, proj.code, att)
+            if n > 0:
+                filled += 1
+        except Exception as e:  # noqa: BLE001  单个项目失败不影响其它
+            log.warning("[backfill_elec_po_from_uploaded] project=%s file=%s err=%s",
+                        proj.code, att.name, e)
+    if filled:
+        await db.commit()
+        log.info("[backfill_elec_po_from_uploaded] 用已上传Excel回填 %d 个项目电工采购单", filled)
+    return {"filled": filled}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -1159,3 +1201,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_elec_po_sheet(db)
     except Exception as e:
         log.warning("backfill_elec_po_sheet failed: %s", e)
+    try:
+        await backfill_elec_po_from_uploaded(db)   # 必须在补建第5表之后
+    except Exception as e:
+        log.warning("backfill_elec_po_from_uploaded failed: %s", e)
