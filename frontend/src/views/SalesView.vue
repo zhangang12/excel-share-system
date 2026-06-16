@@ -148,6 +148,8 @@ function openEdit(r: SalesLedgerRow) {
     contract: r.contract, amount: r.amount, tax_rate: r.tax_rate || '13%',
     prepay: r.prepay, before_ship: r.before_ship, ship_receivable: r.ship_receivable,
     balance: r.balance, balance_date: r.balance_date || '',
+    sign_date: r.sign_date || '', deliver_date: r.deliver_date || '',
+    sales_uid: r.sales_uid ?? undefined,
   })
   editVisible.value = true
 }
@@ -335,10 +337,10 @@ async function openReport() {
     <el-card shadow="never">
       <el-table :data="rows" stripe v-loading="loading" :show-summary="false"
                 max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-        <el-table-column type="index" label="#" width="48" />
         <el-table-column label="项目编号" width="120" fixed>
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
+        <el-table-column type="index" label="#" width="48" />
         <el-table-column prop="name" label="设备名称" min-width="150" show-overflow-tooltip />
         <el-table-column prop="customer" label="客户单位" min-width="130" show-overflow-tooltip>
           <template #default="{ row }">{{ row.customer || '—' }}</template>
@@ -593,6 +595,19 @@ async function openReport() {
             <el-select v-model="editForm.tax_rate" style="width: 100%">
               <el-option label="13%" value="13%" /><el-option label="/（不开票）" value="/" />
             </el-select>
+          </el-form-item>
+        </div>
+        <div class="frow">
+          <el-form-item label="销售员" style="flex: 1">
+            <el-select v-model="editForm.sales_uid" filterable clearable placeholder="选择销售员" style="width: 100%">
+              <el-option v-for="s in salesOptions" :key="s.id" :label="s.name" :value="s.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="下单日期（合同签订）" style="flex: 1">
+            <el-date-picker v-model="editForm.sign_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="交货日期" style="flex: 1">
+            <el-date-picker v-model="editForm.deliver_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
           </el-form-item>
         </div>
         <div class="frow">

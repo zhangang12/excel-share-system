@@ -187,6 +187,15 @@ async def main():
         chk(r.status_code==403, "销售员不能编辑台账")
         r = await c.put(f"/api/sales/ledger/{lidA}", headers=Hsl, json={"amount": 95000, "customer":"涿州腾源阁"})
         chk(r.status_code==200, "主管编辑台账")
+        # 🆕 编辑台账可维护 下单日期/交货日期/销售员(除编号+发货日期外均可改)
+        r = await c.put(f"/api/sales/ledger/{lidA}", headers=Hsl,
+                        json={"sign_date":"2026/5/20","deliver_date":"2026-09-01","sales_uid":ids["s2"]})
+        chk(r.status_code==200, f"编辑下单/交货日期+改派销售: {r.text[:120]}")
+        rowA = [x for x in (await c.get("/api/sales/ledger", headers=Hsl)).json()["rows"] if x["id"]==lidA][0]
+        chk(rowA["sign_date"]=="2026-05-20" and rowA["deliver_date"]=="2026-09-01", f"日期回写台账: {rowA['sign_date']}/{rowA['deliver_date']}")
+        chk(rowA["sales_uid"]==ids["s2"], f"销售员已改派: {rowA['sales_uid']}")
+        # 改回 s1, 不影响后续开票流断言(lidA 属 s1)
+        await c.put(f"/api/sales/ledger/{lidA}", headers=Hsl, json={"sales_uid":ids["s1"]})
 
         # ---- 开票流：申请→审批→财务开票→回传 ----
         r = await c.post(f"/api/sales/ledger/{lidA}/invoice-apply", headers=Hs1,

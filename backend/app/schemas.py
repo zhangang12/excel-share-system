@@ -230,6 +230,9 @@ class SalesLedgerUpdate(BaseModel):
     ship_receivable: Optional[float] = None
     balance: Optional[float] = None
     balance_date: Optional[str] = None
+    sign_date: Optional[str] = None       # 🆕 下单日期(=合同签订日期)，回写项目一览
+    deliver_date: Optional[str] = None    # 🆕 交货日期，回写项目一览
+    sales_uid: Optional[int] = None       # 🆕 销售员改派
 
 
 class PaymentNoteUpdate(BaseModel):

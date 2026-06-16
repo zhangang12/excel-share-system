@@ -272,6 +272,15 @@ async def update_ledger(
             setattr(led, f, v.strip() or None)
     if data.balance_date is not None:
         led.balance_date = normalize_date_str(data.balance_date) or None
+    # 🆕 销售员改派（重新指定台账归属销售）
+    if data.sales_uid is not None:
+        led.sales_uid = data.sales_uid or None
+    # 🆕 下单日期(=合同签订日期)/交货日期 维护：回写项目一览(__o__ + alias __h__下单日期)，
+    #    与「上传合同」同源，免去只能靠上传合同才能改日期
+    if data.sign_date is not None and led.project:
+        _writeback_overview(led.project, "签订日期", normalize_date_str(data.sign_date) or "")
+    if data.deliver_date is not None and led.project:
+        _writeback_overview(led.project, "交货日期", normalize_date_str(data.deliver_date) or "")
     await db.commit()
     await write_audit(db, user=current, action="update", target_type="sales_ledger", target_id=lid)
     return schemas.Msg(message="已保存")
