@@ -108,7 +108,9 @@ else
 fi
 
 # 9. 异常日志（近 1h）
-ERR_CNT=$(docker logs --since 1h pms2_backend 2>&1 | grep -ciE 'ERROR|Traceback|Exception' || echo 0)
+# 注意: grep -c 无匹配时已输出 "0" 并以非0退出, 不能再 `|| echo 0`(会变成 "0\n0" 致 [[ 算术语法错)。
+ERR_CNT=$(docker logs --since 1h pms2_backend 2>&1 | grep -ciE 'ERROR|Traceback|Exception' || true)
+ERR_CNT=$(echo "$ERR_CNT" | head -1); ERR_CNT=${ERR_CNT:-0}
 if [[ "$ERR_CNT" -gt 50 ]]; then
     check "backend-errors-1h" fail "$ERR_CNT errors in last 1h"
 elif [[ "$ERR_CNT" -gt 5 ]]; then
