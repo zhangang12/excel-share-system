@@ -17,6 +17,13 @@ import { fmtDate } from '@/utils/format'
 const auth = useAuthStore()
 const allView = computed(() => ['admin', 'manager', 'sales_lead'].includes(auth.user?.role_code || ''))
 
+// 🆕 收款金额格式化：0 显示 ¥0（销售已填 0 也要显示），仅 null/undefined 显示 —
+// （区别于 fmtMoney 把 0 当空值显示 —）
+function fmtPay(n?: number | null): string {
+  if (n === null || n === undefined || Number.isNaN(n)) return '—'
+  return '¥' + Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+}
+
 const loading = ref(false)
 const rows = ref<SalesLedgerRow[]>([])
 const totals = ref<SalesLedgerTotals | null>(null)
@@ -391,7 +398,7 @@ async function openReport() {
         <el-table-column label="预付" width="106" align="right">
           <template #default="{ row }">
             <div class="pay-cell">
-              <span>{{ fmtMoney(row.prepay) }}</span>
+              <span>{{ fmtPay(row.prepay) }}</span>
               <el-tooltip placement="top" :show-after="150">
                 <template #content>
                   <div class="note-pop">{{ row.prepay_note || '点击添加收款批注（可插入时间）' }}</div>
@@ -406,7 +413,7 @@ async function openReport() {
         <el-table-column label="发货前付" width="106" align="right">
           <template #default="{ row }">
             <div class="pay-cell">
-              <span>{{ fmtMoney(row.before_ship) }}</span>
+              <span>{{ fmtPay(row.before_ship) }}</span>
               <el-tooltip placement="top" :show-after="150">
                 <template #content>
                   <div class="note-pop">{{ row.before_ship_note || '点击添加收款批注（可插入时间）' }}</div>
@@ -419,10 +426,10 @@ async function openReport() {
           </template>
         </el-table-column>
         <el-table-column label="发货款应收" width="100" align="right">
-          <template #default="{ row }">{{ fmtMoney(row.ship_receivable) }}</template>
+          <template #default="{ row }">{{ fmtPay(row.ship_receivable) }}</template>
         </el-table-column>
         <el-table-column label="尾款" width="92" align="right">
-          <template #default="{ row }">{{ fmtMoney(row.balance) }}</template>
+          <template #default="{ row }">{{ fmtPay(row.balance) }}</template>
         </el-table-column>
         <el-table-column label="发货日期 📦" width="105">
           <template #default="{ row }">
