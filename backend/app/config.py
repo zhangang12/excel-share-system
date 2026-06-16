@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # 上线灰度后由管理层确认再打开，符合"动老页面用可逆开关"红线）
     export_approval_enabled: bool = False
 
+    # 🆕 项目目录行级可见性：仅 设计/电工/装配 三类岗位只看"自己接的项目"(被派单 worker_id=自己)，
+    # 其余角色(管理层/各部门负责人/采购/仓库/财务/物流等)维持看全部。
+    # 默认开启；如需回退为"全部可见"，设环境变量 PROJECT_DIR_OWN_ONLY=false 重启即可（可逆开关红线）。
+    project_dir_own_only: bool = True
+
 
 # 确保 data 目录存在（SQLite 文件会写到这里）
 Path("data").mkdir(exist_ok=True)

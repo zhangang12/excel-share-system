@@ -276,6 +276,13 @@ async def list_projects(
         ))
     if status:
         query = query.where(models.Project.status == status)
+    # 🆕 项目目录行级可见性（可逆开关 settings.project_dir_own_only，默认开启）：
+    # 设计/电工/装配 三类岗位仅见"自己接的项目"(被派单 worker_id=本人)；其余角色不受影响看全部。
+    from ..config import settings as _cfg
+    OWN_ONLY_ROLES = {"designer", "electrician", "assembler"}
+    if _cfg.project_dir_own_only and current.role and current.role.code in OWN_ONLY_ROLES:
+        mine = select(models.DeptOrder.project_id).where(models.DeptOrder.worker_id == current.id)
+        query = query.where(models.Project.id.in_(mine))
     query = query.order_by(models.Project.updated_at.desc())
     res = await db.execute(query)
     items = res.scalars().all()
