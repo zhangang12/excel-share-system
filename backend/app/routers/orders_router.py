@@ -11,6 +11,7 @@
 - P-13 作废留痕（不删单），管理层收通知后可重新下单
 - 接单/换人回传一览「设计师/电工」列，设计开始/完成回传「制图开始/制图结束」
 """
+import logging
 from datetime import date, datetime, timezone
 from typing import List, Optional
 
@@ -31,17 +32,55 @@ from ..sheet_templates import ELEC_PO_SHEET_NAME
 from ..config import settings
 
 router = APIRouter(prefix="/api/orders", tags=["部门任务单"])
+log = logging.getLogger("app.orders")
+
+
+def _read_excel_rows(fpath) -> list[list]:
+    """读取 Excel 首个工作表为行列表，兼容 .xls(xlrd) 与 .xlsx/.xlsm(openpyxl)。
+    日期单元格统一转 YYYY-MM-DD 字符串。"""
+    suffix = fpath.suffix.lower()
+    rows: list[list] = []
+    if suffix == ".xls":
+        import xlrd
+        from xlrd.xldate import xldate_as_datetime
+        try:
+            wb = xlrd.open_workbook(str(fpath), encoding_override="cp936")
+        except Exception:
+            wb = xlrd.open_workbook(str(fpath))
+        ws = wb.sheet_by_index(0)
+        for r in range(ws.nrows):
+            row = []
+            for ci in range(ws.ncols):
+                v = ws.cell_value(r, ci)
+                if ws.cell_type(r, ci) == 3:  # xlrd 日期类型
+                    try:
+                        v = xldate_as_datetime(v, wb.datemode)
+                    except Exception:
+                        pass
+                row.append(v)
+            rows.append(row)
+    else:
+        from openpyxl import load_workbook
+        wb = load_workbook(fpath, read_only=True, data_only=True)
+        ws = wb.active
+        rows = [list(r) for r in ws.iter_rows(values_only=True)]
+    return rows
+
+
+def _cell_to_str(v) -> str:
+    if isinstance(v, (datetime, date)):
+        return v.strftime("%Y-%m-%d")
+    return str(v).strip()
 
 
 async def _populate_elec_po_from_excel(db: AsyncSession, project_id: int, project_code: str, att: models.Attachment) -> int:
     """电工首次上传采购清单 → 解析 Excel 自动填充项目「电工采购单」第5表（§十六）。
 
     仅当第5表当前无数据行时填充（避免覆盖采购/仓库后续手填的列）。
-    按表头名与第5表列名交集映射；'项目'列自动填项目编号。解析失败静默跳过（仅留附件引用）。
-    返回写入行数。调用方负责 commit。
+    按表头名与第5表列名交集映射；'项目'列自动填项目编号。解析失败记日志并跳过（仅留附件引用）。
+    返回写入行数。调用方负责 commit。兼容 .xls(xlrd) 与 .xlsx/.xlsm(openpyxl)。
     """
     from pathlib import Path
-    from openpyxl import load_workbook
     from sqlalchemy import func as _f
 
     res = await db.execute(select(models.Datasheet).where(
@@ -62,10 +101,9 @@ async def _populate_elec_po_from_excel(db: AsyncSession, project_id: int, projec
     name_to_fid = {f.name: f.id for f in fields}
 
     try:
-        wb = load_workbook(Path(settings.files_dir) / att.path, read_only=True, data_only=True)
-        ws = wb.active
-        rows = [[c for c in r] for r in ws.iter_rows(values_only=True)]
-    except Exception:
+        rows = _read_excel_rows(Path(settings.files_dir) / att.path)   # 兼容 .xls / .xlsx
+    except Exception as e:  # noqa: BLE001
+        log.warning("[elec_po] 解析采购清单失败 project=%s file=%s err=%s", project_code, att.name, e)
         return 0
     if not rows:
         return 0
@@ -88,12 +126,15 @@ async def _populate_elec_po_from_excel(db: AsyncSession, project_id: int, projec
         for h, ci in col_map.items():
             v = r[ci] if ci < len(r) else None
             if v not in (None, ""):
-                values[str(name_to_fid[h])] = str(v).strip()
+                values[str(name_to_fid[h])] = _cell_to_str(v)
                 has_data = True
         if not has_data:
             continue
         db.add(models.Record(datasheet_id=ds.id, sort_order=written, values=values))
         written += 1
+    if written == 0:
+        log.warning("[elec_po] 采购清单解析到 0 行 project=%s file=%s 表头=%s 命中列=%s",
+                    project_code, att.name, headers, list(col_map.keys()))
     return written
 
 
@@ -394,13 +435,21 @@ async def start_upload(
                               kind=kind, project_id=o.project_id, user=current)
         outs.append(a)
     p = o.project
-    # 🆕 M12：电工采购清单 → 首次自动解析写入项目「电工采购单」第5表
+    # 🆕 M12：电工采购清单 → 首次自动解析写入项目「电工采购单」第5表（兼容 .xls/.xlsx）
+    elec_po_written: Optional[int] = None
     if o.dept == "electric" and kind == "plist" and outs:
         try:
-            await _populate_elec_po_from_excel(db, o.project_id, p.code, outs[0])
-        except Exception:  # noqa: BLE001  解析失败不阻塞上传
-            pass
+            elec_po_written = await _populate_elec_po_from_excel(db, o.project_id, p.code, outs[0])
+        except Exception as e:  # noqa: BLE001  解析失败不阻塞上传
+            log.warning("[elec_po] 自动入表异常 project=%s err=%s", p.code, e)
+            elec_po_written = 0
     await db.commit()
+
+    # 解析未写入任何行 → 给上传者一条提示（不阻塞上传，便于排查表头/格式）
+    if elec_po_written == 0:
+        await push_message(db, to_user_id=current.id, kind="warn",
+                           text=f"【电工采购单】{p.code} 采购清单已上传，但未能自动解析入表（请检查表头列名是否与「电工采购单」一致），可重新上传或在项目详单手动录入。",
+                           biz_type="project", biz_id=o.project_id)
 
     await push_message(db, to_role=so["to_role"], kind="info",
                        text=f"【{so['label']}】{cfg['name']}已上传 {p.code} {so['label']} {len(outs)} 个文件，请查收。",
