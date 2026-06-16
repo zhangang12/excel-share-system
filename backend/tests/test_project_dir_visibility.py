@@ -45,19 +45,25 @@ async def main():
         d1 = await mk("d1", "designer")
         b1 = await mk("b1", "buyer")
         dl = await mk("dl", "design_lead")
+        s1 = await mk("s1", "sales")
+        s2 = await mk("s2", "sales")
+        pml = await mk("pml", "pm_lead")
 
         async def login(u):
             r = await c.post("/api/auth/login", json={"username": u, "password": "pass123"})
             return {"Authorization": f"Bearer {r.json()['access_token']}"}
-        Hd, Hb, Hdl = await login("d1"), await login("b1"), await login("dl")
+        Hd, Hb, Hdl, Hs1, Hs2, Hpm = (await login("d1"), await login("b1"), await login("dl"),
+                                      await login("s1"), await login("s2"), await login("pml"))
 
         # 建两个项目 P1/P2（admin 建，自动把全员加为成员）
         p1 = (await c.post("/api/projects", headers=H, json={"code": "2099-101", "name": "项目甲"})).json()["id"]
         p2 = (await c.post("/api/projects", headers=H, json={"code": "2099-102", "name": "项目乙"})).json()["id"]
 
-        # 给 d1 在 P1 派一个设计任务（worker_id=d1）；P2 不派
+        # P1: 派设计任务给 d1 + 台账销售员=s1；P2: 台账销售员=s2
         async with SessionLocal() as db:
             db.add(models.DeptOrder(project_id=p1, dept="design", worker_id=d1, created_by=1))
+            db.add(models.SalesLedger(project_id=p1, sales_uid=s1, amount=100))
+            db.add(models.SalesLedger(project_id=p2, sales_uid=s2, amount=200))
             await db.commit()
 
         def codes(rows): return {x["code"] for x in rows}
@@ -65,12 +71,25 @@ async def main():
         # 默认开启：设计师只看自己接的 P1
         rows = (await c.get("/api/projects", headers=Hd)).json()
         chk(codes(rows) == {"2099-101"}, f"设计师仅见自己接的P1: {codes(rows)}")
+        # 销售员 s1 只看自己下单的 P1；s2 只看 P2
+        rows = (await c.get("/api/projects", headers=Hs1)).json()
+        chk(codes(rows) == {"2099-101"}, f"销售s1仅见自己下单的P1: {codes(rows)}")
+        rows = (await c.get("/api/projects", headers=Hs2)).json()
+        chk(codes(rows) == {"2099-102"}, f"销售s2仅见自己下单的P2: {codes(rows)}")
         # 采购不受限：看全部
         rows = (await c.get("/api/projects", headers=Hb)).json()
         chk({"2099-101", "2099-102"} <= codes(rows), f"采购看全部: {codes(rows)}")
         # 部门负责人看全部
         rows = (await c.get("/api/projects", headers=Hdl)).json()
         chk({"2099-101", "2099-102"} <= codes(rows), f"设计负责人看全部: {codes(rows)}")
+        # 生产部主管 pm_lead：项目目录看全部 + 有项目详单权限
+        rows = (await c.get("/api/projects", headers=Hpm)).json()
+        chk({"2099-101", "2099-102"} <= codes(rows), f"生产部主管看全部项目目录: {codes(rows)}")
+        menus = (await c.get("/api/auth/menus", headers=Hpm)).json()["menus"]
+        mkeys = {m["key"] for m in menus}
+        chk("list" in mkeys and "catalog" in mkeys, f"生产部主管有项目目录+详单菜单: {mkeys}")
+        r = await c.get(f"/api/projects/{p2}", headers=Hpm)
+        chk(r.status_code == 200, f"生产部主管可进入任意项目详单: {r.status_code}")
         # 管理层看全部
         rows = (await c.get("/api/projects", headers=H)).json()
         chk({"2099-101", "2099-102"} <= codes(rows), f"管理层看全部: {codes(rows)}")
