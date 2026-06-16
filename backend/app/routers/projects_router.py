@@ -276,24 +276,31 @@ async def list_projects(
         ))
     if status:
         query = query.where(models.Project.status == status)
+    query = query.order_by(models.Project.updated_at.desc())
+    res = await db.execute(query)
+    items = list(res.scalars().all())
     # 🆕 项目目录列表行级可见性（仅列表显示；可逆开关 project_dir_own_only，默认开启）：
-    # 设计/电工/装配 只列被派单(worker_id)的项目；销售员只列自己下单(sales_uid)的项目。
+    # 设计/电工/装配 只列被派单(worker_id)的；销售员只列自己下单(sales_uid)的；
+    # 外加按项目目录 销售/电工/设计师 列姓名匹配补授的「可见名单」__viz_uids__（存量数据补全）。
     # 管理层/各部门负责人/采购/仓库/财务/物流等不受影响（看全部，详见 user_can_view_project）。
     from ..config import settings as _cfg
     _code = current.role.code if current.role else ""
-    if _cfg.project_dir_own_only:
-        if _code in ("designer", "electrician", "assembler"):
-            mine = select(models.DeptOrder.project_id).where(models.DeptOrder.worker_id == current.id)
-            query = query.where(models.Project.id.in_(mine))
-        elif _code == "sales":
-            mine = select(models.SalesLedger.project_id).where(models.SalesLedger.sales_uid == current.id)
-            query = query.where(models.Project.id.in_(mine))
-    query = query.order_by(models.Project.updated_at.desc())
-    res = await db.execute(query)
-    items = res.scalars().all()
+    restricted = _cfg.project_dir_own_only and _code in ("designer", "electrician", "assembler", "sales")
+    if restricted:
+        if _code == "sales":
+            sub = await db.execute(
+                select(models.SalesLedger.project_id).where(models.SalesLedger.sales_uid == current.id))
+        else:
+            sub = await db.execute(
+                select(models.DeptOrder.project_id).where(models.DeptOrder.worker_id == current.id))
+        my_pids = {r[0] for r in sub.all()}
+        items = [p for p in items
+                 if p.id in my_pids or current.id in ((p.extra or {}).get("__viz_uids__") or [])]
     visible = []
     for p in items:
-        if await user_can_view_project(db, current, p):
+        # 受限角色的列表已由 被派单/下单/可见名单 过滤定案，不再二次过成员检查；
+        # 其余角色按 user_can_view_project(成员/负责人/管理层)。
+        if restricted or await user_can_view_project(db, current, p):
             visible.append(await _project_to_out(p, db))
     return visible
 

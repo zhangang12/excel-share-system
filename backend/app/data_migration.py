@@ -1119,6 +1119,82 @@ async def backfill_elec_po_from_uploaded(db: AsyncSession) -> dict:
     return {"filled": filled}
 
 
+async def backfill_project_visibility_from_overview_names(db: AsyncSession) -> dict:
+    """🆕 存量项目可见性补全（幂等）：解析项目目录 销售/电工/设计师 列(project.extra __o__)，
+    把列中人名按系统用户 full_name 精确匹配，匹配到的 user_id 并入项目「可见名单」
+    project.extra['__viz_uids__']，使这些人在项目目录/详单能看到自己经手的存量项目。
+
+    口径（用户 2026-06-17 确认）：
+    - 一格多名(顿号/逗号/分号/空格/斜杠分隔)→都授予
+    - 匹配不到系统用户→跳过并记日志；同名多用户→跳过(歧义不乱授)并记日志
+    - 销售列匹配到、且台账 sales_uid 为空时，顺带回填 sales_uid
+    幂等：可见名单做并集(只增不减)，再次运行不重复授权。
+    """
+    import re as _re
+    from .routers.projects_router import OVERVIEW_KEY_PREFIX
+
+    ures = await db.execute(select(models.User))
+    name_map: dict[str, list[int]] = {}
+    for u in ures.scalars().all():
+        nm = (u.full_name or "").strip()
+        if nm:
+            name_map.setdefault(nm, []).append(u.id)
+
+    COLS = ["销售", "设计师", "电工"]
+    SEP = _re.compile(r"[、，,;；/\s]+")
+    res = await db.execute(select(models.Project).where(models.Project.is_deleted == False))  # noqa: E712
+    projects = list(res.scalars().all())
+
+    granted = 0
+    proj_changed = 0
+    sales_filled = 0
+    unmatched: set[str] = set()
+    ambiguous: set[str] = set()
+
+    for p in projects:
+        extra = dict(p.extra or {})
+        cur_viz = set(extra.get("__viz_uids__") or [])
+        new_viz = set(cur_viz)
+        sales_uid_match = None
+        for col in COLS:
+            raw = extra.get(f"{OVERVIEW_KEY_PREFIX}{col}")
+            if not raw or not isinstance(raw, str):
+                continue
+            for nm in SEP.split(raw.strip()):
+                nm = nm.strip()
+                if not nm or nm in ("—", "-", "/", "无"):
+                    continue
+                uids = name_map.get(nm)
+                if not uids:
+                    unmatched.add(nm); continue
+                if len(uids) > 1:
+                    ambiguous.add(nm); continue
+                new_viz.add(uids[0])
+                if col == "销售":
+                    sales_uid_match = uids[0]
+        if new_viz != cur_viz:
+            extra["__viz_uids__"] = sorted(new_viz)
+            p.extra = extra
+            granted += len(new_viz - cur_viz)
+            proj_changed += 1
+        if sales_uid_match is not None:
+            lres = await db.execute(select(models.SalesLedger).where(models.SalesLedger.project_id == p.id))
+            led = lres.scalar_one_or_none()
+            if led and not led.sales_uid:
+                led.sales_uid = sales_uid_match
+                sales_filled += 1
+
+    if proj_changed or sales_filled:
+        await db.commit()
+    if unmatched:
+        log.info("[viz_backfill] 未匹配系统用户的人名(跳过): %s", "、".join(sorted(unmatched))[:300])
+    if ambiguous:
+        log.info("[viz_backfill] 同名多用户(跳过歧义): %s", "、".join(sorted(ambiguous))[:200])
+    log.info("[backfill_project_visibility_from_overview_names] 授权 %d 条 / 改 %d 项目 / 回填 sales_uid %d",
+             granted, proj_changed, sales_filled)
+    return {"granted": granted, "projects": proj_changed, "sales_filled": sales_filled}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -1205,3 +1281,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_elec_po_from_uploaded(db)   # 必须在补建第5表之后
     except Exception as e:
         log.warning("backfill_elec_po_from_uploaded failed: %s", e)
+    try:
+        await backfill_project_visibility_from_overview_names(db)
+    except Exception as e:
+        log.warning("backfill_project_visibility_from_overview_names failed: %s", e)
