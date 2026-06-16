@@ -61,20 +61,32 @@ const stats = computed(() => ({
   suggest: list.value.filter(r => r.kind === 'suggest').length,
 }))
 
+const previewVisible = ref(false)
 const previewSrc = ref('')
+const previewLoading = ref(false)
+const previewError = ref('')
 async function preview(row: UserFeedbackRow) {
   if (!row.shot_file_id) return
-  // 走 http(axios) 拿 blob：用 pms_token 鉴权（之前 fetch 读错 key → 401 → 图裂）
+  // 对话框照常打开：加载中转圈、成功显示图、失败显示明确占位(不再空白)
+  previewVisible.value = true
+  previewError.value = ''
+  previewLoading.value = true
+  if (previewSrc.value) { URL.revokeObjectURL(previewSrc.value); previewSrc.value = '' }
   try {
     const r = await http.get(`/attachments/${row.shot_file_id}/download`, { responseType: 'blob' })
     previewSrc.value = URL.createObjectURL(r.data as Blob)
-  } catch {
-    ElMessage.error('截图加载失败')
+  } catch (e: any) {
+    previewError.value = e?.response?.status === 404
+      ? '截图文件已丢失（可能因服务器存储未持久化），无法预览'
+      : `截图加载失败（${e?.response?.status || e?.message || '未知'}）`
+  } finally {
+    previewLoading.value = false
   }
 }
 function closePreview() {
   if (previewSrc.value) URL.revokeObjectURL(previewSrc.value)
   previewSrc.value = ''
+  previewError.value = ''
 }
 </script>
 
@@ -150,8 +162,11 @@ function closePreview() {
     </el-card>
 
     <!-- 截图预览 -->
-    <el-dialog v-model="previewSrc" title="截图预览" width="80%" top="6vh" @close="closePreview" append-to-body>
-      <div style="text-align:center"><img v-if="previewSrc" :src="previewSrc" alt="截图" style="max-width:100%;max-height:75vh" /></div>
+    <el-dialog v-model="previewVisible" title="截图预览" width="80%" top="6vh" @close="closePreview" append-to-body>
+      <div v-loading="previewLoading" style="text-align:center; min-height:120px">
+        <img v-if="previewSrc" :src="previewSrc" alt="截图" style="max-width:100%;max-height:75vh" />
+        <el-empty v-else-if="previewError" :description="previewError" :image-size="80" />
+      </div>
     </el-dialog>
   </div>
 </template>

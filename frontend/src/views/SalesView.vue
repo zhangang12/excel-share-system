@@ -10,6 +10,8 @@ import { reportsApi, type SalesReport } from '@/api/reports'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import FilePicker from '@/components/FilePicker.vue'
+import WorkflowGraph from '@/components/WorkflowGraph.vue'
+import { collabApi, type Workflow } from '@/api/collab'
 import { fmtDate } from '@/utils/format'
 
 const auth = useAuthStore()
@@ -199,6 +201,23 @@ async function saveNote() {
     noteVisible.value = false
   } finally {
     noteSaving.value = false
+  }
+}
+
+// ===== 🆕 全流程工作流（销售可查自己项目的全览，后端放行） =====
+const wfVisible = ref(false)
+const wfLoading = ref(false)
+const wfData = ref<Workflow | null>(null)
+const wfCode = ref('')
+async function openWorkflow(r: SalesLedgerRow) {
+  wfCode.value = r.code
+  wfData.value = null
+  wfVisible.value = true
+  wfLoading.value = true
+  try {
+    wfData.value = await collabApi.workflow(r.project_id)
+  } finally {
+    wfLoading.value = false
   }
 }
 
@@ -415,11 +434,13 @@ async function openReport() {
         <el-table-column label="尾款日期" width="100">
           <template #default="{ row }">{{ fmtDate(row.balance_date) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="250" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <div class="op-cell">
               <el-button v-if="allView" size="small" link type="primary" class="op-main" @click="openEdit(row)">编辑</el-button>
               <span v-if="allView" class="op-sep">·</span>
+              <el-button size="small" link class="op-sub" @click="openWorkflow(row)">流程</el-button>
+              <span class="op-sep">·</span>
               <el-button size="small" link class="op-sub" @click="openContract(row)">
                 {{ row.contract_file_id ? '换合同' : '上传合同' }}
               </el-button>
@@ -555,6 +576,11 @@ async function openReport() {
               <el-option label="经销商" value="经销商" /><el-option label="终端客户" value="终端客户" />
             </el-select>
           </el-form-item>
+          <el-form-item label="合同" style="flex: 1">
+            <el-select v-model="editForm.contract" style="width: 100%">
+              <el-option label="有" value="有" /><el-option label="无" value="无" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="金额(元)" style="flex: 1"><el-input-number v-model="editForm.amount" :min="0" :controls="false" style="width: 100%" /></el-form-item>
           <el-form-item label="税票" style="flex: 1">
             <el-select v-model="editForm.tax_rate" style="width: 100%">
@@ -594,6 +620,13 @@ async function openReport() {
         <el-button @click="noteVisible = false">取消</el-button>
         <el-button type="primary" :loading="noteSaving" @click="saveNote">保存</el-button>
       </template>
+    </el-dialog>
+
+    <!-- ===== 🆕 全流程工作流 ===== -->
+    <el-dialog v-model="wfVisible" :title="`🔗 全流程进度 · ${wfCode}`" width="92%" top="5vh" append-to-body>
+      <div v-loading="wfLoading" style="min-height: 200px">
+        <WorkflowGraph v-if="wfData" :wf="wfData" />
+      </div>
     </el-dialog>
 
     <!-- ===== 上传合同 ===== -->

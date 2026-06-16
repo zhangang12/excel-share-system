@@ -132,7 +132,8 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
       <!-- 项目一览字段矩阵 -->
       <div v-if="activeView === 'overview'" v-loading="loadingOverview">
         <el-empty v-if="!loadingOverview && !overview?.overview.length" description="项目目录还没有自定义字段" />
-        <table v-else-if="overview?.overview.length" class="matrix">
+        <div v-else-if="overview?.overview.length" class="matrix-wrap">
+        <table class="matrix">
           <thead>
             <tr>
               <th class="th-field">字段</th>
@@ -155,6 +156,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
 
       <!-- 项目进度字段矩阵：先选项目，再异步拉该项目的数据表矩阵 -->
@@ -185,6 +187,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
             <span class="ds-proj">{{ ds.project_code }} · {{ ds.project_name }}</span>
             <span class="ds-name">{{ ds.datasheet_name }}</span>
           </div>
+          <div class="matrix-wrap">
           <table class="matrix">
             <thead>
               <tr>
@@ -209,6 +212,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
             </tbody>
           </table>
           </div>
+          </div>
         </div>
       </div>
     </el-card>
@@ -225,6 +229,15 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
 </template>
 
 <style scoped>
+/* 🆕 矩阵列多时横向滚动（角色列可达 20+），滚动条常驻 */
+.matrix-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+  scrollbar-width: thin;
+}
+.matrix-wrap::-webkit-scrollbar { height: 10px; }
+.matrix-wrap::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 5px; }
+.matrix-wrap::-webkit-scrollbar-track { background: #f1f5f9; }
 .matrix {
   width: 100%;
   border-collapse: collapse;
