@@ -104,8 +104,10 @@ async def main():
         item = r.json()[0]
         chk(item["code"]==code and item["source"]=="电工部" and item["file"]["name"]=="采购清单.xlsx",
             f"收件箱内容: {item['code']} {item['source']}")
+        # 🆕 改口径: 电工采购清单不再单独推送采购部(已进项目详单电工采购单);
+        # 收件箱接口数据保留(前端已隐藏,可逆),故上面收件箱仍可查到附件,但无推送消息。
         msgs = (await c.get("/api/messages", headers=Hbu)).json()
-        chk(any("采购清单" in m["text"] for m in msgs), "采购收推送")
+        chk(not any("采购清单" in m["text"] for m in msgs), "电工采购清单不再推送采购部")
         # 非采购角色被拒
         r = await c.get("/api/purchase/inbox", headers=Hsm)
         chk(r.status_code==403, "非采购访问收件箱被拒")

@@ -451,9 +451,12 @@ async def start_upload(
                            text=f"【电工采购单】{p.code} 采购清单已上传，但未能自动解析入表（请检查表头列名是否与「电工采购单」一致），可重新上传或在项目详单手动录入。",
                            biz_type="project", biz_id=o.project_id)
 
-    await push_message(db, to_role=so["to_role"], kind="info",
-                       text=f"【{so['label']}】{cfg['name']}已上传 {p.code} {so['label']} {len(outs)} 个文件，请查收。",
-                       biz_type="order", biz_id=o.id)
+    # 🆕 电工采购清单已直接进项目详单「电工采购单」第5表, 不再单独推送采购部;
+    #    其余接单上传(如设计图纸包→钣金)照常推送下游。
+    if not (o.dept == "electric" and kind == "plist"):
+        await push_message(db, to_role=so["to_role"], kind="info",
+                           text=f"【{so['label']}】{cfg['name']}已上传 {p.code} {so['label']} {len(outs)} 个文件，请查收。",
+                           biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="upload", target_type="dept_order",
                       target_id=o.id, detail=f"start:{kind} x{len(outs)}")
     return [schemas.AttachmentOut.model_validate(a) for a in outs]

@@ -18,7 +18,12 @@ const auth = useAuthStore()
 const loading = ref(false)
 const rows = ref<InboxRow[]>([])
 
+// 🆕 采购清单收件箱开关：电工采购清单改为直接进「项目详单·电工采购单」第5表,
+// 收件箱已冗余 → 先隐藏(可逆: 改回 true 即恢复收件箱)。
+const SHOW_INBOX = false
+
 async function load() {
+  if (!SHOW_INBOX) return
   loading.value = true
   try { rows.value = (await http.get<InboxRow[]>('/purchase/inbox')).data }
   finally { loading.value = false }
@@ -39,7 +44,17 @@ function openDetail(pid: number) {
       </div>
     </div>
 
-    <el-card shadow="never">
+    <!-- 🆕 收件箱已并入「项目详单·电工采购单」, 先隐藏(SHOW_INBOX 可逆) -->
+    <el-card v-if="!SHOW_INBOX" shadow="never">
+      <el-result icon="info" title="采购清单已并入项目详单"
+                 sub-title="电工部上传的采购清单现已直接进入对应项目「项目详单 · 电工采购单」第5表；请在该表内补充采购负责人 / 订购日期 / 到货日期。本收件箱已停用。">
+        <template #extra>
+          <el-button type="primary" @click="$router.push('/overview')">去项目目录</el-button>
+        </template>
+      </el-result>
+    </el-card>
+
+    <el-card v-else shadow="never">
       <template #header>
         <div style="display:flex;align-items:center;justify-content:space-between">
           <span><el-icon><Document /></el-icon> 采购清单收件箱</span>

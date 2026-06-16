@@ -114,9 +114,10 @@ async def main():
         r = await c.post(f"/api/orders/{o_elec}/start-upload?kind=plist", headers=He1,
                          files=[("files", ("采购清单.xlsx", io.BytesIO(b"XL"), "application/vnd.ms-excel"))])
         chk(r.status_code==200, "电工采购清单上传")
+        # 🆕 改口径: 电工采购清单已直接进项目详单「电工采购单」, 不再单独推送采购部
         Hbu = await login("bu")
         msgs = (await c.get("/api/messages", headers=Hbu)).json()
-        chk(any("采购清单" in m["text"] for m in msgs), "采购收到清单推送")
+        chk(not any("采购清单" in m["text"] for m in msgs), "电工采购清单不再推送采购部(已进电工采购单)")
         # 移除附件
         r = await c.delete(f"/api/orders/{o_design}/attachments/{att_pkg}", headers=Hd)
         chk(r.status_code==200, "移除图纸包文件")
