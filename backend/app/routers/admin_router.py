@@ -154,17 +154,30 @@ async def delete_user(
     u = res.scalar_one_or_none()
     if not u:
         raise HTTPException(404, "用户不存在")
-    # 清掉 audit_logs / records.created_by/updated_by 等外键引用，避免 FK 约束
-    from sqlalchemy import update as _upd
-    await db.execute(
-        _upd(models.AuditLog).where(models.AuditLog.user_id == uid).values(user_id=None)
-    )
-    await db.execute(
-        _upd(models.Record).where(models.Record.created_by == uid).values(created_by=None)
-    )
-    await db.execute(
-        _upd(models.Record).where(models.Record.updated_by == uid).values(updated_by=None)
-    )
+    # 清理全部指向该用户的外键引用，避免 FK 约束导致删除失败（含采购/物流/售后/反馈等业务表）。
+    # 可空外键 → 置 None（保留业务行，仅解除与该用户的关联）；非空外键 → 删除依赖行。
+    from sqlalchemy import update as _upd, delete as _del
+    # 非空外键：必须删行
+    await db.execute(_del(models.Message).where(models.Message.to_user_id == uid))           # 站内消息
+    await db.execute(_del(models.ExportRequest).where(models.ExportRequest.user_id == uid))  # 导出申请
+    await db.execute(_del(models.ProjectMember).where(models.ProjectMember.user_id == uid))  # 项目成员(本就 CASCADE,显式删兼容 SQLite 关闭 FK)
+    # 可空外键：置 None
+    nullables = [
+        (models.AuditLog, "user_id"),
+        (models.Record, "created_by"), (models.Record, "updated_by"),
+        (models.Project, "manager_id"),
+        (models.DeptOrder, "worker_id"), (models.DeptOrder, "created_by"), (models.DeptOrder, "notify_user_id"),
+        (models.SalesLedger, "sales_uid"),
+        (models.Shipment, "shipped_by"),
+        (models.Attachment, "uploaded_by"),
+        (models.WhTxn, "operator_id"),
+        (models.AfterSales, "created_by"), (models.AfterSales, "appr_by"),
+        (models.Feedback, "created_by"), (models.Feedback, "designer_uid"), (models.Feedback, "appr_by"),
+        (models.ExportRequest, "appr_by"),
+        (models.UserFeedback, "user_id"),
+    ]
+    for model, col in nullables:
+        await db.execute(_upd(model).where(getattr(model, col) == uid).values(**{col: None}))
     await db.delete(u)
     await db.commit()
     return schemas.Msg(message="已删除")

@@ -4,6 +4,7 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Download, Refresh } from '@element-plus/icons-vue'
 import { userFeedbackApi, type UserFeedbackRow } from '@/api/userFeedback'
+import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtRelative } from '@/utils/format'
@@ -35,28 +36,22 @@ async function markDone(row: UserFeedbackRow) {
   row.status = 'done'
 }
 
-function exportHtml() {
-  const url = userFeedbackApi.exportUrl({
-    kind: filterKind.value || undefined,
-    status: filterStatus.value || undefined,
-  })
-  // 同源 GET 走浏览器下载（带 Cookie/Header? -> 后端用 Authorization, 故用 fetch+blob）
-  ;(async () => {
-    try {
-      const tok = localStorage.getItem('token') || sessionStorage.getItem('token')
-      const r = await fetch(url, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} })
-      if (!r.ok) throw new Error(`${r.status}`)
-      const blob = await r.blob()
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = `用户反馈导出-${new Date().toISOString().slice(0,10)}.html`
-      document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000)
-      ElMessage.success('已导出 HTML')
-    } catch (e: any) {
-      ElMessage.error(`导出失败：${e?.message || e}`)
-    }
-  })()
+async function exportHtml() {
+  // 走 http(axios) 客户端：统一用拦截器里的 pms_token 鉴权（之前 fetch 读错 key 'token' → 401）
+  try {
+    const r = await http.get('/user-feedback/export.html', {
+      params: { kind: filterKind.value || undefined, status: filterStatus.value || undefined },
+      responseType: 'blob',
+    })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(r.data as Blob)
+    a.download = `用户反馈导出-${new Date().toISOString().slice(0, 10)}.html`
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+    ElMessage.success('已导出 HTML')
+  } catch (e: any) {
+    ElMessage.error(`导出失败：${e?.response?.status || e?.message || e}`)
+  }
 }
 
 const stats = computed(() => ({
@@ -67,13 +62,15 @@ const stats = computed(() => ({
 }))
 
 const previewSrc = ref('')
-function preview(row: UserFeedbackRow) {
+async function preview(row: UserFeedbackRow) {
   if (!row.shot_file_id) return
-  const tok = localStorage.getItem('token') || sessionStorage.getItem('token')
-  // 走 fetch 拿 blob，避免直接 img src 不带 token
-  fetch(`/api/attachments/${row.shot_file_id}/download`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} })
-    .then(r => r.blob())
-    .then(b => { previewSrc.value = URL.createObjectURL(b) })
+  // 走 http(axios) 拿 blob：用 pms_token 鉴权（之前 fetch 读错 key → 401 → 图裂）
+  try {
+    const r = await http.get(`/attachments/${row.shot_file_id}/download`, { responseType: 'blob' })
+    previewSrc.value = URL.createObjectURL(r.data as Blob)
+  } catch {
+    ElMessage.error('截图加载失败')
+  }
 }
 function closePreview() {
   if (previewSrc.value) URL.revokeObjectURL(previewSrc.value)
