@@ -33,6 +33,23 @@ export interface PermMatrix {
   datasheets: MatrixDatasheet[]
 }
 
+// 🆕 异步分片加载
+export type PermRole = { code: string; name: string }
+export interface OverviewMatrix {
+  roles: PermRole[]
+  overview: MatrixField[]
+}
+export interface DatasheetProject {
+  project_id: number
+  project_code: string
+  project_name: string
+  datasheet_count: number
+}
+export interface DatasheetMatrix {
+  roles: PermRole[]
+  datasheets: MatrixDatasheet[]
+}
+
 export interface ClonePermsResult {
   cloned_field_count: number
   matched_datasheets: string[]
@@ -43,6 +60,11 @@ export interface ClonePermsResult {
 
 export const permApi = {
   getMatrix: () => http.get<PermMatrix>('/permissions/matrix').then(r => r.data),
+  // 🆕 异步分片：概览矩阵(轻量) / 有数据表的项目列表 / 单项目数据表矩阵(按需)
+  getOverviewMatrix: () => http.get<OverviewMatrix>('/permissions/matrix/overview').then(r => r.data),
+  getDatasheetProjects: () => http.get<DatasheetProject[]>('/permissions/matrix/datasheet-projects').then(r => r.data),
+  getDatasheetMatrix: (projectId: number) =>
+    http.get<DatasheetMatrix>('/permissions/matrix/datasheets', { params: { project_id: projectId } }).then(r => r.data),
   // 数据表字段
   listFieldPerms: (fid: number) =>
     http.get<FieldPermItem[]>(`/permissions/fields/${fid}`).then(r => r.data),

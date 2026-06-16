@@ -1,24 +1,71 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { Refresh, Lock, DataLine, FolderOpened } from '@element-plus/icons-vue'
-import { permApi, type PermMatrix, type MatrixField } from '@/api/permissions'
+import {
+  permApi, type MatrixField,
+  type OverviewMatrix, type DatasheetProject, type DatasheetMatrix,
+} from '@/api/permissions'
 import FieldPermissionDialog from '@/components/FieldPermissionDialog.vue'
 
-const matrix = ref<PermMatrix | null>(null)
-const loading = ref(false)
 const activeView = ref<'overview' | 'datasheets'>('overview')
+
+// 🆕 异步分片：概览矩阵进页即拉(轻量)；进度矩阵按项目按需拉
+const overview = ref<OverviewMatrix | null>(null)
+const loadingOverview = ref(false)
+
+const dsProjects = ref<DatasheetProject[]>([])
+const loadingProjects = ref(false)
+const selectedProject = ref<number | undefined>(undefined)
+const dsMatrix = ref<DatasheetMatrix | null>(null)
+const loadingDs = ref(false)
 
 const dialogVisible = ref(false)
 const dialogField = ref<{ id: number; name: string; scope: 'overview' | 'datasheet' } | null>(null)
 
-async function load() {
-  loading.value = true
-  try { matrix.value = await permApi.getMatrix() } finally { loading.value = false }
+async function loadOverview() {
+  loadingOverview.value = true
+  try { overview.value = await permApi.getOverviewMatrix() } finally { loadingOverview.value = false }
 }
 
-onMounted(load)
+async function loadProjects() {
+  loadingProjects.value = true
+  try {
+    dsProjects.value = await permApi.getDatasheetProjects()
+    // 默认选中第一个项目，避免 tab 空白
+    if (!selectedProject.value && dsProjects.value.length) {
+      selectedProject.value = dsProjects.value[0].project_id
+      await loadDatasheetMatrix(selectedProject.value)
+    }
+  } finally { loadingProjects.value = false }
+}
 
-const roles = computed(() => matrix.value?.roles || [])
+async function loadDatasheetMatrix(pid: number) {
+  loadingDs.value = true
+  try { dsMatrix.value = await permApi.getDatasheetMatrix(pid) } finally { loadingDs.value = false }
+}
+
+function onSelectProject(pid: number) {
+  selectedProject.value = pid
+  loadDatasheetMatrix(pid)
+}
+
+function refresh() {
+  if (activeView.value === 'overview') loadOverview()
+  else if (selectedProject.value) loadDatasheetMatrix(selectedProject.value)
+  else loadProjects()
+}
+
+onMounted(loadOverview)
+
+// 首次切到「项目进度字段」tab 时才拉项目列表（懒加载）
+watch(activeView, (v) => {
+  if (v === 'datasheets' && !dsProjects.value.length && !loadingProjects.value) loadProjects()
+})
+
+// 表头角色：概览 tab 用概览矩阵的角色，进度 tab 用该项目矩阵的角色
+const roles = computed(() =>
+  (activeView.value === 'overview' ? overview.value?.roles : dsMatrix.value?.roles) || []
+)
 
 // 表格自带 # 行号列，名为"序号" / "#" / "No" 的字段视为冗余，矩阵中也隐藏
 const ROWNUM_FIELD_NAMES = new Set(['序号', '#', 'no', 'no.', '序', '行号', 'index'])
@@ -36,7 +83,11 @@ function openConfig(field: MatrixField, scope: 'overview' | 'datasheet') {
 
 function onDialogClose(v: boolean) {
   dialogVisible.value = v
-  if (!v) load()  // 关闭后刷新
+  if (!v) {
+    // 关闭后只刷新当前分片，避免重拉全量
+    if (dialogField.value?.scope === 'overview') loadOverview()
+    else if (selectedProject.value) loadDatasheetMatrix(selectedProject.value)
+  }
 }
 
 function cellClass(cell: { can_view: boolean; can_edit: boolean; customized: boolean }) {
@@ -61,10 +112,10 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
         <div class="desc">查看与配置所有字段对每个角色的访问权限</div>
       </div>
       <div class="spacer"></div>
-      <el-button :icon="Refresh" @click="load">刷新</el-button>
+      <el-button :icon="Refresh" @click="refresh">刷新</el-button>
     </div>
 
-    <el-card v-loading="loading">
+    <el-card>
       <el-radio-group v-model="activeView" size="default" style="margin-bottom: 16px">
         <el-radio-button value="overview"><el-icon><DataLine /></el-icon> 项目目录字段</el-radio-button>
         <el-radio-button value="datasheets"><el-icon><FolderOpened /></el-icon> 项目进度字段</el-radio-button>
@@ -79,9 +130,9 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
       </div>
 
       <!-- 项目一览字段矩阵 -->
-      <div v-if="activeView === 'overview'">
-        <el-empty v-if="!matrix?.overview.length" description="项目目录还没有自定义字段" />
-        <table v-else class="matrix">
+      <div v-if="activeView === 'overview'" v-loading="loadingOverview">
+        <el-empty v-if="!loadingOverview && !overview?.overview.length" description="项目目录还没有自定义字段" />
+        <table v-else-if="overview?.overview.length" class="matrix">
           <thead>
             <tr>
               <th class="th-field">字段</th>
@@ -90,7 +141,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="f in visibleFields(matrix.overview)" :key="f.field_id">
+            <tr v-for="f in visibleFields(overview.overview)" :key="f.field_id">
               <td class="td-field">
                 <b>{{ f.field_name }}</b>
                 <span class="ftype">{{ f.field_type }}</span>
@@ -106,10 +157,30 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
         </table>
       </div>
 
-      <!-- 项目进度字段矩阵 -->
+      <!-- 项目进度字段矩阵：先选项目，再异步拉该项目的数据表矩阵 -->
       <div v-else>
-        <el-empty v-if="!matrix?.datasheets.length" description="还没有项目数据表" />
-        <div v-for="ds in matrix?.datasheets" :key="ds.datasheet_id" class="ds-block">
+        <div class="ds-toolbar" v-loading="loadingProjects">
+          <span class="ds-toolbar-label">选择项目：</span>
+          <el-select
+            :model-value="selectedProject"
+            filterable
+            placeholder="选择项目查看其进度字段权限"
+            style="width: 360px"
+            :loading="loadingProjects"
+            @change="onSelectProject">
+            <el-option
+              v-for="p in dsProjects"
+              :key="p.project_id"
+              :label="`${p.project_code} · ${p.project_name}（${p.datasheet_count} 张表）`"
+              :value="p.project_id" />
+          </el-select>
+          <span v-if="dsProjects.length" class="muted ds-count">共 {{ dsProjects.length }} 个项目</span>
+        </div>
+
+        <el-empty v-if="!loadingProjects && !dsProjects.length" description="还没有项目数据表" />
+        <div v-else v-loading="loadingDs">
+          <el-empty v-if="selectedProject && !loadingDs && !dsMatrix?.datasheets.length" description="该项目暂无数据表" />
+          <div v-for="ds in dsMatrix?.datasheets" :key="ds.datasheet_id" class="ds-block">
           <div class="ds-title">
             <span class="ds-proj">{{ ds.project_code }} · {{ ds.project_name }}</span>
             <span class="ds-name">{{ ds.datasheet_name }}</span>
@@ -137,6 +208,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       </div>
     </el-card>
@@ -210,6 +282,16 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
   padding: 3px 10px;
   border-radius: 4px;
 }
+
+/* 🆕 项目进度字段 tab 顶部项目选择器 */
+.ds-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 18px; padding-bottom: 16px;
+  border-bottom: 1px dashed var(--border);
+}
+.ds-toolbar-label { font-size: 13px; color: var(--text-2); font-weight: 500; }
+.ds-toolbar .ds-count { font-size: 12px; color: var(--text-3); }
+.muted { color: var(--text-3); }
 
 .ds-block {
   margin-bottom: 28px;

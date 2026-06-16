@@ -1,8 +1,8 @@
 """字段级权限：管理员配置每个字段对每个角色的可见/可编辑"""
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete as sql_delete
+from sqlalchemy import select, delete as sql_delete, func
 
 from ..database import get_db
 from .. import models, schemas
@@ -245,6 +245,126 @@ async def permission_matrix(
     return {
         "roles": [{"code": r.code, "name": r.name} for r in roles],
         "overview": overview_matrix,
+        "datasheets": datasheet_matrix,
+    }
+
+
+# ============== 🆕 矩阵异步分片加载（解决全量 /matrix 大数据下白屏卡顿） ==============
+async def _matrix_roles(db: AsyncSession):
+    """矩阵展示用角色（admin/manager 自动全权，不入矩阵）。"""
+    rres = await db.execute(
+        select(models.Role).where(models.Role.code.notin_(["admin", "manager"]))
+        .order_by(models.Role.id)
+    )
+    return rres.scalars().all()
+
+
+def _perm_cell(p, role) -> dict:
+    return {
+        "role_name": role.name,
+        "can_view": p.can_view if p else True,
+        "can_edit": p.can_edit if p else True,
+        "customized": p is not None,
+    }
+
+
+@router.get("/matrix/overview")
+async def matrix_overview(
+    _: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 仅返回「项目目录字段」矩阵（轻量，进页即拉）。"""
+    roles = await _matrix_roles(db)
+    ofres = await db.execute(select(models.OverviewField).order_by(models.OverviewField.sort_order))
+    ovw_fields = ofres.scalars().all()
+    ofpres = await db.execute(select(models.OverviewFieldPermission))
+    ofp_map = {(p.field_id, p.role_id): p for p in ofpres.scalars().all()}
+
+    overview_matrix = []
+    for f in ovw_fields:
+        row = {"field_id": f.id, "field_name": f.name, "field_type": f.type, "perms": {}}
+        for r in roles:
+            row["perms"][r.code] = _perm_cell(ofp_map.get((f.id, r.id)), r)
+        overview_matrix.append(row)
+    return {
+        "roles": [{"code": r.code, "name": r.name} for r in roles],
+        "overview": overview_matrix,
+    }
+
+
+@router.get("/matrix/datasheet-projects")
+async def matrix_datasheet_projects(
+    _: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 有数据表的项目列表（含数据表数量），供「项目进度字段」tab 做项目选择器。"""
+    res = await db.execute(
+        select(
+            models.Project.id, models.Project.code, models.Project.name,
+            func.count(models.Datasheet.id).label("ds_count"),
+        )
+        .join(models.Datasheet, models.Datasheet.project_id == models.Project.id)
+        .group_by(models.Project.id, models.Project.code, models.Project.name)
+        .order_by(models.Project.id)
+    )
+    return [
+        {"project_id": pid, "project_code": code, "project_name": name, "datasheet_count": cnt}
+        for (pid, code, name, cnt) in res.all()
+    ]
+
+
+@router.get("/matrix/datasheets")
+async def matrix_datasheets_of_project(
+    project_id: int = Query(...),
+    _: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 按需返回「单个项目」的数据表字段矩阵（异步加载，避免一次性算全部项目）。"""
+    roles = await _matrix_roles(db)
+    pres = await db.execute(select(models.Project).where(models.Project.id == project_id))
+    proj = pres.scalar_one_or_none()
+    if not proj:
+        raise HTTPException(404, "项目不存在")
+
+    dres = await db.execute(
+        select(models.Datasheet).where(models.Datasheet.project_id == project_id)
+        .order_by(models.Datasheet.sort_order)
+    )
+    datasheets = dres.scalars().all()
+    ds_ids = [d.id for d in datasheets]
+
+    fields_by_ds: dict[int, list[models.Field]] = {}
+    fp_map: dict[tuple[int, int], models.FieldPermission] = {}
+    if ds_ids:
+        fres = await db.execute(
+            select(models.Field).where(models.Field.datasheet_id.in_(ds_ids))
+            .order_by(models.Field.datasheet_id, models.Field.sort_order)
+        )
+        all_fields = fres.scalars().all()
+        for f in all_fields:
+            fields_by_ds.setdefault(f.datasheet_id, []).append(f)
+        fids = [f.id for f in all_fields]
+        if fids:
+            fpres = await db.execute(
+                select(models.FieldPermission).where(models.FieldPermission.field_id.in_(fids))
+            )
+            fp_map = {(p.field_id, p.role_id): p for p in fpres.scalars().all()}
+
+    datasheet_matrix = []
+    for d in datasheets:
+        ds_entry = {
+            "datasheet_id": d.id, "datasheet_name": d.name,
+            "project_id": proj.id, "project_code": proj.code, "project_name": proj.name,
+            "fields": [],
+        }
+        for f in fields_by_ds.get(d.id, []):
+            field_row = {"field_id": f.id, "field_name": f.name, "field_type": f.type, "perms": {}}
+            for r in roles:
+                field_row["perms"][r.code] = _perm_cell(fp_map.get((f.id, r.id)), r)
+            ds_entry["fields"].append(field_row)
+        datasheet_matrix.append(ds_entry)
+    return {
+        "roles": [{"code": r.code, "name": r.name} for r in roles],
         "datasheets": datasheet_matrix,
     }
 
