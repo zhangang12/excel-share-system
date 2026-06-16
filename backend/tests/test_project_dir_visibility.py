@@ -60,13 +60,24 @@ async def main():
         p2 = (await c.post("/api/projects", headers=H, json={"code": "2099-102", "name": "项目乙"})).json()["id"]
 
         # P1: 派设计任务给 d1 + 台账销售员=s1；P2: 台账销售员=s2
+        # P3: 直接 DB 建, 不加任何成员 —— 复现"新用户不是老项目成员"的生产场景
         async with SessionLocal() as db:
             db.add(models.DeptOrder(project_id=p1, dept="design", worker_id=d1, created_by=1))
             db.add(models.SalesLedger(project_id=p1, sales_uid=s1, amount=100))
             db.add(models.SalesLedger(project_id=p2, sales_uid=s2, amount=200))
+            p3 = models.Project(code="2099-103", name="无成员老项目", status="进行中")
+            db.add(p3); await db.flush()
+            p3id = p3.id
             await db.commit()
 
         def codes(rows): return {x["code"] for x in rows}
+
+        # 🆕 核心修复: P3 无任何成员, 部门负责人(lead)仍应看到(绕过成员资格)——修复"新建主管看不到老项目"
+        rows = (await c.get("/api/projects", headers=Hpm)).json()
+        chk("2099-103" in codes(rows), f"pm_lead看到非成员项目P3(lead绕过成员): {codes(rows)}")
+        # 设计师在 P3 无派单 → 看不到 P3
+        rows = (await c.get("/api/projects", headers=Hd)).json()
+        chk("2099-103" not in codes(rows), f"设计师无派单不应看到P3: {codes(rows)}")
 
         # 默认开启：设计师只看自己接的 P1
         rows = (await c.get("/api/projects", headers=Hd)).json()

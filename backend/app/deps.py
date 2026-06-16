@@ -90,12 +90,18 @@ def ensure_can_export(user: models.User) -> None:
 async def user_can_view_project(
     db: AsyncSession, user: models.User, project: models.Project
 ) -> bool:
+    """项目详情/字段/导出的每项目门禁（get_project、datasheets 读、excel 导出共用）。
+
+    注意：项目目录「列表显示哪些项目」的行级可见性在 list_projects 单独处理
+    （设计/电工/装配只列被派单的、销售只列自己下单的），不在此函数——
+    因为本函数还把守详情/字段/导出，设计师有详单权时应能读任意项目（#91 口径）。
+    """
     if not user.role:
         return False
-    # admin / manager：全可见
-    if user.role.code in ("admin", "manager"):
+    # admin / manager / 各部门负责人(_lead)：全部项目可见（不依赖成员资格——修复新建主管看不到老项目）
+    if user.role.code in ("admin", "manager") or user.role.code.endswith("_lead"):
         return True
-    # 普通成员：是否项目成员
+    # 其余角色：项目成员才可见（成员由建项目自动添加 + 启动回填，普通员工默认是全部项目成员）
     res = await db.execute(
         select(models.ProjectMember).where(
             models.ProjectMember.project_id == project.id,
