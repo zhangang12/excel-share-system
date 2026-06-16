@@ -38,6 +38,10 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
+      # 🆕 关键修复：上传文件目录必须指向持久卷 /app/uploads(下方 volumes 挂载)。
+      # 此前默认 data/files 在容器临时层，每次 up --build 重建容器即丢失全部上传文件
+      # (DB 附件记录仍在→列表能显示但点开 404「文件已丢失」)。
+      FILES_DIR: ${FILES_DIR:-/app/uploads}
     depends_on:
       postgres:
         condition: service_healthy
