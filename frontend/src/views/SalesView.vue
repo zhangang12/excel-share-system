@@ -382,10 +382,10 @@ async function openReport() {
         <el-table-column label="销售" width="80">
           <template #default="{ row }">{{ row.sales_name || '—' }}</template>
         </el-table-column>
-        <el-table-column label="下单日期" width="100">
+        <el-table-column label="下单日期" width="108">
           <template #default="{ row }">{{ fmtDate(row.sign_date) }}</template>
         </el-table-column>
-        <el-table-column label="交货日期" width="100">
+        <el-table-column label="交货日期" width="108">
           <template #default="{ row }">{{ fmtDate(row.deliver_date) }}</template>
         </el-table-column>
         <el-table-column label="合同" width="86">

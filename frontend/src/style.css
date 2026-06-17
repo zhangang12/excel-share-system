@@ -120,6 +120,9 @@ a:hover { text-decoration: none; opacity: .85; }
   font-size: 13.5px;
 }
 .el-table td.el-table__cell { padding: 11px 0 !important; }
+/* 🆕 紧凑布局：表格单元格默认不换行(日期/数字/标签等短内容保持一行;
+   长文本列已用 show-overflow-tooltip 单行省略;需多行的元素在自身样式里覆盖) */
+.el-table .cell { white-space: nowrap; }
 .el-table--striped .el-table__row.el-table__row--striped {
   background: #fafbfc;
 }
