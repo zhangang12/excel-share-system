@@ -125,7 +125,7 @@ function onTab(name: string) {
   <div>
     <div class="page-header">
       <div>
-        <h1>仓库组</h1>
+        <h1>仓库</h1>
         <div class="desc">物料主数据 + 出入库（自动单号·超库存拦截）+ 收发存汇总 + 流水（冲红）+ 发货清单</div>
       </div>
     </div>

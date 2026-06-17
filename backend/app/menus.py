@@ -22,7 +22,7 @@ MENU_DEFS: list[dict] = [
     {"key": "produce",    "label": "生产部"},
     {"key": "sheet",      "label": "钣金组"},
     {"key": "purchase",   "label": "采购部"},
-    {"key": "warehouse",  "label": "仓库组"},
+    {"key": "warehouse",  "label": "仓库"},
     {"key": "logistics",  "label": "物流发货部"},
     {"key": "finance",    "label": "财务部"},
     {"key": "aftersales", "label": "售后部"},
