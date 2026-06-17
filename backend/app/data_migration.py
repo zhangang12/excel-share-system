@@ -1256,6 +1256,19 @@ async def backfill_user_roles(db: AsyncSession) -> dict:
     return {"added": added}
 
 
+async def normalize_tax_rate_no_invoice(db: AsyncSession) -> dict:
+    """🆕 税票口径统一(2026-06-18)：存量「不开票」由 "/" 改为 "0"。幂等。"""
+    from sqlalchemy import update as _upd
+    res = await db.execute(
+        _upd(models.SalesLedger).where(models.SalesLedger.tax_rate == "/").values(tax_rate="0")
+    )
+    n = res.rowcount or 0
+    if n:
+        await db.commit()
+        log.info("[normalize_tax_rate_no_invoice] 不开票税票 '/' → '0' 共 %d 行", n)
+    return {"updated": n}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -1350,3 +1363,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_project_visibility_from_overview_names(db)
     except Exception as e:
         log.warning("backfill_project_visibility_from_overview_names failed: %s", e)
+    try:
+        await normalize_tax_rate_no_invoice(db)
+    except Exception as e:
+        log.warning("normalize_tax_rate_no_invoice failed: %s", e)

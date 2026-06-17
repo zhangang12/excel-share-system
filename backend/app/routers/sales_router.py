@@ -50,6 +50,11 @@ def _all_view(u: models.User) -> bool:
     return _is_mgr(u) or _is_sales_lead(u)
 
 
+# 🆕 税票口径(2026-06-18)：不开票由 "/" 改为 "0"；历史 "/" 仍按不开票兼容，迁移统一为 "0"
+def _is_no_invoice(tax: Optional[str]) -> bool:
+    return (tax or "").strip() in ("/", "0")
+
+
 async def _ledger_or_404(db: AsyncSession, lid: int) -> models.SalesLedger:
     res = await db.execute(select(models.SalesLedger).where(models.SalesLedger.id == lid))
     led = res.scalar_one_or_none()
@@ -243,7 +248,8 @@ async def create_sales_order(
         prepay_note=(data.prepay_note or "").strip() or None,
         before_ship_note=(data.before_ship_note or "").strip() or None,
         ship_receivable=data.ship_receivable or 0, balance=data.balance or 0,
-        balance_date=normalize_date_str(data.balance_date) or None,
+        # 🆕 尾款为0时尾款日期自动留空(显示横杠)
+        balance_date=(normalize_date_str(data.balance_date) or None) if (data.balance or 0) else None,
     )
     db.add(led)
 
@@ -309,6 +315,9 @@ async def update_ledger(
             setattr(led, f, v.strip() or None)
     if data.balance_date is not None:
         led.balance_date = normalize_date_str(data.balance_date) or None
+    # 🆕 尾款为0时尾款日期自动清空(显示横杠)；放在金额/日期赋值之后统一兜底
+    if (led.balance or 0) == 0:
+        led.balance_date = None
     # 🆕 销售员改派（重新指定台账归属销售）
     if data.sales_uid is not None:
         led.sales_uid = data.sales_uid or None
@@ -338,7 +347,11 @@ async def update_payment_note(
     if not _all_view(current) and led.sales_uid != current.id:
         raise HTTPException(403, "只能批注本人负责的台账行")
     col = "prepay_note" if data.field == "prepay" else "before_ship_note"
-    setattr(led, col, (data.note or "").strip() or None)
+    note_val = (data.note or "").strip() or None
+    setattr(led, col, note_val)
+    # 🆕 发货前付插入批注=货款已在发货前收讫 → 发货款应收自动清零
+    if data.field == "before_ship" and note_val:
+        led.ship_receivable = 0
     await db.commit()
     await write_audit(db, user=current, action="update", target_type="sales_ledger",
                       target_id=lid, detail=f"{data.field}_note")
@@ -386,8 +399,8 @@ async def invoice_apply(
     led = await _ledger_or_404(db, lid)
     if _is_sales(current) and led.sales_uid != current.id:
         raise HTTPException(403, "只能操作自己的订单")
-    # 🆕 #1/#104 不开票项目(税票="/")不应进入开票流（只拦显式不开票，不误伤遗留空税率）
-    if (led.tax_rate or "").strip() == "/":
+    # 🆕 #1/#104 不开票项目(税票=0/历史"/")不应进入开票流（只拦显式不开票，不误伤遗留空税率）
+    if _is_no_invoice(led.tax_rate):
         raise HTTPException(400, "该项目税票为「不开票」，无需开票申请")
     if led.invoice_state == "invoiced":
         raise HTTPException(400, "该项目已开票")
@@ -588,8 +601,8 @@ async def invoice_apply_merge(
         raise HTTPException(400, "合并开票要求所选项目为同一客户")
     # 状态校验：均未进入开票流、均非「不开票」
     for l in leds:
-        if (l.tax_rate or "").strip() == "/":
-            raise HTTPException(400, "所选项目含「不开票」(税票=/)，不能合并开票")
+        if _is_no_invoice(l.tax_rate):
+            raise HTTPException(400, "所选项目含「不开票」(税票=0)，不能合并开票")
         if l.invoice_state == "invoiced":
             raise HTTPException(400, "所选项目中有已开票，不能再次申请")
         if l.invoice_state in ("applying", "pending_invoice"):

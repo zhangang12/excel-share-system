@@ -24,6 +24,11 @@ function fmtPay(n?: number | null): string {
   return '¥' + Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
 }
 
+// 🆕 不开票判定：税票为 "0"(新)或 "/"(历史)；用于隐藏开票申请/合并开票入口
+function isNoInvoice(tax?: string | null): boolean {
+  return tax === '0' || tax === '/'
+}
+
 const loading = ref(false)
 const rows = ref<SalesLedgerRow[]>([])
 const totals = ref<SalesLedgerTotals | null>(null)
@@ -172,7 +177,7 @@ function openEdit(r: SalesLedgerRow) {
   editRow.value = r
   Object.assign(editForm, {
     name: r.name, customer: r.customer || '', cust_type: r.cust_type || '经销商',
-    contract: r.contract, amount: r.amount, tax_rate: r.tax_rate || '13%',
+    contract: r.contract, amount: r.amount, tax_rate: r.tax_rate === '/' ? '0' : (r.tax_rate || '13%'),
     prepay: r.prepay, before_ship: r.before_ship, ship_receivable: r.ship_receivable,
     balance: r.balance, balance_date: r.balance_date || '',
     sign_date: r.sign_date || '', deliver_date: r.deliver_date || '',
@@ -305,7 +310,7 @@ const mergeFile = ref<File | null>(null)
 const mergeSubmitting = ref(false)
 const mergeTableRef = ref()
 // 可合并的项目：未进入开票流且非「不开票」
-const mergeEligible = computed(() => rows.value.filter((r) => !r.invoice_state && r.tax_rate !== '/'))
+const mergeEligible = computed(() => rows.value.filter((r) => !r.invoice_state && !isNoInvoice(r.tax_rate)))
 const mergeAmount = computed(() => mergeSelected.value.reduce((s, r) => s + (r.amount || 0), 0))
 // 同客户约束：选中首个后，其它客户的行不可勾选（实现「002A/002B 同客户」口径）
 function mergeSelectable(row: SalesLedgerRow) {
@@ -632,7 +637,7 @@ async function openReport() {
               <el-button size="small" link class="op-sub" @click="openContract(row)">
                 {{ row.contract_file_id ? '换合同' : '上传合同' }}
               </el-button>
-              <template v-if="!row.invoice_state && row.tax_rate !== '/'">
+              <template v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)">
                 <span class="op-sep">·</span>
                 <el-button size="small" link class="op-sub" @click="applyInvoice(row)">开票申请</el-button>
               </template>
@@ -648,7 +653,7 @@ async function openReport() {
                   <el-dropdown-item v-if="allView" @click="openEdit(row)">编辑</el-dropdown-item>
                   <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
                   <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
-                  <el-dropdown-item v-if="!row.invoice_state && row.tax_rate !== '/'" @click="applyInvoice(row)">开票申请</el-dropdown-item>
+                  <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
                   <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
                   <el-dropdown-item v-else divided @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
                 </el-dropdown-menu>
@@ -706,7 +711,7 @@ async function openReport() {
           </el-form-item>
           <el-form-item label="税票" style="flex: 1">
             <el-select v-model="orderForm.tax_rate" style="width: 100%">
-              <el-option label="13%" value="13%" /><el-option label="/（不开票）" value="/" />
+              <el-option label="13%" value="13%" /><el-option label="0（不开票）" value="0" />
             </el-select>
           </el-form-item>
         </div>
@@ -717,9 +722,9 @@ async function openReport() {
           <el-form-item label="发货款应收" style="flex: 1"><el-input-number v-model="orderForm.ship_receivable" :min="0" :controls="false" style="width: 100%" /></el-form-item>
         </div>
         <div class="frow">
-          <el-form-item label="尾款" style="flex: 1"><el-input-number v-model="orderForm.balance" :min="0" :controls="false" style="width: 100%" /></el-form-item>
+          <el-form-item label="尾款" style="flex: 1"><el-input-number v-model="orderForm.balance" :min="0" :controls="false" style="width: 100%" @change="() => { if (!orderForm.balance) orderForm.balance_date = '' }" /></el-form-item>
           <el-form-item label="尾款日期" style="flex: 1">
-            <el-date-picker v-model="orderForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+            <el-date-picker v-model="orderForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" :disabled="!orderForm.balance" placeholder="尾款为0时无需填" />
           </el-form-item>
         </div>
         <div class="fsec">🛠 派单</div>
@@ -786,7 +791,7 @@ async function openReport() {
           <el-form-item label="金额(元)" style="flex: 1"><el-input-number v-model="editForm.amount" :min="0" :controls="false" style="width: 100%" /></el-form-item>
           <el-form-item label="税票" style="flex: 1">
             <el-select v-model="editForm.tax_rate" style="width: 100%">
-              <el-option label="13%" value="13%" /><el-option label="/（不开票）" value="/" />
+              <el-option label="13%" value="13%" /><el-option label="0（不开票）" value="0" />
             </el-select>
           </el-form-item>
         </div>
@@ -809,9 +814,9 @@ async function openReport() {
           <el-form-item label="发货款应收" style="flex: 1"><el-input-number v-model="editForm.ship_receivable" :min="0" :controls="false" style="width: 100%" /></el-form-item>
         </div>
         <div class="frow">
-          <el-form-item label="尾款" style="flex: 1"><el-input-number v-model="editForm.balance" :min="0" :controls="false" style="width: 100%" /></el-form-item>
+          <el-form-item label="尾款" style="flex: 1"><el-input-number v-model="editForm.balance" :min="0" :controls="false" style="width: 100%" @change="() => { if (!editForm.balance) editForm.balance_date = '' }" /></el-form-item>
           <el-form-item label="尾款日期" style="flex: 1">
-            <el-date-picker v-model="editForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+            <el-date-picker v-model="editForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" :disabled="!editForm.balance" placeholder="尾款为0时无需填" />
           </el-form-item>
         </div>
       </el-form>
