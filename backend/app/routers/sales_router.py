@@ -56,6 +56,16 @@ def _is_no_invoice(tax: Optional[str]) -> bool:
     return (tax or "").strip() in ("/", "0")
 
 
+# 🆕 项目编号自然排序键（与前端 sortByCode 同序）：标准编号 YYYY-NNN[后缀] 按 年→序号→后缀 在前，其余按字符串在后
+_STD_CODE_RE = re.compile(r"^(\d{4})-0*(\d+)([A-Za-z]*)$")
+def _ledger_sort_key(l: "models.SalesLedger"):
+    code = (l.project.code if l.project else "") or ""
+    m = _STD_CODE_RE.match(code)
+    if m:
+        return (0, int(m.group(1)), int(m.group(2)), m.group(3), "")
+    return (1, 0, 0, "", code)
+
+
 async def _ledger_or_404(db: AsyncSession, lid: int) -> models.SalesLedger:
     res = await db.execute(select(models.SalesLedger).where(models.SalesLedger.id == lid))
     led = res.scalar_one_or_none()
@@ -147,6 +157,8 @@ async def list_ledger(
     contract: Optional[str] = Query(None),
     sales_uid: Optional[int] = Query(None),
     balance_month: Optional[str] = Query(None),   # 🆕 尾款日期筛选(YYYY-MM)
+    page: int = Query(1, ge=1),                   # 🆕 分页（性能优化：只构建当前页的附件名等重数据）
+    page_size: int = Query(50, ge=1, le=200),
     current: models.User = Depends(require_roles("sales", "sales_lead")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -165,26 +177,33 @@ async def list_ledger(
     if balance_month:  # 🆕 尾款日期按月筛选(YYYY-MM)；balance_date 存 'YYYY-MM-DD'
         q = q.where(models.SalesLedger.balance_date.like(f"{balance_month.strip()}%"))
 
-    res = await db.execute(q.order_by(models.SalesLedger.id.desc()).limit(500))
+    # 取全部匹配实体(含 joined project，轻量)→关键词过滤→自然排序→分页切片；
+    # 重数据(_ledger_rows 的附件名查询)只对当前页构建，避免整表 500 行的开销（性能优化）。
+    res = await db.execute(q)
     ledgers = list(res.scalars().all())
     if kw:
         k = kw.strip()
         ledgers = [l for l in ledgers if l.project and (
             k in l.project.code or k in l.project.name or k in (l.customer or ""))]
+    ledgers.sort(key=_ledger_sort_key)
+    total = len(ledgers)
 
-    rows = await _ledger_rows(db, ledgers)
     totals = None
-    if _all_view(current):
+    if _all_view(current):  # 合计针对全集(全部页)，非当前页
         totals = schemas.SalesLedgerTotals(
-            count=len(rows),
-            amount=sum(r.amount for r in rows),
-            uninvoiced=sum(r.amount for r in rows if r.invoice_state != "invoiced"),
-            prepay=sum(r.prepay for r in rows),
-            before_ship=sum(r.before_ship for r in rows),
-            ship_receivable=sum(r.ship_receivable for r in rows),
-            balance=sum(r.balance for r in rows),
+            count=total,
+            amount=sum(l.amount or 0 for l in ledgers),
+            uninvoiced=sum(l.amount or 0 for l in ledgers if l.invoice_state != "invoiced"),
+            prepay=sum(l.prepay or 0 for l in ledgers),
+            before_ship=sum(l.before_ship or 0 for l in ledgers),
+            ship_receivable=sum(l.ship_receivable or 0 for l in ledgers),
+            balance=sum(l.balance or 0 for l in ledgers),
         )
-    return schemas.SalesLedgerListOut(rows=rows, totals=totals)
+
+    start = (page - 1) * page_size
+    page_ledgers = ledgers[start:start + page_size]
+    rows = await _ledger_rows(db, page_ledgers)
+    return schemas.SalesLedgerListOut(rows=rows, totals=totals, total=total)
 
 
 @router.get("/next-code", response_model=schemas.NextCodeOut)

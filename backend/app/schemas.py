@@ -196,6 +196,7 @@ class SalesLedgerTotals(BaseModel):
 class SalesLedgerListOut(BaseModel):
     rows: list[SalesLedgerRow]
     totals: Optional[SalesLedgerTotals] = None  # 仅主管/管理层视角返回
+    total: Optional[int] = None                 # 🆕 分页：当前筛选下的总条数（rows 只是一页）
 
 
 class VoidApplyIn(BaseModel):

@@ -49,6 +49,7 @@ export interface SalesLedgerTotals {
 export interface SalesLedgerList {
   rows: SalesLedgerRow[]
   totals?: SalesLedgerTotals | null
+  total?: number | null   // 🆕 分页总条数
 }
 
 export interface SalesOrderForm {
@@ -72,7 +73,7 @@ export interface SalesOrderForm {
 }
 
 export const salesApi = {
-  ledger: (params?: { kw?: string; cust_type?: string; contract?: string; sales_uid?: number; balance_month?: string }) =>
+  ledger: (params?: { kw?: string; cust_type?: string; contract?: string; sales_uid?: number; balance_month?: string; page?: number; page_size?: number }) =>
     http.get<SalesLedgerList>('/sales/ledger', { params }).then((r) => r.data),
 
   nextCode: () => http.get<{ code: string }>('/sales/next-code').then((r) => r.data.code),

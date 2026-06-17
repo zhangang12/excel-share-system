@@ -34,12 +34,8 @@ const rows = ref<SalesLedgerRow[]>([])
 const totals = ref<SalesLedgerTotals | null>(null)
 const filters = reactive({ kw: '', cust_type: '', contract: '', sales_uid: undefined as number | undefined, balance_month: '' })
 
-// 销售员筛选下拉（从数据行聚合）：筛选只对「有项目的销售员」有意义，故用聚合
-const salesOptions = computed(() => {
-  const m = new Map<number, string>()
-  rows.value.forEach((r) => { if (r.sales_uid && r.sales_name) m.set(r.sales_uid, r.sales_name) })
-  return Array.from(m, ([id, name]) => ({ id, name }))
-})
+// 销售员筛选下拉：用真实销售员名单（salesStaff，分页后不能再从当前页 rows 聚合）
+const salesOptions = computed(() => salesStaff.value)
 
 // 🆕 编辑弹窗「选择销售员」用真实用户名单（拥有 sales/sales_lead 角色的在职用户），
 // 修复新建销售员未挂台账前选不到；管理层/主管才需要，登录后拉一次
@@ -65,22 +61,11 @@ function toggleOpCompact() {
   localStorage.setItem('sales_op_compact', opCompact.value ? '1' : '0')
 }
 
-// 🆕 项目编号自然排序：标准编号(YYYY-NNN[后缀])按 年→序号→后缀 升序在前，其它(PCT-/SOFT-等)按字符串排其后
-function sortByCode(list: SalesLedgerRow[]): SalesLedgerRow[] {
-  const re = /^(\d{4})-0*(\d+)([A-Za-z]*)$/
-  return [...list].sort((a, b) => {
-    const ra = re.exec(a.code || ''), rb = re.exec(b.code || '')
-    if (ra && rb) {
-      if (ra[1] !== rb[1]) return +ra[1] - +rb[1]
-      if (+ra[2] !== +rb[2]) return +ra[2] - +rb[2]
-      return ra[3].localeCompare(rb[3])
-    }
-    if (ra) return -1
-    if (rb) return 1
-    return (a.code || '').localeCompare(b.code || '')
-  })
-}
 
+// 🆕 分页（性能优化：后端按编号自然序分页，前端不再整表渲染/排序）
+const page = ref(1)
+const pageSize = ref(50)
+const total = ref(0)
 async function load() {
   loading.value = true
   try {
@@ -90,13 +75,19 @@ async function load() {
       contract: filters.contract || undefined,
       sales_uid: filters.sales_uid,
       balance_month: filters.balance_month || undefined,
+      page: page.value,
+      page_size: pageSize.value,
     })
-    rows.value = sortByCode(j.rows)
+    rows.value = j.rows   // 后端已按编号自然序返回，无需再客户端排序
     totals.value = j.totals || null
+    total.value = j.total ?? j.rows.length
   } finally {
     loading.value = false
   }
 }
+// 改筛选 → 回到第 1 页再查；翻页 → 直接查
+function reload() { page.value = 1; load() }
+function onPage(p: number) { page.value = p; load() }
 onMounted(() => { load(); loadSalesStaff() })
 
 // ===== 销售下单 =====
@@ -495,21 +486,21 @@ async function openReport() {
 
     <el-card shadow="never" style="margin-bottom: 12px">
       <div class="filter-bar">
-        <el-input v-model="filters.kw" placeholder="搜索 编号/设备/客户" clearable style="width: 220px" @change="load" />
-        <el-select v-if="allView" v-model="filters.sales_uid" placeholder="销售员(全部)" clearable style="width: 150px" @change="load">
+        <el-input v-model="filters.kw" placeholder="搜索 编号/设备/客户" clearable style="width: 220px" @change="reload" />
+        <el-select v-if="allView" v-model="filters.sales_uid" placeholder="销售员(全部)" clearable style="width: 150px" @change="reload">
           <el-option v-for="s in salesOptions" :key="s.id" :label="s.name" :value="s.id" />
         </el-select>
-        <el-select v-model="filters.cust_type" placeholder="客户分类(全部)" clearable style="width: 150px" @change="load">
+        <el-select v-model="filters.cust_type" placeholder="客户分类(全部)" clearable style="width: 150px" @change="reload">
           <el-option label="经销商" value="经销商" />
           <el-option label="终端客户" value="终端客户" />
         </el-select>
-        <el-select v-model="filters.contract" placeholder="合同(全部)" clearable style="width: 120px" @change="load">
+        <el-select v-model="filters.contract" placeholder="合同(全部)" clearable style="width: 120px" @change="reload">
           <el-option label="有" value="有" />
           <el-option label="无" value="无" />
         </el-select>
         <el-date-picker v-model="filters.balance_month" type="month" value-format="YYYY-MM"
-                        placeholder="尾款月份" clearable style="width: 150px" @change="load" />
-        <span class="muted">共 {{ rows.length }} 个项目</span>
+                        placeholder="尾款月份" clearable style="width: 150px" @change="reload" />
+        <span class="muted">共 {{ total }} 个项目</span>
         <span class="spacer" style="flex:1"></span>
         <el-tooltip :content="opCompact ? '展开操作列（显示全部按钮）' : '收起操作列（省版面，操作收进 ⋯ 菜单）'" placement="top">
           <el-button :icon="Operation" @click="toggleOpCompact">{{ opCompact ? '展开操作列' : '收起操作列' }}</el-button>
@@ -623,7 +614,7 @@ async function openReport() {
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="尾款日期" width="100">
+        <el-table-column label="尾款日期" width="118">
           <template #default="{ row }">{{ fmtDate(row.balance_date) }}</template>
         </el-table-column>
         <el-table-column label="操作" :width="opCompact ? 72 : 300" fixed="right" :align="opCompact ? 'center' : 'left'">
@@ -674,6 +665,12 @@ async function openReport() {
         <span>发货前付 <b>{{ fmtMoney(totals.before_ship) }}</b></span>
         <span>发货款应收 <b>{{ fmtMoney(totals.ship_receivable) }}</b></span>
         <span>尾款 <b>{{ fmtMoney(totals.balance) }}</b></span>
+      </div>
+
+      <!-- 🆕 分页（性能优化：每页 50 条，后端分页） -->
+      <div v-if="total > pageSize" class="pager">
+        <el-pagination background layout="prev, pager, next, jumper, ->, total"
+                       :total="total" :page-size="pageSize" :current-page="page" @current-change="onPage" />
       </div>
     </el-card>
 
@@ -1095,6 +1092,7 @@ async function openReport() {
   font-size: 13px; color: var(--el-text-color-secondary);
 }
 .totals-bar b { color: var(--el-text-color-primary); }
+.pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 .totals-bar .warn { color: var(--warning); }
 .fsec {
   font-size: 13px; font-weight: 600; color: var(--el-text-color-primary);
