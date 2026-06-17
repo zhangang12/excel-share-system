@@ -13,7 +13,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from ..database import get_db
 from .. import models, schemas
@@ -35,15 +35,15 @@ _CODE_RE = re.compile(r"^(\d{4})-0*(\d+)")
 
 
 def _is_mgr(u: models.User) -> bool:
-    return bool(u.role and u.role.code in ("admin", "manager"))
+    return u.has_role("admin", "manager")
 
 
 def _is_sales_lead(u: models.User) -> bool:
-    return bool(u.role and u.role.code == "sales_lead")
+    return u.has_role("sales_lead")
 
 
 def _is_sales(u: models.User) -> bool:
-    return bool(u.role and u.role.code == "sales")
+    return u.has_role("sales")
 
 
 def _all_view(u: models.User) -> bool:
@@ -60,6 +60,32 @@ async def _ledger_or_404(db: AsyncSession, lid: int) -> models.SalesLedger:
 
 def _uname(u: Optional[models.User]) -> Optional[str]:
     return (u.full_name or u.username) if u else None
+
+
+# ==================== 销售员名单（台账编辑下拉用） ====================
+@router.get("/salespeople")
+async def list_salespeople(
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """可分配的销售员名单：拥有 sales/sales_lead 角色的在职用户。
+
+    修复「新建销售员未挂台账前，编辑弹窗下拉看不到」——下拉应来自真实用户名单，
+    而非已有台账行聚合。多角色感知：锚点角色或多角色关联命中任一即算销售员。
+    """
+    SALES_CODES = ("sales", "sales_lead")
+    rres = await db.execute(select(models.Role.id).where(models.Role.code.in_(SALES_CODES)))
+    role_ids = [r[0] for r in rres.all()]
+    if not role_ids:
+        return []
+    sub = select(models.UserRole.user_id).where(models.UserRole.role_id.in_(role_ids))
+    res = await db.execute(
+        select(models.User).where(
+            models.User.is_active == True,  # noqa: E712
+            or_(models.User.role_id.in_(role_ids), models.User.id.in_(sub)),
+        ).order_by(models.User.id)
+    )
+    return [{"id": u.id, "name": _uname(u)} for u in res.scalars().all()]
 
 
 async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> list[schemas.SalesLedgerRow]:

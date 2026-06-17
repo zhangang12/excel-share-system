@@ -74,6 +74,9 @@ export const salesApi = {
 
   nextCode: () => http.get<{ code: string }>('/sales/next-code').then((r) => r.data.code),
 
+  // 🆕 可分配销售员名单（拥有 sales/sales_lead 角色的在职用户），台账编辑下拉用
+  salespeople: () => http.get<{ id: number; name: string }[]>('/sales/salespeople').then((r) => r.data),
+
   createOrder: (data: SalesOrderForm) =>
     http.post<{ project_id: number; code: string; order_ids: number[] }>('/sales/orders', data).then((r) => r.data),
 

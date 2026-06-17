@@ -2,7 +2,7 @@
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
 import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close } from '@element-plus/icons-vue'
+import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment, ordersApi } from '@/api/orders'
@@ -15,7 +15,7 @@ import { collabApi, type Workflow } from '@/api/collab'
 import { fmtDate } from '@/utils/format'
 
 const auth = useAuthStore()
-const allView = computed(() => ['admin', 'manager', 'sales_lead'].includes(auth.user?.role_code || ''))
+const allView = computed(() => auth.hasRole('admin', 'manager', 'sales_lead'))
 
 // 🆕 收款金额格式化：0 显示 ¥0（销售已填 0 也要显示），仅 null/undefined 显示 —
 // （区别于 fmtMoney 把 0 当空值显示 —）
@@ -29,12 +29,36 @@ const rows = ref<SalesLedgerRow[]>([])
 const totals = ref<SalesLedgerTotals | null>(null)
 const filters = reactive({ kw: '', cust_type: '', contract: '', sales_uid: undefined as number | undefined })
 
-// 销售员筛选下拉（从数据行聚合，避免再开接口）
+// 销售员筛选下拉（从数据行聚合）：筛选只对「有项目的销售员」有意义，故用聚合
 const salesOptions = computed(() => {
   const m = new Map<number, string>()
   rows.value.forEach((r) => { if (r.sales_uid && r.sales_name) m.set(r.sales_uid, r.sales_name) })
   return Array.from(m, ([id, name]) => ({ id, name }))
 })
+
+// 🆕 编辑弹窗「选择销售员」用真实用户名单（拥有 sales/sales_lead 角色的在职用户），
+// 修复新建销售员未挂台账前选不到；管理层/主管才需要，登录后拉一次
+const salesStaff = ref<{ id: number; name: string }[]>([])
+async function loadSalesStaff() {
+  if (!allView.value) return
+  try { salesStaff.value = await salesApi.salespeople() } catch { /* 静默 */ }
+}
+// 编辑下拉选项：真实名单 + 兜底当前已分配的人（防止其被停用后名字消失）
+const editSalesOptions = computed(() => {
+  const list = salesStaff.value.slice()
+  const r = editRow.value
+  if (r?.sales_uid && r.sales_name && !list.some((s) => s.id === r.sales_uid)) {
+    list.unshift({ id: r.sales_uid, name: `${r.sales_name}（已停用）` })
+  }
+  return list
+})
+
+// 🆕 操作列折叠：宽操作列占版面，支持收起为「⋯」下拉，偏好持久化（按浏览器记忆）
+const opCompact = ref(localStorage.getItem('sales_op_compact') === '1')
+function toggleOpCompact() {
+  opCompact.value = !opCompact.value
+  localStorage.setItem('sales_op_compact', opCompact.value ? '1' : '0')
+}
 
 // 🆕 项目编号自然排序：标准编号(YYYY-NNN[后缀])按 年→序号→后缀 升序在前，其它(PCT-/SOFT-等)按字符串排其后
 function sortByCode(list: SalesLedgerRow[]): SalesLedgerRow[] {
@@ -67,7 +91,7 @@ async function load() {
     loading.value = false
   }
 }
-onMounted(load)
+onMounted(() => { load(); loadSalesStaff() })
 
 // ===== 销售下单 =====
 const orderVisible = ref(false)
@@ -331,6 +355,10 @@ async function openReport() {
           <el-option label="无" value="无" />
         </el-select>
         <span class="muted">共 {{ rows.length }} 个项目</span>
+        <span class="spacer" style="flex:1"></span>
+        <el-tooltip :content="opCompact ? '展开操作列（显示全部按钮）' : '收起操作列（省版面，操作收进 ⋯ 菜单）'" placement="top">
+          <el-button :icon="Operation" @click="toggleOpCompact">{{ opCompact ? '展开操作列' : '收起操作列' }}</el-button>
+        </el-tooltip>
       </div>
     </el-card>
 
@@ -443,9 +471,10 @@ async function openReport() {
         <el-table-column label="尾款日期" width="100">
           <template #default="{ row }">{{ fmtDate(row.balance_date) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column label="操作" :width="opCompact ? 72 : 300" fixed="right" :align="opCompact ? 'center' : 'left'">
           <template #default="{ row }">
-            <div class="op-cell">
+            <!-- 展开：行内按钮（原样） -->
+            <div v-if="!opCompact" class="op-cell">
               <el-button v-if="allView" size="small" link type="primary" class="op-main" @click="openEdit(row)">编辑</el-button>
               <span v-if="allView" class="op-sep">·</span>
               <el-button size="small" link class="op-sub" @click="openWorkflow(row)">流程</el-button>
@@ -458,6 +487,18 @@ async function openReport() {
                 <el-button size="small" link class="op-sub" @click="applyInvoice(row)">开票申请</el-button>
               </template>
             </div>
+            <!-- 收起：操作收进「⋯」下拉，省版面 -->
+            <el-dropdown v-else trigger="click" placement="bottom-end">
+              <el-button size="small" text :icon="MoreFilled" class="op-more" />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-if="allView" @click="openEdit(row)">编辑</el-dropdown-item>
+                  <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
+                  <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
+                  <el-dropdown-item v-if="!row.invoice_state && row.tax_rate !== '/'" @click="applyInvoice(row)">开票申请</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -600,7 +641,7 @@ async function openReport() {
         <div class="frow">
           <el-form-item label="销售员" style="flex: 1">
             <el-select v-model="editForm.sales_uid" filterable clearable placeholder="选择销售员" style="width: 100%">
-              <el-option v-for="s in salesOptions" :key="s.id" :label="s.name" :value="s.id" />
+              <el-option v-for="s in editSalesOptions" :key="s.id" :label="s.name" :value="s.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="下单日期（合同签订）" style="flex: 1">
@@ -768,6 +809,9 @@ async function openReport() {
 .op-cell .op-sub :deep(span) { color: var(--text-3, #9ca3af) !important; transition: color .12s; }
 .op-cell .op-sub:hover :deep(span) { color: var(--primary, #2563eb) !important; }
 .op-cell .op-sep { color: var(--text-4, #d1d5db); font-size: 11px; user-select: none; }
+/* 🆕 操作列收起态：⋯ 触发按钮 */
+.op-more { color: var(--text-3, #9ca3af); font-size: 18px; padding: 4px 6px; }
+.op-more:hover { color: var(--primary, #2563eb); }
 /* 🆕 销售下单·下单资料多选上传 */
 .up-box {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
