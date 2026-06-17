@@ -3,7 +3,7 @@ import asyncio, os, sys, tempfile, shutil
 tmp = tempfile.mkdtemp(prefix="smoke")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp}/test.db"
 os.environ["FILES_DIR"] = f"{tmp}/files"
-os.chdir(r"D:/opencode-project/EXCEL共享维护系统1500/EXCEL共享维护系统/v2/backend"); sys.path.insert(0, os.getcwd())
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); sys.path.insert(0, os.getcwd())
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.database import engine, SessionLocal, Base
