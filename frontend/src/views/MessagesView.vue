@@ -31,9 +31,13 @@ async function load() {
   }
 }
 
+// 🆕 通知顶层布局刷新未读角标（标已读后角标须即时清零，否则要等 60s 轮询）
+function notifyRead() { window.dispatchEvent(new Event('pms:messages-read')) }
+
 async function markAllRead() {
   await messagesApi.readAll()
   list.value.forEach((m) => (m.read = true))
+  notifyRead()
   ElMessage.success('已全部标为已读')
 }
 
@@ -41,7 +45,9 @@ onMounted(async () => {
   await load()
   // 进入页面即标已读（同原型口径）
   if (list.value.some((m) => !m.read)) {
-    try { await messagesApi.readAll(); list.value.forEach((m) => (m.read = true)) } catch { /* 静默 */ }
+    try { await messagesApi.readAll(); list.value.forEach((m) => (m.read = true)); notifyRead() } catch { /* 静默 */ }
+  } else {
+    notifyRead()  // 本就无未读：仍同步一次角标，防止角标与列表不一致
   }
 })
 </script>

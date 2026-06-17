@@ -38,6 +38,8 @@ async function refreshUnread() {
   if (!auth.isLoggedIn || !auth.hasMenu('messages')) return
   try { unread.value = await messagesApi.unreadCount() } catch { /* 静默 */ }
 }
+// 🆕 消息中心标已读后即时清零角标（监听 MessagesView 派发的事件，免等 60s 轮询）
+function onMessagesRead() { unread.value = 0 }
 
 const collapsed = ref(localStorage.getItem('pms_sidebar_collapsed') === '1')
 function toggleCollapse() {
@@ -96,9 +98,13 @@ onMounted(async () => {
   await auth.fetchMenus()
   refreshUnread()
   unreadTimer = window.setInterval(refreshUnread, 60_000)
+  window.addEventListener('pms:messages-read', onMessagesRead)
 })
 
-onUnmounted(() => { if (unreadTimer) window.clearInterval(unreadTimer) })
+onUnmounted(() => {
+  if (unreadTimer) window.clearInterval(unreadTimer)
+  window.removeEventListener('pms:messages-read', onMessagesRead)
+})
 </script>
 
 <template>
