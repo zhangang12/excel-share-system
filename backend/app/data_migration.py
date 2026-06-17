@@ -29,6 +29,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("prepay_note", "TEXT"),
         ("before_ship_note", "TEXT"),
         ("invoice_batch_id", "INTEGER"),           # 🆕 合并开票批次号(同客户多项目合并)
+        ("void_state", "VARCHAR(20)"),             # 🆕 订单作废流: applying/voided
+        ("void_reason", "TEXT"),                   # 🆕 作废原因
     ],
 }
 

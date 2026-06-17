@@ -4,7 +4,7 @@ from datetime import date
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func, delete as sql_delete
+from sqlalchemy import select, or_, func, delete as sql_delete, update as sql_update
 
 from ..database import get_db
 from .. import models, schemas
@@ -139,6 +139,31 @@ async def _purge_project_derived_data(db: AsyncSession, project_ids: list[int]) 
         models.ProjectMember.project_id.in_(project_ids)
     ))
 
+    return counts
+
+
+async def soft_delete_project(db: AsyncSession, p: models.Project, *,
+                              void_dept_orders: bool = True) -> dict:
+    """软删项目并清理派生数据（详单/字段/行/权限/成员），可选把各部门任务单置作废。
+
+    只做删除机制本身，不做业务前置校验、不 commit（调用方负责）。
+    供管理员删除项目、销售订单作废审批通过共用，避免逻辑分叉。
+    返回清理计数（含 dept_orders_voided）。
+    """
+    counts = await _purge_project_derived_data(db, [p.id])
+    voided = 0
+    if void_dept_orders:
+        res = await db.execute(
+            sql_update(models.DeptOrder)
+            .where(models.DeptOrder.project_id == p.id,
+                   models.DeptOrder.status.notin_(("done", "voided")))
+            .values(status="voided")
+        )
+        voided = res.rowcount or 0
+    p.is_deleted = True
+    if not p.code.startswith("_deleted_"):
+        p.code = f"_deleted_{p.id}_{p.code}"[:64]
+    counts["dept_orders_voided"] = voided
     return counts
 
 
@@ -515,13 +540,8 @@ async def delete_project(
         raise HTTPException(
             409, "该项目有进行中的开票流程（待审批/待开票），请先在销售或财务处理完成/驳回后再删除")
 
-    # 清理所有派生数据（datasheets / fields / records / field_perms / members）
-    counts = await _purge_project_derived_data(db, [pid])
-
-    # project 本身软删（保留 audit 追溯），把 code 加前缀腾出 unique 约束
-    p.is_deleted = True
-    if not p.code.startswith("_deleted_"):
-        p.code = f"_deleted_{pid}_{p.code}"[:64]
+    # 清理派生数据 + 作废各部门任务单 + 软删项目（统一走 soft_delete_project）
+    counts = await soft_delete_project(db, p, void_dept_orders=True)
     await db.commit()
     await write_audit(
         db, user=_, action="delete_project",
@@ -529,7 +549,8 @@ async def delete_project(
         detail=(
             f"{orig_code} · 清理 {counts['datasheets']} 数据表 / "
             f"{counts['fields']} 字段 / {counts['field_perms']} 权限 / "
-            f"{counts['records']} 行 / {counts['members']} 成员"
+            f"{counts['records']} 行 / {counts['members']} 成员 / "
+            f"{counts['dept_orders_voided']} 任务单作废"
         )
     )
     return schemas.Msg(message="已删除")

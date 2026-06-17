@@ -116,6 +116,7 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
             amount=l.amount or 0, tax_rate=l.tax_rate,
             invoice_state=l.invoice_state,
             invoice_batch_id=l.invoice_batch_id,
+            void_state=l.void_state, void_reason=l.void_reason,
             invoice_apply_file_id=l.invoice_apply_file_id,
             invoice_apply_file_name=names.get(l.invoice_apply_file_id),
             invoice_file_id=l.invoice_file_id,
@@ -696,3 +697,129 @@ async def invoice_batch_upload(
     await write_audit(db, user=current, action="invoice_batch_upload",
                       target_type="invoice_batch", target_id=batch_id)
     return schemas.Msg(message=f"合并发票已上传（{len(leds)} 个项目已开票）")
+
+
+# ==================== 🆕 销售订单作废（销售员申请 → 销售负责人审批 → 软删项目+各部门流程） ====================
+# 口径(用户 2026-06-18)：销售员申请、负责人审批(负责人可一键直接作废)；已开票/已发货禁止作废；
+# 软删可追溯；必填原因；通过后仅通知管理层。项目软删后各列表(目录/详单/各部门工作台)按 is_deleted 自动隐藏。
+async def _assert_voidable(db: AsyncSession, led: models.SalesLedger) -> None:
+    """作废前置校验：已开票/已发货禁止；开票流程进行中先处理。"""
+    if led.invoice_state == "invoiced":
+        raise HTTPException(400, "该订单已开票，不可作废")
+    if led.invoice_state in ("applying", "pending_invoice"):
+        raise HTTPException(400, "该订单开票流程进行中，请先处理/驳回开票后再作废")
+    sr = await db.execute(select(models.Shipment).where(
+        models.Shipment.project_id == led.project_id,
+        models.Shipment.status == "shipped"))
+    if sr.scalar_one_or_none() is not None:
+        raise HTTPException(400, "该订单已发货，不可作废")
+
+
+async def _execute_void(db: AsyncSession, led: models.SalesLedger,
+                        actor: models.User, reason: str) -> None:
+    """执行作废：软删项目 + 清派生数据 + 各部门任务单置作废；台账记 voided。仅通知管理层。"""
+    from .projects_router import soft_delete_project
+    res = await db.execute(select(models.Project).where(models.Project.id == led.project_id))
+    p = res.scalar_one_or_none()
+    orig_code = p.code if p else f"#{led.project_id}"
+    pname = p.name if p else ""
+    led.void_state = "voided"
+    led.void_reason = reason
+    counts: dict = {}
+    if p and not p.is_deleted:
+        counts = await soft_delete_project(db, p, void_dept_orders=True)
+    await db.commit()
+    # 仅通知管理层（口径 2026-06-18）
+    await push_message(
+        db, to_role="manager", kind="warn",
+        text=f"【订单已作废】{orig_code} {pname} 已作废（原因：{reason or '—'}），"
+             f"项目目录/详单/各部门任务已同步移除。",
+        biz_type="order_void", biz_id=led.id)
+    await write_audit(db, user=actor, action="void_sales_order",
+                      target_type="sales_ledger", target_id=led.id,
+                      detail=f"{orig_code} · 原因:{reason} · {counts}")
+
+
+@router.post("/ledger/{lid}/void-apply", response_model=schemas.Msg)
+async def void_apply(
+    lid: int,
+    data: schemas.VoidApplyIn,
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """销售员发起订单作废申请（→待负责人审批）；销售负责人/管理层调用则一键直接作废。"""
+    led = await _ledger_or_404(db, lid)
+    if _is_sales(current) and not _all_view(current) and led.sales_uid != current.id:
+        raise HTTPException(403, "只能作废自己的订单")
+    if led.void_state == "applying":
+        raise HTTPException(400, "该订单作废申请已在审批中")
+    if led.void_state == "voided":
+        raise HTTPException(400, "该订单已作废")
+    reason = (data.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "请填写作废原因")
+    await _assert_voidable(db, led)
+    # 销售负责人/管理层：一键直接作废，无需再审批
+    if _all_view(current):
+        await _execute_void(db, led, current, reason)
+        return schemas.Msg(message="订单已作废，项目及各部门流程已同步移除")
+    # 销售员：进入待审批
+    led.void_state = "applying"
+    led.void_reason = reason
+    await db.commit()
+    p = led.project
+    await push_message(db, to_role="sales_lead", kind="warn",
+                       text=f"【作废申请】{p.code if p else ''} {p.name if p else ''} "
+                            f"申请作废，原因：{reason}，待销售负责人审批。",
+                       biz_type="order_void", biz_id=led.id)
+    await write_audit(db, user=current, action="void_apply",
+                      target_type="sales_ledger", target_id=lid)
+    return schemas.Msg(message="作废申请已提交，等待销售负责人审批")
+
+
+@router.get("/void-approvals", response_model=schemas.SalesLedgerListOut)
+async def void_approvals(
+    current: models.User = Depends(require_roles("sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    res = await db.execute(
+        select(models.SalesLedger).where(models.SalesLedger.void_state == "applying")
+        .order_by(models.SalesLedger.id.desc())
+    )
+    return schemas.SalesLedgerListOut(rows=await _ledger_rows(db, list(res.scalars().all())))
+
+
+@router.post("/ledger/{lid}/void-approve", response_model=schemas.Msg)
+async def void_approve(
+    lid: int,
+    current: models.User = Depends(require_roles("sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    led = await _ledger_or_404(db, lid)
+    if led.void_state != "applying":
+        raise HTTPException(400, "该订单不在待作废审批状态")
+    await _assert_voidable(db, led)  # 申请到审批之间状态可能变化，再校验一次
+    await _execute_void(db, led, current, led.void_reason or "")
+    return schemas.Msg(message="已通过，订单已作废，项目及各部门流程已同步移除")
+
+
+@router.post("/ledger/{lid}/void-reject", response_model=schemas.Msg)
+async def void_reject(
+    lid: int,
+    current: models.User = Depends(require_roles("sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    led = await _ledger_or_404(db, lid)
+    if led.void_state != "applying":
+        raise HTTPException(400, "该订单不在待作废审批状态")
+    led.void_state = None
+    led.void_reason = None
+    await db.commit()
+    if led.sales_uid:
+        p = led.project
+        await push_message(db, to_user_id=led.sales_uid, kind="info",
+                           text=f"【作废驳回】{p.code if p else ''} 作废申请被销售负责人驳回，订单仍有效。",
+                           biz_type="order_void", biz_id=led.id)
+    await write_audit(db, user=current, action="void_reject",
+                      target_type="sales_ledger", target_id=lid)
+    return schemas.Msg(message="已驳回作废申请")

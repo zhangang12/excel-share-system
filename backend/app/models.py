@@ -254,6 +254,9 @@ class SalesLedger(Base):
     invoice_state: Mapped[Optional[str]] = mapped_column(String(20), index=True)
     # 🆕 合并开票批次号：同一客户多个项目合并开票时共享同一 batch_id；None=单项目开票
     invoice_batch_id: Mapped[Optional[int]] = mapped_column(index=True)
+    # 🆕 订单作废流(2026-06-18)：None 正常 / applying 待销售负责人审批 / voided 已作废(项目软删)
+    void_state: Mapped[Optional[str]] = mapped_column(String(20), index=True)
+    void_reason: Mapped[Optional[str]] = mapped_column(Text)
     invoice_apply_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     invoice_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     prepay: Mapped[float] = mapped_column(default=0)                  # 预付

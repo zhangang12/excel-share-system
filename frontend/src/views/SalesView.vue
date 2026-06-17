@@ -2,7 +2,7 @@
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
 import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation, UploadFilled, DocumentCopy } from '@element-plus/icons-vue'
+import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation, UploadFilled, DocumentCopy, CircleClose } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment, ordersApi } from '@/api/orders'
@@ -415,6 +415,55 @@ async function approveGroup(g: any, ok: boolean) {
   await load()
 }
 
+// ===== 🆕 订单作废（销售员申请 → 负责人审批；负责人点即一键直接作废） =====
+async function applyVoid(r: SalesLedgerRow) {
+  let reason = ''
+  try {
+    const { value } = await ElMessageBox.prompt(
+      allView.value
+        ? `确认作废订单「${r.code} ${r.name}」？通过后将同步移除项目目录、详单及各部门流程（软删可追溯）。请填写作废原因：`
+        : `申请作废订单「${r.code} ${r.name}」，提交后需销售负责人审批。请填写作废原因：`,
+      '订单作废',
+      { inputPlaceholder: '作废原因（必填）', inputPattern: /\S+/, inputErrorMessage: '请填写作废原因',
+        confirmButtonText: allView.value ? '确认作废' : '提交申请', type: 'warning' },
+    )
+    reason = value
+  } catch { return }
+  try {
+    const res = await salesApi.voidApply(r.id, reason.trim())
+    ElMessage.success(res.message || '已提交')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  }
+}
+
+// ===== 🆕 作废审批（负责人） =====
+const voidApprovalVisible = ref(false)
+const voidApprovals = ref<SalesLedgerRow[]>([])
+async function openVoidApprovals() {
+  voidApprovals.value = (await salesApi.voidApprovals()).rows
+  voidApprovalVisible.value = true
+}
+async function approveVoid(r: SalesLedgerRow, ok: boolean) {
+  if (!ok) {
+    try {
+      await ElMessageBox.confirm('驳回后订单恢复有效，销售可重新申请。确认驳回？', '作废驳回', { type: 'warning' })
+    } catch { return }
+    await salesApi.voidReject(r.id)
+  } else {
+    try {
+      await ElMessageBox.confirm(
+        `通过后将作废订单「${r.code}」并同步移除项目目录、详单及各部门流程（软删可追溯）。确认通过？`,
+        '确认作废', { type: 'warning' })
+    } catch { return }
+    await salesApi.voidApprove(r.id)
+  }
+  ElMessage.success(ok ? '已通过，订单已作废' : '已驳回')
+  voidApprovals.value = (await salesApi.voidApprovals()).rows
+  await load()
+}
+
 // 🆕 M14 销售报表
 const reportVisible = ref(false)
 const report = ref<SalesReport | null>(null)
@@ -434,6 +483,7 @@ async function openReport() {
       <div class="spacer"></div>
       <el-button v-if="allView" type="primary" plain @click="openReport">📊 销售报表</el-button>
       <el-button v-if="allView" :icon="Stamp" @click="openApprovals">开票审批</el-button>
+      <el-button v-if="allView" :icon="CircleClose" @click="openVoidApprovals">作废审批</el-button>
       <el-button :icon="DocumentCopy" @click="openMerge">合并开票</el-button>
       <el-button type="primary" :icon="Plus" :loading="openingOrder" @click="openOrder">销售下单</el-button>
     </div>
@@ -586,6 +636,9 @@ async function openReport() {
                 <span class="op-sep">·</span>
                 <el-button size="small" link class="op-sub" @click="applyInvoice(row)">开票申请</el-button>
               </template>
+              <span class="op-sep">·</span>
+              <el-tag v-if="row.void_state === 'applying'" size="small" type="warning" effect="plain">作废待审批</el-tag>
+              <el-button v-else size="small" link class="op-del" @click="applyVoid(row)">{{ allView ? '作废' : '申请作废' }}</el-button>
             </div>
             <!-- 收起：操作收进「⋯」下拉，省版面 -->
             <el-dropdown v-else trigger="click" placement="bottom-end">
@@ -596,6 +649,8 @@ async function openReport() {
                   <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
                   <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
                   <el-dropdown-item v-if="!row.invoice_state && row.tax_rate !== '/'" @click="applyInvoice(row)">开票申请</el-dropdown-item>
+                  <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
+                  <el-dropdown-item v-else divided @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -935,6 +990,32 @@ async function openReport() {
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- ===== 🆕 作废审批（销售负责人） ===== -->
+    <el-dialog v-model="voidApprovalVisible" title="🗑️ 订单作废审批" width="720px" class="v3-scroll-dialog">
+      <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 10px"
+                title="通过后将作废订单并同步移除项目目录、项目详单及各部门流程（软删可追溯，必要时管理层可恢复）。" />
+      <EmptyHint v-if="!voidApprovals.length" text="暂无待审批的作废申请" size="sm" />
+      <el-table v-else :data="voidApprovals" stripe>
+        <el-table-column prop="code" label="项目编号" width="110" />
+        <el-table-column prop="name" label="设备名称" min-width="130" />
+        <el-table-column label="销售" width="84">
+          <template #default="{ row }">{{ row.sales_name || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="金额" width="100" align="right">
+          <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
+        </el-table-column>
+        <el-table-column label="作废原因" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.void_reason || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="156">
+          <template #default="{ row }">
+            <el-button size="small" type="danger" @click="approveVoid(row, true)">通过作废</el-button>
+            <el-button size="small" @click="approveVoid(row, false)">驳回</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -949,6 +1030,11 @@ async function openReport() {
 .op-cell .op-main { color: var(--primary, #2563eb); font-weight: 500; }
 .op-cell .op-sub :deep(span) { color: var(--text-3, #9ca3af) !important; transition: color .12s; }
 .op-cell .op-sub:hover :deep(span) { color: var(--primary, #2563eb) !important; }
+/* 🆕 作废操作：默认灰、hover 转危险红 */
+.op-cell .op-del :deep(span) { color: var(--text-3, #9ca3af) !important; transition: color .12s; }
+.op-cell .op-del:hover :deep(span) { color: var(--el-color-danger, #f56c6c) !important; }
+.op-del { color: var(--text-3, #9ca3af); }
+.op-del:hover { color: var(--el-color-danger, #f56c6c); }
 .op-cell .op-sep { color: var(--text-4, #d1d5db); font-size: 11px; user-select: none; }
 /* 🆕 操作列收起态：⋯ 触发按钮 */
 .op-more { color: var(--text-3, #9ca3af); font-size: 18px; padding: 4px 6px; }

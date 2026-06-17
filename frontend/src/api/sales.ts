@@ -20,6 +20,8 @@ export interface SalesLedgerRow {
   tax_rate?: string | null
   invoice_state?: 'applying' | 'pending_invoice' | 'invoiced' | null
   invoice_batch_id?: number | null   // 🆕 合并开票批次号；同批多行共享，None=单项目
+  void_state?: 'applying' | 'voided' | null   // 🆕 订单作废流：None 正常 / applying 待审批 / voided 已作废
+  void_reason?: string | null
   invoice_apply_file_id?: number | null
   invoice_apply_file_name?: string | null
   invoice_file_id?: number | null
@@ -117,6 +119,13 @@ export const salesApi = {
     http.post(`/sales/invoice-batch/${batchId}/approve`).then((r) => r.data),
   invoiceBatchReject: (batchId: number) =>
     http.post(`/sales/invoice-batch/${batchId}/reject`).then((r) => r.data),
+
+  // 🆕 订单作废：销售员申请→负责人审批(负责人调用即一键直接作废)
+  voidApply: (id: number, reason: string) =>
+    http.post<{ message: string }>(`/sales/ledger/${id}/void-apply`, { reason }).then((r) => r.data),
+  voidApprovals: () => http.get<SalesLedgerList>('/sales/void-approvals').then((r) => r.data),
+  voidApprove: (id: number) => http.post(`/sales/ledger/${id}/void-approve`).then((r) => r.data),
+  voidReject: (id: number) => http.post(`/sales/ledger/${id}/void-reject`).then((r) => r.data),
 }
 
 export function fmtMoney(n?: number | null): string {

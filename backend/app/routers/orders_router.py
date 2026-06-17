@@ -254,7 +254,12 @@ async def list_orders(
     db: AsyncSession = Depends(get_db),
 ):
     """工作台列表：工人=本人任务；部门负责人=本部门全量；管理层=全量（可按 dept 过滤）。"""
-    q = select(models.DeptOrder)
+    # 🆕 排除已软删项目的任务单（项目作废/删除后，其他部门工作台不再显示该项目流程）
+    q = select(models.DeptOrder).where(
+        models.DeptOrder.project_id.in_(
+            select(models.Project.id).where(models.Project.is_deleted == False)  # noqa: E712
+        )
+    )
     if dept:
         _dept_or_400(dept)
         q = q.where(models.DeptOrder.dept == dept)

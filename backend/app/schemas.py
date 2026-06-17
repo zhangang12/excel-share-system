@@ -164,6 +164,8 @@ class SalesLedgerRow(BaseModel):
     tax_rate: Optional[str] = None
     invoice_state: Optional[str] = None
     invoice_batch_id: Optional[int] = None   # 🆕 合并开票批次号(同客户多项目合并)；None=单项目
+    void_state: Optional[str] = None         # 🆕 订单作废流：None 正常 / applying 待审批 / voided 已作废
+    void_reason: Optional[str] = None
     invoice_apply_file_id: Optional[int] = None
     invoice_apply_file_name: Optional[str] = None
     invoice_file_id: Optional[int] = None
@@ -191,6 +193,10 @@ class SalesLedgerTotals(BaseModel):
 class SalesLedgerListOut(BaseModel):
     rows: list[SalesLedgerRow]
     totals: Optional[SalesLedgerTotals] = None  # 仅主管/管理层视角返回
+
+
+class VoidApplyIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)  # 🆕 订单作废原因（必填）
 
 
 class SalesReceiverIn(BaseModel):
