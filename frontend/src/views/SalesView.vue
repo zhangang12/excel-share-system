@@ -27,7 +27,7 @@ function fmtPay(n?: number | null): string {
 const loading = ref(false)
 const rows = ref<SalesLedgerRow[]>([])
 const totals = ref<SalesLedgerTotals | null>(null)
-const filters = reactive({ kw: '', cust_type: '', contract: '', sales_uid: undefined as number | undefined })
+const filters = reactive({ kw: '', cust_type: '', contract: '', sales_uid: undefined as number | undefined, balance_month: '' })
 
 // 销售员筛选下拉（从数据行聚合）：筛选只对「有项目的销售员」有意义，故用聚合
 const salesOptions = computed(() => {
@@ -84,6 +84,7 @@ async function load() {
       cust_type: filters.cust_type || undefined,
       contract: filters.contract || undefined,
       sales_uid: filters.sales_uid,
+      balance_month: filters.balance_month || undefined,
     })
     rows.value = sortByCode(j.rows)
     totals.value = j.totals || null
@@ -107,9 +108,11 @@ const orderForm = reactive({
 async function openOrder() {
   openingOrder.value = true
   try {
-    // 🆕 项目编号改人工输入, 不再自动生成
+    // 🆕 编号人工输入, 但自动带出最新建议编号作默认值(可改)
+    let suggested = ''
+    try { suggested = await salesApi.nextCode() } catch { /* 拿不到就留空人工填 */ }
     Object.assign(orderForm, {
-      code: '', name: '', customer: '', cust_type: '经销商', contract: '有',
+      code: suggested, name: '', customer: '', cust_type: '经销商', contract: '有',
       amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
       ship_receivable: 0,
       balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
@@ -354,6 +357,8 @@ async function openReport() {
           <el-option label="有" value="有" />
           <el-option label="无" value="无" />
         </el-select>
+        <el-date-picker v-model="filters.balance_month" type="month" value-format="YYYY-MM"
+                        placeholder="尾款月份" clearable style="width: 150px" @change="load" />
         <span class="muted">共 {{ rows.length }} 个项目</span>
         <span class="spacer" style="flex:1"></span>
         <el-tooltip :content="opCompact ? '展开操作列（显示全部按钮）' : '收起操作列（省版面，操作收进 ⋯ 菜单）'" placement="top">

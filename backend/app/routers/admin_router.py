@@ -7,7 +7,7 @@ from sqlalchemy import select
 from ..database import get_db
 from .. import models, schemas
 from ..auth import hash_password
-from ..deps import require_admin, require_admin_or_manager
+from ..deps import require_admin_or_manager
 from ..utils import write_audit
 
 router = APIRouter(prefix="/api/admin", tags=["管理后台"])
@@ -183,7 +183,7 @@ async def update_user(
 async def bind_wxid(
     uid: int,
     data: schemas.WxidIn,
-    _: models.User = Depends(require_admin),
+    current: models.User = Depends(require_admin_or_manager),  # 🆕 管理层=管理员权限
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 v3：绑定/更新用户企业微信 userid（F1 手动绑定口径；空串=解绑）。"""
@@ -191,6 +191,8 @@ async def bind_wxid(
     u = res.scalar_one_or_none()
     if not u:
         raise HTTPException(404, "用户不存在")
+    if u.has_role("admin") and not current.has_role("admin"):
+        raise HTTPException(403, "不可修改超级管理员账号")
     u.wxid = data.wxid.strip() or None
     await db.commit()
     return schemas.Msg(message="已绑定" if u.wxid else "已解绑")
@@ -199,7 +201,7 @@ async def bind_wxid(
 @router.delete("/users/{uid}", response_model=schemas.Msg)
 async def delete_user(
     uid: int,
-    current: models.User = Depends(require_admin),
+    current: models.User = Depends(require_admin_or_manager),  # 🆕 管理层=管理员权限(可删用户)
     db: AsyncSession = Depends(get_db),
 ):
     if uid == current.id:
@@ -208,6 +210,9 @@ async def delete_user(
     u = res.scalar_one_or_none()
     if not u:
         raise HTTPException(404, "用户不存在")
+    # 非超级管理员不可删除超级管理员账号(admin 系统级保护)
+    if u.has_role("admin") and not current.has_role("admin"):
+        raise HTTPException(403, "不可删除超级管理员账号")
     # 清理全部指向该用户的外键引用，避免 FK 约束导致删除失败（含采购/物流/售后/反馈等业务表）。
     # 可空外键 → 置 None（保留业务行，仅解除与该用户的关联）；非空外键 → 删除依赖行。
     from sqlalchemy import update as _upd, delete as _del

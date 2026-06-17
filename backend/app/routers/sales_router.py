@@ -134,6 +134,7 @@ async def list_ledger(
     cust_type: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
     sales_uid: Optional[int] = Query(None),
+    balance_month: Optional[str] = Query(None),   # 🆕 尾款日期筛选(YYYY-MM)
     current: models.User = Depends(require_roles("sales", "sales_lead")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -149,6 +150,8 @@ async def list_ledger(
         q = q.where(models.SalesLedger.cust_type == cust_type)
     if contract:
         q = q.where(models.SalesLedger.contract == contract)
+    if balance_month:  # 🆕 尾款日期按月筛选(YYYY-MM)；balance_date 存 'YYYY-MM-DD'
+        q = q.where(models.SalesLedger.balance_date.like(f"{balance_month.strip()}%"))
 
     res = await db.execute(q.order_by(models.SalesLedger.id.desc()).limit(500))
     ledgers = list(res.scalars().all())

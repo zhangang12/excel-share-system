@@ -167,6 +167,13 @@ async def main():
         # manager 不可篡改超级管理员账号 → 403
         r = await c.put(f"/api/admin/users/{admin_uid}", headers=Hmgr, json={"role_ids": [rid["sales"]]})
         chk(r.status_code == 403, f"manager 不可改 admin 账号: {r.status_code}")
+        # 🆕 口径 2026-06-17: manager=admin 权限, manager 可删用户
+        mdel = await mk("mgr_can_delete", [rid["logistics"]])
+        r = await c.delete(f"/api/admin/users/{mdel}", headers=Hmgr)
+        chk(r.status_code == 200, f"manager 可删普通用户: {r.status_code} {r.text[:80]}")
+        # 但 manager 不可删除超级管理员账号 → 403
+        r = await c.delete(f"/api/admin/users/{admin_uid}", headers=Hmgr)
+        chk(r.status_code == 403, f"manager 不可删 admin 账号: {r.status_code}")
 
         # ================= I. 降级后项目可见性回填 =================
         # manager 用户无 ProjectMember；降为普通角色(finance)后应被回填为全项目成员 → 一览可见
