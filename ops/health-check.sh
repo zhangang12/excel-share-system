@@ -20,7 +20,8 @@ JSON=0
 [[ "$1" == "--quiet" ]] && QUIET=1
 [[ "$1" == "--json"  ]] && JSON=1
 
-FAILS=0
+FAILS=0   # 硬失败：计入退出码，upgrade.sh 据此回滚
+WARNS=0   # 告警：仅提示，不计入退出码（不阻断升级，避免少量良性噪声触发回滚）
 RESULTS=()
 
 check() {
@@ -30,7 +31,7 @@ check() {
     RESULTS+=("$label|$status|$detail")
     case "$status" in
         ok)   [[ "$QUIET" == "0" ]] && echo "  [OK]   $label  $detail";;
-        warn) echo "  [WARN] $label  $detail"; FAILS=$((FAILS+1));;
+        warn) echo "  [WARN] $label  $detail"; WARNS=$((WARNS+1));;
         fail) echo "  [FAIL] $label  $detail"; FAILS=$((FAILS+1));;
     esac
 }
@@ -121,7 +122,7 @@ fi
 
 # === Output ===
 if [[ "$JSON" == "1" ]]; then
-    echo -n '{"fails":'$FAILS',"checks":['
+    echo -n '{"fails":'$FAILS',"warns":'$WARNS',"checks":['
     first=1
     for r in "${RESULTS[@]}"; do
         IFS='|' read -r l s d <<< "$r"
@@ -131,7 +132,9 @@ if [[ "$JSON" == "1" ]]; then
     done
     echo ']}'
 else
-    [[ "$QUIET" == "0" || "$FAILS" -gt 0 ]] && echo "===== $FAILS 项异常 ====="
+    [[ "$QUIET" == "0" || "$FAILS" -gt 0 || "$WARNS" -gt 0 ]] && \
+        echo "===== $FAILS 项异常 / $WARNS 项告警(告警不阻断升级) ====="
 fi
 
+# 退出码只反映硬失败：upgrade.sh 仅在 FAIL 时回滚；告警(磁盘 80%/少量错误日志等)不回滚
 exit $FAILS
