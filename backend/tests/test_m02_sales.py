@@ -295,6 +295,20 @@ async def main():
                          files={"file": ("申请.xlsx", io.BytesIO(b"X"), "application/vnd.ms-excel")})
         chk(r.status_code==400 and "不开票" in r.text, f"#1/#104 不开票项目申请被拒: {r.status_code} {r.text[:80]}")
 
+        # ---- 🆕 项目编号人工输入: 传 code 用人工值; 重复人工编号→409; 空 code 回退自动 ----
+        r = await c.post("/api/sales/orders", headers=Hs1, json={
+            "code": "ZD-2026-888", "name": "人工编号机", "cust_type": "经销商",
+            "contract": "有", "amount": 1000, "tax_rate": "13%", "depts": ["produce"]})
+        chk(r.status_code==200 and r.json()["code"]=="ZD-2026-888", f"人工编号下单: {r.text[:120]}")
+        r = await c.post("/api/sales/orders", headers=Hs1, json={
+            "code": "ZD-2026-888", "name": "重复编号机", "cust_type": "经销商",
+            "contract": "有", "depts": ["produce"]})
+        chk(r.status_code==409, f"重复人工编号被拒: {r.status_code}")
+        r = await c.post("/api/sales/orders", headers=Hs1, json={
+            "code": "", "code_suffix": "", "name": "空编号回退机", "cust_type": "经销商",
+            "contract": "有", "depts": ["produce"]})
+        chk(r.status_code==200 and r.json()["code"], f"空编号回退自动生成: {r.text[:120]}")
+
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")
     shutil.rmtree(tmp, ignore_errors=True)

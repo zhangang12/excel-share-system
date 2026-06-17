@@ -204,12 +204,18 @@ async def create_sales_order(
     if data.cust_type not in ("经销商", "终端客户"):
         raise HTTPException(400, "客户分类必须是 经销商/终端客户")
 
-    # 编号：自动 + 可选后缀字母；后端唯一校验（P-21 双保险：DB unique + 此处查重）
-    base = (await next_code(_=current, db=db)).code
-    suffix = (data.code_suffix or "").strip().upper()[:2]
-    if suffix and not suffix.isalpha():
-        raise HTTPException(400, "编号后缀只能是字母")
-    code = base + suffix
+    # 🆕 项目编号：优先人工输入（前端已改为必填、取消自动生成）；
+    #    留空时回退旧的自动编号 + 可选后缀（向后兼容，仅作安全网，UI 不会走此分支）。
+    code = (data.code or "").strip()
+    if code:
+        if len(code) > 64:
+            raise HTTPException(400, "项目编号过长（≤64 字符）")
+    else:
+        base = (await next_code(_=current, db=db)).code
+        suffix = (data.code_suffix or "").strip().upper()[:2]
+        if suffix and not suffix.isalpha():
+            raise HTTPException(400, "编号后缀只能是字母")
+        code = base + suffix
     res = await db.execute(select(models.Project).where(models.Project.code == code))
     if res.scalar_one_or_none():
         raise HTTPException(409, f"项目编号 {code} 已存在")

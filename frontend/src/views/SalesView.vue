@@ -97,9 +97,8 @@ onMounted(() => { load(); loadSalesStaff() })
 const orderVisible = ref(false)
 const ordering = ref(false)
 const openingOrder = ref(false)
-const nextCode = ref('')
 const orderForm = reactive({
-  code_suffix: '', name: '', customer: '', cust_type: '经销商', contract: '有',
+  code: '', name: '', customer: '', cust_type: '经销商', contract: '有',
   amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
   ship_receivable: 0,
   balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
@@ -108,9 +107,9 @@ const orderForm = reactive({
 async function openOrder() {
   openingOrder.value = true
   try {
-    nextCode.value = await salesApi.nextCode()
+    // 🆕 项目编号改人工输入, 不再自动生成
     Object.assign(orderForm, {
-      code_suffix: '', name: '', customer: '', cust_type: '经销商', contract: '有',
+      code: '', name: '', customer: '', cust_type: '经销商', contract: '有',
       amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
       ship_receivable: 0,
       balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
@@ -137,6 +136,7 @@ function fmtFileSize(n: number): string {
 }
 
 async function submitOrder() {
+  if (!orderForm.code.trim()) { ElMessage.warning('请填写项目编号'); return }
   if (!orderForm.name.trim()) { ElMessage.warning('请填写设备名称'); return }
   if (!orderForm.depts.length) { ElMessage.warning('请至少选择一个派往部门'); return }
   ordering.value = true
@@ -524,11 +524,8 @@ async function openReport() {
       <el-form label-position="top">
         <div class="fsec">📋 项目信息</div>
         <div class="frow">
-          <el-form-item label="项目编号（自动生成 + 可选后缀字母）" style="flex: 1">
-            <div style="display: flex; gap: 8px; width: 100%">
-              <el-input :model-value="nextCode" disabled style="flex: 1" />
-              <el-input v-model="orderForm.code_suffix" placeholder="后缀如 A" maxlength="2" style="width: 100px" />
-            </div>
+          <el-form-item label="项目编号（人工填写）" required style="flex: 1">
+            <el-input v-model="orderForm.code" placeholder="如 2026-057 / 2026-050C" maxlength="64" clearable />
           </el-form-item>
           <el-form-item label="设备名称" required style="flex: 1">
             <el-input v-model="orderForm.name" placeholder="如 300L真空乳化机" />

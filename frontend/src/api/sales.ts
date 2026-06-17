@@ -49,7 +49,7 @@ export interface SalesLedgerList {
 }
 
 export interface SalesOrderForm {
-  code_suffix: string
+  code: string
   name: string
   customer: string
   cust_type: string

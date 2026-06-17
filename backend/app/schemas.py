@@ -199,7 +199,8 @@ class SalesReceiverIn(BaseModel):
 
 
 class SalesOrderCreate(BaseModel):
-    code_suffix: str = ""                 # 编号后缀字母（可选，如 A）
+    code: str = ""                        # 🆕 项目编号：人工输入（取消自动生成）
+    code_suffix: str = ""                 # (废弃)编号后缀字母——保留字段兼容，已不用
     name: str = Field(min_length=1, max_length=255)   # 设备名称
     customer: str = ""
     cust_type: str = "经销商"
