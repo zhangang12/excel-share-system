@@ -2,7 +2,7 @@
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
 import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation, UploadFilled, DocumentCopy, CircleClose } from '@element-plus/icons-vue'
+import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation, UploadFilled, DocumentCopy, CircleClose, Select } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment, ordersApi } from '@/api/orders'
@@ -101,12 +101,15 @@ const orderForm = reactive({
   balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
   receiver: { name: '', phone: '', addr: '' },
 })
+// draftEditLid: null=新建下单；有值=修改被退回的草稿(走 draft-resubmit)
+const draftEditLid = ref<number | null>(null)
 async function openOrder() {
   openingOrder.value = true
   try {
     // 🆕 编号人工输入, 但自动带出最新建议编号作默认值(可改)
     let suggested = ''
     try { suggested = await salesApi.nextCode() } catch { /* 拿不到就留空人工填 */ }
+    draftEditLid.value = null
     Object.assign(orderForm, {
       code: suggested, name: '', customer: '', cust_type: '经销商', contract: '有',
       amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
@@ -119,6 +122,23 @@ async function openOrder() {
   } finally {
     openingOrder.value = false
   }
+}
+// 🆕 修改被退回的下单草稿：预填表单(含暂存的派单信息)后重新提交审批
+function openDraftEdit(r: SalesLedgerRow) {
+  draftEditLid.value = r.id
+  const po: any = r.pending_order || {}
+  Object.assign(orderForm, {
+    code: r.code, name: r.name, customer: r.customer || '', cust_type: r.cust_type || '经销商',
+    contract: r.contract || '有', amount: r.amount || 0,
+    tax_rate: r.tax_rate === '/' ? '0' : (r.tax_rate || '13%'),
+    prepay: r.prepay || 0, prepay_note: '', before_ship: r.before_ship || 0, before_ship_note: '',
+    ship_receivable: r.ship_receivable || 0, balance: r.balance || 0, balance_date: r.balance_date || '',
+    depts: (po.depts && po.depts.length) ? po.depts : ['design'],
+    req_text: po.req_text || '',
+    receiver: { name: po.receiver?.name || '', phone: po.receiver?.phone || '', addr: po.receiver?.addr || '' },
+  })
+  orderFiles.value = []
+  orderVisible.value = true
 }
 // 🆕 下单资料（多选，PDF/Word/Excel）——下单后随附给各派往部门任务单
 const orderFileInput = ref<HTMLInputElement | null>(null)
@@ -140,9 +160,25 @@ async function submitOrder() {
   if (!orderForm.depts.length) { ElMessage.warning('请至少选择一个派往部门'); return }
   ordering.value = true
   try {
+    // 🆕 修改被退回的草稿 → 重新提交审批
+    if (draftEditLid.value) {
+      const r = await salesApi.draftResubmit(draftEditLid.value, { ...orderForm })
+      ElMessage.success(`已重新提交审批（${r.code}），等待销售主管审批`)
+      orderVisible.value = false
+      draftEditLid.value = null
+      await load()
+      return
+    }
     const r = await salesApi.createOrder({ ...orderForm })
-    // 🆕 下单资料随附：传到每个生成的部门任务单(order_input)，接单负责人即可见
-    if (orderFiles.value.length && r.order_ids?.length) {
+    // order_ids 为空 = 命中下单审批开关，进入"待主管审批"（尚未创建各部门任务）
+    if (!r.order_ids || r.order_ids.length === 0) {
+      if (orderFiles.value.length) {
+        ElMessage.warning(`下单已提交待审批（${r.code}）；下单资料请在审批通过后到对应部门任务单补传`)
+      } else {
+        ElMessage.success(`下单已提交（${r.code}），等待销售主管审批`)
+      }
+    } else if (orderFiles.value.length) {
+      // 🆕 下单资料随附：传到每个生成的部门任务单(order_input)，接单负责人即可见
       const files = orderFiles.value.slice()
       try {
         await Promise.all(r.order_ids.map(oid => ordersApi.inputUpload(oid, files)))
@@ -460,6 +496,43 @@ async function approveVoid(r: SalesLedgerRow, ok: boolean) {
   await load()
 }
 
+// ===== 🆕 下单审批（销售主管）+ 放弃草稿 =====
+const orderApprovalVisible = ref(false)
+const orderApprovalRows = ref<SalesLedgerRow[]>([])
+async function openOrderApprovals() {
+  orderApprovalRows.value = (await salesApi.orderApprovals()).rows
+  orderApprovalVisible.value = true
+}
+async function approveOrder(r: SalesLedgerRow, ok: boolean) {
+  if (ok) {
+    try {
+      await ElMessageBox.confirm(`通过后将正式创建并推送「${r.code}」各部门任务与发货待办。确认通过？`,
+        '确认下单', { type: 'warning' })
+    } catch { return }
+    await salesApi.orderApprove(r.id)
+  } else {
+    let reason = ''
+    try {
+      const { value } = await ElMessageBox.prompt('请填写退回原因（可留空），将通知销售修改后重新提交：',
+        '退回下单', { inputType: 'textarea', confirmButtonText: '退回', inputValue: '' })
+      reason = value || ''
+    } catch { return }
+    await salesApi.orderReject(r.id, reason.trim())
+  }
+  ElMessage.success(ok ? '已通过，各部门任务已派发' : '已退回销售修改')
+  orderApprovalRows.value = (await salesApi.orderApprovals()).rows
+  await load()
+}
+async function discardOrder(r: SalesLedgerRow) {
+  try {
+    await ElMessageBox.confirm(`放弃下单「${r.code} ${r.name}」？该下单尚未生效，放弃后将删除。`,
+      '放弃下单', { type: 'warning' })
+  } catch { return }
+  await salesApi.orderDiscard(r.id)
+  ElMessage.success('已放弃该下单')
+  await load()
+}
+
 // 🆕 M14 销售报表
 const reportVisible = ref(false)
 const report = ref<SalesReport | null>(null)
@@ -479,6 +552,7 @@ async function openReport() {
       <div class="spacer"></div>
       <el-button v-if="allView" type="primary" plain @click="openReport">📊 销售报表</el-button>
       <el-button v-if="allView" :icon="Stamp" @click="openApprovals">开票审批</el-button>
+      <el-button v-if="allView" :icon="Select" @click="openOrderApprovals">下单审批</el-button>
       <el-button v-if="allView" :icon="CircleClose" @click="openVoidApprovals">作废审批</el-button>
       <el-button :icon="DocumentCopy" @click="openMerge">合并开票</el-button>
       <el-button type="primary" :icon="Plus" :loading="openingOrder" @click="openOrder">销售下单</el-button>
@@ -621,32 +695,57 @@ async function openReport() {
           <template #default="{ row }">
             <!-- 展开：行内按钮（原样） -->
             <div v-if="!opCompact" class="op-cell">
-              <el-button v-if="allView" size="small" link type="primary" class="op-main" @click="openEdit(row)">编辑</el-button>
-              <span v-if="allView" class="op-sep">·</span>
-              <el-button size="small" link class="op-sub" @click="openWorkflow(row)">流程</el-button>
-              <span class="op-sep">·</span>
-              <el-button size="small" link class="op-sub" @click="openContract(row)">
-                {{ row.contract_file_id ? '换合同' : '上传合同' }}
-              </el-button>
-              <template v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)">
+              <!-- 🆕 下单审批流：待审批/已退回时只显示对应动作（项目尚未生效，无详单/流程） -->
+              <template v-if="row.order_state === 'pending'">
+                <el-tag size="small" type="info" effect="plain">待审批</el-tag>
                 <span class="op-sep">·</span>
-                <el-button size="small" link class="op-sub" @click="applyInvoice(row)">开票申请</el-button>
+                <el-button size="small" link class="op-del" @click="discardOrder(row)">放弃</el-button>
               </template>
-              <span class="op-sep">·</span>
-              <el-tag v-if="row.void_state === 'applying'" size="small" type="warning" effect="plain">作废待审批</el-tag>
-              <el-button v-else size="small" link class="op-del" @click="applyVoid(row)">{{ allView ? '作废' : '申请作废' }}</el-button>
+              <template v-else-if="row.order_state === 'draft'">
+                <el-tag size="small" type="warning" effect="plain">已退回</el-tag>
+                <span class="op-sep">·</span>
+                <el-button size="small" link class="op-main" @click="openDraftEdit(row)">修改重提</el-button>
+                <span class="op-sep">·</span>
+                <el-button size="small" link class="op-del" @click="discardOrder(row)">放弃</el-button>
+              </template>
+              <template v-else>
+                <el-button v-if="allView" size="small" link type="primary" class="op-main" @click="openEdit(row)">编辑</el-button>
+                <span v-if="allView" class="op-sep">·</span>
+                <el-button size="small" link class="op-sub" @click="openWorkflow(row)">流程</el-button>
+                <span class="op-sep">·</span>
+                <el-button size="small" link class="op-sub" @click="openContract(row)">
+                  {{ row.contract_file_id ? '换合同' : '上传合同' }}
+                </el-button>
+                <template v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)">
+                  <span class="op-sep">·</span>
+                  <el-button size="small" link class="op-sub" @click="applyInvoice(row)">开票申请</el-button>
+                </template>
+                <span class="op-sep">·</span>
+                <el-tag v-if="row.void_state === 'applying'" size="small" type="warning" effect="plain">作废待审批</el-tag>
+                <el-button v-else size="small" link class="op-del" @click="applyVoid(row)">{{ allView ? '作废' : '申请作废' }}</el-button>
+              </template>
             </div>
             <!-- 收起：操作收进「⋯」下拉，省版面 -->
             <el-dropdown v-else trigger="click" placement="bottom-end">
               <el-button size="small" text :icon="MoreFilled" class="op-more" />
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item v-if="allView" @click="openEdit(row)">编辑</el-dropdown-item>
-                  <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
-                  <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
-                  <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
-                  <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
-                  <el-dropdown-item v-else divided @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
+                  <template v-if="row.order_state === 'pending'">
+                    <el-dropdown-item disabled>待审批</el-dropdown-item>
+                    <el-dropdown-item divided @click="discardOrder(row)">放弃下单</el-dropdown-item>
+                  </template>
+                  <template v-else-if="row.order_state === 'draft'">
+                    <el-dropdown-item @click="openDraftEdit(row)">修改重提</el-dropdown-item>
+                    <el-dropdown-item divided @click="discardOrder(row)">放弃下单</el-dropdown-item>
+                  </template>
+                  <template v-else>
+                    <el-dropdown-item v-if="allView" @click="openEdit(row)">编辑</el-dropdown-item>
+                    <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
+                    <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
+                    <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
+                    <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
+                    <el-dropdown-item v-else divided @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
+                  </template>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -674,15 +773,15 @@ async function openReport() {
       </div>
     </el-card>
 
-    <!-- ===== 销售下单 ===== -->
-    <el-dialog v-model="orderVisible" title="💼 销售下单" width="640px" :close-on-click-modal="false" class="v3-scroll-dialog">
-      <el-alert type="info" :closable="false" style="margin-bottom: 14px"
-                title="编号自动生成；下单日期/交货日期在「上传合同」时填写；发货日期由物流部确认发货时自动回传" />
+    <!-- ===== 销售下单 / 修改重提 ===== -->
+    <el-dialog v-model="orderVisible" :title="draftEditLid ? '✏️ 修改重提下单' : '💼 销售下单'" width="640px" :close-on-click-modal="false" class="v3-scroll-dialog">
+      <el-alert :type="draftEditLid ? 'warning' : 'info'" :closable="false" style="margin-bottom: 14px"
+                :title="draftEditLid ? '修改被退回的下单，提交后重新进入销售主管审批' : '下单日期/交货日期在「上传合同」时填写；发货日期由物流部确认发货时自动回传'" />
       <el-form label-position="top">
         <div class="fsec">📋 项目信息</div>
         <div class="frow">
           <el-form-item label="项目编号（人工填写）" required style="flex: 1">
-            <el-input v-model="orderForm.code" placeholder="如 2026-057 / 2026-050C" maxlength="64" clearable />
+            <el-input v-model="orderForm.code" placeholder="如 2026-057 / 2026-050C" maxlength="64" clearable :disabled="!!draftEditLid" />
           </el-form-item>
           <el-form-item label="设备名称" required style="flex: 1">
             <el-input v-model="orderForm.name" placeholder="如 300L真空乳化机" />
@@ -1014,6 +1113,35 @@ async function openReport() {
           <template #default="{ row }">
             <el-button size="small" type="danger" @click="approveVoid(row, true)">通过作废</el-button>
             <el-button size="small" @click="approveVoid(row, false)">驳回</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <!-- ===== 🆕 下单审批（销售主管） ===== -->
+    <el-dialog v-model="orderApprovalVisible" title="📝 销售下单审批" width="760px" class="v3-scroll-dialog">
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 10px"
+                title="通过后才正式创建并推送各部门任务与物流发货待办；退回则销售可修改后重新提交。" />
+      <EmptyHint v-if="!orderApprovalRows.length" text="暂无待审批的下单" size="sm" />
+      <el-table v-else :data="orderApprovalRows" stripe>
+        <el-table-column prop="code" label="项目编号" width="110" />
+        <el-table-column prop="name" label="设备名称" min-width="130" />
+        <el-table-column label="客户" min-width="100">
+          <template #default="{ row }">{{ row.customer || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="销售" width="84">
+          <template #default="{ row }">{{ row.sales_name || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="金额" width="100" align="right">
+          <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
+        </el-table-column>
+        <el-table-column label="派往" min-width="120">
+          <template #default="{ row }">{{ (row.pending_order?.depts || []).map((d:string)=>({design:'设计',electric:'电工',produce:'生产'}[d]||d)).join('、') || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="150">
+          <template #default="{ row }">
+            <el-button size="small" type="success" :icon="Check" @click="approveOrder(row, true)">通过</el-button>
+            <el-button size="small" @click="approveOrder(row, false)">退回</el-button>
           </template>
         </el-table-column>
       </el-table>

@@ -22,6 +22,9 @@ export interface SalesLedgerRow {
   invoice_batch_id?: number | null   // 🆕 合并开票批次号；同批多行共享，None=单项目
   void_state?: 'applying' | 'voided' | null   // 🆕 订单作废流：None 正常 / applying 待审批 / voided 已作废
   void_reason?: string | null
+  order_state?: 'pending' | 'draft' | null    // 🆕 下单审批流：None 已生效 / pending 待审批 / draft 被退回
+  order_reject_reason?: string | null
+  pending_order?: { depts?: string[]; req_text?: string; receiver?: { name?: string; phone?: string; addr?: string } } | null
   invoice_apply_file_id?: number | null
   invoice_apply_file_name?: string | null
   invoice_file_id?: number | null
@@ -127,6 +130,16 @@ export const salesApi = {
   voidApprovals: () => http.get<SalesLedgerList>('/sales/void-approvals').then((r) => r.data),
   voidApprove: (id: number) => http.post(`/sales/ledger/${id}/void-approve`).then((r) => r.data),
   voidReject: (id: number) => http.post(`/sales/ledger/${id}/void-reject`).then((r) => r.data),
+
+  // 🆕 销售下单审批：仅销售员下单需主管审批(开关 SALES_ORDER_APPROVAL 开启时)
+  orderApprovals: () => http.get<SalesLedgerList>('/sales/order-approvals').then((r) => r.data),
+  orderApprove: (id: number) => http.post(`/sales/ledger/${id}/order-approve`).then((r) => r.data),
+  orderReject: (id: number, reason: string) =>
+    http.post(`/sales/ledger/${id}/order-reject`, { reason }).then((r) => r.data),
+  // 修改被退回的草稿并重新提交审批
+  draftResubmit: (id: number, data: SalesOrderForm) =>
+    http.put<{ project_id: number; code: string }>(`/sales/orders/${id}/draft-resubmit`, data).then((r) => r.data),
+  orderDiscard: (id: number) => http.post(`/sales/ledger/${id}/order-discard`).then((r) => r.data),
 }
 
 export function fmtMoney(n?: number | null): string {

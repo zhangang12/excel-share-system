@@ -42,6 +42,8 @@ services:
       # 此前默认 data/files 在容器临时层，每次 up --build 重建容器即丢失全部上传文件
       # (DB 附件记录仍在→列表能显示但点开 404「文件已丢失」)。
       FILES_DIR: ${FILES_DIR:-/app/uploads}
+      # 🆕 销售下单审批：销售员下单→销售主管审批→通过才派单各部门(可逆开关;默认关)
+      SALES_ORDER_APPROVAL: ${SALES_ORDER_APPROVAL:-true}
     depends_on:
       postgres:
         condition: service_healthy
