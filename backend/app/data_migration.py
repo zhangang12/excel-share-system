@@ -492,6 +492,26 @@ async def align_known_sheet_fields_to_template(db: AsyncSession) -> dict:
     return {"datasheets": len(targets), "reordered_fields": reordered}
 
 
+def _tpl_field_type(name: str) -> str:
+    """与 projects_router._template_field_type 同源：按字段名推断模板字段类型，
+    使重建的已知 sheet 字段（进度=select/日期=date/数量=number）与新建项目一致。"""
+    n = (name or '').strip()
+    if n == '进度':
+        return 'select'
+    if n.endswith('日期'):
+        return 'date'
+    if n == '数量':
+        return 'number'
+    return 'text'
+
+
+def _tpl_field_config(name: str):
+    """进度列预置「完成/进行中」选项（与 _create_sheet_with_fields 一致）。"""
+    if (name or '').strip() == '进度':
+        return json.dumps({'options': ['完成', '进行中']}, ensure_ascii=False)
+    return None
+
+
 async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
     """检测已知 sheet 类型的字段是否与模板严格一致；不一致就清空 datasheet。
 
@@ -558,12 +578,14 @@ async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
             models.Record.datasheet_id == d.id
         ))
         # 按模板重建空字段（让用户看到固定列名的空表，可重新导入或手填）
+        # 字段类型与新建项目一致：进度=select、*日期=date、数量=number、其余=text
         for sort_i, tpl_name in enumerate(template):
             db.add(models.Field(
                 datasheet_id=d.id,
                 name=tpl_name,
-                type='text',
+                type=_tpl_field_type(tpl_name),
                 sort_order=sort_i,
+                config=_tpl_field_config(tpl_name),
             ))
         log.warning(
             "[cleanup_misaligned_known_sheets] 清空+按模板重建 datasheet#%d (%s)；"
