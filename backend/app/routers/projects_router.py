@@ -284,16 +284,20 @@ async def list_projects(
     # 外加按项目目录 销售/电工/设计师 列姓名匹配补授的「可见名单」__viz_uids__（存量数据补全）。
     # 管理层/各部门负责人/采购/仓库/财务/物流等不受影响（看全部，详见 user_can_view_project）。
     from ..config import settings as _cfg
-    _code = current.role.code if current.role else ""
-    restricted = _cfg.project_dir_own_only and _code in ("designer", "electrician", "assembler", "sales")
+    _RESTRICTED = {"designer", "electrician", "assembler", "sales"}
+    _codes = current.role_codes
+    # 多角色取并集：仅当用户「全部角色」都在受限集时才受限；只要有一个更宽的角色就看全部
+    restricted = _cfg.project_dir_own_only and bool(_codes) and _codes <= _RESTRICTED
     if restricted:
-        if _code == "sales":
+        my_pids: set[int] = set()
+        if "sales" in _codes:
             sub = await db.execute(
                 select(models.SalesLedger.project_id).where(models.SalesLedger.sales_uid == current.id))
-        else:
+            my_pids |= {r[0] for r in sub.all()}
+        if _codes & {"designer", "electrician", "assembler"}:
             sub = await db.execute(
                 select(models.DeptOrder.project_id).where(models.DeptOrder.worker_id == current.id))
-        my_pids = {r[0] for r in sub.all()}
+            my_pids |= {r[0] for r in sub.all()}
         items = [p for p in items
                  if p.id in my_pids or current.id in ((p.extra or {}).get("__viz_uids__") or [])]
     visible = []
@@ -311,7 +315,7 @@ async def create_project(
     current: models.User = Depends(require_not_viewer),
     db: AsyncSession = Depends(get_db),
 ):
-    if current.role.code not in ("admin", "manager"):
+    if not current.has_role("admin", "manager"):
         raise HTTPException(403, "无权创建项目")
     # 只与活跃项目比较；已软删的项目允许复用其 code
     res = await db.execute(
@@ -411,7 +415,7 @@ async def update_project(
             extra = dict(p.extra or {})
             if extra.pop(cd_key, None) is not None:
                 p.extra = extra
-    if data.manager_id is not None and current.role.code in ("admin", "manager"):
+    if data.manager_id is not None and current.has_role("admin", "manager"):
         p.manager_id = data.manager_id
     await db.commit()
     await db.refresh(p)
@@ -560,7 +564,7 @@ async def list_members(
 
 
 async def _can_manage_members(db, user, project) -> bool:
-    if user.role and user.role.code in ("admin", "manager"):
+    if user.has_role("admin", "manager"):
         return True
     return False
 

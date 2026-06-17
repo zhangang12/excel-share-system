@@ -216,7 +216,7 @@ async def confirm_ship(
     res = await db.execute(select(models.DeptOrder).where(
         models.DeptOrder.project_id == s.project_id))
     can, missing = _gate(list(res.scalars().all()))
-    is_mgr = current.role and current.role.code in ("admin", "manager")
+    is_mgr = current.has_role("admin", "manager")
     if not can and not (force and is_mgr):
         raise HTTPException(400, f"发货闸门未通过：{('、'.join(missing))} 未完成（D5：已下单任务须全部完成）")
 

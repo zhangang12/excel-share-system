@@ -177,8 +177,7 @@ async def dept_report(
     cfg = DEPTS.get(dept)
     if not cfg:
         raise HTTPException(400, "未知部门")
-    code = current.role.code if current.role else ""
-    if code not in ("admin", "manager", cfg["lead_role"]):
+    if not current.has_role("admin", "manager", cfg["lead_role"]):
         raise HTTPException(403, "仅本部门负责人或管理层可看部门报表")
 
     r = await db.execute(select(models.DeptOrder).where(models.DeptOrder.dept == dept))

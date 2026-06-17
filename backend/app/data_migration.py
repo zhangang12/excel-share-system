@@ -890,11 +890,23 @@ async def merge_buyers_into_purchase(db: AsyncSession) -> dict:
         return {"users": 0, "perms": 0}
     old_ids = [r.id for r in old_roles]
 
-    # 1) 用户迁移
+    # 1) 用户迁移：锚点 role_id + user_roles 关联一起改指向 buyer（否则 role_codes 会残留旧角色）
     res = await db.execute(select(models.User).where(models.User.role_id.in_(old_ids)))
     users = res.scalars().all()
     for u in users:
         u.role_id = buyer.id
+    # user_roles：旧采购角色关联重指向 buyer（去重后删旧），幂等
+    ur_res = await db.execute(select(models.UserRole).where(models.UserRole.role_id.in_(old_ids)))
+    old_urs = ur_res.scalars().all()
+    if old_urs:
+        bres = await db.execute(select(models.UserRole.user_id).where(models.UserRole.role_id == buyer.id))
+        have_buyer = {r[0] for r in bres.all()}
+        for ur in old_urs:
+            if ur.user_id not in have_buyer:
+                db.add(models.UserRole(user_id=ur.user_id, role_id=buyer.id))
+                have_buyer.add(ur.user_id)
+        from sqlalchemy import delete as _del_ur
+        await db.execute(_del_ur(models.UserRole).where(models.UserRole.role_id.in_(old_ids)))
 
     # 2) 字段权限合并（两套权限表同一套逻辑）
     merged = 0
@@ -1195,8 +1207,36 @@ async def backfill_project_visibility_from_overview_names(db: AsyncSession) -> d
     return {"granted": granted, "projects": proj_changed, "sales_filled": sales_filled}
 
 
+async def backfill_user_roles(db: AsyncSession) -> dict:
+    """🆕 多角色：给存量用户补 user_roles 关联（镜像其锚点 role_id）。
+
+    新表 user_roles 由 create_all 建好；存量用户的角色此前只在 users.role_id。
+    这里确保每个用户在 user_roles 至少有锚点角色一行，使 role_codes/role_ids
+    与现状一致。幂等：已有 (user_id, role_id) 跳过。
+    """
+    res = await db.execute(select(models.User.id, models.User.role_id))
+    user_role = [(uid, rid) for uid, rid in res.all() if rid is not None]
+    if not user_role:
+        return {"added": 0}
+    res = await db.execute(select(models.UserRole.user_id, models.UserRole.role_id))
+    existing = {(u, r) for u, r in res.all()}
+    added = 0
+    for uid, rid in user_role:
+        if (uid, rid) not in existing:
+            db.add(models.UserRole(user_id=uid, role_id=rid))
+            added += 1
+    if added:
+        await db.commit()
+        log.info("[backfill_user_roles] 补 %d 条用户角色关联（镜像锚点角色）", added)
+    return {"added": added}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
+    try:
+        await backfill_user_roles(db)
+    except Exception as e:
+        log.warning("backfill_user_roles failed: %s", e)
     try:
         await cleanup_deleted_project_data(db)
     except Exception as e:

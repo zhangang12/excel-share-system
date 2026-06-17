@@ -9,7 +9,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_
 
 from ..database import get_db
 from .. import models, schemas
@@ -71,21 +71,24 @@ async def list_feedbacks(
         if not user_can_view_detail(current):
             raise HTTPException(403, "你没有项目详单权限")
         q = q.where(models.Feedback.project_id == project_id)
-    code = current.role.code if current.role else ""
+    codes = current.role_codes
     if mine:
-        if code == "assembler":
-            q = q.where(models.Feedback.created_by == current.id)
-        elif code == "pm_lead":
-            q = q.where(models.Feedback.status == "pending_pm")
-        elif code == "designer":
-            q = q.where(models.Feedback.status == "pending_design",
-                        models.Feedback.designer_uid == current.id)
-        elif code == "design_lead":
+        # 多角色取并集：合并各角色「待我处理」的条件（OR）
+        conds = []
+        if "assembler" in codes:
+            conds.append(models.Feedback.created_by == current.id)
+        if "pm_lead" in codes:
+            conds.append(models.Feedback.status == "pending_pm")
+        if "designer" in codes:
+            conds.append(and_(models.Feedback.status == "pending_design",
+                              models.Feedback.designer_uid == current.id))
+        if "design_lead" in codes:
             # 🆕 #29 设计负责人看「待接收但无在岗设计师(死信)」的反馈，可指派
-            q = q.where(models.Feedback.status == "pending_design",
-                        models.Feedback.designer_uid.is_(None))
-        else:
+            conds.append(and_(models.Feedback.status == "pending_design",
+                              models.Feedback.designer_uid.is_(None)))
+        if not conds:
             return []
+        q = q.where(or_(*conds))
     r = await db.execute(q.order_by(models.Feedback.id.desc()).limit(300))
     return await _rows(db, list(r.scalars().all()))
 
@@ -206,7 +209,7 @@ async def assign_feedback(
         raise HTTPException(400, "仅待设计接收的反馈可指派")
     r = await db.execute(select(models.User).where(models.User.id == worker_id))
     u = r.scalar_one_or_none()
-    if not u or not u.role or u.role.code not in ("designer", "design_lead"):
+    if not u or not u.has_role("designer", "design_lead"):
         raise HTTPException(400, "只能指派给设计人员")
     p_code, p_name, content = fb.project.code, fb.project.name, fb.content
     fb.designer_uid = worker_id

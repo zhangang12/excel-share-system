@@ -21,8 +21,8 @@ interface Row {
 interface Stats { total: number; pending: number; approved_cost: number; total_cost: number }
 
 const auth = useAuthStore()
-const canReg = computed(() => ['as_worker', 'admin', 'manager'].includes(auth.user?.role_code || ''))
-const canApprove = computed(() => ['as_lead', 'admin', 'manager'].includes(auth.user?.role_code || ''))
+const canReg = computed(() => auth.hasRole('as_worker', 'admin', 'manager'))
+const canApprove = computed(() => auth.hasRole('as_lead', 'admin', 'manager'))
 
 const loading = ref(false)
 const rows = ref<Row[]>([])

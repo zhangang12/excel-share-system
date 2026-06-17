@@ -8,7 +8,7 @@ import type { User, Role } from '@/types'
 import StatusPill from '@/components/StatusPill.vue'
 
 const auth = useAuthStore()
-const isAdmin = computed(() => ['admin', 'manager'].includes(auth.user?.role_code || ''))
+const isAdmin = computed(() => auth.hasRole('admin', 'manager'))
 const users = ref<User[]>([])
 const roles = ref<Role[]>([])
 const loading = ref(false)
@@ -22,7 +22,7 @@ const form = reactive({
   password: '',
   full_name: '',
   email: '',
-  role_id: undefined as number | undefined,
+  role_ids: [] as number[],   // 🆕 多角色（平等，无主次）
   is_active: true,
 })
 
@@ -38,6 +38,10 @@ const filtered = computed(() => {
 
 function initialOf(u: User) {
   return (u.full_name || u.username).charAt(0).toUpperCase()
+}
+
+function tagType(code?: string | null) {
+  return code === 'admin' ? 'danger' : code === 'manager' ? 'warning' : 'primary'
 }
 
 const avatarColors = ['#6366f1','#8b5cf6','#ec4899','#f97316','#10b981','#0ea5e9','#f59e0b','#ef4444']
@@ -59,7 +63,7 @@ function openCreate() {
   isEdit.value = false
   Object.assign(form, {
     id: 0, username: '', password: '', full_name: '', email: '',
-    role_id: roles.value[0]?.id, is_active: true,
+    role_ids: roles.value[0]?.id ? [roles.value[0].id] : [], is_active: true,
   })
   dialogVisible.value = true
 }
@@ -69,7 +73,8 @@ function openEdit(u: User) {
   Object.assign(form, {
     id: u.id, username: u.username, password: '',
     full_name: u.full_name || '', email: u.email || '',
-    role_id: u.role_id,
+    // 优先用全部角色；缺失则回退锚点角色
+    role_ids: (u.role_ids && u.role_ids.length) ? [...u.role_ids] : (u.role_id ? [u.role_id] : []),
     is_active: u.is_active,
   })
   dialogVisible.value = true
@@ -86,12 +91,12 @@ async function submit() {
   } else if (form.password && form.password.length < 6) {
     ElMessage.warning('新密码至少 6 位（不改请留空）'); return
   }
-  if (!form.role_id) { ElMessage.warning('请选择角色'); return }
+  if (!form.role_ids.length) { ElMessage.warning('请至少选择一个角色'); return }
   try {
     if (isEdit.value) {
       const body: Record<string, unknown> = {
         full_name: form.full_name, email: form.email,
-        role_id: form.role_id,
+        role_ids: form.role_ids,
         is_active: form.is_active,
       }
       if (form.password) body.password = form.password
@@ -101,7 +106,7 @@ async function submit() {
         username: form.username, password: form.password,
         full_name: form.full_name || undefined,
         email: form.email || undefined,
-        role_id: form.role_id,
+        role_ids: form.role_ids,
         is_active: form.is_active,
       })
     }
@@ -155,11 +160,14 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="角色" width="120">
+        <el-table-column label="角色" min-width="180">
           <template #default="{ row }">
-            <el-tag :type="row.role_code === 'admin' ? 'danger' : row.role_code === 'manager' ? 'warning' : 'primary'" effect="light">
-              {{ row.role_name }}
-            </el-tag>
+            <span class="role-tags">
+              <el-tag v-for="(rn, i) in (row.role_names?.length ? row.role_names : [row.role_name])" :key="i"
+                      :type="tagType((row.role_codes || [row.role_code])[i])" effect="light" size="small">
+                {{ rn }}
+              </el-tag>
+            </span>
           </template>
         </el-table-column>
         <el-table-column prop="email" label="邮箱" min-width="180">
@@ -197,8 +205,9 @@ onMounted(load)
         <el-form-item label="邮箱">
           <el-input v-model="form.email" size="large" />
         </el-form-item>
-        <el-form-item label="角色 *">
-          <el-select v-model="form.role_id" size="large" style="width:100%">
+        <el-form-item label="角色 *（可多选，权限取并集）">
+          <el-select v-model="form.role_ids" multiple filterable collapse-tags collapse-tags-tooltip
+                     size="large" style="width:100%" placeholder="可选一个或多个角色">
             <el-option v-for="r in roles" :key="r.id" :value="r.id" :label="r.name" />
           </el-select>
         </el-form-item>
@@ -225,4 +234,5 @@ onMounted(load)
 }
 .muted { color: var(--text-3); }
 .small { font-size: 12px; }
+.role-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 </style>

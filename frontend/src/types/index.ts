@@ -5,8 +5,12 @@ export interface Role {
 export interface User {
   id: number; username: string
   full_name?: string | null; email?: string | null
+  // 锚点角色（兼容旧字段）
   role_id: number; role_code?: string | null; role_name?: string | null
+  // 🆕 全部角色（平等多角色）
+  role_ids?: number[]; role_codes?: string[]; role_names?: string[]
   is_active: boolean; password_must_change: boolean
+  wxid?: string | null
   created_at: string; last_login?: string | null
 }
 

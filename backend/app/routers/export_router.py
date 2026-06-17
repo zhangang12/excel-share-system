@@ -26,7 +26,7 @@ def _uname(u: Optional[models.User]) -> Optional[str]:
 @router.get("/config", response_model=schemas.ExportConfigOut)
 async def export_config(current: models.User = Depends(get_current_user)):
     """前端据此决定导出按钮行为（开关关=直接导出；开=无权时引导申请）。"""
-    is_mgr = current.role and current.role.code in ("admin", "manager")
+    is_mgr = current.has_role("admin", "manager")
     return schemas.ExportConfigOut(
         enabled=settings.export_approval_enabled,
         # 开关关闭时导出不受限 → 视为可导出；开启时仅管理层或已获权

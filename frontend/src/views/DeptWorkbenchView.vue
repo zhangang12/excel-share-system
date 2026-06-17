@@ -34,8 +34,8 @@ const WORKER_ROLES: Record<string, string> = { design: 'designer', electric: 'el
 const LEAD_ROLES: Record<string, string> = { design: 'design_lead', electric: 'electric_lead', produce: 'pm_lead' }
 
 const isMgr = computed(() => auth.isAdmin)
-const isLead = computed(() => auth.user?.role_code === LEAD_ROLES[dept.value])
-const isWorker = computed(() => auth.user?.role_code === WORKER_ROLES[dept.value])
+const isLead = computed(() => auth.hasRole(LEAD_ROLES[dept.value]))
+const isWorker = computed(() => auth.hasRole(WORKER_ROLES[dept.value]))
 
 const loading = ref(false)
 const orders = ref<DeptOrder[]>([])

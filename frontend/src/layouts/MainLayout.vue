@@ -147,7 +147,7 @@ onUnmounted(() => { if (unreadTimer) window.clearInterval(unreadTimer) })
           <span v-if="unread > 0" class="nav-badge">{{ unread > 99 ? '99+' : unread }}</span>
         </a>
 
-        <template v-if="auth.isAdmin || auth.user?.role_code === 'manager'">
+        <template v-if="auth.isAdmin">
           <div v-if="!collapsed" class="section-title">管理</div>
           <div v-else class="section-divider"></div>
 
@@ -179,7 +179,8 @@ onUnmounted(() => { if (unreadTimer) window.clearInterval(unreadTimer) })
           <div v-if="!collapsed" class="user-info">
             <div class="uname">{{ auth.user?.full_name || auth.user?.username }}</div>
             <div class="ubadges">
-              <span class="badge primary">{{ auth.user?.role_name }}</span>
+              <span v-for="rn in (auth.user?.role_names?.length ? auth.user.role_names : [auth.user?.role_name])"
+                    :key="rn || ''" class="badge primary">{{ rn }}</span>
               </div>
           </div>
         </div>

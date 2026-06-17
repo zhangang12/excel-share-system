@@ -140,15 +140,15 @@ async def _populate_elec_po_from_excel(db: AsyncSession, project_id: int, projec
 
 # ==================== 工具 ====================
 def _is_mgr(u: models.User) -> bool:
-    return bool(u.role and u.role.code in ("admin", "manager"))
+    return u.has_role("admin", "manager")
 
 
 def _is_lead(u: models.User, dept: str) -> bool:
-    return bool(u.role and u.role.code == DEPTS[dept]["lead_role"])
+    return u.has_role(DEPTS[dept]["lead_role"])
 
 
 def _is_worker_role(u: models.User, dept: str) -> bool:
-    return bool(u.role and u.role.code == DEPTS[dept]["worker_role"])
+    return u.has_role(DEPTS[dept]["worker_role"])
 
 
 def _dept_or_400(dept: str) -> dict:
@@ -271,7 +271,7 @@ async def list_orders(
         # 未指定 dept 的非管理层：按角色推断本部门
         my_dept = next(
             (k for k, c in DEPTS.items()
-             if current.role and current.role.code in (c["worker_role"], c["lead_role"])),
+             if current.has_role(c["worker_role"], c["lead_role"])),
             None,
         )
         if not my_dept:

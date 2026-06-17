@@ -28,7 +28,7 @@ WRITE_ROLES = ("warehouse", "warehouse_lead")
 
 
 def _can_write(u: models.User) -> bool:
-    return bool(u.role and u.role.code in WRITE_ROLES + ("admin", "manager"))
+    return u.has_role(*WRITE_ROLES, "admin", "manager")
 
 
 async def _stock_map(db: AsyncSession, material_ids: Optional[list[int]] = None,

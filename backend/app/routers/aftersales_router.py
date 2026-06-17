@@ -55,7 +55,7 @@ async def list_aftersales(
 ):
     """售后/管理层看全部；财务只读已审批（财务页「售后费用」tab 复用此端点 status=approved 过滤）。"""
     q = select(models.AfterSales)
-    if current.role and current.role.code == "finance":
+    if current.has_role("finance") and not current.has_role("as_worker", "as_lead", "admin", "manager"):
         q = q.where(models.AfterSales.status == "approved")
     r = await db.execute(q.order_by(models.AfterSales.id.desc()).limit(500))
     items = list(r.scalars().all())

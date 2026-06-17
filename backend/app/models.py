@@ -25,6 +25,15 @@ class Role(Base):
     can_push: Mapped[bool] = mapped_column(default=False)
 
 
+# 🆕 用户↔角色 多对多关联（一个用户可配置多个角色，权限取并集）。
+# 用户的角色集为「平等多角色」：无主次之分；User.role_id 仅作为存量兼容锚点
+# （恒等于其角色之一），新逻辑一律读 User.role_codes / role_ids / has_role()。
+class UserRole(Base):
+    __tablename__ = "user_roles"
+    __table_args__ = (UniqueConstraint("user_id", "role_id", name="uq_user_role"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), index=True)
 
 
 class User(Base):
@@ -44,7 +53,35 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
+    # 锚点角色（存量兼容/展示无关）：恒等于 roles 中的一个
     role: Mapped["Role"] = relationship(lazy="joined")
+    # 🆕 全部角色（平等，无主次）；selectin 预加载供 deps/menus 同步读取。
+    # viewonly：只读关系，写入统一走 user_roles 关联表（Core）——避免 async 下
+    # 赋值触发同步 lazy-load(MissingGreenlet) 及与 ORM 二次同步冲突。
+    roles: Mapped[list["Role"]] = relationship(
+        secondary="user_roles", lazy="selectin", order_by="Role.id", viewonly=True,
+    )
+
+    # ---- 多角色辅助（全系统权限判断统一走这三个，取并集语义）----
+    @property
+    def role_codes(self) -> set[str]:
+        """用户全部角色 code 的集合（含锚点 role，去重）。"""
+        codes = {r.code for r in self.roles} if self.roles else set()
+        if self.role and self.role.code:
+            codes.add(self.role.code)
+        return codes
+
+    @property
+    def role_ids(self) -> list[int]:
+        """用户全部角色 id（含锚点 role_id，去重；字段权限按此 IN 查询）。"""
+        ids = [r.id for r in self.roles] if self.roles else []
+        if self.role_id and self.role_id not in ids:
+            ids.append(self.role_id)
+        return ids
+
+    def has_role(self, *codes: str) -> bool:
+        """用户是否拥有 codes 中的任一角色（并集判断）。"""
+        return bool(self.role_codes & set(codes))
 
 
 class Project(Base):

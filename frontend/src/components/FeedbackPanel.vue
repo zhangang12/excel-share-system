@@ -9,10 +9,10 @@ import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
 const auth = useAuthStore()
-const role = computed(() => auth.user?.role_code || '')
-const isAssembler = computed(() => role.value === 'assembler')
-const isPm = computed(() => ['pm_lead', 'manager', 'admin'].includes(role.value))
-const isDesigner = computed(() => role.value === 'designer')
+// 多角色：按并集判断（任一角色命中即显示对应能力）
+const isAssembler = computed(() => auth.hasRole('assembler'))
+const isPm = computed(() => auth.hasRole('pm_lead', 'manager', 'admin'))
+const isDesigner = computed(() => auth.hasRole('designer'))
 
 const list = ref<Feedback[]>([])
 const loading = ref(false)

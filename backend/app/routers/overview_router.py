@@ -152,7 +152,7 @@ async def get_overview(
     t2 = time.perf_counter()
 
     # admin / manager 免权限校验
-    is_super = current.role and current.role.code in ("admin", "manager")
+    is_super = current.has_role("admin", "manager")
     if is_super:
         visible_rows = [_project_row(p) for p in all_projects]
     else:
@@ -200,7 +200,7 @@ async def export_overview(
     )
     all_projects = pres.scalars().all()
 
-    is_super = current.role and current.role.code in ("admin", "manager")
+    is_super = current.has_role("admin", "manager")
     if is_super:
         visible = list(all_projects)
     else:
@@ -257,14 +257,15 @@ async def update_overview_cell(
     fres = await db.execute(select(models.OverviewField).where(models.OverviewField.id == data.field_id))
     if not fres.scalar_one_or_none():
         raise HTTPException(404, "字段不存在")
-    # 字段级权限：admin / manager 跳过
-    if current.role.code not in ("admin", "manager"):
+    # 字段级权限：admin / manager 跳过（多角色取并集：任一角色可编辑即放行）
+    if not current.has_role("admin", "manager"):
+        role_ids = current.role_ids
         fp_res = await db.execute(select(models.OverviewFieldPermission).where(
             models.OverviewFieldPermission.field_id == data.field_id,
-            models.OverviewFieldPermission.role_id == current.role_id,
+            models.OverviewFieldPermission.role_id.in_(role_ids),
         ))
-        fp = fp_res.scalar_one_or_none()
-        if fp is not None and (not fp.can_view or not fp.can_edit):
+        fps = fp_res.scalars().all()
+        if len(fps) >= len(role_ids) and not any(fp.can_view and fp.can_edit for fp in fps):
             raise HTTPException(403, "无权编辑该字段")
     extra = dict(p.extra or {})
     if data.value in (None, ""):

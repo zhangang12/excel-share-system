@@ -35,7 +35,7 @@ const records = ref<DataRecord[]>([])
 const loading = ref(false)
 const auth = useAuthStore()
 const myPerms = ref<Record<string, { can_view: boolean; can_edit: boolean }>>({})
-const isAdmin = computed(() => ['admin', 'manager'].includes(auth.user?.role_code || ''))
+const isAdmin = computed(() => auth.hasRole('admin', 'manager'))
 
 // 分页 + 适应屏幕
 const pageSize = ref(20)

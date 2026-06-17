@@ -17,7 +17,22 @@ export const useAuthStore = defineStore('auth', () => {
   )
 
   const isLoggedIn = computed(() => !!token.value)
-  const isAdmin = computed(() => ['admin', 'manager'].includes(user.value?.role_code || ''))
+
+  // 🆕 多角色：用户全部角色 code（含锚点，去重）
+  function roleCodes(): string[] {
+    const u = user.value
+    if (!u) return []
+    const set = new Set<string>(u.role_codes || [])
+    if (u.role_code) set.add(u.role_code)
+    return [...set]
+  }
+  // 🆕 是否拥有 codes 中任一角色（并集判断）——前端按钮显隐统一走它
+  function hasRole(...codes: string[]): boolean {
+    const mine = new Set(roleCodes())
+    return codes.some((c) => mine.has(c))
+  }
+
+  const isAdmin = computed(() => hasRole('admin', 'manager'))
   const mustChangePassword = computed(() => !!user.value?.password_must_change)
 
   // 🆕 是否可见某菜单：菜单未加载时 catalog/list 按老默认放行（老角色无感知）
@@ -89,5 +104,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   return { token, user, isLoggedIn, isAdmin, mustChangePassword,
            menus, canViewDetail, hasMenu, deptMenus, fetchMenus,
+           hasRole, roleCodes,
            login, fetchMe, changePassword, logout }
 })

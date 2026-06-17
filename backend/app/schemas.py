@@ -25,7 +25,9 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=6, max_length=128)
     full_name: Optional[str] = None
     email: Optional[str] = None
-    role_id: int
+    # 多角色：优先用 role_ids（可多选）；role_id 保留兼容旧调用（单角色）
+    role_id: Optional[int] = None
+    role_ids: Optional[list[int]] = None
     is_active: bool = True
 
 
@@ -34,6 +36,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     email: Optional[str] = None
     role_id: Optional[int] = None
+    role_ids: Optional[list[int]] = None  # 传则整体替换该用户的角色集
     is_active: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=6, max_length=128)
 
@@ -45,9 +48,14 @@ class UserOut(BaseModel):
     username: str
     full_name: Optional[str] = None
     email: Optional[str] = None
+    # 锚点角色（兼容旧前端字段）
     role_id: int
     role_code: Optional[str] = None
     role_name: Optional[str] = None
+    # 🆕 全部角色（平等多角色）
+    role_ids: list[int] = []
+    role_codes: list[str] = []
+    role_names: list[str] = []
     is_active: bool
     password_must_change: bool = False
     wxid: Optional[str] = None  # 🆕 v3 企微绑定

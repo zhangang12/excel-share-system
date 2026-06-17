@@ -14,6 +14,10 @@ router = APIRouter(prefix="/api/auth", tags=["认证"])
 
 
 def _user_to_out(u: models.User) -> schemas.UserOut:
+    roles = list(u.roles or [])
+    if u.role and u.role.id not in {r.id for r in roles}:
+        roles = [u.role] + roles
+    roles = sorted(roles, key=lambda r: r.id)
     return schemas.UserOut(
         id=u.id,
         username=u.username,
@@ -22,8 +26,12 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         role_id=u.role_id,
         role_code=u.role.code if u.role else None,
         role_name=u.role.name if u.role else None,
+        role_ids=[r.id for r in roles],
+        role_codes=[r.code for r in roles],
+        role_names=[r.name for r in roles],
         is_active=u.is_active,
         password_must_change=u.password_must_change,
+        wxid=u.wxid,
         created_at=u.created_at,
         last_login=u.last_login,
     )

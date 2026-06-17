@@ -7,7 +7,7 @@ export const adminApi = {
 
   // 用户
   listUsers: () => http.get<User[]>('/admin/users').then((r) => r.data),
-  createUser: (data: Partial<User> & { username: string; password: string; role_id: number }) =>
+  createUser: (data: Partial<User> & { username: string; password: string; role_ids: number[] }) =>
     http.post<User>('/admin/users', data).then((r) => r.data),
   updateUser: (id: number, data: Partial<User> & { password?: string }) =>
     http.put<User>(`/admin/users/${id}`, data).then((r) => r.data),

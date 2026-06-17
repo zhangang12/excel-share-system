@@ -68,12 +68,14 @@ async def project_workflow(
     # 销售员仅能看自己台账的项目；其余角色经详单闸门（销售例外，用于全览）
     from ..menus import user_can_view_detail
     if not user_can_view_detail(current):
-        is_sales = current.role and current.role.code in ("sales", "sales_lead")
+        is_sales = current.has_role("sales", "sales_lead")
         if is_sales:
             r2 = await db.execute(select(models.SalesLedger).where(
                 models.SalesLedger.project_id == pid))
             led = r2.scalar_one_or_none()
-            if current.role.code == "sales" and (not led or led.sales_uid != current.id):
+            # 销售主管看全部；仅「纯销售员」限定本人项目（多角色：有 sales_lead 即放行）
+            if current.has_role("sales") and not current.has_role("sales_lead") \
+                    and (not led or led.sales_uid != current.id):
                 raise HTTPException(403, "只能查看自己的项目")
         else:
             raise HTTPException(403, "无权查看")
@@ -151,14 +153,14 @@ async def assembly_sheet_status(
     db: AsyncSession = Depends(get_db),
 ):
     """装配前置三表完成情况：装配工人看被派任务的项目；生产主管/管理层看全部有生产任务的项目。"""
-    code = current.role.code if current.role else ""
-    # 范围：装配工人 = 自己被派produce任务的项目；pm_lead/manager/admin = 有produce任务的项目
+    codes = current.role_codes
+    # 范围：pm_lead/manager/admin = 有produce任务的全部项目；装配工人 = 自己被派的（多角色取并集，先判更宽的）
     q = select(models.DeptOrder.project_id).where(models.DeptOrder.dept == "produce",
                                                    models.DeptOrder.status != "voided")
-    if code == "assembler":
-        q = q.where(models.DeptOrder.worker_id == current.id)
-    elif code in ("pm_lead", "manager", "admin"):
+    if codes & {"pm_lead", "manager", "admin"}:
         pass
+    elif "assembler" in codes:
+        q = q.where(models.DeptOrder.worker_id == current.id)
     else:
         return []
     r = await db.execute(q.distinct())
@@ -199,8 +201,7 @@ async def set_done_flag(
     db: AsyncSession = Depends(get_db),
 ):
     """标记/取消装配前置表"已完成"（§十七：管理层/生产主管/设计师可标记）。"""
-    code = current.role.code if current.role else ""
-    if code not in ("admin", "manager", "pm_lead", "designer", "design_lead"):
+    if not current.has_role("admin", "manager", "pm_lead", "designer", "design_lead"):
         raise HTTPException(403, "无权标记数据表完成状态")
     res = await db.execute(select(models.Datasheet).where(models.Datasheet.id == did))
     d = res.scalar_one_or_none()

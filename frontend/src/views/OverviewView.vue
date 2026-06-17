@@ -31,7 +31,7 @@ const { height: tableHeight } = useTableHeight(tableRef)
 const pageSize = ref(20)
 const currentPage = ref(1)
 
-const isAdmin = computed(() => ['admin', 'manager'].includes(auth.user?.role_code || ''))
+const isAdmin = computed(() => auth.hasRole('admin', 'manager'))
 const visibleFields = computed(() =>
   fields.value.filter(f => myPerms.value[String(f.id)]?.can_view !== false)
 )

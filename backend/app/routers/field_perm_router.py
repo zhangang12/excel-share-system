@@ -100,6 +100,34 @@ async def set_ovw_field_perms(
     return await _get_ovw_perms(db, fid)
 
 
+# ===== 多角色字段权限并集（最宽松：任一角色放行即放行；未配置角色=默认放行）=====
+async def _union_field_perms(db, fields, current, PermModel) -> dict:
+    role_ids = current.role_ids
+    n = len(role_ids)
+    by_field: dict[int, list] = {}
+    if fields and role_ids:
+        pres = await db.execute(
+            select(PermModel).where(
+                PermModel.field_id.in_([f.id for f in fields]),
+                PermModel.role_id.in_(role_ids),
+            )
+        )
+        for p in pres.scalars().all():
+            by_field.setdefault(p.field_id, []).append(p)
+    out = {}
+    for f in fields:
+        rowsf = by_field.get(f.id, [])
+        # 有角色未配置该字段 → 该角色默认全放行 → 并集即全放行
+        if len(rowsf) < n:
+            out[str(f.id)] = {"can_view": True, "can_edit": True}
+        else:
+            out[str(f.id)] = {
+                "can_view": any(p.can_view for p in rowsf),
+                "can_edit": any(p.can_edit for p in rowsf),
+            }
+    return out
+
+
 # ===== 给前端用：按当前用户的角色，返回字段可见性 map =====
 @router.get("/me/datasheet/{did}")
 async def my_datasheet_perms(
@@ -112,26 +140,11 @@ async def my_datasheet_perms(
         select(models.Field).where(models.Field.datasheet_id == did)
     )
     fields = fres.scalars().all()
-    if current.role.code in ("admin", "manager"):
+    if current.has_role("admin", "manager"):
         return {str(f.id): {"can_view": True, "can_edit": True} for f in fields}
 
-    # 取当前角色的所有权限
-    pres = await db.execute(
-        select(models.FieldPermission).where(
-            models.FieldPermission.field_id.in_([f.id for f in fields]),
-            models.FieldPermission.role_id == current.role_id,
-        )
-    )
-    perm_map = {p.field_id: p for p in pres.scalars().all()}
-    # 未配置默认 can_view/can_edit = True (向后兼容)
-    out = {}
-    for f in fields:
-        p = perm_map.get(f.id)
-        if p is None:
-            out[str(f.id)] = {"can_view": True, "can_edit": True}
-        else:
-            out[str(f.id)] = {"can_view": p.can_view, "can_edit": p.can_edit}
-    return out
+    # 多角色取并集：取用户全部角色的字段权限，按字段 OR 合并
+    return await _union_field_perms(db, fields, current, models.FieldPermission)
 
 
 @router.get("/me/overview")
@@ -141,26 +154,13 @@ async def my_overview_perms(
 ):
     import logging
     log = logging.getLogger("perm")
-    log.info("my_overview_perms by user=%s role=%s", current.username, current.role.code if current.role else None)
+    log.info("my_overview_perms by user=%s roles=%s", current.username, current.role_codes)
     fres = await db.execute(select(models.OverviewField))
     fields = fres.scalars().all()
-    if current.role.code in ("admin", "manager"):
+    if current.has_role("admin", "manager"):
         return {str(f.id): {"can_view": True, "can_edit": True} for f in fields}
-    pres = await db.execute(
-        select(models.OverviewFieldPermission).where(
-            models.OverviewFieldPermission.field_id.in_([f.id for f in fields]),
-            models.OverviewFieldPermission.role_id == current.role_id,
-        )
-    )
-    perm_map = {p.field_id: p for p in pres.scalars().all()}
-    out = {}
-    for f in fields:
-        p = perm_map.get(f.id)
-        if p is None:
-            out[str(f.id)] = {"can_view": True, "can_edit": True}
-        else:
-            out[str(f.id)] = {"can_view": p.can_view, "can_edit": p.can_edit}
-    return out
+    # 多角色取并集
+    return await _union_field_perms(db, fields, current, models.OverviewFieldPermission)
 
 
 

@@ -29,32 +29,33 @@ async def get_current_user(
 
 
 async def require_admin(current: models.User = Depends(get_current_user)) -> models.User:
-    # admin 与 manager（管理层）拥有同等的全部权限
-    if not current.role or current.role.code not in ("admin", "manager"):
+    # admin 与 manager（管理层）拥有同等的全部权限（多角色取并集：任一即可）
+    if not current.has_role("admin", "manager"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "无权操作")
     return current
 
 async def require_admin_or_manager(current: models.User = Depends(get_current_user)) -> models.User:
     """admin 或 管理层都允许"""
-    if not current.role or current.role.code not in ("admin", "manager"):
+    if not current.has_role("admin", "manager"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "仅管理员/管理层可操作")
     return current
 
 
 
 async def require_not_viewer(current: models.User = Depends(get_current_user)) -> models.User:
-    if current.role and current.role.code == "viewer":
+    # 并集语义：只要还拥有任一非 viewer 角色即放行（仅当唯一角色是 viewer 才拦）
+    if current.role_codes and not (current.role_codes - {"viewer"}):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "只读账号不可操作")
     return current
 
 
 def require_roles(*codes: str):
-    """🆕 依赖工厂：仅允许指定角色（admin/manager 始终放行）。
+    """🆕 依赖工厂：仅允许指定角色（admin/manager 始终放行；多角色取并集）。
     用法：Depends(require_roles("sales", "sales_lead"))"""
     allowed = set(codes) | {"admin", "manager"}
 
     async def _dep(current: models.User = Depends(get_current_user)) -> models.User:
-        if not current.role or current.role.code not in allowed:
+        if not current.has_role(*allowed):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "无权操作")
         return current
 
@@ -77,7 +78,7 @@ def ensure_can_export(user: models.User) -> None:
     from .config import settings
     if not settings.export_approval_enabled:
         return
-    if user.role and user.role.code in ("admin", "manager"):
+    if user.has_role("admin", "manager"):
         return
     if getattr(user, "can_export", False):
         return
@@ -96,10 +97,10 @@ async def user_can_view_project(
     （设计/电工/装配只列被派单的、销售只列自己下单的），不在此函数——
     因为本函数还把守详情/字段/导出，设计师有详单权时应能读任意项目（#91 口径）。
     """
-    if not user.role:
+    if not user.role_codes:
         return False
     # admin / manager / 各部门负责人(_lead)：全部项目可见（不依赖成员资格——修复新建主管看不到老项目）
-    if user.role.code in ("admin", "manager") or user.role.code.endswith("_lead"):
+    if user.has_role("admin", "manager") or any(c.endswith("_lead") for c in user.role_codes):
         return True
     # 其余角色：项目成员才可见（成员由建项目自动添加 + 启动回填，普通员工默认是全部项目成员）
     res = await db.execute(
@@ -114,10 +115,10 @@ async def user_can_view_project(
 async def user_can_edit_project(
     db: AsyncSession, user: models.User, project: models.Project
 ) -> bool:
-    if not user.role:
+    if not user.role_codes:
         return False
     # admin / manager：全可编辑
-    if user.role.code in ("admin", "manager"):
+    if user.has_role("admin", "manager"):
         return True
     res = await db.execute(
         select(models.ProjectMember).where(

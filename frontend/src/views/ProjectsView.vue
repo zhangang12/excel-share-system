@@ -14,12 +14,8 @@ const loading = ref(false)
 const keyword = ref('')
 const statusFilter = ref('')
 
-const canCreate = computed(() =>
-  ['admin', 'manager'].includes(auth.user?.role_code || '')
-)
-const canDelete = computed(() =>
-  ['admin', 'manager'].includes(auth.user?.role_code || '')
-)
+const canCreate = computed(() => auth.hasRole('admin', 'manager'))
+const canDelete = computed(() => auth.hasRole('admin', 'manager'))
 
 const dialogVisible = ref(false)
 const isEdit = ref(false)

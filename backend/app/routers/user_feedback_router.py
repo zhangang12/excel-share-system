@@ -33,7 +33,7 @@ def _row_out(fb: models.UserFeedback) -> schemas.UserFeedbackRow:
         user_agent=fb.user_agent, status=fb.status, created_at=fb.created_at,
         user_id=fb.user_id,
         user_name=(fb.user.full_name or fb.user.username) if fb.user else None,
-        user_role=fb.user.role.code if (fb.user and fb.user.role) else None,
+        user_role=("/".join(sorted(fb.user.role_codes)) or None) if fb.user else None,
         shot_file_id=fb.shot_file_id,
         shot_file_name=fb.shot.name if fb.shot else None,
     )
@@ -85,7 +85,7 @@ async def list_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """管理层(admin/manager)可见全部,其余角色只看自己。"""
-    is_mgr = current.role and current.role.code in ("admin", "manager")
+    is_mgr = current.has_role("admin", "manager")
     q = select(models.UserFeedback)
     if not is_mgr or mine:
         q = q.where(models.UserFeedback.user_id == current.id)
@@ -154,7 +154,7 @@ async def export_html(
     items_html = []
     for fb in rows:
         uname = (fb.user.full_name or fb.user.username) if fb.user else "—"
-        urole = fb.user.role.code if (fb.user and fb.user.role) else "—"
+        urole = ("/".join(sorted(fb.user.role_codes)) or "—") if fb.user else "—"
         shot_html = ""
         if fb.shot:
             uri = _img_data_uri(Path(settings.files_dir) / fb.shot.path)

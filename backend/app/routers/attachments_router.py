@@ -158,7 +158,7 @@ async def remove(
     a = res.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "附件不存在")
-    is_mgr = current.role and current.role.code in ("admin", "manager")
+    is_mgr = current.has_role("admin", "manager")
     if not is_mgr and a.uploaded_by != current.id:
         raise HTTPException(403, "仅上传者本人或管理层可删除")
     name = a.name

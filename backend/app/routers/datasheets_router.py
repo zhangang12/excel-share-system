@@ -18,7 +18,8 @@ from ..deps import (
 async def _detail_write_dep(
     current: models.User = Depends(require_can_view_detail),
 ) -> models.User:
-    if current.role and current.role.code == "viewer":
+    # 并集语义：仅当唯一角色是 viewer 才拦
+    if current.role_codes and not (current.role_codes - {"viewer"}):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "只读账号不可操作")
     return current
 
@@ -349,15 +350,17 @@ async def update_cell(
     p = await _get_project_or_404(db, d.project_id)
     if not await user_can_edit_project(db, current, p):
         raise HTTPException(403, "无权修改")
-    # 字段级权限：admin / manager 跳过；其他角色检查 FieldPermission
-    if current.role.code not in ("admin", "manager"):
+    # 字段级权限：admin / manager 跳过；其他角色检查 FieldPermission（多角色取并集：任一角色可编辑即放行）
+    if not current.has_role("admin", "manager"):
         from sqlalchemy import select as _sel
+        role_ids = current.role_ids
         fp_res = await db.execute(_sel(models.FieldPermission).where(
             models.FieldPermission.field_id == data.field_id,
-            models.FieldPermission.role_id == current.role_id,
+            models.FieldPermission.role_id.in_(role_ids),
         ))
-        fp = fp_res.scalar_one_or_none()
-        if fp is not None and (not fp.can_view or not fp.can_edit):
+        fps = fp_res.scalars().all()
+        # 某角色未配置=默认放行；仅当所有角色都配了且都不允许编辑才拦
+        if len(fps) >= len(role_ids) and not any(fp.can_view and fp.can_edit for fp in fps):
             raise HTTPException(403, "无权编辑该字段")
     # 必须重新赋值整个 dict 才能让 SQLAlchemy 感知到 JSONB 变化
     values = dict(r.values or {})

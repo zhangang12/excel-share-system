@@ -72,11 +72,16 @@ ROLE_MENUS: dict[str, list[str]] = {
 
 
 def user_menu_keys(user: models.User) -> list[str]:
-    """当前用户可见的业务菜单 key（按 MENU_DEFS 顺序）+ 管理组 key。"""
-    code = user.role.code if user.role else ""
-    if code in ("admin", "manager"):
+    """当前用户可见的业务菜单 key（按 MENU_DEFS 顺序）+ 管理组 key。
+
+    多角色取并集：可见菜单 = 各角色可见菜单的合集。
+    """
+    codes = user.role_codes
+    if codes & {"admin", "manager"}:
         return _ALL_KEYS + _ADMIN_KEYS
-    allowed = set(ROLE_MENUS.get(code, ["catalog", "list"]))  # 未知角色按老默认（目录+详单）
+    allowed: set[str] = set()
+    for code in (codes or {""}):
+        allowed |= set(ROLE_MENUS.get(code, ["catalog", "list"]))  # 未知角色按老默认（目录+详单）
     allowed.add("messages")
     return [k for k in _ALL_KEYS if k in allowed]
 

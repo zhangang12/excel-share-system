@@ -33,19 +33,15 @@ const activeTab = ref('data')
 
 const canEdit = computed(() => {
   if (!auth.user || !project.value) return false
-  if (auth.user.role_code === 'admin' || auth.user.role_code === 'manager') return true
+  if (auth.hasRole('admin', 'manager')) return true
   const me = members.value.find(m => m.user_id === auth.user!.id)
   return !!me && me.permission === 'edit'
 })
 
-const canManage = computed(() =>
-  auth.user?.role_code === 'admin' || auth.user?.role_code === 'manager'
-)
+const canManage = computed(() => auth.hasRole('admin', 'manager'))
 
 // 权限克隆：admin 或 manager 可见（与后端 require_admin_or_manager 对齐）
-const canClonePerm = computed(() =>
-  auth.user?.role_code === 'admin' || auth.user?.role_code === 'manager'
-)
+const canClonePerm = computed(() => auth.hasRole('admin', 'manager'))
 const cloneDialogVisible = ref(false)
 
 async function loadProject() {
@@ -100,7 +96,7 @@ const fourSheetStatus = computed(() =>
 const activeSheet = computed(() => datasheets.value.find(d => d.id === activeSheetId.value) || null)
 const isPrecheckSheet = computed(() => !!activeSheet.value && ASSEMBLY_SHEETS.includes(activeSheet.value.name))
 const canMarkDone = computed(() =>
-  ['admin', 'manager', 'pm_lead', 'designer', 'design_lead'].includes(auth.user?.role_code || ''))
+  auth.hasRole('admin', 'manager', 'pm_lead', 'designer', 'design_lead'))
 
 const feedbacks = ref<Feedback[]>([])
 async function loadWorkflow() {

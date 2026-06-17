@@ -11,7 +11,7 @@ import StatusPill from '@/components/StatusPill.vue'
 import { fmtDate } from '@/utils/format'
 
 const auth = useAuthStore()
-const canWrite = computed(() => ['warehouse', 'warehouse_lead', 'admin', 'manager'].includes(auth.user?.role_code || ''))
+const canWrite = computed(() => auth.hasRole('warehouse', 'warehouse_lead', 'admin', 'manager'))
 
 const tab = ref('ov')
 const loading = ref(false)
