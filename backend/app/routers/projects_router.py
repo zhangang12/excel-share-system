@@ -304,6 +304,16 @@ async def list_projects(
     query = query.order_by(models.Project.updated_at.desc())
     res = await db.execute(query)
     items = list(res.scalars().all())
+    # 🆕 下单审批流：待审批/草稿(order_state pending/draft)的项目在通过前仅「销售本人 + 销售主管 + 管理层」可见，
+    # 其余角色(含各部门负责人——其经 user_can_view_project 本会看全部)在审批通过前看不到该项目。
+    if not current.has_role("admin", "manager", "sales_lead"):
+        sub = await db.execute(
+            select(models.SalesLedger.project_id, models.SalesLedger.sales_uid)
+            .where(models.SalesLedger.order_state.in_(("pending", "draft")))
+        )
+        hidden = {pid for pid, suid in sub.all() if suid != current.id}
+        if hidden:
+            items = [p for p in items if p.id not in hidden]
     # 🆕 项目目录列表行级可见性（仅列表显示；可逆开关 project_dir_own_only，默认开启）：
     # 设计/电工/装配 只列被派单(worker_id)的；销售员只列自己下单(sales_uid)的；
     # 外加按项目目录 销售/电工/设计师 列姓名匹配补授的「可见名单」__viz_uids__（存量数据补全）。

@@ -257,6 +257,9 @@ class SalesLedger(Base):
     # 🆕 订单作废流(2026-06-18)：None 正常 / applying 待销售负责人审批 / voided 已作废(项目软删)
     void_state: Mapped[Optional[str]] = mapped_column(String(20), index=True)
     void_reason: Mapped[Optional[str]] = mapped_column(Text)
+    # 🆕 下单审批流(2026-06-18)：None 已生效/历史 / pending 待主管审批 / draft 被退回可改
+    # （仅销售员下单需审批；销售主管/管理层下单直接 None 生效。待审批/草稿期间不建各部门任务/发货单）
+    order_state: Mapped[Optional[str]] = mapped_column(String(20), index=True)
     invoice_apply_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     invoice_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     prepay: Mapped[float] = mapped_column(default=0)                  # 预付

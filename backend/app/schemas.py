@@ -166,6 +166,9 @@ class SalesLedgerRow(BaseModel):
     invoice_batch_id: Optional[int] = None   # 🆕 合并开票批次号(同客户多项目合并)；None=单项目
     void_state: Optional[str] = None         # 🆕 订单作废流：None 正常 / applying 待审批 / voided 已作废
     void_reason: Optional[str] = None
+    order_state: Optional[str] = None        # 🆕 下单审批流：None 已生效 / pending 待主管审批 / draft 被退回
+    order_reject_reason: Optional[str] = None  # draft 时的退回原因
+    pending_order: Optional[dict] = None     # pending/draft 时的派单信息(depts/req_text/receiver)，供前端预填
     invoice_apply_file_id: Optional[int] = None
     invoice_apply_file_name: Optional[str] = None
     invoice_file_id: Optional[int] = None
@@ -197,6 +200,10 @@ class SalesLedgerListOut(BaseModel):
 
 class VoidApplyIn(BaseModel):
     reason: str = Field(min_length=1, max_length=500)  # 🆕 订单作废原因（必填）
+
+
+class OrderRejectIn(BaseModel):
+    reason: str = ""  # 🆕 下单退回原因（可选）
 
 
 class SalesReceiverIn(BaseModel):

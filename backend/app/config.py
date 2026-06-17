@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # 上线灰度后由管理层确认再打开，符合"动老页面用可逆开关"红线）
     export_approval_enabled: bool = False
 
+    # 🆕 销售下单审批开关(2026-06-18)：开启后「销售员」下单进入"待销售主管审批"，通过后才创建并推送
+    # 各部门任务/物流发货待办；销售主管/管理层下单仍直接生效。默认关闭=与现状一致(下单即生效)，
+    # 生产环境置 SALES_ORDER_APPROVAL=true 开启（可逆开关红线）。
+    sales_order_approval: bool = False
+
     # 🆕 项目目录行级可见性：仅 设计/电工/装配 三类岗位只看"自己接的项目"(被派单 worker_id=自己)，
     # 其余角色(管理层/各部门负责人/采购/仓库/财务/物流等)维持看全部。
     # 默认开启；如需回退为"全部可见"，设环境变量 PROJECT_DIR_OWN_ONLY=false 重启即可（可逆开关红线）。

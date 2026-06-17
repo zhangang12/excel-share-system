@@ -31,6 +31,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("invoice_batch_id", "INTEGER"),           # 🆕 合并开票批次号(同客户多项目合并)
         ("void_state", "VARCHAR(20)"),             # 🆕 订单作废流: applying/voided
         ("void_reason", "TEXT"),                   # 🆕 作废原因
+        ("order_state", "VARCHAR(20)"),            # 🆕 下单审批流: pending/draft
     ],
 }
 

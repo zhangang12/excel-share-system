@@ -22,6 +22,7 @@ from ..notify import push_message
 from ..utils import write_audit
 from ..dept_config import DEPTS
 from ..sheet_templates import normalize_date_str
+from ..config import settings
 from .attachments_router import save_upload, delete_attachment_file
 from .orders_router import create_order_internal, _writeback_overview
 from .projects_router import (
@@ -107,7 +108,11 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
     for l in ledgers:
         p = l.project
         extra = (p.extra or {}) if p else {}
+        po = extra.get("__pending_order__") or None  # 🆕 待审批/草稿派单信息(供前端预填)
         rows.append(schemas.SalesLedgerRow(
+            order_state=l.order_state,
+            order_reject_reason=(po or {}).get("reject_reason") if po else None,
+            pending_order={k: po[k] for k in ("depts", "req_text", "receiver") if k in po} if po else None,
             id=l.id, project_id=l.project_id,
             code=p.code if p else "", name=p.name if p else "",
             status=p.status if p else "",
@@ -198,6 +203,36 @@ async def next_code(
     return schemas.NextCodeOut(code=f"{year}-{mx + 1:03d}")
 
 
+async def _materialize_order_downstream(db: AsyncSession, p: models.Project, depts: list[str],
+                                        req_text: str, receiver: tuple, creator: models.User) -> list[int]:
+    """下单生效：补全员成员 + 建发货待办 + 各部门待派任务。返回 order_ids。不 commit、不推送。
+    供「主管/管理层直接下单」与「销售员下单经主管审批通过」共用。"""
+    await _add_all_active_users_as_members(db, p.id)
+    name_, phone_, addr_ = receiver
+    db.add(models.Shipment(
+        project_id=p.id,
+        receiver_name=(name_ or "").strip() or None,
+        receiver_phone=(phone_ or "").strip() or None,
+        receiver_addr=(addr_ or "").strip() or None,
+    ))
+    order_ids = []
+    for d in depts:
+        o = await create_order_internal(db, project=p, dept=d, req_text=req_text, created_by=creator.id)
+        order_ids.append(o.id)
+    return order_ids
+
+
+async def _push_order_dispatched(db: AsyncSession, p: models.Project, depts: list[str], creator_name) -> None:
+    """下单生效后推送各部门负责人 + 物流（事务提交后调用）。"""
+    for d in depts:
+        await push_message(db, to_role=DEPTS[d]["lead_role"], kind="info",
+                           text=f"【销售下单】{p.code} {p.name} 新{DEPTS[d]['name']}任务待分派（销售：{creator_name}）。",
+                           biz_type="project", biz_id=p.id)
+    await push_message(db, to_role="logistics", kind="info",
+                       text=f"【新项目】{p.code} {p.name} 已创建发货待办。",
+                       biz_type="project", biz_id=p.id)
+
+
 @router.post("/orders", response_model=schemas.SalesOrderOut)
 async def create_sales_order(
     data: schemas.SalesOrderCreate,
@@ -230,12 +265,11 @@ async def create_sales_order(
     if res.scalar_one_or_none():
         raise HTTPException(409, f"项目编号 {code} 已存在")
 
-    # 1) 项目（预置模板表 + 全员成员，与目录新建一致）
+    # 1) 项目（预置模板表 + 一览销售名回写）
     p = models.Project(code=code, name=name, status="进行中", manager_id=None)
     db.add(p)
     await db.flush()
     await create_default_template_sheets(db, p.id)
-    await _add_all_active_users_as_members(db, p.id)
     _writeback_overview(p, "销售", _uname(current))
 
     # 2) 台账（未开票金额=合同金额，由 invoice_state 推导不另存）
@@ -253,33 +287,33 @@ async def create_sales_order(
     )
     db.add(led)
 
-    # 3) 发货待办（E1 一项目一单；E2 收货信息销售录入为权威初值）
     rcv = data.receiver or schemas.SalesReceiverIn()
-    db.add(models.Shipment(
-        project_id=p.id,
-        receiver_name=rcv.name.strip() or None,
-        receiver_phone=rcv.phone.strip() or None,
-        receiver_addr=rcv.addr.strip() or None,
-    ))
-
-    # 4) 各部门待派任务
-    order_ids = []
     req = data.req_text.strip() or f"（销售下单）{name}"
-    for d in depts:
-        o = await create_order_internal(
-            db, project=p, dept=d, req_text=req, created_by=current.id)
-        order_ids.append(o.id)
 
-    await db.commit()
-
-    # 推送（事务提交后）
-    for d in depts:
-        await push_message(db, to_role=DEPTS[d]["lead_role"], kind="info",
-                           text=f"【销售下单】{code} {name} 新{DEPTS[d]['name']}任务待分派（销售：{_uname(current)}）。",
+    # 🆕 下单审批流(2026-06-18)：仅销售员下单需主管审批，审批通过后才建各部门任务/发货单/成员；
+    #    销售主管/管理层下单直接生效（免审批）。待审批期间项目无成员/无任务，仅销售本人+主管/管理层可见。
+    #    可逆开关 sales_order_approval（默认关=下单即生效，与现状一致；生产置 true 开启）。
+    if settings.sales_order_approval and not _all_view(current):
+        led.order_state = "pending"
+        extra = dict(p.extra or {})
+        extra["__pending_order__"] = {
+            "depts": depts, "req_text": req,
+            "receiver": {"name": rcv.name.strip(), "phone": rcv.phone.strip(), "addr": rcv.addr.strip()},
+        }
+        p.extra = extra
+        await db.commit()
+        await push_message(db, to_role="sales_lead", kind="info",
+                           text=f"【下单待审批】{code} {name} 待销售主管审批（销售：{_uname(current)}）。",
                            biz_type="project", biz_id=p.id)
-    await push_message(db, to_role="logistics", kind="info",
-                       text=f"【新项目】{code} {name} 已创建发货待办。",
-                       biz_type="project", biz_id=p.id)
+        await write_audit(db, user=current, action="create_pending", target_type="sales_order",
+                          target_id=p.id, detail=f"{code} 待审批 派往{','.join(depts)}")
+        return schemas.SalesOrderOut(project_id=p.id, code=code, order_ids=[])
+
+    # 主管/管理层下单：直接生效
+    order_ids = await _materialize_order_downstream(
+        db, p, depts, req, (rcv.name, rcv.phone, rcv.addr), current)
+    await db.commit()
+    await _push_order_dispatched(db, p, depts, _uname(current))
     await write_audit(db, user=current, action="create", target_type="sales_order",
                       target_id=p.id, detail=f"{code} 派往{','.join(depts)}")
     return schemas.SalesOrderOut(project_id=p.id, code=code, order_ids=order_ids)
@@ -836,3 +870,160 @@ async def void_reject(
     await write_audit(db, user=current, action="void_reject",
                       target_type="sales_ledger", target_id=lid)
     return schemas.Msg(message="已驳回作废申请")
+
+
+# ==================== 🆕 销售下单审批（仅销售员下单需主管审批；通过后才建各部门任务/发货单） ====================
+# 口径(用户 2026-06-18)：仅销售员下单需审批，主管/管理层下单直接生效；审批通过后才创建并推送
+# 各部门任务+物流发货待办；驳回=退回草稿，销售可修改后重新提交。
+def _pending_payload(p: models.Project) -> dict:
+    return ((p.extra or {}).get("__pending_order__") or {}) if p else {}
+
+
+@router.get("/order-approvals", response_model=schemas.SalesLedgerListOut)
+async def order_approvals(
+    current: models.User = Depends(require_roles("sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    res = await db.execute(
+        select(models.SalesLedger).where(models.SalesLedger.order_state == "pending")
+        .order_by(models.SalesLedger.id.desc())
+    )
+    return schemas.SalesLedgerListOut(rows=await _ledger_rows(db, list(res.scalars().all())))
+
+
+@router.post("/ledger/{lid}/order-approve", response_model=schemas.Msg)
+async def order_approve(
+    lid: int,
+    current: models.User = Depends(require_roles("sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    led = await _ledger_or_404(db, lid)
+    if led.order_state != "pending":
+        raise HTTPException(400, "该下单不在待审批状态")
+    p = led.project
+    payload = _pending_payload(p)
+    depts = [d for d in (payload.get("depts") or []) if d in DEPTS] or ["design"]
+    req = payload.get("req_text") or f"（销售下单）{p.name if p else ''}"
+    rcv = payload.get("receiver") or {}
+    order_ids = await _materialize_order_downstream(
+        db, p, depts, req, (rcv.get("name"), rcv.get("phone"), rcv.get("addr")),
+        led.sales_user or current)
+    led.order_state = None
+    extra = dict(p.extra or {})
+    extra.pop("__pending_order__", None)
+    p.extra = extra
+    await db.commit()
+    await _push_order_dispatched(db, p, depts, _uname(led.sales_user))
+    if led.sales_uid:
+        await push_message(db, to_user_id=led.sales_uid, kind="info",
+                           text=f"【下单已通过】{p.code} {p.name} 已通过审批，各部门任务已派发。",
+                           biz_type="project", biz_id=p.id)
+    await write_audit(db, user=current, action="order_approve",
+                      target_type="sales_order", target_id=p.id, detail=f"派往{','.join(depts)}")
+    return schemas.Msg(message=f"已通过，已派发 {len(order_ids)} 个部门任务")
+
+
+@router.post("/ledger/{lid}/order-reject", response_model=schemas.Msg)
+async def order_reject(
+    lid: int,
+    data: schemas.OrderRejectIn,
+    current: models.User = Depends(require_roles("sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    led = await _ledger_or_404(db, lid)
+    if led.order_state != "pending":
+        raise HTTPException(400, "该下单不在待审批状态")
+    reason = (data.reason or "").strip()
+    led.order_state = "draft"
+    p = led.project
+    extra = dict(p.extra or {})
+    po = dict(extra.get("__pending_order__") or {})
+    po["reject_reason"] = reason
+    extra["__pending_order__"] = po
+    p.extra = extra
+    await db.commit()
+    if led.sales_uid:
+        await push_message(db, to_user_id=led.sales_uid, kind="warn",
+                           text=f"【下单退回】{p.code} 下单被主管退回{('：' + reason) if reason else ''}，可修改后重新提交。",
+                           biz_type="project", biz_id=p.id)
+    await write_audit(db, user=current, action="order_reject",
+                      target_type="sales_order", target_id=p.id, detail=reason)
+    return schemas.Msg(message="已退回销售修改")
+
+
+@router.put("/orders/{lid}/draft-resubmit", response_model=schemas.SalesOrderOut)
+async def order_draft_resubmit(
+    lid: int,
+    data: schemas.SalesOrderCreate,
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """销售修改被退回的下单(draft)并重新提交审批(→pending)。也可在 pending 状态下改后再交。"""
+    led = await _ledger_or_404(db, lid)
+    if led.order_state not in ("draft", "pending"):
+        raise HTTPException(400, "仅待审批/已退回的下单可修改重提")
+    if _is_sales(current) and not _all_view(current) and led.sales_uid != current.id:
+        raise HTTPException(403, "只能修改自己的下单")
+    p = led.project
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(400, "请填写设备名称")
+    depts = [d for d in data.depts if d in DEPTS]
+    if not depts:
+        raise HTTPException(400, "请至少选择一个派往部门")
+    if data.cust_type not in ("经销商", "终端客户"):
+        raise HTTPException(400, "客户分类必须是 经销商/终端客户")
+    if p:
+        p.name = name
+    led.customer = data.customer.strip() or None
+    led.cust_type = data.cust_type
+    led.contract = data.contract if data.contract in ("有", "无") else "无"
+    led.amount = data.amount or 0
+    led.tax_rate = data.tax_rate
+    led.prepay = data.prepay or 0
+    led.before_ship = data.before_ship or 0
+    led.prepay_note = (data.prepay_note or "").strip() or None
+    led.before_ship_note = (data.before_ship_note or "").strip() or None
+    led.ship_receivable = data.ship_receivable or 0
+    led.balance = data.balance or 0
+    led.balance_date = (normalize_date_str(data.balance_date) or None) if (data.balance or 0) else None
+    req = data.req_text.strip() or f"（销售下单）{name}"
+    rcv = data.receiver or schemas.SalesReceiverIn()
+    extra = dict(p.extra or {}) if p else {}
+    extra["__pending_order__"] = {
+        "depts": depts, "req_text": req,
+        "receiver": {"name": rcv.name.strip(), "phone": rcv.phone.strip(), "addr": rcv.addr.strip()},
+    }
+    if p:
+        p.extra = extra
+    led.order_state = "pending"
+    await db.commit()
+    await push_message(db, to_role="sales_lead", kind="info",
+                       text=f"【下单待审批】{p.code if p else ''} {name} 已重新提交，待销售主管审批（销售：{_uname(current)}）。",
+                       biz_type="project", biz_id=led.project_id)
+    await write_audit(db, user=current, action="order_resubmit",
+                      target_type="sales_order", target_id=led.project_id)
+    return schemas.SalesOrderOut(project_id=led.project_id, code=p.code if p else "", order_ids=[])
+
+
+@router.post("/ledger/{lid}/order-discard", response_model=schemas.Msg)
+async def order_discard(
+    lid: int,
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """销售放弃尚未生效的下单(待审批/草稿)→软删项目(无下游任务可清)。"""
+    led = await _ledger_or_404(db, lid)
+    if led.order_state not in ("draft", "pending"):
+        raise HTTPException(400, "仅待审批/已退回的下单可放弃")
+    if _is_sales(current) and not _all_view(current) and led.sales_uid != current.id:
+        raise HTTPException(403, "只能放弃自己的下单")
+    from .projects_router import soft_delete_project
+    p = led.project
+    led.order_state = None
+    if p and not p.is_deleted:
+        await soft_delete_project(db, p, void_dept_orders=False)
+    await db.commit()
+    await write_audit(db, user=current, action="order_discard",
+                      target_type="sales_order", target_id=lid)
+    return schemas.Msg(message="已放弃该下单")
