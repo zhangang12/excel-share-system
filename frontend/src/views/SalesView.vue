@@ -163,6 +163,10 @@ async function submitOrder() {
     // 🆕 修改被退回的草稿 → 重新提交审批
     if (draftEditLid.value) {
       const r = await salesApi.draftResubmit(draftEditLid.value, { ...orderForm })
+      // 追加的下单资料继续暂存，审批通过后随附各部门任务
+      if (orderFiles.value.length && r.ledger_id) {
+        try { await salesApi.pendingFiles(r.ledger_id, orderFiles.value.slice()) } catch { /* 静默 */ }
+      }
       ElMessage.success(`已重新提交审批（${r.code}），等待销售主管审批`)
       orderVisible.value = false
       draftEditLid.value = null
@@ -172,8 +176,14 @@ async function submitOrder() {
     const r = await salesApi.createOrder({ ...orderForm })
     // order_ids 为空 = 命中下单审批开关，进入"待主管审批"（尚未创建各部门任务）
     if (!r.order_ids || r.order_ids.length === 0) {
-      if (orderFiles.value.length) {
-        ElMessage.warning(`下单已提交待审批（${r.code}）；下单资料请在审批通过后到对应部门任务单补传`)
+      if (orderFiles.value.length && r.ledger_id) {
+        // 🆕 下单资料暂存，审批通过后自动转挂各部门任务单
+        try {
+          await salesApi.pendingFiles(r.ledger_id, orderFiles.value.slice())
+          ElMessage.success(`下单已提交待审批（${r.code}），资料(${orderFiles.value.length})已暂存，审批通过后自动随附各部门任务`)
+        } catch {
+          ElMessage.warning(`下单已提交待审批（${r.code}），但资料暂存失败，可在审批通过后到部门任务单补传`)
+        }
       } else {
         ElMessage.success(`下单已提交（${r.code}），等待销售主管审批`)
       }

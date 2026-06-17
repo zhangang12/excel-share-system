@@ -23,7 +23,7 @@ from ..utils import write_audit
 from ..dept_config import DEPTS
 from ..sheet_templates import normalize_date_str
 from ..config import settings
-from .attachments_router import save_upload, delete_attachment_file
+from .attachments_router import save_upload, delete_attachment_file, copy_attachment
 from .orders_router import create_order_internal, _writeback_overview
 from .projects_router import (
     create_default_template_sheets, _add_all_active_users_as_members,
@@ -222,10 +222,35 @@ async def next_code(
     return schemas.NextCodeOut(code=f"{year}-{mx + 1:03d}")
 
 
+async def _distribute_pending_files(db: AsyncSession, project_id: int,
+                                    order_ids: list[int], user_id) -> int:
+    """把待审批期间暂存的下单资料(order_input + biz_id NULL)审批通过后转挂到每个部门任务单：
+    各部门单独立复制一份(删除互不影响)，分发完删除暂存件。返回分发份数。"""
+    if not order_ids:
+        return 0
+    res = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "order_input",
+        models.Attachment.project_id == project_id,
+        models.Attachment.biz_id.is_(None),
+    ))
+    holdings = list(res.scalars().all())
+    if not holdings:
+        return 0
+    n = 0
+    for src in holdings:
+        for oid in order_ids:
+            await copy_attachment(db, src, biz_type="order_input", biz_id=oid,
+                                  project_id=project_id, user_id=user_id)
+            n += 1
+    for src in holdings:
+        await delete_attachment_file(db, src)  # 暂存件已分发，清理(物理+行)
+    return n
+
+
 async def _materialize_order_downstream(db: AsyncSession, p: models.Project, depts: list[str],
                                         req_text: str, receiver: tuple, creator: models.User) -> list[int]:
-    """下单生效：补全员成员 + 建发货待办 + 各部门待派任务。返回 order_ids。不 commit、不推送。
-    供「主管/管理层直接下单」与「销售员下单经主管审批通过」共用。"""
+    """下单生效：补全员成员 + 建发货待办 + 各部门待派任务 + 转挂暂存下单资料。返回 order_ids。
+    不 commit、不推送。供「主管/管理层直接下单」与「销售员下单经主管审批通过」共用。"""
     await _add_all_active_users_as_members(db, p.id)
     name_, phone_, addr_ = receiver
     db.add(models.Shipment(
@@ -238,6 +263,8 @@ async def _materialize_order_downstream(db: AsyncSession, p: models.Project, dep
     for d in depts:
         o = await create_order_internal(db, project=p, dept=d, req_text=req_text, created_by=creator.id)
         order_ids.append(o.id)
+    # 待审批暂存的下单资料 → 转挂到各部门任务单（主管/管理层直接下单时无暂存件，自动跳过）
+    await _distribute_pending_files(db, p.id, order_ids, creator.id)
     return order_ids
 
 
@@ -326,7 +353,7 @@ async def create_sales_order(
                            biz_type="project", biz_id=p.id)
         await write_audit(db, user=current, action="create_pending", target_type="sales_order",
                           target_id=p.id, detail=f"{code} 待审批 派往{','.join(depts)}")
-        return schemas.SalesOrderOut(project_id=p.id, code=code, order_ids=[])
+        return schemas.SalesOrderOut(project_id=p.id, code=code, order_ids=[], ledger_id=led.id)
 
     # 主管/管理层下单：直接生效
     order_ids = await _materialize_order_downstream(
@@ -335,7 +362,7 @@ async def create_sales_order(
     await _push_order_dispatched(db, p, depts, _uname(current))
     await write_audit(db, user=current, action="create", target_type="sales_order",
                       target_id=p.id, detail=f"{code} 派往{','.join(depts)}")
-    return schemas.SalesOrderOut(project_id=p.id, code=code, order_ids=order_ids)
+    return schemas.SalesOrderOut(project_id=p.id, code=code, order_ids=order_ids, ledger_id=led.id)
 
 
 @router.put("/ledger/{lid}", response_model=schemas.Msg)
@@ -1022,7 +1049,32 @@ async def order_draft_resubmit(
                        biz_type="project", biz_id=led.project_id)
     await write_audit(db, user=current, action="order_resubmit",
                       target_type="sales_order", target_id=led.project_id)
-    return schemas.SalesOrderOut(project_id=led.project_id, code=p.code if p else "", order_ids=[])
+    return schemas.SalesOrderOut(project_id=led.project_id, code=p.code if p else "", order_ids=[], ledger_id=led.id)
+
+
+@router.post("/ledger/{lid}/pending-files", response_model=schemas.Msg)
+async def upload_pending_files(
+    lid: int,
+    files: List[UploadFile] = File(...),
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 待审批/草稿下单的下单资料暂存：存为 order_input + biz_id NULL（各部门任务此时不可见），
+    审批通过时由 _distribute_pending_files 转挂到新建的各部门任务单。"""
+    led = await _ledger_or_404(db, lid)
+    if _is_sales(current) and not _all_view(current) and led.sales_uid != current.id:
+        raise HTTPException(403, "只能操作自己的下单")
+    if led.order_state not in ("pending", "draft"):
+        raise HTTPException(400, "仅待审批/已退回的下单可暂存资料")
+    n = 0
+    for f in files:
+        await save_upload(db, f, biz_type="order_input", biz_id=None,
+                          project_id=led.project_id, user=current)
+        n += 1
+    await db.commit()
+    await write_audit(db, user=current, action="pending_files",
+                      target_type="sales_order", target_id=led.project_id, detail=f"暂存{n}个")
+    return schemas.Msg(message=f"已暂存 {n} 个下单资料，审批通过后自动随附各部门任务")
 
 
 @router.post("/ledger/{lid}/order-discard", response_model=schemas.Msg)
@@ -1040,6 +1092,14 @@ async def order_discard(
     from .projects_router import soft_delete_project
     p = led.project
     led.order_state = None
+    # 清理暂存的下单资料(避免孤儿文件)
+    hres = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "order_input",
+        models.Attachment.project_id == led.project_id,
+        models.Attachment.biz_id.is_(None),
+    ))
+    for a in hres.scalars().all():
+        await delete_attachment_file(db, a)
     if p and not p.is_deleted:
         await soft_delete_project(db, p, void_dept_orders=False)
     await db.commit()

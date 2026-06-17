@@ -85,7 +85,14 @@ export const salesApi = {
   salespeople: () => http.get<{ id: number; name: string }[]>('/sales/salespeople').then((r) => r.data),
 
   createOrder: (data: SalesOrderForm) =>
-    http.post<{ project_id: number; code: string; order_ids: number[] }>('/sales/orders', data).then((r) => r.data),
+    http.post<{ project_id: number; code: string; order_ids: number[]; ledger_id?: number }>('/sales/orders', data).then((r) => r.data),
+
+  // 🆕 待审批/草稿下单的下单资料暂存（审批通过后自动转挂各部门任务）
+  pendingFiles: (lid: number, files: File[]) => {
+    const fd = new FormData()
+    files.forEach((f) => fd.append('files', f))
+    return http.post(`/sales/ledger/${lid}/pending-files`, fd).then((r) => r.data)
+  },
 
   updateLedger: (id: number, data: Partial<SalesLedgerRow>) =>
     http.put(`/sales/ledger/${id}`, data).then((r) => r.data),
@@ -138,7 +145,7 @@ export const salesApi = {
     http.post(`/sales/ledger/${id}/order-reject`, { reason }).then((r) => r.data),
   // 修改被退回的草稿并重新提交审批
   draftResubmit: (id: number, data: SalesOrderForm) =>
-    http.put<{ project_id: number; code: string }>(`/sales/orders/${id}/draft-resubmit`, data).then((r) => r.data),
+    http.put<{ project_id: number; code: string; ledger_id?: number }>(`/sales/orders/${id}/draft-resubmit`, data).then((r) => r.data),
   orderDiscard: (id: number) => http.post(`/sales/ledger/${id}/order-discard`).then((r) => r.data),
 }
 

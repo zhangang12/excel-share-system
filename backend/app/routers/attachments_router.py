@@ -83,6 +83,28 @@ async def save_upload(
     return a
 
 
+async def copy_attachment(
+    db: AsyncSession, src: models.Attachment, *,
+    biz_type: str, biz_id: Optional[int] = None,
+    project_id: Optional[int] = None, user_id: Optional[int] = None,
+) -> models.Attachment:
+    """把已存在附件的物理文件复制一份并新建附件记录（用于待审批下单资料审批通过后转挂各部门任务）。
+    每份目标独立物理文件，删除互不影响。调用方负责 commit。"""
+    content = (Path(settings.files_dir) / src.path).read_bytes()
+    sub = datetime.now(timezone.utc).strftime("%Y%m")
+    rel = f"{sub}/{uuid.uuid4().hex}.{src.ext or 'bin'}"
+    dest = Path(settings.files_dir) / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(content)
+    a = models.Attachment(
+        biz_type=biz_type, biz_id=biz_id, project_id=project_id,
+        name=src.name, ext=src.ext, size=src.size, path=rel, uploaded_by=user_id,
+    )
+    db.add(a)
+    await db.flush()
+    return a
+
+
 async def delete_attachment_file(db: AsyncSession, att: models.Attachment) -> None:
     """删除附件记录与磁盘文件（撤回场景复用）。调用方负责 commit。"""
     try:

@@ -238,6 +238,7 @@ class SalesOrderOut(BaseModel):
     project_id: int
     code: str
     order_ids: list[int]
+    ledger_id: Optional[int] = None   # 🆕 待审批下单暂存资料用（前端按此调 pending-files）
 
 
 class SalesLedgerUpdate(BaseModel):

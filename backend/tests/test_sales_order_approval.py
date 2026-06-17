@@ -121,6 +121,34 @@ async def main():
         chk(resD["order_ids"], f"主管下单立即派单: {resD['order_ids']}")
         chk(await dept_orders(resD["project_id"]) >= 1, "主管下单立即有部门任务单")
 
+        # ===== E: 下单资料暂存 → 审批通过后转挂各部门任务单 =====
+        resE = await c.post("/api/sales/orders", headers=Hs1, json={
+            "name": "机E", "customer": "客户甲", "cust_type": "经销商", "contract": "有",
+            "amount": 50000, "tax_rate": "13%", "prepay": 0, "before_ship": 0,
+            "ship_receivable": 0, "balance": 0, "balance_date": "",
+            "depts": ["design", "electric"], "receiver": {"name": "a", "phone": "1", "addr": "b"}})
+        eJson = resE.json(); pidE = eJson["project_id"]; lidE = eJson["ledger_id"]
+        chk(lidE is not None, "下单返回 ledger_id 供暂存资料")
+        # 暂存 2 个下单资料
+        r = await c.post(f"/api/sales/ledger/{lidE}/pending-files", headers=Hs1,
+                         files=[("files", ("a.pdf", b"AAA", "application/pdf")),
+                                ("files", ("b.pdf", b"BBB", "application/pdf"))])
+        chk(r.status_code == 200, f"暂存下单资料: {r.text[:80]}")
+
+        async def order_input_count(pid, biz_id_null=False):
+            async with SessionLocal() as db:
+                qq = select(func.count()).select_from(models.Attachment).where(
+                    models.Attachment.biz_type == "order_input",
+                    models.Attachment.project_id == pid)
+                qq = qq.where(models.Attachment.biz_id.is_(None) if biz_id_null
+                              else models.Attachment.biz_id.isnot(None))
+                return (await db.execute(qq)).scalar()
+        chk(await order_input_count(pidE, biz_id_null=True) == 2, "暂存件 2 个(biz_id NULL)")
+        # 审批通过 → 2 部门 × 2 资料 = 4 份转挂，暂存件清零
+        await c.post(f"/api/sales/ledger/{lidE}/order-approve", headers=Hsl)
+        chk(await order_input_count(pidE) == 4, f"通过后转挂各部门(2部门×2资料=4): {await order_input_count(pidE)}")
+        chk(await order_input_count(pidE, biz_id_null=True) == 0, "暂存件已清理")
+
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")
     shutil.rmtree(tmp, ignore_errors=True)
