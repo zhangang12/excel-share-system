@@ -75,12 +75,76 @@ async def scan_overdue(db: AsyncSession) -> dict:
     return {"scanned": len(orders), "notified": notified}
 
 
+async def scan_balance_due(db: AsyncSession, *, advance_days: int = 14) -> dict:
+    """🆕 尾款到期提醒：尾款日期(balance_date)前 advance_days 天起触发，
+    每条台账**只提醒一次**（终身去重），推送销售本人 + 抄送销售主管(sales_lead) + 管理层(manager)。
+
+    幂等键 = (biz_type='balance_due', biz_id=ledger.id)：只要历史上推过就跳过
+    （区别于逾期提醒的「按天去重」，尾款提醒口径是「只提醒一次即可」，用户 2026-06-17 确认）。
+    返回 {scanned, notified}。
+    """
+    today = datetime.now(_CN_TZ).date()
+    # balance_date <= 今天+advance_days 即进入提醒窗（含已逾期）；ISO 字符串可直接字典序比较
+    threshold = (today + timedelta(days=advance_days)).isoformat()
+    r = await db.execute(
+        select(models.SalesLedger).where(
+            models.SalesLedger.balance > 0,
+            models.SalesLedger.balance_date.isnot(None),
+            models.SalesLedger.balance_date != "",
+            models.SalesLedger.balance_date <= threshold,
+        )
+    )
+    ledgers = list(r.scalars().all())
+    notified = 0
+    for led in ledgers:
+        # 幂等：该台账历史上是否已推过尾款提醒（任意时间，非当日）→ 只提醒一次
+        r = await db.execute(
+            select(models.Message.id).where(
+                models.Message.biz_type == "balance_due",
+                models.Message.biz_id == led.id,
+            ).limit(1)
+        )
+        if r.scalar_one_or_none() is not None:
+            continue
+        try:
+            due = date.fromisoformat(led.balance_date)
+        except (ValueError, TypeError):
+            continue  # 脏数据(非法日期)跳过，避免误推
+        p = led.project
+        code = p.code if p else f"#{led.project_id}"
+        name = p.name if p else ""
+        days = (due - today).days
+        when = (f"还有 {days} 天到期" if days > 0
+                else ("今天到期" if days == 0 else f"已逾期 {-days} 天"))
+        text = (f"【尾款提醒】{code} {name} 尾款 ¥{led.balance:,.0f} 预计 {led.balance_date} 到期"
+                f"（{when}），请及时跟进收款。")
+        # 销售本人 + 抄送主管/管理层；三条均带同一 biz 键，下次扫描即被去重
+        if led.sales_uid:
+            await push_message(db, to_user_id=led.sales_uid, kind="wx",
+                               text=text, biz_type="balance_due", biz_id=led.id)
+        await push_message(db, to_role="sales_lead", kind="warn",
+                           text=text, biz_type="balance_due", biz_id=led.id)
+        await push_message(db, to_role="manager", kind="warn",
+                           text=text, biz_type="balance_due", biz_id=led.id)
+        notified += 1
+
+    if notified:
+        log.info("[scan_balance_due] 推送 %d 条尾款到期提醒（共扫描 %d）", notified, len(ledgers))
+    return {"scanned": len(ledgers), "notified": notified}
+
+
 async def overdue_scheduler(interval_hours: int = 12) -> None:
-    """启动期周期任务：每 interval_hours 扫一次（单容器部署用 asyncio 即可）。"""
+    """启动期周期任务：每 interval_hours 扫一次（单容器部署用 asyncio 即可）。
+    含：逾期任务提醒 + 🆕 尾款到期提醒（各用独立会话，互不影响）。"""
     while True:
         try:
             async with SessionLocal() as db:
                 await scan_overdue(db)
         except Exception as e:  # noqa: BLE001
-            log.warning("overdue_scheduler 失败: %s", e)
+            log.warning("scan_overdue 失败: %s", e)
+        try:
+            async with SessionLocal() as db:
+                await scan_balance_due(db)
+        except Exception as e:  # noqa: BLE001
+            log.warning("scan_balance_due 失败: %s", e)
         await asyncio.sleep(interval_hours * 3600)

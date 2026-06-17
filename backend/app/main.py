@@ -104,6 +104,15 @@ def create_app() -> FastAPI:
         from .overdue import scan_overdue
         return await scan_overdue(db)
 
+    # 🆕 尾款到期提醒手动/cron 触发（管理层）：到期前14天起，每条台账只提醒一次
+    @app.post("/api/internal/balance-due-scan")
+    async def balance_due_scan_now(
+        current=Depends(require_admin_or_manager),
+        db=Depends(get_db),
+    ):
+        from .overdue import scan_balance_due
+        return await scan_balance_due(db)
+
     # ===== 演示模式：托管前端静态资源 =====
     static_path = Path(settings.static_dir).resolve()
     if static_path.exists():
