@@ -140,16 +140,33 @@ async def main():
             "username": "esc1", "password": "pass123", "role_ids": [rid["admin"]]})
         chk(r.status_code == 403, f"admin 角色不可经 API 分配(连 admin 操作也禁): {r.status_code} {r.text[:80]}")
         Hmgr = await login("manager", "manager123")
+        # 🆕 口径 2026-06-17: 管理层可为自己/他人调整角色, 含分配 manager 角色
         r = await c.post("/api/admin/users", headers=Hmgr, json={
             "username": "esc2", "password": "pass123", "role_ids": [rid["manager"]]})
-        chk(r.status_code == 403, f"manager 不可分配 manager 角色(防自助提权): {r.status_code}")
+        chk(r.status_code == 200, f"manager 现可分配 manager 角色: {r.status_code} {r.text[:80]}")
+        # 但 admin 仍是系统级, 任何人(含 manager)都不可经 API 夹带分配
         r = await c.post("/api/admin/users", headers=Hmgr, json={
             "username": "esc3", "password": "pass123", "role_ids": [rid["sales"], rid["admin"]]})
-        chk(r.status_code == 403, f"manager 不可在多选里夹带 admin: {r.status_code}")
+        chk(r.status_code == 403, f"manager 仍不可夹带 admin(系统级): {r.status_code}")
         # 对照：admin 可分配 manager
         r = await c.post("/api/admin/users", headers=H, json={
             "username": "mgr_ok", "password": "pass123", "role_ids": [rid["manager"]]})
         chk(r.status_code == 200, f"admin 分配 manager 应成功: {r.text[:100]}")
+
+        # ===== 🆕 H2. 管理层可为他人/自己调整角色, 但不可篡改超级管理员 =====
+        async with SessionLocal() as db:
+            mgr_uid = (await db.execute(select(models.User).where(models.User.username == "manager"))).scalar_one().id
+            admin_uid = (await db.execute(select(models.User).where(models.User.username == "admin"))).scalar_one().id
+        target = await mk("mgr_target", [rid["sales"]])
+        # manager 改他人角色 → 200
+        r = await c.put(f"/api/admin/users/{target}", headers=Hmgr, json={"role_ids": [rid["designer"]]})
+        chk(r.status_code == 200 and r.json()["role_codes"] == ["designer"], f"manager 改他人角色: {r.text[:100]}")
+        # manager 给自己调整角色(在 manager 基础上加 sales) → 200
+        r = await c.put(f"/api/admin/users/{mgr_uid}", headers=Hmgr, json={"role_ids": [rid["manager"], rid["sales"]]})
+        chk(r.status_code == 200 and set(r.json()["role_codes"]) == {"manager", "sales"}, f"manager 给自己调整角色: {r.text[:100]}")
+        # manager 不可篡改超级管理员账号 → 403
+        r = await c.put(f"/api/admin/users/{admin_uid}", headers=Hmgr, json={"role_ids": [rid["sales"]]})
+        chk(r.status_code == 403, f"manager 不可改 admin 账号: {r.status_code}")
 
         # ================= I. 降级后项目可见性回填 =================
         # manager 用户无 ProjectMember；降为普通角色(finance)后应被回填为全项目成员 → 一览可见

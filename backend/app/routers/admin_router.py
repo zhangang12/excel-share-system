@@ -61,14 +61,12 @@ _UNASSIGNABLE_CODES = {"admin", "buyer_standard", "buyer_outsource"}
 
 
 def _guard_assignable(actor: models.User, codes: set[str]) -> None:
-    """越权防护：拦截把高权/系统角色塞给用户。
-    - admin / 旧采购角色：任何人都不可经 API 分配
-    - manager（管理层）：仅 admin 可分配（防止 manager 自助提权造 manager）"""
+    """越权防护：拦截把系统级/已停用角色塞给用户。
+    - admin / 旧采购角色(buyer_standard/buyer_outsource)：任何人都不可经 API 分配（admin 仅系统种子持有）
+    - manager（管理层）：管理层自身亦可分配（用户口径 2026-06-17：manager 可为自己/他人调整角色）"""
     bad = codes & _UNASSIGNABLE_CODES
     if bad:
         raise HTTPException(403, f"不可分配角色：{'、'.join(sorted(bad))}（系统/已停用角色）")
-    if "manager" in codes and not actor.has_role("admin"):
-        raise HTTPException(403, "仅超级管理员可分配「管理层」角色")
 
 
 async def _set_user_roles(db: AsyncSession, u: models.User, role_ids: list[int],
@@ -148,13 +146,16 @@ async def create_user(
 async def update_user(
     uid: int,
     data: schemas.UserUpdate,
-    current: models.User = Depends(require_admin),
+    current: models.User = Depends(require_admin_or_manager),  # 🆕 管理层亦可编辑用户/调整角色(自己+他人)
     db: AsyncSession = Depends(get_db),
 ):
     res = await db.execute(select(models.User).where(models.User.id == uid))
     u = res.scalar_one_or_none()
     if not u:
         raise HTTPException(404, "用户不存在")
+    # 非超级管理员不可篡改超级管理员账号(admin 系统级保护)
+    if u.has_role("admin") and not current.has_role("admin"):
+        raise HTTPException(403, "不可修改超级管理员账号")
     if data.full_name is not None:
         u.full_name = data.full_name
     if data.email is not None:
