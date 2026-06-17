@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 🆕 v3 M09 财务部：待开票 / 已开票 / 售后费用 三 tab
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { http } from '@/api'
@@ -11,9 +11,12 @@ import EmptyHint from '@/components/EmptyHint.vue'
 interface InvoiceRow {
   ledger_id: number; code: string; name: string; customer?: string | null
   sales_name?: string | null; amount: number; tax_rate?: string | null
+  invoice_batch_id?: number | null   // 🆕 合并开票批次号；同批多行共享，一次开一张合并发票
   apply_file_id?: number | null; apply_file_name?: string | null
   invoice_file_id?: number | null; invoice_file_name?: string | null
 }
+// 视图行：在 InvoiceRow 基础上叠加合并组的展示字段
+type ViewRow = InvoiceRow & { _isBatch: boolean; _count: number; _codes: string }
 interface AsRow {
   id: number; code: string; name: string; problem: string; cost: number
   mat_file_id?: number | null; mat_file_name?: string | null
@@ -40,7 +43,32 @@ async function load() {
 }
 onMounted(load)
 
-async function uploadInvoice(row: InvoiceRow) {
+// 🆕 把同 invoice_batch_id 的多行归为一行展示（合并组），单项目保持原样
+function groupRows(list: InvoiceRow[]): ViewRow[] {
+  const out: ViewRow[] = []
+  const batches = new Map<number, InvoiceRow[]>()
+  for (const r of list) {
+    if (r.invoice_batch_id) {
+      if (!batches.has(r.invoice_batch_id)) batches.set(r.invoice_batch_id, [])
+      batches.get(r.invoice_batch_id)!.push(r)
+    } else {
+      out.push({ ...r, _isBatch: false, _count: 1, _codes: r.code })
+    }
+  }
+  for (const [, rs] of batches) {
+    out.push({
+      ...rs[0], _isBatch: true, _count: rs.length,
+      _codes: rs.map((x) => x.code).join('、'),
+      name: rs.length > 1 ? `${rs[0].name} 等 ${rs.length} 项` : rs[0].name,
+      amount: rs.reduce((s, x) => s + (x.amount || 0), 0),
+    })
+  }
+  return out
+}
+const pendingView = computed(() => groupRows(pending.value))
+const invoicedView = computed(() => groupRows(invoiced.value))
+
+async function uploadInvoice(row: ViewRow) {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = '.pdf,.jpg,.jpeg,.png,.ofd'
@@ -48,16 +76,22 @@ async function uploadInvoice(row: InvoiceRow) {
     const f = input.files?.[0]
     if (!f) return
     const fd = new FormData(); fd.append('file', f)
-    await http.post(`/sales/ledger/${row.ledger_id}/invoice-upload`, fd)
-    ElMessage.success('发票已上传，已回传销售订单')
+    // 🆕 合并批次走批次端点，一张发票回传整组；单项目走原端点
+    if (row._isBatch && row.invoice_batch_id) {
+      await http.post(`/sales/invoice-batch/${row.invoice_batch_id}/invoice-upload`, fd)
+      ElMessage.success(`合并发票已上传，${row._count} 个项目已开票`)
+    } else {
+      await http.post(`/sales/ledger/${row.ledger_id}/invoice-upload`, fd)
+      ElMessage.success('发票已上传，已回传销售订单')
+    }
     await load()
     tab.value = 'invoiced'
   }
   input.click()
 }
 
-// #2 财务开票纠错：作废原发票退回待开票，可重新上传正确发票
-async function revokeInvoice(row: InvoiceRow) {
+// #2 财务开票纠错：作废原发票退回待开票，可重新上传正确发票（合并发票暂不支持单项目作废）
+async function revokeInvoice(row: ViewRow) {
   try {
     await ElMessageBox.confirm(
       '作废原发票并退回「待开票」以便重新开具？原发票文件将删除。', '作废重开', { type: 'warning' })
@@ -80,9 +114,14 @@ async function revokeInvoice(row: InvoiceRow) {
 
     <el-card shadow="never" v-loading="loading">
       <el-tabs v-model="tab">
-        <el-tab-pane :label="`📥 待开票 (${pending.length})`" name="pending">
-          <el-table :data="pending" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-            <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+        <el-tab-pane :label="`📥 待开票 (${pendingView.length})`" name="pending">
+          <el-table :data="pendingView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+            <el-table-column label="项目编号" min-width="140">
+              <template #default="{ row }">
+                <el-tag v-if="row._isBatch" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row._count }}</el-tag>
+                <b class="code">{{ row._codes }}</b>
+              </template>
+            </el-table-column>
             <el-table-column prop="name" label="设备名称" min-width="150" />
             <el-table-column prop="customer" label="客户单位" min-width="120"><template #default="{ row }">{{ row.customer || '—' }}</template></el-table-column>
             <el-table-column prop="sales_name" label="销售" width="90"><template #default="{ row }">{{ row.sales_name || '—' }}</template></el-table-column>
@@ -96,18 +135,25 @@ async function revokeInvoice(row: InvoiceRow) {
                 </el-button>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="120">
+            <el-table-column label="操作" width="140">
               <template #default="{ row }">
-                <el-button size="small" type="primary" :icon="UploadFilled" @click="uploadInvoice(row)">上传发票</el-button>
+                <el-button size="small" type="primary" :icon="UploadFilled" @click="uploadInvoice(row)">
+                  {{ row._isBatch ? '上传合并发票' : '上传发票' }}
+                </el-button>
               </template>
             </el-table-column>
           </el-table>
-          <EmptyHint v-if="!pending.length" text="暂无待开票" />
+          <EmptyHint v-if="!pendingView.length" text="暂无待开票" />
         </el-tab-pane>
 
-        <el-tab-pane :label="`✅ 已开票 (${invoiced.length})`" name="invoiced">
-          <el-table :data="invoiced" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-            <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+        <el-tab-pane :label="`✅ 已开票 (${invoicedView.length})`" name="invoiced">
+          <el-table :data="invoicedView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+            <el-table-column label="项目编号" min-width="140">
+              <template #default="{ row }">
+                <el-tag v-if="row._isBatch" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row._count }}</el-tag>
+                <b class="code">{{ row._codes }}</b>
+              </template>
+            </el-table-column>
             <el-table-column prop="name" label="设备名称" min-width="150" />
             <el-table-column prop="sales_name" label="销售" width="90"><template #default="{ row }">{{ row.sales_name || '—' }}</template></el-table-column>
             <el-table-column label="金额" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
@@ -115,17 +161,20 @@ async function revokeInvoice(row: InvoiceRow) {
               <template #default="{ row }">
                 <el-button v-if="row.invoice_file_id" size="small" link type="success"
                            @click="downloadAttachment({ id: row.invoice_file_id, name: row.invoice_file_name || '发票' })">
-                  📎 {{ row.invoice_file_name }}
+                  📎 {{ row.invoice_file_name }}{{ row._isBatch ? '（合并）' : '' }}
                 </el-button>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="110">
               <template #default="{ row }">
-                <el-button size="small" link type="warning" @click="revokeInvoice(row)">作废重开</el-button>
+                <el-button v-if="!row._isBatch" size="small" link type="warning" @click="revokeInvoice(row)">作废重开</el-button>
+                <el-tooltip v-else content="合并发票暂不支持单项目作废" placement="top">
+                  <span class="muted">—</span>
+                </el-tooltip>
               </template>
             </el-table-column>
           </el-table>
-          <EmptyHint v-if="!invoiced.length" text="暂无已开票" />
+          <EmptyHint v-if="!invoicedView.length" text="暂无已开票" />
         </el-tab-pane>
 
         <el-tab-pane :label="`🛎️ 售后费用 (${aftersales.length})`" name="aftersales">
@@ -154,4 +203,5 @@ async function revokeInvoice(row: InvoiceRow) {
 
 <style scoped>
 .code { color: var(--primary, #2563eb); }
+.muted { color: var(--el-text-color-secondary); font-size: 13px; }
 </style>

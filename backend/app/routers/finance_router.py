@@ -41,6 +41,7 @@ async def _invoice_rows(db: AsyncSession, state: str) -> list[schemas.FinanceInv
             ledger_id=l.id, code=p.code if p else "", name=p.name if p else "",
             customer=l.customer, sales_name=_uname(l.sales_user),
             amount=l.amount or 0, tax_rate=l.tax_rate,
+            invoice_batch_id=l.invoice_batch_id,
             apply_file_id=l.invoice_apply_file_id,
             apply_file_name=names.get(l.invoice_apply_file_id),
             invoice_file_id=l.invoice_file_id,

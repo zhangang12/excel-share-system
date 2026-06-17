@@ -2,7 +2,7 @@
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
 import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation } from '@element-plus/icons-vue'
+import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation, UploadFilled, DocumentCopy } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment, ordersApi } from '@/api/orders'
@@ -298,26 +298,120 @@ async function applyInvoice(r: SalesLedgerRow) {
   input.click()
 }
 
-// ===== 开票审批（主管） =====
+// ===== 🆕 合并开票申请（同客户多项目，一份申请 + 一张合并发票） =====
+const mergeVisible = ref(false)
+const mergeSelected = ref<SalesLedgerRow[]>([])
+const mergeFile = ref<File | null>(null)
+const mergeSubmitting = ref(false)
+const mergeTableRef = ref()
+// 可合并的项目：未进入开票流且非「不开票」
+const mergeEligible = computed(() => rows.value.filter((r) => !r.invoice_state && r.tax_rate !== '/'))
+const mergeAmount = computed(() => mergeSelected.value.reduce((s, r) => s + (r.amount || 0), 0))
+// 同客户约束：选中首个后，其它客户的行不可勾选（实现「002A/002B 同客户」口径）
+function mergeSelectable(row: SalesLedgerRow) {
+  if (!mergeSelected.value.length) return true
+  return (row.customer || '') === (mergeSelected.value[0].customer || '')
+}
+// selectable 在选中变化时不一定即时重算，这里在 selection-change 兜底剔除跨客户勾选
+let mergeSelGuard = false
+function onMergeSel(sel: SalesLedgerRow[]) {
+  if (mergeSelGuard) return
+  if (sel.length <= 1) { mergeSelected.value = [...sel]; return }
+  const cust = sel[0].customer || ''
+  const bad = sel.filter((r) => (r.customer || '') !== cust)
+  if (bad.length) {
+    mergeSelGuard = true
+    bad.forEach((r) => mergeTableRef.value?.toggleRowSelection(r, false))
+    nextTick(() => { mergeSelGuard = false })
+    ElMessage.warning('合并开票只能勾选同一客户的项目')
+    mergeSelected.value = sel.filter((r) => (r.customer || '') === cust)
+    return
+  }
+  mergeSelected.value = [...sel]
+}
+function openMerge() {
+  mergeSelected.value = []
+  mergeFile.value = null
+  mergeVisible.value = true
+  nextTick(() => mergeTableRef.value?.clearSelection?.())
+}
+function pickMergeFile() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.pdf,.xls,.xlsx,.doc,.docx'
+  input.onchange = () => { mergeFile.value = input.files?.[0] || null }
+  input.click()
+}
+async function submitMerge() {
+  if (mergeSelected.value.length < 2) { ElMessage.warning('请至少勾选 2 个同客户项目'); return }
+  if (!mergeFile.value) { ElMessage.warning('请上传合并开票申请表'); return }
+  mergeSubmitting.value = true
+  try {
+    await salesApi.invoiceApplyMerge(mergeSelected.value.map((r) => r.id), mergeFile.value)
+    ElMessage.success(`合并开票申请已提交（${mergeSelected.value.length} 个项目），等待销售主管审批`)
+    mergeVisible.value = false
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '提交失败')
+  } finally {
+    mergeSubmitting.value = false
+  }
+}
+
+// ===== 开票审批（主管）：单项目 + 🆕 合并批次混合展示 =====
 const approvalVisible = ref(false)
 const approvals = ref<SalesLedgerRow[]>([])
+// 把审批列表按 invoice_batch_id 归组：合并批次显示为一组（一次通过/驳回），单项目各自一组
+const approvalGroups = computed(() => {
+  const singles: any[] = []
+  const batches = new Map<number, SalesLedgerRow[]>()
+  for (const r of approvals.value) {
+    if (r.invoice_batch_id) {
+      if (!batches.has(r.invoice_batch_id)) batches.set(r.invoice_batch_id, [])
+      batches.get(r.invoice_batch_id)!.push(r)
+    } else singles.push(r)
+  }
+  const groups = singles.map((r) => ({
+    key: `s${r.id}`, isBatch: false, batchId: null as number | null, count: 1,
+    codes: r.code, customer: r.customer, sales_name: r.sales_name, amount: r.amount || 0,
+    apply_file_id: r.invoice_apply_file_id, apply_file_name: r.invoice_apply_file_name,
+    ledgerId: r.id,
+  }))
+  for (const [bid, rs] of batches) {
+    groups.push({
+      key: `b${bid}`, isBatch: true, batchId: bid, count: rs.length,
+      codes: rs.map((x) => x.code).join('、'), customer: rs[0].customer, sales_name: rs[0].sales_name,
+      amount: rs.reduce((s, x) => s + (x.amount || 0), 0),
+      apply_file_id: rs[0].invoice_apply_file_id, apply_file_name: rs[0].invoice_apply_file_name,
+      ledgerId: rs[0].id,
+    })
+  }
+  return groups
+})
 async function openApprovals() {
   approvals.value = (await salesApi.invoiceApprovals()).rows
   approvalVisible.value = true
 }
-async function approve(r: SalesLedgerRow, ok: boolean) {
-  if (ok) {
-    await salesApi.invoiceApprove(r.id)
-  } else {
-    // #14 驳回会删除已上传的开票申请表（不可逆），加二次确认
+async function approveGroup(g: any, ok: boolean) {
+  if (!ok) {
+    // 驳回会删除已上传的开票申请表（不可逆），加二次确认
     try {
       await ElMessageBox.confirm(
-        '驳回后将删除该开票申请表，销售需重新申请。确认驳回？', '开票驳回', { type: 'warning' })
+        g.isBatch
+          ? `驳回后将删除该合并开票申请表（${g.count} 个项目一并退回），销售需重新申请。确认驳回？`
+          : '驳回后将删除该开票申请表，销售需重新申请。确认驳回？',
+        '开票驳回', { type: 'warning' })
     } catch { return }
-    await salesApi.invoiceReject(r.id)
+  }
+  if (g.isBatch) {
+    if (ok) await salesApi.invoiceBatchApprove(g.batchId)
+    else await salesApi.invoiceBatchReject(g.batchId)
+  } else {
+    if (ok) await salesApi.invoiceApprove(g.ledgerId)
+    else await salesApi.invoiceReject(g.ledgerId)
   }
   ElMessage.success(ok ? '已通过，已推送财务部开票' : '已驳回')
-  approvals.value = approvals.value.filter((x) => x.id !== r.id)
+  approvals.value = (await salesApi.invoiceApprovals()).rows
   await load()
 }
 
@@ -340,6 +434,7 @@ async function openReport() {
       <div class="spacer"></div>
       <el-button v-if="allView" type="primary" plain @click="openReport">📊 销售报表</el-button>
       <el-button v-if="allView" :icon="Stamp" @click="openApprovals">开票审批</el-button>
+      <el-button :icon="DocumentCopy" @click="openMerge">合并开票</el-button>
       <el-button type="primary" :icon="Plus" :loading="openingOrder" @click="openOrder">销售下单</el-button>
     </div>
 
@@ -768,33 +863,77 @@ async function openReport() {
       </div>
     </el-dialog>
 
-    <!-- ===== 开票审批（主管） ===== -->
-    <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="720px" class="v3-scroll-dialog">
-      <EmptyHint v-if="!approvals.length" text="暂无待审批的开票申请" size="sm" />
-      <el-table v-else :data="approvals" stripe>
-        <el-table-column prop="code" label="项目编号" width="110" />
-        <el-table-column prop="name" label="设备名称" min-width="140" />
-        <el-table-column label="销售" width="90">
+    <!-- ===== 开票审批（主管）：单项目 + 🆕 合并批次 ===== -->
+    <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="760px" class="v3-scroll-dialog">
+      <EmptyHint v-if="!approvalGroups.length" text="暂无待审批的开票申请" size="sm" />
+      <el-table v-else :data="approvalGroups" row-key="key" stripe>
+        <el-table-column label="项目编号" min-width="150">
+          <template #default="{ row }">
+            <el-tag v-if="row.isBatch" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row.count }}</el-tag>
+            <span>{{ row.codes }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="客户" min-width="110">
+          <template #default="{ row }">{{ row.customer || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="销售" width="84">
           <template #default="{ row }">{{ row.sales_name || '—' }}</template>
         </el-table-column>
         <el-table-column label="金额" width="110" align="right">
           <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
         </el-table-column>
-        <el-table-column label="申请表" min-width="150">
+        <el-table-column label="申请表" min-width="140">
           <template #default="{ row }">
-            <el-button v-if="row.invoice_apply_file_id" size="small" link type="primary"
-                       @click="downloadAttachment({ id: row.invoice_apply_file_id, name: row.invoice_apply_file_name || '申请表' })">
-              {{ row.invoice_apply_file_name }}
+            <el-button v-if="row.apply_file_id" size="small" link type="primary"
+                       @click="downloadAttachment({ id: row.apply_file_id, name: row.apply_file_name || '申请表' })">
+              {{ row.apply_file_name }}
             </el-button>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160">
+        <el-table-column label="操作" width="156">
           <template #default="{ row }">
-            <el-button size="small" type="success" :icon="Check" @click="approve(row, true)">通过</el-button>
-            <el-button size="small" @click="approve(row, false)">驳回</el-button>
+            <el-button size="small" type="success" :icon="Check" @click="approveGroup(row, true)">通过</el-button>
+            <el-button size="small" @click="approveGroup(row, false)">驳回</el-button>
           </template>
         </el-table-column>
       </el-table>
+    </el-dialog>
+
+    <!-- ===== 🆕 合并开票申请（同客户多项目，一份申请 + 一张合并发票） ===== -->
+    <el-dialog v-model="mergeVisible" title="🧾 合并开票申请" width="780px" class="v3-scroll-dialog">
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 10px"
+                title="勾选同一客户的多个项目合并开票：选中首个项目后，其它客户的项目将不可勾选。上传一份合并开票申请表，主管审批通过后由财务开具一张合并发票。" />
+      <el-table ref="mergeTableRef" :data="mergeEligible" stripe max-height="380" @selection-change="onMergeSel">
+        <el-table-column type="selection" width="46" :selectable="mergeSelectable" />
+        <el-table-column prop="code" label="项目编号" width="120" />
+        <el-table-column prop="name" label="设备名称" min-width="150" />
+        <el-table-column label="客户单位" min-width="120">
+          <template #default="{ row }">{{ row.customer || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="金额" width="110" align="right">
+          <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
+        </el-table-column>
+      </el-table>
+      <EmptyHint v-if="!mergeEligible.length" text="暂无可合并开票的项目（需未开票且税票非「不开票」）" size="sm" />
+      <div class="merge-foot">
+        <div class="merge-sum">
+          <template v-if="mergeSelected.length">
+            已选 <b>{{ mergeSelected.length }}</b> 个 · 客户「{{ mergeSelected[0].customer || '—' }}」 · 合计 <b>{{ fmtMoney(mergeAmount) }}</b>
+          </template>
+          <span v-else class="muted">请勾选 2 个及以上同客户项目</span>
+        </div>
+        <div class="merge-up" @click="pickMergeFile">
+          <el-icon><UploadFilled /></el-icon>
+          <span>{{ mergeFile ? mergeFile.name : '点击选择合并开票申请表' }}</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="mergeVisible = false">取消</el-button>
+        <el-button type="primary" :loading="mergeSubmitting"
+                   :disabled="mergeSelected.length < 2 || !mergeFile" @click="submitMerge">
+          提交合并申请
+        </el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -824,6 +963,16 @@ async function openReport() {
 .up-box:hover { border-color: var(--primary, #2563eb); color: var(--primary, #2563eb); background: rgba(37,99,235,.03); }
 .up-box-t { font-size: 13.5px; font-weight: 500; }
 .up-box-s { font-size: 12px; color: var(--text-4, #cbd5e1); }
+/* 🆕 合并开票弹窗底部：已选汇总 + 申请表上传 */
+.merge-foot { display: flex; align-items: center; gap: 14px; margin-top: 12px; }
+.merge-sum { font-size: 13px; color: var(--el-text-color-regular); }
+.merge-sum b { color: var(--primary, #2563eb); }
+.merge-up {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px; border: 1px dashed var(--border, #d1d5db); border-radius: 8px;
+  color: var(--text-3, #9ca3af); cursor: pointer; transition: all .15s; font-size: 13px;
+}
+.merge-up:hover { border-color: var(--primary, #2563eb); color: var(--primary, #2563eb); background: rgba(37,99,235,.03); }
 .up-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .up-item {
   display: flex; align-items: center; gap: 8px;

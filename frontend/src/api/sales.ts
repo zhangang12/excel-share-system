@@ -19,6 +19,7 @@ export interface SalesLedgerRow {
   amount: number
   tax_rate?: string | null
   invoice_state?: 'applying' | 'pending_invoice' | 'invoiced' | null
+  invoice_batch_id?: number | null   // 🆕 合并开票批次号；同批多行共享，None=单项目
   invoice_apply_file_id?: number | null
   invoice_apply_file_name?: string | null
   invoice_file_id?: number | null
@@ -104,6 +105,18 @@ export const salesApi = {
   invoiceApprovals: () => http.get<SalesLedgerList>('/sales/invoice-approvals').then((r) => r.data),
   invoiceApprove: (id: number) => http.post(`/sales/ledger/${id}/invoice-approve`).then((r) => r.data),
   invoiceReject: (id: number) => http.post(`/sales/ledger/${id}/invoice-reject`).then((r) => r.data),
+
+  // 🆕 合并开票：勾选同客户多个项目(≥2)，上传一份合并开票申请表
+  invoiceApplyMerge: (ledgerIds: number[], file: File) => {
+    const fd = new FormData()
+    fd.append('ledger_ids', ledgerIds.join(','))
+    fd.append('file', file)
+    return http.post('/sales/invoice-apply-merge', fd).then((r) => r.data)
+  },
+  invoiceBatchApprove: (batchId: number) =>
+    http.post(`/sales/invoice-batch/${batchId}/approve`).then((r) => r.data),
+  invoiceBatchReject: (batchId: number) =>
+    http.post(`/sales/invoice-batch/${batchId}/reject`).then((r) => r.data),
 }
 
 export function fmtMoney(n?: number | null): string {

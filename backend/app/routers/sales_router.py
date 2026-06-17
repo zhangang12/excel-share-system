@@ -13,7 +13,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 
 from ..database import get_db
 from .. import models, schemas
@@ -115,6 +115,7 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
             contract_file_name=names.get(l.contract_file_id),
             amount=l.amount or 0, tax_rate=l.tax_rate,
             invoice_state=l.invoice_state,
+            invoice_batch_id=l.invoice_batch_id,
             invoice_apply_file_id=l.invoice_apply_file_id,
             invoice_apply_file_name=names.get(l.invoice_apply_file_id),
             invoice_file_id=l.invoice_file_id,
@@ -424,6 +425,8 @@ async def invoice_approve(
     db: AsyncSession = Depends(get_db),
 ):
     led = await _ledger_or_404(db, lid)
+    if led.invoice_batch_id is not None:
+        raise HTTPException(400, "该项目属于合并开票批次，请使用合并审批")
     if led.invoice_state != "applying":
         raise HTTPException(400, "该申请不在待审批状态")
     led.invoice_state = "pending_invoice"
@@ -444,6 +447,8 @@ async def invoice_reject(
     db: AsyncSession = Depends(get_db),
 ):
     led = await _ledger_or_404(db, lid)
+    if led.invoice_batch_id is not None:
+        raise HTTPException(400, "该项目属于合并开票批次，请使用合并驳回")
     if led.invoice_state != "applying":
         raise HTTPException(400, "该申请不在待审批状态")
     # 清申请文件（含磁盘），状态退回未申请
@@ -475,6 +480,8 @@ async def invoice_upload(
 ):
     """财务上传发票：状态→已开票，发票回传销售订单（发票情况→0）。"""
     led = await _ledger_or_404(db, lid)
+    if led.invoice_batch_id is not None:
+        raise HTTPException(400, "该项目属于合并开票批次，请使用合并开票上传")
     if led.invoice_state != "pending_invoice":
         raise HTTPException(400, "该项目不在待开票状态")
     a = await save_upload(db, file, biz_type="invoice", biz_id=led.id,
@@ -501,6 +508,8 @@ async def invoice_revoke(
     """🆕 #2 财务开票纠错出口：已开票(invoiced)退回待开票(pending_invoice)，
     删除错误发票文件，便于重新上传正确发票（开错票的闭环）。"""
     led = await _ledger_or_404(db, lid)
+    if led.invoice_batch_id is not None:
+        raise HTTPException(400, "该项目属于合并开票批次，暂不支持单项目作废")
     if led.invoice_state != "invoiced":
         raise HTTPException(400, "仅已开票项目可作废重开")
     if led.invoice_file_id:
@@ -520,3 +529,170 @@ async def invoice_revoke(
     await write_audit(db, user=current, action="invoice_revoke",
                       target_type="sales_ledger", target_id=lid)
     return schemas.Msg(message="已作废原发票，退回待开票，可重新上传")
+
+
+# ==================== 🆕 合并开票（同客户多项目，一份申请 + 一张合并发票，整组一次审批/开票） ====================
+# 口径(用户 2026-06-17 确认)：必须同一客户才能合并；一份开票申请、一张合并发票，主管/财务整组一次处理。
+# 沿用逐项目开票状态机(applying→pending_invoice→invoiced)，仅以 invoice_batch_id 把多条 ledger 绑为一批。
+def _parse_ids(raw: str) -> list[int]:
+    """解析逗号分隔的台账 id（容错中文逗号），去重保序。"""
+    out: list[int] = []
+    for tok in (raw or "").replace("，", ",").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            out.append(int(tok))
+        except ValueError:
+            raise HTTPException(400, f"非法的项目 id：{tok}")
+    return list(dict.fromkeys(out))
+
+
+async def _batch_ledgers(db: AsyncSession, batch_id: int,
+                         state: Optional[str] = None) -> list[models.SalesLedger]:
+    q = select(models.SalesLedger).where(models.SalesLedger.invoice_batch_id == batch_id)
+    if state is not None:
+        q = q.where(models.SalesLedger.invoice_state == state)
+    res = await db.execute(q.order_by(models.SalesLedger.id))
+    return list(res.scalars().all())
+
+
+def _codes(leds: list[models.SalesLedger]) -> str:
+    return "、".join(sorted((l.project.code if l.project else f"#{l.project_id}") for l in leds))
+
+
+@router.post("/invoice-apply-merge", response_model=schemas.Msg)
+async def invoice_apply_merge(
+    ledger_ids: str = Form(...),         # 逗号分隔的台账 id，如 "12,15"
+    file: UploadFile = File(...),
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """合并开票申请：勾选同一客户的多个项目(≥2)，上传一份合并开票申请表，
+    生成一个 invoice_batch_id，整组进入「待主管审批」。"""
+    ids = _parse_ids(ledger_ids)
+    if len(ids) < 2:
+        raise HTTPException(400, "合并开票至少选择 2 个项目")
+    res = await db.execute(select(models.SalesLedger).where(models.SalesLedger.id.in_(ids)))
+    leds = list(res.scalars().all())
+    if len(leds) != len(ids):
+        raise HTTPException(404, "部分台账行不存在")
+    # 销售本人只能合并自己的订单（主管/管理层不受限）
+    if _is_sales(current) and not _all_view(current):
+        if any(l.sales_uid != current.id for l in leds):
+            raise HTTPException(403, "只能合并自己的订单")
+    # 必须同一客户（非空且一致）
+    customers = {(l.customer or "").strip() for l in leds}
+    if len(customers) != 1 or "" in customers:
+        raise HTTPException(400, "合并开票要求所选项目为同一客户")
+    # 状态校验：均未进入开票流、均非「不开票」
+    for l in leds:
+        if (l.tax_rate or "").strip() == "/":
+            raise HTTPException(400, "所选项目含「不开票」(税票=/)，不能合并开票")
+        if l.invoice_state == "invoiced":
+            raise HTTPException(400, "所选项目中有已开票，不能再次申请")
+        if l.invoice_state in ("applying", "pending_invoice"):
+            raise HTTPException(400, "所选项目中有开票申请已在流程中")
+    # 生成批次号（单容器低并发，max+1 足够）
+    res = await db.execute(select(func.max(models.SalesLedger.invoice_batch_id)))
+    batch_id = (res.scalar() or 0) + 1
+    # 一份合并申请文件，挂在批次首个台账上，组内共享其 id
+    a = await save_upload(db, file, biz_type="invoice_apply", biz_id=leds[0].id,
+                          project_id=leds[0].project_id, user=current)
+    for l in leds:
+        l.invoice_state = "applying"
+        l.invoice_batch_id = batch_id
+        l.invoice_apply_file_id = a.id
+    await db.commit()
+    cust = customers.pop()
+    total = sum(l.amount or 0 for l in leds)
+    await push_message(db, to_role="sales_lead", kind="info",
+                       text=f"【合并开票申请】{cust} 项目 {_codes(leds)} 共 {len(leds)} 个，"
+                            f"合计 ¥{total:,.0f}，待销售主管审批：{a.name}",
+                       biz_type="invoice_batch", biz_id=batch_id)
+    await write_audit(db, user=current, action="invoice_apply_merge",
+                      target_type="invoice_batch", target_id=batch_id)
+    return schemas.Msg(message=f"合并开票申请已提交（{len(leds)} 个项目），等待销售主管审批")
+
+
+@router.post("/invoice-batch/{batch_id}/approve", response_model=schemas.Msg)
+async def invoice_batch_approve(
+    batch_id: int,
+    current: models.User = Depends(require_roles("sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    leds = await _batch_ledgers(db, batch_id, "applying")
+    if not leds:
+        raise HTTPException(400, "该合并批次不在待审批状态")
+    for l in leds:
+        l.invoice_state = "pending_invoice"
+    await db.commit()
+    cust = (leds[0].customer or "").strip()
+    total = sum(l.amount or 0 for l in leds)
+    await push_message(db, to_role="finance", kind="info",
+                       text=f"【待开票·合并】{cust} 项目 {_codes(leds)} 共 {len(leds)} 个，"
+                            f"合计 ¥{total:,.0f}，请财务合并开具一张发票。",
+                       biz_type="invoice_batch", biz_id=batch_id)
+    await write_audit(db, user=current, action="invoice_batch_approve",
+                      target_type="invoice_batch", target_id=batch_id)
+    return schemas.Msg(message=f"已通过合并开票（{len(leds)} 个项目），已推送财务部")
+
+
+@router.post("/invoice-batch/{batch_id}/reject", response_model=schemas.Msg)
+async def invoice_batch_reject(
+    batch_id: int,
+    current: models.User = Depends(require_roles("sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    leds = await _batch_ledgers(db, batch_id, "applying")
+    if not leds:
+        raise HTTPException(400, "该合并批次不在待审批状态")
+    # 组内共享的申请文件只删一次
+    apply_fid = next((l.invoice_apply_file_id for l in leds if l.invoice_apply_file_id), None)
+    if apply_fid:
+        res = await db.execute(select(models.Attachment).where(models.Attachment.id == apply_fid))
+        a = res.scalar_one_or_none()
+        if a:
+            await delete_attachment_file(db, a)
+    sales_uid = leds[0].sales_uid
+    codes = _codes(leds)
+    for l in leds:
+        l.invoice_state = None
+        l.invoice_batch_id = None
+        l.invoice_apply_file_id = None
+    await db.commit()
+    if sales_uid:
+        await push_message(db, to_user_id=sales_uid, kind="warn",
+                           text=f"【合并开票驳回】项目 {codes} 的合并开票申请被销售主管驳回，可修改后重新申请。",
+                           biz_type="invoice_batch", biz_id=batch_id)
+    await write_audit(db, user=current, action="invoice_batch_reject",
+                      target_type="invoice_batch", target_id=batch_id)
+    return schemas.Msg(message="已驳回合并开票申请")
+
+
+@router.post("/invoice-batch/{batch_id}/invoice-upload", response_model=schemas.Msg)
+async def invoice_batch_upload(
+    batch_id: int,
+    file: UploadFile = File(...),
+    current: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """财务上传一张合并发票，整组置为已开票，组内共享同一发票文件。"""
+    leds = await _batch_ledgers(db, batch_id, "pending_invoice")
+    if not leds:
+        raise HTTPException(400, "该合并批次不在待开票状态")
+    a = await save_upload(db, file, biz_type="invoice", biz_id=leds[0].id,
+                          project_id=leds[0].project_id, user=current)
+    for l in leds:
+        l.invoice_state = "invoiced"
+        l.invoice_file_id = a.id
+    await db.commit()
+    sales_uid = leds[0].sales_uid
+    codes = _codes(leds)
+    if sales_uid:
+        await push_message(db, to_user_id=sales_uid, kind="wx",
+                           text=f"【合并发票已开】项目 {codes} 财务已开具合并发票并回传：{a.name}",
+                           biz_type="invoice_batch", biz_id=batch_id)
+    await write_audit(db, user=current, action="invoice_batch_upload",
+                      target_type="invoice_batch", target_id=batch_id)
+    return schemas.Msg(message=f"合并发票已上传（{len(leds)} 个项目已开票）")

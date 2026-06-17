@@ -163,6 +163,7 @@ class SalesLedgerRow(BaseModel):
     amount: float = 0
     tax_rate: Optional[str] = None
     invoice_state: Optional[str] = None
+    invoice_batch_id: Optional[int] = None   # 🆕 合并开票批次号(同客户多项目合并)；None=单项目
     invoice_apply_file_id: Optional[int] = None
     invoice_apply_file_name: Optional[str] = None
     invoice_file_id: Optional[int] = None
@@ -392,6 +393,7 @@ class FinanceInvoiceRow(BaseModel):
     sales_name: Optional[str] = None
     amount: float = 0
     tax_rate: Optional[str] = None
+    invoice_batch_id: Optional[int] = None   # 🆕 合并开票批次号；同批多行共享，财务一次开票
     apply_file_id: Optional[int] = None
     apply_file_name: Optional[str] = None
     invoice_file_id: Optional[int] = None

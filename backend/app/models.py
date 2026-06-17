@@ -252,6 +252,8 @@ class SalesLedger(Base):
     tax_rate: Mapped[Optional[str]] = mapped_column(String(16))      # 13% / "/"(不开票)
     # 开票状态机(M03)：None 未申请 / applying 待主管审批 / pending_invoice 待财务开票 / invoiced 已开票
     invoice_state: Mapped[Optional[str]] = mapped_column(String(20), index=True)
+    # 🆕 合并开票批次号：同一客户多个项目合并开票时共享同一 batch_id；None=单项目开票
+    invoice_batch_id: Mapped[Optional[int]] = mapped_column(index=True)
     invoice_apply_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     invoice_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     prepay: Mapped[float] = mapped_column(default=0)                  # 预付

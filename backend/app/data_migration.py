@@ -28,6 +28,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "sales_ledger": [                              # 🆕 预付/发货前付收款批注(支持插入时间戳)
         ("prepay_note", "TEXT"),
         ("before_ship_note", "TEXT"),
+        ("invoice_batch_id", "INTEGER"),           # 🆕 合并开票批次号(同客户多项目合并)
     ],
 }
 
