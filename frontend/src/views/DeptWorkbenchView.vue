@@ -227,6 +227,18 @@ async function viewSheet(row: GroupProjectRow) {
 function cellVal(rec: any, fid: number) {
   return rec.values?.[String(fid)] ?? ''
 }
+// 🆕 钣金装配表导出下载（xlsx）——与采购部同口径
+async function downloadSheet(did: number | null | undefined, label: string) {
+  if (!did) { ElMessage.info('该项目暂无钣金装配表'); return }
+  try {
+    const res = await http.get(`/datasheets/${did}/export`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a'); a.href = url; a.download = `${label}.xlsx`; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.status === 403 ? '无权下载' : '下载失败')
+  }
+}
 watch(dept, () => { activeTab.value = ''; load() })
 onMounted(load)
 
@@ -686,11 +698,15 @@ const stockVisible = ref(false)
             <el-table-column prop="name" label="项目名称" min-width="240" show-overflow-tooltip />
             <el-table-column label="设计师" min-width="100" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
             <el-table-column label="派给" min-width="100" align="center"><template #default="{ row }">{{ row.worker_name || '—' }}</template></el-table-column>
-            <el-table-column label="钣金装配表(引用)" min-width="160" align="center">
+            <el-table-column label="钣金装配表(引用)" min-width="200" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" @click="viewSheet(row)">
-                  钣金装配表<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:4px"><CircleCheck /></el-icon>
-                </el-button>
+                <template v-if="row.sheetmetal_datasheet_id">
+                  <el-button size="small" link type="primary" @click="viewSheet(row)">
+                    预览<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
+                  </el-button>
+                  <el-button size="small" link type="primary" :icon="Download"
+                             @click="downloadSheet(row.sheetmetal_datasheet_id, `${row.code}-钣金装配表`)">下载</el-button>
+                </template>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
@@ -714,9 +730,13 @@ const stockVisible = ref(false)
             <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
             <el-table-column label="设计师" min-width="90" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
             <el-table-column label="派给" min-width="90" align="center"><template #default="{ row }">{{ row.worker_name || '—' }}</template></el-table-column>
-            <el-table-column label="钣金装配表(引用)" min-width="150" align="center">
+            <el-table-column label="钣金装配表(引用)" min-width="180" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" @click="viewSheet(row)">钣金装配表</el-button>
+                <template v-if="row.sheetmetal_datasheet_id">
+                  <el-button size="small" link type="primary" @click="viewSheet(row)">预览</el-button>
+                  <el-button size="small" link type="primary" :icon="Download"
+                             @click="downloadSheet(row.sheetmetal_datasheet_id, `${row.code}-钣金装配表`)">下载</el-button>
+                </template>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
