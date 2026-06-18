@@ -1077,6 +1077,47 @@ async def backfill_shipments(db: AsyncSession) -> dict:
     return {"created": created}
 
 
+async def dedupe_elec_po_sheets(db: AsyncSession) -> dict:
+    """清理「电工采购单」重复表：一个项目出现 ≥2 张同名表时，保留有数据(记录最多)的一张，
+    其余连同字段/记录/字段权限一并删除。幂等：无重复时空操作。
+
+    必须在 backfill_elec_po_sheet 之前跑——先去重，backfill 的「已有则跳过」才不会误判。
+    """
+    from .sheet_templates import ELEC_PO_SHEET_NAME
+    from sqlalchemy import delete as _del, func as _f
+
+    res = await db.execute(
+        select(models.Datasheet).where(models.Datasheet.name == ELEC_PO_SHEET_NAME))
+    by_proj: dict[int, list] = {}
+    for d in res.scalars().all():
+        by_proj.setdefault(d.project_id, []).append(d)
+
+    removed = 0
+    for pid, ds in by_proj.items():
+        if len(ds) < 2:
+            continue
+        counts: dict[int, int] = {}
+        for d in ds:
+            counts[d.id] = (await db.execute(
+                select(_f.count(models.Record.id)).where(models.Record.datasheet_id == d.id)
+            )).scalar() or 0
+        keep = max(ds, key=lambda d: (counts[d.id], -d.id))  # 记录多优先，其次保留 id 最小(最早)
+        drop_ids = [d.id for d in ds if d.id != keep.id]
+        fres = await db.execute(select(models.Field.id).where(models.Field.datasheet_id.in_(drop_ids)))
+        fids = [r[0] for r in fres.all()]
+        if fids:
+            await db.execute(_del(models.FieldPermission).where(models.FieldPermission.field_id.in_(fids)))
+            await db.execute(_del(models.Field).where(models.Field.id.in_(fids)))
+        await db.execute(_del(models.Record).where(models.Record.datasheet_id.in_(drop_ids)))
+        await db.execute(_del(models.Datasheet).where(models.Datasheet.id.in_(drop_ids)))
+        removed += len(drop_ids)
+
+    if removed:
+        await db.commit()
+        log.info("[dedupe_elec_po_sheets] 清理重复「电工采购单」%d 张", removed)
+    return {"removed": removed}
+
+
 async def backfill_elec_po_sheet(db: AsyncSession) -> dict:
     """🆕 v3 M12：给已有数据表的存量活跃项目补建第 5 张「电工采购单」空表（§十六）。
 
@@ -1352,6 +1393,10 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_shipments(db)
     except Exception as e:
         log.warning("backfill_shipments failed: %s", e)
+    try:
+        await dedupe_elec_po_sheets(db)   # 先去重,再补建
+    except Exception as e:
+        log.warning("dedupe_elec_po_sheets failed: %s", e)
     try:
         await backfill_elec_po_sheet(db)
     except Exception as e:

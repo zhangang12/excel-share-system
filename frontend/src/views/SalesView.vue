@@ -88,6 +88,7 @@ async function load() {
 // 改筛选 → 回到第 1 页再查；翻页 → 直接查
 function reload() { page.value = 1; load() }
 function onPage(p: number) { page.value = p; load() }
+function onSize(s: number) { pageSize.value = s; page.value = 1; load() }   // 改每页条数 → 回第 1 页
 onMounted(() => { load(); loadSalesStaff() })
 
 // ===== 销售下单 =====
@@ -101,14 +102,24 @@ const orderForm = reactive({
   balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
   receiver: { name: '', phone: '', addr: '' },
 })
+// 🆕 年度选项：选年份后按该年生成下一个编号（如 2027 → 2027-001），可跨年提前建档
+const orderYear = ref(String(new Date().getFullYear()))
+const yearOptions = computed(() => {
+  const y = new Date().getFullYear()
+  return [String(y), String(y + 1), String(y + 2)]
+})
+async function onYearChange() {
+  try { orderForm.code = await salesApi.nextCode(orderYear.value) } catch { /* 留空人工填 */ }
+}
 // draftEditLid: null=新建下单；有值=修改被退回的草稿(走 draft-resubmit)
 const draftEditLid = ref<number | null>(null)
 async function openOrder() {
   openingOrder.value = true
   try {
-    // 🆕 编号人工输入, 但自动带出最新建议编号作默认值(可改)
+    // 🆕 编号人工输入, 但自动带出最新建议编号作默认值(可改);年度默认当年
+    orderYear.value = String(new Date().getFullYear())
     let suggested = ''
-    try { suggested = await salesApi.nextCode() } catch { /* 拿不到就留空人工填 */ }
+    try { suggested = await salesApi.nextCode(orderYear.value) } catch { /* 拿不到就留空人工填 */ }
     draftEditLid.value = null
     Object.assign(orderForm, {
       code: suggested, name: '', customer: '', cust_type: '经销商', contract: '有',
@@ -273,8 +284,13 @@ async function saveNote() {
     await salesApi.paymentNote(noteRow.value.id, noteField.value, noteText.value)
     // 本地同步，避免整表重载
     const v = noteText.value.trim() || null
-    if (noteField.value === 'prepay') noteRow.value.prepay_note = v
-    else noteRow.value.before_ship_note = v
+    if (noteField.value === 'prepay') {
+      noteRow.value.prepay_note = v
+    } else {
+      noteRow.value.before_ship_note = v
+      // 与后端一致：发货前付有批注=货款收讫→发货款应收清零；删批注=未收→应收恢复为发货前付金额
+      noteRow.value.ship_receivable = v ? 0 : (noteRow.value.before_ship || 0)
+    }
     ElMessage.success('批注已保存')
     noteVisible.value = false
   } finally {
@@ -776,10 +792,11 @@ async function openReport() {
         <span>尾款 <b>{{ fmtMoney(totals.balance) }}</b></span>
       </div>
 
-      <!-- 🆕 分页（性能优化：每页 50 条，后端分页） -->
-      <div v-if="total > pageSize" class="pager">
-        <el-pagination background layout="prev, pager, next, jumper, ->, total"
-                       :total="total" :page-size="pageSize" :current-page="page" @current-change="onPage" />
+      <!-- 🆕 分页（后端分页）+ 每页条数选择（最大 200） -->
+      <div v-if="total > 20" class="pager">
+        <el-pagination background layout="prev, pager, next, sizes, jumper, ->, total"
+                       :total="total" :page-size="pageSize" :page-sizes="[20, 50, 100, 200]"
+                       :current-page="page" @current-change="onPage" @size-change="onSize" />
       </div>
     </el-card>
 
@@ -790,7 +807,12 @@ async function openReport() {
       <el-form label-position="top">
         <div class="fsec">📋 项目信息</div>
         <div class="frow">
-          <el-form-item label="项目编号（人工填写）" required style="flex: 1">
+          <el-form-item label="年度" style="flex: 0 0 110px">
+            <el-select v-model="orderYear" @change="onYearChange" :disabled="!!draftEditLid">
+              <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="项目编号（可改）" required style="flex: 1">
             <el-input v-model="orderForm.code" placeholder="如 2026-057 / 2026-050C" maxlength="64" clearable :disabled="!!draftEditLid" />
           </el-form-item>
           <el-form-item label="设备名称" required style="flex: 1">

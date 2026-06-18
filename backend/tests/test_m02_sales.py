@@ -85,7 +85,9 @@ async def main():
         # ---- 台账行级隔离 + 合计 ----
         r = await c.get("/api/sales/ledger", headers=Hs1)
         j = r.json()
-        chk(len(j["rows"])==2 and j["totals"] is None, f"销售员仅本人2行无合计: {len(j['rows'])}")
+        # 🆕 需求#2：销售员现在也看「本人」合计（2 行 + 合计 count=2）
+        chk(len(j["rows"])==2 and j["totals"] is not None and j["totals"]["count"]==2,
+            f"销售员本人2行+本人合计: rows={len(j['rows'])} totals={j['totals']}")
         r = await c.get("/api/sales/ledger", headers=Hsl)
         j = r.json()
         chk(len(j["rows"])==3 and j["totals"]["count"]==3, "主管全量3行+合计")

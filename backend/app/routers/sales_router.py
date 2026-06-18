@@ -188,17 +188,16 @@ async def list_ledger(
     ledgers.sort(key=_ledger_sort_key)
     total = len(ledgers)
 
-    totals = None
-    if _all_view(current):  # 合计针对全集(全部页)，非当前页
-        totals = schemas.SalesLedgerTotals(
-            count=total,
-            amount=sum(l.amount or 0 for l in ledgers),
-            uninvoiced=sum(l.amount or 0 for l in ledgers if l.invoice_state != "invoiced"),
-            prepay=sum(l.prepay or 0 for l in ledgers),
-            before_ship=sum(l.before_ship or 0 for l in ledgers),
-            ship_receivable=sum(l.ship_receivable or 0 for l in ledgers),
-            balance=sum(l.balance or 0 for l in ledgers),
-        )
+    # 合计针对全集(全部页)，非当前页。销售员看本人合计、主管/管理层看全量合计（口径同各自可见范围）
+    totals = schemas.SalesLedgerTotals(
+        count=total,
+        amount=sum(l.amount or 0 for l in ledgers),
+        uninvoiced=sum(l.amount or 0 for l in ledgers if l.invoice_state != "invoiced"),
+        prepay=sum(l.prepay or 0 for l in ledgers),
+        before_ship=sum(l.before_ship or 0 for l in ledgers),
+        ship_receivable=sum(l.ship_receivable or 0 for l in ledgers),
+        balance=sum(l.balance or 0 for l in ledgers),
+    )
 
     start = (page - 1) * page_size
     page_ledgers = ledgers[start:start + page_size]
@@ -206,20 +205,26 @@ async def list_ledger(
     return schemas.SalesLedgerListOut(rows=rows, totals=totals, total=total)
 
 
-@router.get("/next-code", response_model=schemas.NextCodeOut)
-async def next_code(
-    _: models.User = Depends(require_roles("sales", "sales_lead")),
-    db: AsyncSession = Depends(get_db),
-):
-    """自动编号：当年-NNN（3 位补零），扫描全部项目编号取当年最大序号 +1（P-21）。"""
-    year = datetime.now(timezone.utc).strftime("%Y")
+async def _compute_next_code(db: AsyncSession, year: Optional[str] = None) -> str:
+    """指定年份(YYYY，留空=当年)的下一个项目编号：{年}-NNN，扫全部项目取该年最大序号 +1。"""
+    y = (year or "").strip() or datetime.now(timezone.utc).strftime("%Y")
     res = await db.execute(select(models.Project.code))
     mx = 0
     for (code,) in res.all():
         m = _CODE_RE.match(code or "")
-        if m and m.group(1) == year:
+        if m and m.group(1) == y:
             mx = max(mx, int(m.group(2)))
-    return schemas.NextCodeOut(code=f"{year}-{mx + 1:03d}")
+    return f"{y}-{mx + 1:03d}"
+
+
+@router.get("/next-code", response_model=schemas.NextCodeOut)
+async def next_code(
+    year: Optional[str] = Query(None),   # 🆕 指定年度(YYYY)；留空=当年。供销售下单选年份后预生成编号
+    _: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """自动编号：{年}-NNN（3 位补零），扫描全部项目编号取该年最大序号 +1（P-21）。"""
+    return schemas.NextCodeOut(code=await _compute_next_code(db, year))
 
 
 async def _distribute_pending_files(db: AsyncSession, project_id: int,
@@ -302,7 +307,7 @@ async def create_sales_order(
         if len(code) > 64:
             raise HTTPException(400, "项目编号过长（≤64 字符）")
     else:
-        base = (await next_code(_=current, db=db)).code
+        base = await _compute_next_code(db, None)
         suffix = (data.code_suffix or "").strip().upper()[:2]
         if suffix and not suffix.isalpha():
             raise HTTPException(400, "编号后缀只能是字母")
@@ -429,9 +434,9 @@ async def update_payment_note(
     col = "prepay_note" if data.field == "prepay" else "before_ship_note"
     note_val = (data.note or "").strip() or None
     setattr(led, col, note_val)
-    # 🆕 发货前付插入批注=货款已在发货前收讫 → 发货款应收自动清零
-    if data.field == "before_ship" and note_val:
-        led.ship_receivable = 0
+    # 🆕 发货前付批注=货款已在发货前收讫 → 发货款应收清零；删除批注=未收 → 应收恢复为发货前付金额
+    if data.field == "before_ship":
+        led.ship_receivable = 0 if note_val else (led.before_ship or 0)
     await db.commit()
     await write_audit(db, user=current, action="update", target_type="sales_ledger",
                       target_id=lid, detail=f"{data.field}_note")

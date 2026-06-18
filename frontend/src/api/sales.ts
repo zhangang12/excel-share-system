@@ -79,7 +79,8 @@ export const salesApi = {
   ledger: (params?: { kw?: string; cust_type?: string; contract?: string; sales_uid?: number; balance_month?: string; page?: number; page_size?: number }) =>
     http.get<SalesLedgerList>('/sales/ledger', { params }).then((r) => r.data),
 
-  nextCode: () => http.get<{ code: string }>('/sales/next-code').then((r) => r.data.code),
+  nextCode: (year?: string) =>
+    http.get<{ code: string }>('/sales/next-code', { params: year ? { year } : {} }).then((r) => r.data.code),
 
   // 🆕 可分配销售员名单（拥有 sales/sales_lead 角色的在职用户），台账编辑下拉用
   salespeople: () => http.get<{ id: number; name: string }[]>('/sales/salespeople').then((r) => r.data),
