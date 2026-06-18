@@ -319,16 +319,16 @@ const stockVisible = ref(false)
             <el-table-column label="项目" min-width="120">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
             </el-table-column>
-            <el-table-column prop="start_date" :label="options?.start_label" width="105">
+            <el-table-column prop="start_date" :label="options?.start_label" width="120">
               <template #default="{ row }">{{ fmtDate(row.start_date) }}</template>
             </el-table-column>
-            <el-table-column prop="due_date" :label="options?.end_label" width="105">
+            <el-table-column prop="due_date" :label="options?.end_label" width="120">
               <template #default="{ row }">{{ fmtDate(row.due_date) }}</template>
             </el-table-column>
-            <el-table-column prop="done_date" label="完成" width="105">
+            <el-table-column prop="done_date" label="完成" width="120">
               <template #default="{ row }">{{ fmtDate(row.done_date) }}</template>
             </el-table-column>
-            <el-table-column label="完成效率" width="90">
+            <el-table-column label="完成效率" width="96">
               <template #default="{ row }">
                 <span v-if="row.eff_pct != null" :class="effClass(row)">{{ row.eff_pct }}%</span>
                 <span v-else>—</span>
@@ -404,21 +404,21 @@ const stockVisible = ref(false)
                 <span v-else>—</span>
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="90" align="center">
+            <el-table-column label="状态" width="106" align="center">
               <template #default="{ row }">
                 <StatusPill :text="ORDER_STATUS_TEXT[row.status]" :variant="PILL_VARIANT[ORDER_STATUS_TAG[row.status]] || 'muted'" />
               </template>
             </el-table-column>
-            <el-table-column prop="start_date" :label="options?.start_label" width="100">
+            <el-table-column prop="start_date" :label="options?.start_label" width="120">
               <template #default="{ row }">{{ row.start_date ? fmtDate(row.start_date) : '—' }}</template>
             </el-table-column>
-            <el-table-column prop="due_date" :label="options?.end_label" width="100">
+            <el-table-column prop="due_date" :label="options?.end_label" width="120">
               <template #default="{ row }">{{ row.due_date ? fmtDate(row.due_date) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="完成" width="100">
+            <el-table-column label="完成" width="120">
               <template #default="{ row }">{{ row.done_date ? fmtDate(row.done_date) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="完成效率" width="85">
+            <el-table-column label="完成效率" width="96">
               <template #default="{ row }">
                 <span v-if="row.eff_pct != null" :class="effClass(row)">{{ row.eff_pct }}%</span>
                 <span v-else>—</span>
