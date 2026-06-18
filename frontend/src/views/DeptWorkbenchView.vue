@@ -12,9 +12,10 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import {
   ordersApi, produceApi, downloadAttachment, ORDER_STATUS_TEXT, ORDER_STATUS_TAG,
-  type DeptOrder, type DeptOptions, type OrderAttachment, type GroupProjectRow,
+  type DeptOrder, type DeptOptions, type OrderAttachment, type GroupProjectRow, type DispatchOptions,
 } from '@/api/orders'
 import { datasheetsApi } from '@/api/datasheets'
+import { http } from '@/api'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
 import StockQueryDialog from '@/components/StockQueryDialog.vue'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -108,6 +109,12 @@ async function load() {
     ])
     orders.value = os
     options.value = opt
+    // 🆕 设计部：拉本人进行中任务的四表导入状态（卡片内「上传一个 Excel 导入四表」）
+    if (dept.value === 'design') {
+      for (const o of os) {
+        if (o.status === 'in_progress') loadSheetStatus(o.project_id)
+      }
+    }
     // 负责人(含同时是工人的多角色)默认进「待分派」；纯工人进「我的待办」
     if (!activeTab.value) activeTab.value = (isLead.value || isMgr.value) ? 'assign' : 'todo'
   } finally {
@@ -115,28 +122,75 @@ async function load() {
   }
 }
 
-// 🆕 生产派发（主管手动）：把待分派的生产任务派给钣金组+装配组
+// 🆕 生产派发（主管手动）：分别选钣金组、装配组各一名人员（两组都必选）
 const dispatchVisible = ref(false)
 const dispatchOrder = ref<DeptOrder | null>(null)
-const dispatchDue = ref('')
+const dispatchOpts = ref<DispatchOptions>({ sheetmetal: [], assembly: [] })
+const dispatchSmWid = ref<number | null>(null)
+const dispatchAsmWid = ref<number | null>(null)
 const dispatching = ref(false)
-function openDispatch(o: DeptOrder) {
+async function openDispatch(o: DeptOrder) {
   dispatchOrder.value = o
-  dispatchDue.value = ''
+  dispatchSmWid.value = null
+  dispatchAsmWid.value = null
   dispatchVisible.value = true
+  try { dispatchOpts.value = await produceApi.dispatchOptions() } catch { /* 忽略 */ }
 }
 async function doDispatch() {
   const o = dispatchOrder.value
   if (!o) return
+  if (!dispatchSmWid.value) { ElMessage.warning('请选择派给钣金组的人员'); return }
+  if (!dispatchAsmWid.value) { ElMessage.warning('请选择派给装配组的人员'); return }
   dispatching.value = true
   try {
-    await produceApi.dispatch(o.id, dispatchDue.value || undefined)
+    await produceApi.dispatch(o.id, dispatchSmWid.value, dispatchAsmWid.value)
     ElMessage.success('已派发到钣金组、装配组')
     dispatchVisible.value = false
     await load()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '派发失败')
   } finally { dispatching.value = false }
+}
+
+// 🆕 设计部卡片内「上传一个 Excel 导入四表」+ 四表导入状态（与项目详情同一导入接口）
+const FOUR_SHEETS = ['钣金装配', '标准件清单', '外协加工', '不锈钢原料下料单']
+const sheetStatus = ref<Record<number, { name: string; imported: boolean }[]>>({})
+async function loadSheetStatus(pid: number) {
+  try {
+    const ds: any[] = await datasheetsApi.list(pid)
+    sheetStatus.value[pid] = FOUR_SHEETS.map((n) => ({
+      name: n, imported: !!ds.find((d) => d.name === n)?.imported,
+    }))
+  } catch { /* 无权限/异常忽略，不阻塞卡片 */ }
+}
+function fourReady(pid: number) {
+  const s = sheetStatus.value[pid]
+  return !!s && s.length === FOUR_SHEETS.length && s.every((x) => x.imported)
+}
+const importingPid = ref<number | null>(null)
+function importFourTables(o: DeptOrder) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.xls,.xlsx'
+  input.onchange = async () => {
+    const f = (input.files || [])[0]
+    if (!f) return
+    try {
+      await ElMessageBox.confirm(
+        `导入「${f.name}」？将按四个 sheet 一次性导入/重建本项目数据表（与项目详情「导入 Excel」一致）。`,
+        '导入四表', { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消' })
+    } catch { return }
+    const fd = new FormData(); fd.append('file', f)
+    importingPid.value = o.project_id
+    try {
+      const r: any = await http.post(`/projects/${o.project_id}/import-excel`, fd)
+      ElMessage.success(r.data?.message || '导入成功')
+      await loadSheetStatus(o.project_id)
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.detail || '导入失败')
+    } finally { importingPid.value = null }
+  }
+  input.click()
 }
 
 // 🆕 组内标记完成（两组都完成→生产任务单 done）
@@ -462,6 +516,30 @@ const stockVisible = ref(false)
                   </div>
                 </div>
 
+                <!-- 🆕 设计部：四个数据表导入（卡片内上传一个 Excel 一次性导入四表，与项目详情同口径） -->
+                <div v-if="options?.sheet_check" class="up-sec">
+                  <div class="up-h">
+                    📋 四个数据表导入
+                    <span style="margin-left:auto">
+                      <StatusPill :text="fourReady(o.project_id) ? '已齐全' : '未齐全'"
+                                  :variant="fourReady(o.project_id) ? 'success' : 'warn'" />
+                    </span>
+                  </div>
+                  <div class="up-b">
+                    <div class="four-chips">
+                      <el-tag v-for="s in sheetStatus[o.project_id] || []" :key="s.name" size="small"
+                              :type="s.imported ? 'success' : 'info'" effect="plain">
+                        {{ s.name }} {{ s.imported ? '✅' : '⬜' }}
+                      </el-tag>
+                    </div>
+                    <el-button size="small" plain type="primary" :icon="UploadFilled"
+                               :loading="importingPid === o.project_id" @click="importFourTables(o)">
+                      上传一个 Excel 导入四表
+                    </el-button>
+                    <div class="tc-hint">上传含「钣金装配/标准件清单/外协加工/不锈钢原料下料单」四个 sheet 的 Excel，一次性导入；完成前四表须齐全。</div>
+                  </div>
+                </div>
+
                 <el-button type="success" size="small" :icon="Check" @click="openComplete(o)">完成…</el-button>
               </template>
             </el-card>
@@ -606,7 +684,8 @@ const stockVisible = ref(false)
             <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="240" show-overflow-tooltip />
-            <el-table-column label="设计师" min-width="110" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="设计师" min-width="100" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="派给" min-width="100" align="center"><template #default="{ row }">{{ row.worker_name || '—' }}</template></el-table-column>
             <el-table-column label="钣金装配表(引用)" min-width="160" align="center">
               <template #default="{ row }">
                 <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" @click="viewSheet(row)">
@@ -633,7 +712,8 @@ const stockVisible = ref(false)
             <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
-            <el-table-column label="设计师" min-width="100" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="设计师" min-width="90" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="派给" min-width="90" align="center"><template #default="{ row }">{{ row.worker_name || '—' }}</template></el-table-column>
             <el-table-column label="钣金装配表(引用)" min-width="150" align="center">
               <template #default="{ row }">
                 <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" @click="viewSheet(row)">钣金装配表</el-button>
@@ -751,10 +831,17 @@ const stockVisible = ref(false)
     <!-- ===== 🆕 生产派发弹窗（派给钣金组+装配组） ===== -->
     <el-dialog v-model="dispatchVisible" :title="`🚀 派发生产任务 · ${dispatchOrder?.project_code || ''}`" width="460px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
-                title="派发后该项目同时进入「钣金组」「装配组」两个工作 tab；两组都标记完成即视为生产完成（可发货）。" />
+                title="分别选定钣金组、装配组各一名人员（两组都必选）；两人各自标记完成后即视为生产完成（可发货）。" />
       <el-form label-position="top">
-        <el-form-item label="预计完成日期（选填，供部门报表/逾期统计）">
-          <el-date-picker v-model="dispatchDue" type="date" value-format="YYYY-MM-DD" style="width: 100%" placeholder="可不填" />
+        <el-form-item label="派给 · 生产部-钣金组" required>
+          <el-select v-model="dispatchSmWid" placeholder="选择钣金组人员" style="width: 100%">
+            <el-option v-for="w in dispatchOpts.sheetmetal" :key="w.id" :label="w.name" :value="w.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="派给 · 生产部-装配组" required>
+          <el-select v-model="dispatchAsmWid" placeholder="选择装配组人员" style="width: 100%">
+            <el-option v-for="w in dispatchOpts.assembly" :key="w.id" :label="w.name" :value="w.id" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -819,6 +906,7 @@ const stockVisible = ref(false)
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 .up-b { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.four-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .assign-bar { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 .eff-good { color: var(--success); font-weight: 700; }
 .eff-bad { color: var(--danger); font-weight: 700; }

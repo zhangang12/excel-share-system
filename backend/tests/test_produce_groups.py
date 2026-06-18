@@ -54,9 +54,11 @@ async def main():
 
         dlid = await mk("dl", "design_lead")
         await mk("pm", "pm_lead")
-        await mk("sm", "sheetmetal")
-        await mk("asm", "assembler")
+        smid = await mk("sm", "sheetmetal")
+        asmid = await mk("asm", "assembler")
+        sm2id = await mk("sm2", "sheetmetal")   # 第二个钣金组人员：验证只看派给自己的
         Hdl, Hpm, Hsm, Hasm = await login("dl"), await login("pm"), await login("sm"), await login("asm")
+        Hsm2 = await login("sm2")
 
         # 钣金组菜单并入生产部：含 produce、不含 sheet
         ks = [m["key"] for m in (await c.get("/api/auth/menus", headers=Hsm)).json()["menus"]]
@@ -71,27 +73,42 @@ async def main():
         chk((await c.get("/api/produce/sheetmetal-projects", headers=Hsm)).json() == [], "派发前钣金组空")
         chk((await c.get("/api/produce/assembly-projects", headers=Hasm)).json() == [], "派发前装配组空")
 
-        # 非主管不可派发
-        chk((await c.post(f"/api/produce/dispatch/{oid}", headers=Hsm, json={})).status_code == 403, "钣金组不可派发")
+        # 派发下拉：钣金组/装配组各自人员
+        opts = (await c.get("/api/produce/dispatch-options", headers=Hpm)).json()
+        chk(smid in [u["id"] for u in opts["sheetmetal"]] and asmid in [u["id"] for u in opts["assembly"]],
+            f"派发下拉含两组人员: {opts}")
 
-        # 主管派发 → 建两组任务、生产单 in_progress
-        r = await c.post(f"/api/produce/dispatch/{oid}", headers=Hpm, json={"due_date":"2026-07-01"})
+        # 非主管不可派发（带合法 body，确保是 403 而非 422）
+        chk((await c.post(f"/api/produce/dispatch/{oid}", headers=Hsm,
+             json={"sheetmetal_worker_id": smid, "assembly_worker_id": asmid})).status_code == 403, "钣金组不可派发")
+        # 角色不符校验：把装配组的人填到钣金组位 → 400
+        chk((await c.post(f"/api/produce/dispatch/{oid}", headers=Hpm,
+             json={"sheetmetal_worker_id": asmid, "assembly_worker_id": asmid})).status_code == 400, "派发对象角色校验")
+
+        # 主管派发：分别指定钣金组(sm)、装配组(asm) → 建两组任务、生产单 in_progress
+        r = await c.post(f"/api/produce/dispatch/{oid}", headers=Hpm,
+                         json={"sheetmetal_worker_id": smid, "assembly_worker_id": asmid})
         chk(r.status_code == 200, f"主管派发: {r.text[:120]}")
         async with SessionLocal() as db:
-            tasks = (await db.execute(select(models.ProduceGroupTask).where(models.ProduceGroupTask.order_id == oid))).scalars().all()
-            chk({t.group for t in tasks} == {"sheetmetal", "assembly"}, f"建钣金+装配两组: {[t.group for t in tasks]}")
+            tasks = {t.group: t for t in (await db.execute(select(models.ProduceGroupTask).where(models.ProduceGroupTask.order_id == oid))).scalars().all()}
+            chk(set(tasks) == {"sheetmetal", "assembly"}, f"建钣金+装配两组: {list(tasks)}")
+            chk(tasks["sheetmetal"].worker_id == smid and tasks["assembly"].worker_id == asmid, "两组各记派给的人")
             o = (await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))).scalar_one()
-            chk(o.status == "in_progress" and o.due_date == "2026-07-01", f"生产单 in_progress+预计: {o.status}/{o.due_date}")
-        # 重复派发幂等（不重复建组）
-        await c.post(f"/api/produce/dispatch/{oid}", headers=Hpm, json={})
+            chk(o.status == "in_progress", f"生产单 in_progress: {o.status}")
+        # 重复派发=换人（不重复建组）
+        await c.post(f"/api/produce/dispatch/{oid}", headers=Hpm,
+                     json={"sheetmetal_worker_id": smid, "assembly_worker_id": asmid})
         async with SessionLocal() as db:
             n = len((await db.execute(select(models.ProduceGroupTask).where(models.ProduceGroupTask.order_id == oid))).scalars().all())
-            chk(n == 2, f"派发幂等仅2组: {n}")
+            chk(n == 2, f"重复派发仍仅2组: {n}")
 
-        # 钣金组/装配组各看到本项目；越权看对方组 403
+        # 按人可见：sm 看到派给自己的；sm2(另一钣金组人)看不到；越权看对方组 403
         smrows = (await c.get("/api/produce/sheetmetal-projects", headers=Hsm)).json()
-        chk(len(smrows) == 1 and smrows[0]["project_id"] == pid, f"钣金组看到派发项目: {smrows}")
-        chk(smrows[0]["designer"] == "dl" or smrows[0]["designer"] is None, f"设计师列存在: {smrows[0]['designer']}")
+        chk(len(smrows) == 1 and smrows[0]["project_id"] == pid, f"钣金组看到派给自己的项目: {smrows}")
+        chk(smrows[0]["worker_name"] == "sm", f"派给列=sm: {smrows[0].get('worker_name')}")
+        chk((await c.get("/api/produce/sheetmetal-projects", headers=Hsm2)).json() == [], "另一钣金组人看不到非自己的")
+        # 主管看本组全部（含派给信息）
+        chk(len((await c.get("/api/produce/sheetmetal-projects", headers=Hpm)).json()) == 1, "主管看本组全部")
         asmrows = (await c.get("/api/produce/assembly-projects", headers=Hasm)).json()
         chk(len(asmrows) == 1, f"装配组看到派发项目: {asmrows}")
         chk(asmrows[0]["standard_ready"] is False and asmrows[0]["outsource_ready"] is False, f"无记录→未备齐: {asmrows[0]}")

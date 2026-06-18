@@ -110,6 +110,7 @@ export interface GroupProjectRow {
   name: string
   designer?: string | null
   task_id: number
+  worker_name?: string | null        // 派给谁（主管视角）
   group_done: boolean
   sheetmetal_datasheet_id?: number | null
   sheetmetal_done: boolean
@@ -117,9 +118,17 @@ export interface GroupProjectRow {
   outsource_ready?: boolean | null   // 仅装配组
 }
 
+export interface DispatchOptions {
+  sheetmetal: OptionUser[]
+  assembly: OptionUser[]
+}
+
 export const produceApi = {
-  dispatch: (orderId: number, dueDate?: string) =>
-    http.post(`/produce/dispatch/${orderId}`, { due_date: dueDate || null }).then((r) => r.data),
+  dispatchOptions: () =>
+    http.get<DispatchOptions>('/produce/dispatch-options').then((r) => r.data),
+  dispatch: (orderId: number, sheetmetalWorkerId: number, assemblyWorkerId: number) =>
+    http.post(`/produce/dispatch/${orderId}`,
+      { sheetmetal_worker_id: sheetmetalWorkerId, assembly_worker_id: assemblyWorkerId }).then((r) => r.data),
   groupDone: (taskId: number, done: boolean) =>
     http.post(`/produce/group/${taskId}/done`, { done }).then((r) => r.data),
   sheetmetalProjects: () =>

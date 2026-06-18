@@ -249,6 +249,7 @@ class ProduceGroupTask(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
     group: Mapped[str] = mapped_column(String(16), index=True)        # sheetmetal / assembly
     status: Mapped[str] = mapped_column(String(16), default="dispatched")  # dispatched / done
+    worker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)  # 派给本组的具体人
     dispatched_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     done_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     done_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

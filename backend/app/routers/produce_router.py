@@ -48,51 +48,86 @@ async def _produce_order(db: AsyncSession, order_id: int) -> models.DeptOrder:
     return o
 
 
-# ==================== 派发（主管手动） ====================
+# ==================== 派发可选人员（主管下拉） ====================
+class DispatchOptions(BaseModel):
+    sheetmetal: list[schemas.OrderOptionUser] = []
+    assembly: list[schemas.OrderOptionUser] = []
+
+
+async def _role_users(db: AsyncSession, code: str) -> list[schemas.OrderOptionUser]:
+    """某角色的在线可派发用户（锚点角色或多角色关联命中任一即算）。"""
+    rid = (await db.execute(select(models.Role.id).where(models.Role.code == code))).scalar_one_or_none()
+    if rid is None:
+        return []
+    sub = select(models.UserRole.user_id).where(models.UserRole.role_id == rid)
+    res = await db.execute(select(models.User).where(
+        models.User.is_active == True,  # noqa: E712
+        (models.User.role_id == rid) | (models.User.id.in_(sub))).order_by(models.User.id))
+    return [schemas.OrderOptionUser(id=u.id, name=_uname(u)) for u in res.scalars().all()]
+
+
+@router.get("/dispatch-options", response_model=DispatchOptions)
+async def dispatch_options(
+    _: models.User = Depends(require_roles("pm_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """派发下拉：钣金组(sheetmetal)、装配组(assembler)各自的可派发人员。"""
+    return DispatchOptions(
+        sheetmetal=await _role_users(db, "sheetmetal"),
+        assembly=await _role_users(db, "assembler"),
+    )
+
+
+# ==================== 派发（主管手动，分别指定两组的人） ====================
 class DispatchIn(BaseModel):
-    due_date: Optional[str] = None   # 预计完成（选填，供部门报表/逾期口径）
+    sheetmetal_worker_id: int   # 派给钣金组的人
+    assembly_worker_id: int     # 派给装配组的人
 
 
 @router.post("/dispatch/{order_id}", response_model=schemas.Msg)
 async def dispatch_produce(
     order_id: int,
-    data: DispatchIn = DispatchIn(),
+    data: DispatchIn,
     current: models.User = Depends(require_roles("pm_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """生产部主管派发：把待分派的生产任务同时派给钣金组、装配组两个角色。"""
+    """生产部主管派发：分别选定钣金组、装配组各一名人员（两组都必选）。"""
     o = await _produce_order(db, order_id)
     if o.status in ("done", "voided"):
         raise HTTPException(400, "已完成/已作废的任务单不可派发")
 
-    # 已派发过的组不重复建（幂等）
+    worker_of = {"sheetmetal": data.sheetmetal_worker_id, "assembly": data.assembly_worker_id}
+    # 校验两人各自具备对应组角色
+    for g, wid in worker_of.items():
+        w = (await db.execute(select(models.User).where(models.User.id == wid))).scalar_one_or_none()
+        if not w or not w.is_active or not w.has_role(GROUP_ROLE[g]):
+            raise HTTPException(400, f"{GROUP_NAME[g]}派发对象必须是「{GROUP_NAME[g]}」角色的在职人员")
+
     res = await db.execute(select(models.ProduceGroupTask).where(
         models.ProduceGroupTask.order_id == o.id))
-    existing = {t.group for t in res.scalars().all()}
-    created = 0
+    by_group = {t.group: t for t in res.scalars().all()}
     for g in GROUPS:
-        if g in existing:
-            continue
-        db.add(models.ProduceGroupTask(
-            order_id=o.id, project_id=o.project_id, group=g,
-            status="dispatched", dispatched_by=current.id))
-        created += 1
+        t = by_group.get(g)
+        if t:
+            t.worker_id = worker_of[g]      # 重新派发=换人
+        else:
+            db.add(models.ProduceGroupTask(
+                order_id=o.id, project_id=o.project_id, group=g,
+                status="dispatched", worker_id=worker_of[g], dispatched_by=current.id))
 
     o.status = "in_progress"
     if not o.start_date:
         o.start_date = date.today().isoformat()
-    if data.due_date:
-        o.due_date = data.due_date
     await db.commit()
 
     p = o.project
-    for g in GROUPS:
-        await push_message(db, to_role=GROUP_ROLE[g], kind="info",
+    for g, wid in worker_of.items():
+        await push_message(db, to_user_id=wid, kind="info",
                            text=f"【生产派发】{p.code if p else ''} {p.name if p else ''} "
-                                f"已派发到{GROUP_NAME[g]}（派发：{_uname(current)}）。",
+                                f"已派发给你（{GROUP_NAME[g]}，派发：{_uname(current)}）。",
                            biz_type="project", biz_id=o.project_id)
     await write_audit(db, user=current, action="produce_dispatch", target_type="dept_order",
-                      target_id=o.id, detail=f"派发到钣金组+装配组（新建{created}组）")
+                      target_id=o.id, detail=f"派发 钣金组#{data.sheetmetal_worker_id}/装配组#{data.assembly_worker_id}")
     return schemas.Msg(message="已派发到钣金组、装配组")
 
 
@@ -156,6 +191,7 @@ class GroupProjectRow(BaseModel):
     name: str
     designer: Optional[str] = None
     task_id: int
+    worker_name: Optional[str] = None   # 派给谁（主管/管理层视角展示）
     group_done: bool = False
     sheetmetal_datasheet_id: Optional[int] = None   # 钣金装配表（只读引用）
     sheetmetal_done: bool = False
@@ -203,15 +239,24 @@ async def _sheet_ready(db: AsyncSession, ds: Optional[models.Datasheet]) -> bool
 
 
 async def _group_rows(db: AsyncSession, current: models.User, group: str) -> List[GroupProjectRow]:
-    # 范围：本组角色看已派发给本组的项目；生产主管/管理层看全部
-    res = await db.execute(
-        select(models.ProduceGroupTask, models.DeptOrder)
-        .join(models.DeptOrder, models.ProduceGroupTask.order_id == models.DeptOrder.id)
-        .where(models.ProduceGroupTask.group == group, models.DeptOrder.status != "voided"))
+    # 范围：本组组员只看派给自己的项目；生产主管/管理层看本组全部
+    q = (select(models.ProduceGroupTask, models.DeptOrder)
+         .join(models.DeptOrder, models.ProduceGroupTask.order_id == models.DeptOrder.id)
+         .where(models.ProduceGroupTask.group == group, models.DeptOrder.status != "voided"))
+    is_boss = current.has_role("pm_lead", "manager", "admin")
+    if not is_boss:
+        q = q.where(models.ProduceGroupTask.worker_id == current.id)
+    res = await db.execute(q)
     pairs = [(t, o) for t, o in res.all()]
     if not pairs:
         return []
     pids = [t.project_id for t, _ in pairs]
+    # 派给谁（主管视角展示）
+    wids = {t.worker_id for t, _ in pairs if t.worker_id}
+    wname_by_id: dict[int, str] = {}
+    if wids:
+        wr = await db.execute(select(models.User).where(models.User.id.in_(wids)))
+        wname_by_id = {u.id: _uname(u) for u in wr.scalars().all()}
 
     res = await db.execute(select(models.Project).where(
         models.Project.id.in_(pids), models.Project.is_deleted == False))  # noqa: E712
@@ -231,7 +276,8 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str) -> Lis
         row = GroupProjectRow(
             project_id=p.id, code=p.code, name=p.name,
             designer=(p.extra or {}).get("__o__设计师") or designer_by_pid.get(p.id),
-            task_id=t.id, group_done=(t.status == "done"),
+            task_id=t.id, worker_name=wname_by_id.get(t.worker_id) if t.worker_id else None,
+            group_done=(t.status == "done"),
             sheetmetal_datasheet_id=bj.id if bj else None,
             sheetmetal_done=bool(bj.done_flag) if bj else False,
         )

@@ -24,6 +24,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("done_at", "TIMESTAMP"),
     ],
     "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
+    "produce_group_tasks": [("worker_id", "INTEGER")],  # 🆕 生产分组派给具体人(钣金组/装配组)
     "aftersales": [("reject_reason", "TEXT")],     # 🆕 #98 售后驳回原因
     "sales_ledger": [                              # 🆕 预付/发货前付收款批注(支持插入时间戳)
         ("prepay_note", "TEXT"),
