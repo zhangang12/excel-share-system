@@ -190,6 +190,17 @@ async def main():
         people = (await c.get("/api/sales/salespeople", headers=H)).json()
         chk(sec in {p["id"] for p in people}, "锚点非 sales 但副角色含 sales 的用户也应在销售员名单")
 
+        # ================= K. 按角色推送命中「副角色」用户(notify 多角色修复) =================
+        # 锚点 designer + 副角色 design_lead：push_message(to_role=design_lead) 必须能推到 ta
+        dl = await mk("sec_dlead", [rid["designer"], rid["design_lead"]])
+        from app.notify import push_message
+        async with SessionLocal() as db:
+            n = await push_message(db, to_role="design_lead", kind="info", text="【测试】设计部待办")
+            got = (await db.execute(select(func.count()).select_from(models.Message)
+                                    .where(models.Message.to_user_id == dl,
+                                           models.Message.text == "【测试】设计部待办"))).scalar()
+        chk(got == 1, f"K 按角色推送应命中副角色用户(设计部负责人为副角色): 推送{n}条, 该用户收到{got}")
+
         # ================= G. 删多角色用户清关联 =================
         del_uid = await mk("to_delete", [rid["warehouse"], rid["logistics"], rid["finance"]])
         async with SessionLocal() as db:

@@ -11,7 +11,7 @@
 import logging
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import models
@@ -35,13 +35,19 @@ async def push_message(
     if to_user_id is not None:
         user_ids.append(to_user_id)
     if to_role:
-        res = await db.execute(
-            select(models.User.id).join(models.Role).where(
-                models.Role.code == to_role,
-                models.User.is_active == True,  # noqa: E712
+        # 多角色：锚点 role_id 命中 或 user_roles 关联命中任一即推送
+        # （否则「该角色仅为副角色」的用户收不到按角色的待办/提醒推送）
+        rid = (await db.execute(
+            select(models.Role.id).where(models.Role.code == to_role))).scalar_one_or_none()
+        if rid is not None:
+            sub = select(models.UserRole.user_id).where(models.UserRole.role_id == rid)
+            res = await db.execute(
+                select(models.User.id).where(
+                    models.User.is_active == True,  # noqa: E712
+                    or_(models.User.role_id == rid, models.User.id.in_(sub)),
+                )
             )
-        )
-        user_ids.extend(r[0] for r in res.all())
+            user_ids.extend(r[0] for r in res.all())
     if not user_ids:
         log.info("push_message: 角色 %s 无在线用户，消息丢弃: %s", to_role, text[:50])
         return 0
