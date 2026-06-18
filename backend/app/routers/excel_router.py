@@ -458,6 +458,10 @@ async def import_excel(
     base_order = 0
     from datetime import datetime as _dt, timezone as _tz
     for idx, (sname, headers, rows, preamble) in enumerate(sheets_meta):
+        # 🆕 跳过与受保护表(电工采购单)同名的导入 sheet：该表由电工部上传采购清单生成、
+        #    导入时已被保护保留，不应再按导入文件重建，否则与原表形成重复 tab（修复 2026-037A 两个电工采购单）。
+        if sname in PROTECT:
+            continue
         d = models.Datasheet(
             project_id=pid, name=sname, sort_order=base_order + idx,
             header_lines=json.dumps(preamble, ensure_ascii=False) if preamble else None,
