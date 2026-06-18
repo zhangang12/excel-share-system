@@ -610,10 +610,10 @@ async function openReport() {
     <el-card shadow="never">
       <el-table :data="rows" stripe v-loading="loading" :show-summary="false"
                 max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+        <el-table-column type="index" label="#" width="48" fixed />
         <el-table-column label="项目编号" width="120" fixed>
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
-        <el-table-column type="index" label="#" width="48" />
         <el-table-column prop="name" label="设备名称" min-width="150" show-overflow-tooltip />
         <el-table-column prop="customer" label="客户单位" min-width="130" show-overflow-tooltip>
           <template #default="{ row }">{{ row.customer || '—' }}</template>
