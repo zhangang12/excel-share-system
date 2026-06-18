@@ -52,7 +52,8 @@ async function load() {
     ])
     orders.value = os
     options.value = opt
-    if (!activeTab.value) activeTab.value = isWorker.value ? 'todo' : 'assign'
+    // 负责人(含同时是工人的多角色)默认进「待分派」；纯工人进「我的待办」
+    if (!activeTab.value) activeTab.value = (isLead.value || isMgr.value) ? 'assign' : 'todo'
   } finally {
     loading.value = false
   }
@@ -239,10 +240,10 @@ const stockVisible = ref(false)
       <el-button v-if="isLead || isMgr" type="primary" plain @click="openReport">📊 {{ deptName }}报表</el-button>
     </div>
 
-    <!-- ===== 工人视角 ===== -->
-    <template v-if="isWorker">
+    <!-- ===== 部门工作台：负责人(待分派/跟踪) + 工人(待办/已完成) 并存；多角色用户全部显示 ===== -->
+    <template v-if="isWorker || isLead || isMgr">
       <el-tabs v-model="activeTab">
-        <el-tab-pane :label="`📥 我的待办 (${myTodo.length})`" name="todo">
+        <el-tab-pane v-if="isWorker" :label="`📥 我的待办 (${myTodo.length})`" name="todo">
           <EmptyHint v-if="!loading && myTodo.length === 0" text="暂无待办任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in myTodo" :key="o.id" shadow="hover"
@@ -313,7 +314,7 @@ const stockVisible = ref(false)
           </div>
         </el-tab-pane>
 
-        <el-tab-pane :label="`✅ 已完成 (${myDone.length})`" name="done">
+        <el-tab-pane v-if="isWorker" :label="`✅ 已完成 (${myDone.length})`" name="done">
           <el-table :data="myDone" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目" min-width="120">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
@@ -353,13 +354,8 @@ const stockVisible = ref(false)
           </el-table>
           <EmptyHint v-if="!loading && !myDone.length" text="还没有已完成的任务" size="sm" />
         </el-tab-pane>
-      </el-tabs>
-    </template>
-
-    <!-- ===== 负责人 / 管理层视角 ===== -->
-    <template v-else-if="isLead || isMgr">
-      <el-tabs v-model="activeTab">
-        <el-tab-pane :label="`📥 待分派 (${pendingAssign.length})`" name="assign">
+        <!-- ===== 负责人 / 管理层：待分派 + 任务跟踪 ===== -->
+        <el-tab-pane v-if="isLead || isMgr" :label="`📥 待分派 (${pendingAssign.length})`" name="assign">
           <EmptyHint v-if="!loading && pendingAssign.length === 0" text="暂无待分派任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in pendingAssign" :key="o.id" shadow="hover" class="todo-card assign">
@@ -384,7 +380,7 @@ const stockVisible = ref(false)
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="📋 任务跟踪" name="track">
+        <el-tab-pane v-if="isLead || isMgr" label="📋 任务跟踪" name="track">
           <el-table :data="orders" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目" min-width="130">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
