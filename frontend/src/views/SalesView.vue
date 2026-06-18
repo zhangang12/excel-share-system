@@ -648,7 +648,7 @@ async function openReport() {
           </template>
         </el-table-column>
         <el-table-column label="金额" width="100" align="right">
-          <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
+          <template #default="{ row }">{{ fmtPay(row.amount) }}</template>
         </el-table-column>
         <el-table-column prop="tax_rate" label="税票" width="70">
           <template #default="{ row }">{{ row.tax_rate || '—' }}</template>
