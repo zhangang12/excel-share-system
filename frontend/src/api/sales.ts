@@ -7,6 +7,8 @@ export interface SalesLedgerRow {
   code: string
   name: string
   status: string
+  qty?: number | null
+  unit?: string | null
   sales_uid?: number | null
   sales_name?: string | null
   customer?: string | null
@@ -58,6 +60,8 @@ export interface SalesLedgerList {
 export interface SalesOrderForm {
   code: string
   name: string
+  qty: number
+  unit: string
   customer: string
   cust_type: string
   contract: string

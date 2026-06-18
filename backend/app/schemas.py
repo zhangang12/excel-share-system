@@ -151,6 +151,8 @@ class SalesLedgerRow(BaseModel):
     code: str
     name: str
     status: str
+    qty: Optional[int] = None             # 🆕 数量（解析一览「数量」单元格）
+    unit: Optional[str] = None            # 🆕 单位 台/套
     sales_uid: Optional[int] = None
     sales_name: Optional[str] = None
     customer: Optional[str] = None
@@ -217,6 +219,8 @@ class SalesOrderCreate(BaseModel):
     code: str = ""                        # 🆕 项目编号：人工输入（取消自动生成）
     code_suffix: str = ""                 # (废弃)编号后缀字母——保留字段兼容，已不用
     name: str = Field(min_length=1, max_length=255)   # 设备名称
+    qty: int = 1                          # 🆕 数量
+    unit: str = "台"                       # 🆕 单位：台/套
     customer: str = ""
     cust_type: str = "经销商"
     contract: str = "有"

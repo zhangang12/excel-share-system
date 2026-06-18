@@ -96,7 +96,7 @@ const orderVisible = ref(false)
 const ordering = ref(false)
 const openingOrder = ref(false)
 const orderForm = reactive({
-  code: '', name: '', customer: '', cust_type: '经销商', contract: '有',
+  code: '', name: '', qty: 1, unit: '台', customer: '', cust_type: '经销商', contract: '有',
   amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
   ship_receivable: 0,
   balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
@@ -122,7 +122,7 @@ async function openOrder() {
     try { suggested = await salesApi.nextCode(orderYear.value) } catch { /* 拿不到就留空人工填 */ }
     draftEditLid.value = null
     Object.assign(orderForm, {
-      code: suggested, name: '', customer: '', cust_type: '经销商', contract: '有',
+      code: suggested, name: '', qty: 1, unit: '台', customer: '', cust_type: '经销商', contract: '有',
       amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
       ship_receivable: 0,
       balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
@@ -139,7 +139,8 @@ function openDraftEdit(r: SalesLedgerRow) {
   draftEditLid.value = r.id
   const po: any = r.pending_order || {}
   Object.assign(orderForm, {
-    code: r.code, name: r.name, customer: r.customer || '', cust_type: r.cust_type || '经销商',
+    code: r.code, name: r.name, qty: r.qty || 1, unit: r.unit || '台',
+    customer: r.customer || '', cust_type: r.cust_type || '经销商',
     contract: r.contract || '有', amount: r.amount || 0,
     tax_rate: r.tax_rate === '/' ? '0' : (r.tax_rate || '13%'),
     prepay: r.prepay || 0, prepay_note: '', before_ship: r.before_ship || 0, before_ship_note: '',
@@ -816,6 +817,12 @@ async function openReport() {
           </el-form-item>
           <el-form-item label="设备名称" required style="flex: 1">
             <el-input v-model="orderForm.name" placeholder="如 300L真空乳化机" />
+          </el-form-item>
+          <el-form-item label="数量" style="flex: 0 0 150px">
+            <el-input-number v-model="orderForm.qty" :min="1" :controls="false" style="width: 80px" />
+            <el-select v-model="orderForm.unit" style="width: 64px; margin-left: 6px">
+              <el-option label="台" value="台" /><el-option label="套" value="套" />
+            </el-select>
           </el-form-item>
         </div>
         <div class="fsec">🤝 客户与合同</div>

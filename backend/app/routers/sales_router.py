@@ -78,6 +78,27 @@ def _uname(u: Optional[models.User]) -> Optional[str]:
     return (u.full_name or u.username) if u else None
 
 
+# 🆕 解析一览「数量」单元格文本(如 "2台")→ (数量, 单位)，供台账行/草稿预填回带
+_QTY_RE = re.compile(r"^\s*(\d+)\s*(台|套)?")
+def _parse_qty(s):
+    m = _QTY_RE.match(s or "")
+    if not m:
+        return (None, None)
+    return (int(m.group(1)), m.group(2) or "台")
+
+
+# 🆕 数量+单位(台/套)→ 一览「数量」单元格文本，如 "2台"
+def _qty_str(qty, unit) -> str:
+    u = unit if unit in ("台", "套") else "台"
+    try:
+        n = int(qty)
+    except (TypeError, ValueError):
+        n = 1
+    if n < 1:
+        n = 1
+    return f"{n}{u}"
+
+
 # ==================== 销售员名单（台账编辑下拉用） ====================
 @router.get("/salespeople")
 async def list_salespeople(
@@ -119,7 +140,9 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
         p = l.project
         extra = (p.extra or {}) if p else {}
         po = extra.get("__pending_order__") or None  # 🆕 待审批/草稿派单信息(供前端预填)
+        _qn, _qu = _parse_qty(extra.get(f"{OVERVIEW_KEY_PREFIX}数量"))
         rows.append(schemas.SalesLedgerRow(
+            qty=_qn, unit=_qu,
             order_state=l.order_state,
             order_reject_reason=(po or {}).get("reject_reason") if po else None,
             pending_order={k: po[k] for k in ("depts", "req_text", "receiver") if k in po} if po else None,
@@ -321,6 +344,7 @@ async def create_sales_order(
     await db.flush()
     await create_default_template_sheets(db, p.id)
     _writeback_overview(p, "销售", _uname(current))
+    _writeback_overview(p, "数量", _qty_str(data.qty, data.unit))  # 🆕 同步一览「数量」单元格
 
     # 2) 台账（未开票金额=合同金额，由 invoice_state 推导不另存）
     led = models.SalesLedger(
@@ -1024,6 +1048,7 @@ async def order_draft_resubmit(
         raise HTTPException(400, "客户分类必须是 经销商/终端客户")
     if p:
         p.name = name
+        _writeback_overview(p, "数量", _qty_str(data.qty, data.unit))  # 🆕 同步一览「数量」
     led.customer = data.customer.strip() or None
     led.cust_type = data.cust_type
     led.contract = data.contract if data.contract in ("有", "无") else "无"
