@@ -97,6 +97,35 @@ export const ordersApi = {
 
   reassign: (id: number, workerId: number) =>
     http.post(`/orders/${id}/reassign`, { worker_id: workerId }).then((r) => r.data),
+
+  // 🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账
+  spareOrder: (data: { code: string; name: string; qty: number; unit: string; depts: string[]; req_text: string }) =>
+    http.post<{ project_id: number; code: string; order_ids: number[] }>('/orders/spare', data).then((r) => r.data),
+}
+
+// 🆕 2026-06-19 生产部分组派发（钣金组/装配组）
+export interface GroupProjectRow {
+  project_id: number
+  code: string
+  name: string
+  designer?: string | null
+  task_id: number
+  group_done: boolean
+  sheetmetal_datasheet_id?: number | null
+  sheetmetal_done: boolean
+  standard_ready?: boolean | null    // 仅装配组
+  outsource_ready?: boolean | null   // 仅装配组
+}
+
+export const produceApi = {
+  dispatch: (orderId: number, dueDate?: string) =>
+    http.post(`/produce/dispatch/${orderId}`, { due_date: dueDate || null }).then((r) => r.data),
+  groupDone: (taskId: number, done: boolean) =>
+    http.post(`/produce/group/${taskId}/done`, { done }).then((r) => r.data),
+  sheetmetalProjects: () =>
+    http.get<GroupProjectRow[]>('/produce/sheetmetal-projects').then((r) => r.data),
+  assemblyProjects: () =>
+    http.get<GroupProjectRow[]>('/produce/assembly-projects').then((r) => r.data),
 }
 
 // 附件下载（带鉴权的 blob 下载，沿用现有 fetch+blob 模式）

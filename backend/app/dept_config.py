@@ -15,8 +15,10 @@ DEPTS: dict[str, dict] = {
         "worker_role": "designer",
         "lead_role": "design_lead",
         "sheet_check": True,
+        # 🆕 2026-06-19：图纸包改为「CAD激光图纸」并推送采购部(不再推钣金组)；新增「外购附图」也推采购部
         "start_outputs": [
-            {"k": "sheetpkg", "label": "PDF 图纸包", "to_role": "sheetmetal"},
+            {"k": "sheetpkg", "label": "CAD激光图纸", "to_role": "buyer"},
+            {"k": "outsource_img", "label": "外购附图", "to_role": "buyer"},
         ],
         "outputs": [
             {"k": "manual",    "label": "说明书 (Word)", "to_role": "logistics", "required": False},

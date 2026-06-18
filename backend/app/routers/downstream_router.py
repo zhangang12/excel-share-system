@@ -84,6 +84,82 @@ class PurchaseInboxRow(BaseModel):
     received_at: str
 
 
+class PurchaseProjectRow(BaseModel):
+    project_id: int
+    code: str
+    name: str
+    designer: Optional[str] = None
+    # 数据表引用（前端按 datasheet_id 走导出下载）
+    outsource_sheet_id: Optional[int] = None        # 外协加工
+    material_sheet_id: Optional[int] = None          # 不锈钢原料下料单
+    elec_po_sheet_id: Optional[int] = None           # 电工采购单
+    standard_sheet_id: Optional[int] = None          # 标准件清单
+    # 设计师推送的附件
+    cad_laser_files: list[schemas.AttachmentOut] = []      # CAD激光图纸(order_start_output/sheetpkg)
+    outsource_img_files: list[schemas.AttachmentOut] = []  # 外购附图(order_start_output/outsource_img)
+
+
+@router.get("/purchase/projects", response_model=List[PurchaseProjectRow])
+async def purchase_projects(
+    _: models.User = Depends(require_roles("buyer", "buyer_standard", "buyer_outsource", "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 采购部项目列表：按项目汇总采购所需数据表(引用下载)与设计师推送的图纸附件。
+    前端按采购员子角色(外协采购员/标准件采购员)显示对应列；未细分的 buyer 看全部列。"""
+    res = await db.execute(
+        select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
+        .order_by(models.Project.code)
+    )
+    projects = list(res.scalars().all())
+    pids = [p.id for p in projects]
+    if not pids:
+        return []
+
+    _NAME2KEY = {"外协加工": "outsource", "不锈钢原料下料单": "material",
+                 "电工采购单": "elec_po", "标准件清单": "standard"}
+    res = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.project_id.in_(pids),
+        models.Datasheet.name.in_(tuple(_NAME2KEY.keys()))))
+    sheet_ids: dict[int, dict[str, int]] = {}
+    for d in res.scalars().all():
+        sheet_ids.setdefault(d.project_id, {})[_NAME2KEY[d.name]] = d.id
+
+    # 设计师推送的 CAD激光图纸 / 外购附图（排除已作废来源单）
+    res = await db.execute(select(models.Attachment)
+        .join(models.DeptOrder, models.Attachment.biz_id == models.DeptOrder.id)
+        .where(models.Attachment.biz_type == "order_start_output",
+               models.Attachment.kind.in_(("sheetpkg", "outsource_img")),
+               models.Attachment.project_id.in_(pids),
+               models.DeptOrder.status != "voided").order_by(models.Attachment.id))
+    cad_by_pid: dict[int, list] = {}
+    img_by_pid: dict[int, list] = {}
+    for a in res.scalars().all():
+        (cad_by_pid if a.kind == "sheetpkg" else img_by_pid).setdefault(
+            a.project_id, []).append(schemas.AttachmentOut.model_validate(a))
+
+    # 设计师名：优先一览 __o__设计师（接单回写），否则回退设计任务单负责人
+    res = await db.execute(
+        select(models.DeptOrder.project_id, models.User.full_name, models.User.username)
+        .join(models.User, models.DeptOrder.worker_id == models.User.id)
+        .where(models.DeptOrder.dept == "design", models.DeptOrder.project_id.in_(pids)))
+    designer_by_pid: dict[int, str] = {}
+    for did, fn, un in res.all():
+        designer_by_pid.setdefault(did, fn or un)
+
+    rows = []
+    for p in projects:
+        sm = sheet_ids.get(p.id, {})
+        rows.append(PurchaseProjectRow(
+            project_id=p.id, code=p.code, name=p.name,
+            designer=(p.extra or {}).get("__o__设计师") or designer_by_pid.get(p.id),
+            outsource_sheet_id=sm.get("outsource"), material_sheet_id=sm.get("material"),
+            elec_po_sheet_id=sm.get("elec_po"), standard_sheet_id=sm.get("standard"),
+            cad_laser_files=cad_by_pid.get(p.id, []),
+            outsource_img_files=img_by_pid.get(p.id, []),
+        ))
+    return rows
+
+
 @router.get("/purchase/inbox", response_model=List[PurchaseInboxRow])
 async def purchase_inbox(
     _: models.User = Depends(require_roles("buyer", "buyer_standard", "buyer_outsource")),

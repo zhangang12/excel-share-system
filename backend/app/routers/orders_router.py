@@ -21,7 +21,7 @@ from sqlalchemy import select, update, or_
 
 from ..database import get_db
 from .. import models, schemas
-from ..deps import get_current_user
+from ..deps import get_current_user, require_roles
 from ..dept_config import DEPTS, compute_efficiency
 from ..notify import push_message
 from ..utils import write_audit
@@ -400,6 +400,52 @@ async def create_order_internal(
     db.add(o)
     await db.flush()
     return o
+
+
+@router.post("/spare", response_model=schemas.SalesOrderOut)
+async def create_spare_order(
+    data: schemas.SpareOrderCreate,
+    current: models.User = Depends(require_roles("admin", "manager", "design_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 备机下单（设计部负责人/管理层）：建项目(进项目目录/详单)+派各部门任务，
+    复用下单派单/推送逻辑，但不建销售台账(不在销售部管理)。直接生效、无需审批。"""
+    from .projects_router import create_default_template_sheets, _add_all_active_users_as_members
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(400, "请填写设备名称")
+    code = (data.code or "").strip()
+    if not code:
+        raise HTTPException(400, "请填写项目编号")
+    depts = [d for d in data.depts if d in DEPTS] or ["produce", "electric"]
+    res = await db.execute(select(models.Project).where(models.Project.code == code))
+    if res.scalar_one_or_none():
+        raise HTTPException(409, f"项目编号 {code} 已存在")
+
+    p = models.Project(code=code, name=name, status="进行中", manager_id=None)
+    db.add(p)
+    await db.flush()
+    await create_default_template_sheets(db, p.id)
+    await _add_all_active_users_as_members(db, p.id)
+    u = data.unit if data.unit in ("台", "套") else "台"
+    n = data.qty if isinstance(data.qty, int) and data.qty >= 1 else 1
+    _writeback_overview(p, "数量", f"{n}{u}")
+    _writeback_overview(p, "销售", f"备机·{_uname(current)}")  # 标记备机便于在项目目录区分
+
+    req = data.req_text.strip() or f"（备机下单）{name}"
+    order_ids = []
+    for d in depts:
+        o = await create_order_internal(db, project=p, dept=d, req_text=req, created_by=current.id)
+        order_ids.append(o.id)
+    await db.commit()
+
+    for d in depts:
+        await push_message(db, to_role=DEPTS[d]["lead_role"], kind="info",
+                           text=f"【备机下单】{code} {name} 新{DEPTS[d]['name']}任务待分派（下单：{_uname(current)}）。",
+                           biz_type="project", biz_id=p.id)
+    await write_audit(db, user=current, action="create_spare", target_type="project",
+                      target_id=p.id, detail=f"{code} 备机 派往{','.join(depts)}")
+    return schemas.SalesOrderOut(project_id=p.id, code=code, order_ids=order_ids)
 
 
 # ==================== 附件 ====================

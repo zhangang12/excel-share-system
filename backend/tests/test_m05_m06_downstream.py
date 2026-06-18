@@ -69,11 +69,11 @@ async def main():
                           files=[("files", ("总装图.pdf", io.BytesIO(b"P1"), "application/pdf")),
                                  ("files", ("钣金件图.pdf", io.BytesIO(b"P2"), "application/pdf"))])
         att_id = up.json()[0]["id"]
-        # 钣金收推送
-        msgs = (await c.get("/api/messages", headers=Hsm)).json()
-        chk(any("图纸包" in m["text"] for m in msgs), "钣金收图纸包推送")
+        # CAD激光图纸推送给采购部(2026-06-19 改向，不再推钣金)；钣金组仍可只读引用图纸包附件
+        msgs = (await c.get("/api/messages", headers=Hbu)).json()
+        chk(any("CAD激光图纸" in m["text"] for m in msgs), "采购部收CAD激光图纸推送")
         row = [x for x in (await c.get("/api/sheetmetal/projects", headers=Hsm)).json() if x["code"]==code][0]
-        chk(len(row["pkg_files"])==2, f"钣金看到2个图纸包: {len(row['pkg_files'])}")
+        chk(len(row["pkg_files"])==2, f"钣金仍可见2个图纸包附件: {len(row['pkg_files'])}")
         # 钣金下载图纸包
         r = await c.get(f"/api/attachments/{att_id}/download", headers=Hsm)
         chk(r.status_code==200, "钣金下载图纸包")

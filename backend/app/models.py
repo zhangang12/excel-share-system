@@ -236,6 +236,27 @@ class DeptOrder(Base):
     project: Mapped["Project"] = relationship(lazy="joined")
 
 
+# ---------- 🆕 2026-06-19 生产部分组派发（钣金组/装配组）：取代生产单的单人分派 ----------
+class ProduceGroupTask(Base):
+    """生产部主管把销售下单的生产任务（dept_orders.dept==produce）派发给「钣金组」「装配组」
+    两个组，每组一行；两组都标记完成 → 父生产任务单 status=done（驱动发货闸门 D5/部门报表）。
+    group: sheetmetal 钣金组 / assembly 装配组。"""
+    __tablename__ = "produce_group_tasks"
+    __table_args__ = (UniqueConstraint("order_id", "group", name="uq_produce_group"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("dept_orders.id"), index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    group: Mapped[str] = mapped_column(String(16), index=True)        # sheetmetal / assembly
+    status: Mapped[str] = mapped_column(String(16), default="dispatched")  # dispatched / done
+    dispatched_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    done_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    done_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    project: Mapped["Project"] = relationship(lazy="joined")
+
+
 # ---------- 🆕 销售台账（§十三 19 列；一项目一行；台账为权威、关键日期同步 __o__） ----------
 class SalesLedger(Base):
     __tablename__ = "sales_ledger"

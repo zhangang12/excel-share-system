@@ -20,7 +20,7 @@ MENU_DEFS: list[dict] = [
     {"key": "design",     "label": "设计部"},
     {"key": "electric",   "label": "电工部"},
     {"key": "produce",    "label": "生产部"},
-    {"key": "sheet",      "label": "钣金组"},
+    # 🆕 2026-06-19 「钣金组」菜单并入「生产部」(以 tab 呈现)，不再单列菜单 key=sheet
     {"key": "purchase",   "label": "采购部"},
     {"key": "warehouse",  "label": "仓库"},
     {"key": "logistics",  "label": "物流发货部"},
@@ -59,9 +59,9 @@ ROLE_MENUS: dict[str, list[str]] = {
     "design_lead":      ["catalog", "list", "design"],
     "electrician":      ["catalog", "electric"],              # 无详单
     "electric_lead":    ["catalog", "electric"],              # 无详单（与 design_lead 不对称是有意口径）
-    "assembler":        ["catalog", "produce"],               # 无详单
+    "assembler":        ["catalog", "produce"],               # 无详单；装配组 tab 在生产部菜单内
     "pm_lead":          ["catalog", "list", "produce"],
-    "sheetmetal":       ["catalog", "list", "sheet"],
+    "sheetmetal":       ["catalog", "list", "produce"],        # 🆕 钣金组并入生产部菜单(tab)
     "buyer":            ["catalog", "list", "purchase"],
     "warehouse_lead":   ["catalog", "list", "warehouse"],
     "logistics":        ["catalog", "list", "logistics"],

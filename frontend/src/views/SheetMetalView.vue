@@ -2,17 +2,14 @@
 // 🆕 v3 M05 钣金组：项目图纸包下载 + 钣金装配表只读引用
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, Download, Refresh, CircleCheck } from '@element-plus/icons-vue'
+import { Refresh, CircleCheck } from '@element-plus/icons-vue'
 import { http } from '@/api'
-import { downloadAttachment } from '@/api/orders'
 import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
-import StatusPill from '@/components/StatusPill.vue'
 
-interface Att { id: number; name: string }
 interface Row {
   project_id: number; code: string; name: string; designer?: string | null
-  sheetmetal_datasheet_id?: number | null; sheetmetal_done: boolean; pkg_files: Att[]
+  sheetmetal_datasheet_id?: number | null; sheetmetal_done: boolean
 }
 
 const loading = ref(false)
@@ -55,7 +52,7 @@ function cellVal(rec: any, fid: number) {
     <div class="page-header">
       <div>
         <h1>钣金组</h1>
-        <div class="desc">设计部接单后上传的 PDF 图纸包在此下载；钣金装配表为设计数据表的只读引用</div>
+        <div class="desc">钣金装配表为设计数据表的只读引用</div>
       </div>
       <div class="spacer"></div>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
@@ -76,21 +73,6 @@ function cellVal(rec: any, fid: number) {
               钣金装配表<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:4px"><CircleCheck /></el-icon>
             </el-button>
             <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="PDF 图纸包(下载)" min-width="220">
-          <template #default="{ row }">
-            <el-tag v-for="f in row.pkg_files" :key="f.id" size="small" effect="plain"
-                    class="fc" @click="downloadAttachment(f)">
-              <el-icon><Document /></el-icon>{{ f.name }}<el-icon class="dl"><Download /></el-icon>
-            </el-tag>
-            <span v-if="!row.pkg_files.length" class="muted">待设计部上传</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="120" align="center" fixed="right">
-          <template #default="{ row }">
-            <StatusPill :variant="row.pkg_files.length ? 'success' : 'muted'"
-                        :text="row.pkg_files.length ? `可下载·${row.pkg_files.length}` : '待图纸包'" />
           </template>
         </el-table-column>
       </el-table>

@@ -20,8 +20,9 @@ async def list_roles(
     db: AsyncSession = Depends(get_db),
 ):
     # admin 角色对 UI 隐身（不出现在角色下拉、字段权限对话框等任何地方）
-    # 🆕 A2: 标准件/外协采购员已并入「采购部 (buyer)」，对前端隐藏但保留数据(存量用户兼容)
-    HIDDEN_ROLE_CODES = ("admin", "buyer_standard", "buyer_outsource")
+    # 🆕 2026-06-19: 重新启用「标准件采购员/外协机加工采购员」两个子角色——采购部项目列表按其区分两套列
+    #    (外协采购员→外协加工/不锈钢原料/CAD激光图纸；标准件采购员→电工采购单/标准件清单/外购附图)。
+    HIDDEN_ROLE_CODES = ("admin",)
     res = await db.execute(
         select(models.Role).where(models.Role.code.notin_(HIDDEN_ROLE_CODES)).order_by(models.Role.id)
     )
@@ -56,8 +57,8 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
     )
 
 
-# 不可经 API 分配的角色：admin 仅系统种子持有；两旧采购角色已并入 buyer
-_UNASSIGNABLE_CODES = {"admin", "buyer_standard", "buyer_outsource"}
+# 不可经 API 分配的角色：admin 仅系统种子持有（采购两子角色 2026-06-19 重新启用，可分配）
+_UNASSIGNABLE_CODES = {"admin"}
 
 
 def _guard_assignable(actor: models.User, codes: set[str]) -> None:

@@ -1,37 +1,51 @@
 <script setup lang="ts">
-// 🆕 v3 M06 采购部：采购清单收件箱（电工接单上传的采购清单，撤回即消失）
-import { ref, onMounted } from 'vue'
-import { Document, Download, Refresh } from '@element-plus/icons-vue'
+// 🆕 采购部项目列表：按采购员子角色显示两套列
+//   外协采购员(buyer_outsource)：项目编号/项目名称/设计师/外协加工(下载)/不锈钢原料下料单(下载)/CAD激光图纸
+//   标准件采购员(buyer_standard)：项目编号/项目名称/电工采购单(下载)/标准件清单(下载)/外购附图
+//   未细分 buyer / 管理层：两套列全显示
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Download, Refresh, Document } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
-import { fmtDateTime } from '@/utils/format'
 
 interface Att { id: number; name: string }
-interface InboxRow {
-  project_id: number; code: string; name: string; source: string
-  file: Att; received_at: string
+interface Row {
+  project_id: number; code: string; name: string; designer?: string | null
+  outsource_sheet_id?: number | null; material_sheet_id?: number | null
+  elec_po_sheet_id?: number | null; standard_sheet_id?: number | null
+  cad_laser_files: Att[]; outsource_img_files: Att[]
 }
 
 const auth = useAuthStore()
 const loading = ref(false)
-const rows = ref<InboxRow[]>([])
+const rows = ref<Row[]>([])
 
-// 🆕 采购清单收件箱开关：电工采购清单改为直接进「项目详单·电工采购单」第5表,
-// 收件箱已冗余 → 先隐藏(可逆: 改回 true 即恢复收件箱)。
-const SHOW_INBOX = false
+// 列可见性：仅外协采购员→外协列；仅标准件采购员→标准件列；buyer/管理层/双角色→全部
+const isOutsource = computed(() => auth.hasRole('buyer_outsource'))
+const isStandard = computed(() => auth.hasRole('buyer_standard'))
+const seeAll = computed(() => auth.hasRole('buyer', 'admin', 'manager') || (!isOutsource.value && !isStandard.value))
+const showOutsource = computed(() => seeAll.value || isOutsource.value)
+const showStandard = computed(() => seeAll.value || isStandard.value)
 
 async function load() {
-  if (!SHOW_INBOX) return
   loading.value = true
-  try { rows.value = (await http.get<InboxRow[]>('/purchase/inbox')).data }
+  try { rows.value = (await http.get<Row[]>('/purchase/projects')).data }
   finally { loading.value = false }
 }
 onMounted(load)
 
-function openDetail(pid: number) {
-  if (auth.canViewDetail) window.open(`/projects/${pid}`, '_self')
+// 数据表「引用·下载」：导出该 sheet 为 xlsx
+async function downloadSheet(did: number | null | undefined, label: string) {
+  if (!did) { ElMessage.info(`该项目暂无「${label}」`); return }
+  try {
+    const res = await http.get(`/datasheets/${did}/export`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a'); a.href = url; a.download = `${label}.xlsx`; a.click()
+    URL.revokeObjectURL(url)
+  } catch { ElMessage.error('下载失败') }
 }
 </script>
 
@@ -40,59 +54,83 @@ function openDetail(pid: number) {
     <div class="page-header">
       <div>
         <h1>采购部</h1>
-        <div class="desc">电工部接单上传的「采购清单」汇总到这里；在项目详单「电工采购单」表补充采购负责人/订购到货日期</div>
+        <div class="desc">按项目汇总采购所需数据表（引用·支持下载）与设计师推送的图纸；不同采购员看到对应列</div>
       </div>
+      <div class="spacer"></div>
+      <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
-    <!-- 🆕 收件箱已并入「项目详单·电工采购单」, 先隐藏(SHOW_INBOX 可逆) -->
-    <el-card v-if="!SHOW_INBOX" shadow="never">
-      <el-result icon="info" title="采购清单已并入项目详单"
-                 sub-title="电工部上传的采购清单现已直接进入对应项目「项目详单 · 电工采购单」第5表；请在该表内补充采购负责人 / 订购日期 / 到货日期。本收件箱已停用。">
-        <template #extra>
-          <el-button type="primary" @click="$router.push('/overview')">去项目目录</el-button>
-        </template>
-      </el-result>
-    </el-card>
-
-    <el-card v-else shadow="never">
-      <template #header>
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <span><el-icon><Document /></el-icon> 采购清单收件箱</span>
-          <el-button size="small" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-        </div>
-      </template>
+    <el-card shadow="never">
       <el-table :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-        <el-table-column type="index" label="#" width="50" />
-        <el-table-column label="项目编号" width="120">
-          <template #default="{ row }">
-            <a v-if="auth.canViewDetail" class="code link" @click="openDetail(row.project_id)">{{ row.code }}</a>
-            <b v-else class="code">{{ row.code }}</b>
-          </template>
+        <el-table-column type="index" label="#" width="50" fixed />
+        <el-table-column label="项目编号" width="120" fixed>
+          <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
         <el-table-column prop="name" label="项目名称" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="source" label="来源" width="100">
-          <template #default="{ row }"><el-tag size="small" effect="plain">{{ row.source }}</el-tag></template>
+        <el-table-column v-if="showOutsource" label="设计师" width="90">
+          <template #default="{ row }">{{ row.designer || '—' }}</template>
         </el-table-column>
-        <el-table-column label="采购清单" min-width="200">
+
+        <!-- 外协采购列 -->
+        <el-table-column v-if="showOutsource" label="外协加工表" min-width="130">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain" class="fc" @click="downloadAttachment(row.file)">
-              <el-icon><Document /></el-icon>{{ row.file.name }}<el-icon class="dl"><Download /></el-icon>
-            </el-tag>
+            <el-button size="small" link type="primary" :disabled="!row.outsource_sheet_id"
+                       @click="downloadSheet(row.outsource_sheet_id, '外协加工')">
+              <el-icon><Document /></el-icon>{{ row.outsource_sheet_id ? '下载' : '—' }}
+            </el-button>
           </template>
         </el-table-column>
-        <el-table-column prop="received_at" label="收到时间" width="150">
-          <template #default="{ row }">{{ fmtDateTime(row.received_at) }}</template>
+        <el-table-column v-if="showOutsource" label="不锈钢原料下料单" min-width="150">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" :disabled="!row.material_sheet_id"
+                       @click="downloadSheet(row.material_sheet_id, '不锈钢原料下料单')">
+              <el-icon><Document /></el-icon>{{ row.material_sheet_id ? '下载' : '—' }}
+            </el-button>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="showOutsource" label="CAD激光图纸(设计推送)" min-width="180">
+          <template #default="{ row }">
+            <el-tag v-for="f in row.cad_laser_files" :key="f.id" size="small" effect="plain" class="fc" @click="downloadAttachment(f)">
+              {{ f.name }}<el-icon class="dl"><Download /></el-icon>
+            </el-tag>
+            <span v-if="!row.cad_laser_files.length" class="muted">待设计推送</span>
+          </template>
+        </el-table-column>
+
+        <!-- 标准件采购列 -->
+        <el-table-column v-if="showStandard" label="电工采购单" min-width="130">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" :disabled="!row.elec_po_sheet_id"
+                       @click="downloadSheet(row.elec_po_sheet_id, '电工采购单')">
+              <el-icon><Document /></el-icon>{{ row.elec_po_sheet_id ? '下载' : '—' }}
+            </el-button>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="showStandard" label="标准件清单" min-width="130">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" :disabled="!row.standard_sheet_id"
+                       @click="downloadSheet(row.standard_sheet_id, '标准件清单')">
+              <el-icon><Document /></el-icon>{{ row.standard_sheet_id ? '下载' : '—' }}
+            </el-button>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="showStandard" label="外购附图(设计推送)" min-width="180">
+          <template #default="{ row }">
+            <el-tag v-for="f in row.outsource_img_files" :key="f.id" size="small" effect="plain" class="fc" @click="downloadAttachment(f)">
+              {{ f.name }}<el-icon class="dl"><Download /></el-icon>
+            </el-tag>
+            <span v-if="!row.outsource_img_files.length" class="muted">待设计推送</span>
+          </template>
         </el-table-column>
       </el-table>
-      <EmptyHint v-if="!loading && !rows.length" text="暂无采购清单（电工部完成接单上传后出现）" />
+      <EmptyHint v-if="!loading && !rows.length" text="暂无项目" />
     </el-card>
   </div>
 </template>
 
 <style scoped>
 .code { color: var(--primary, #2563eb); }
-.link { cursor: pointer; font-weight: 600; }
-.link:hover { text-decoration: underline; }
-.fc { cursor: pointer; }
+.muted { color: var(--el-text-color-secondary); font-size: 12.5px; }
+.fc { cursor: pointer; margin: 2px 4px 2px 0; }
 .fc .dl { margin-left: 4px; }
 </style>

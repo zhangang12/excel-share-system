@@ -245,6 +245,16 @@ class SalesOrderOut(BaseModel):
     ledger_id: Optional[int] = None   # 🆕 待审批下单暂存资料用（前端按此调 pending-files）
 
 
+class SpareOrderCreate(BaseModel):
+    """🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账。"""
+    code: str = ""
+    name: str = Field(min_length=1, max_length=255)
+    qty: int = 1
+    unit: str = "台"
+    depts: list[str] = Field(default_factory=lambda: ["produce", "electric"])
+    req_text: str = ""
+
+
 class SalesLedgerUpdate(BaseModel):
     name: Optional[str] = None            # 设备名称（同步 Project.name）
     customer: Optional[str] = None

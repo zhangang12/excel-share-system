@@ -102,15 +102,15 @@ async def main():
         r = await c.post(f"/api/orders/{o_design}/start", headers=Hd, json={"start_date":"2026-06-02","due_date":"2026-06-11"})
         chk(r.status_code==400, "B5/状态机: 已开始不可重填时间")
 
-        # ---- 接单上传：设计图纸包→钣金；电工清单→采购 ----
+        # ---- 接单上传：设计 CAD激光图纸→采购部(2026-06-19 改向)；电工清单→采购 ----
         r = await c.post(f"/api/orders/{o_design}/start-upload?kind=sheetpkg", headers=Hd,
                          files=[("files", ("总装图.pdf", io.BytesIO(b"PDF1"), "application/pdf")),
                                 ("files", ("钣金件图.pdf", io.BytesIO(b"PDF2"), "application/pdf"))])
-        chk(r.status_code==200 and len(r.json())==2, f"图纸包多文件上传: {r.text[:150]}")
+        chk(r.status_code==200 and len(r.json())==2, f"CAD激光图纸多文件上传: {r.text[:150]}")
         att_pkg = r.json()[0]["id"]
-        Hsm = await login("sm")
-        msgs = (await c.get("/api/messages", headers=Hsm)).json()
-        chk(any("图纸包" in m["text"] for m in msgs), "钣金组收到图纸包推送")
+        Hbu = await login("bu")
+        msgs = (await c.get("/api/messages", headers=Hbu)).json()
+        chk(any("CAD激光图纸" in m["text"] for m in msgs), "采购部收到CAD激光图纸推送")
         r = await c.post(f"/api/orders/{o_elec}/start-upload?kind=plist", headers=He1,
                          files=[("files", ("采购清单.xlsx", io.BytesIO(b"XL"), "application/vnd.ms-excel"))])
         chk(r.status_code==200, "电工采购清单上传")

@@ -7,18 +7,21 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Document, Download, Close, UploadFilled, Check, RefreshLeft, Switch as SwitchIcon, Lock,
+  Promotion, CircleCheck,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import {
-  ordersApi, downloadAttachment, ORDER_STATUS_TEXT, ORDER_STATUS_TAG,
-  type DeptOrder, type DeptOptions, type OrderAttachment,
+  ordersApi, produceApi, downloadAttachment, ORDER_STATUS_TEXT, ORDER_STATUS_TAG,
+  type DeptOrder, type DeptOptions, type OrderAttachment, type GroupProjectRow,
 } from '@/api/orders'
+import { datasheetsApi } from '@/api/datasheets'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
 import StockQueryDialog from '@/components/StockQueryDialog.vue'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtDate } from '@/utils/format'
 import { reportsApi, type DeptReport } from '@/api/reports'
+import { salesApi } from '@/api/sales'   // 复用建议编号
 
 // el-tag type → StatusPill variant 映射（ORDER_STATUS_TAG 用）
 const PILL_VARIANT: Record<string, 'success' | 'warn' | 'info' | 'danger' | 'primary' | 'muted'> = {
@@ -36,16 +39,69 @@ const LEAD_ROLES: Record<string, string> = { design: 'design_lead', electric: 'e
 const isMgr = computed(() => auth.isAdmin)
 const isLead = computed(() => auth.hasRole(LEAD_ROLES[dept.value]))
 const isWorker = computed(() => auth.hasRole(WORKER_ROLES[dept.value]))
+// 🆕 生产部分组（钣金组/装配组）；钣金组角色 sheetmetal、装配组角色 assembler
+const isSheetmetal = computed(() => auth.hasRole('sheetmetal'))
+const isAssembler = computed(() => auth.hasRole('assembler'))
+const isProduce = computed(() => dept.value === 'produce')
+
+// 🆕 备机下单：仅设计部工作台、且 设计部负责人/管理层 可见
+const canSpare = computed(() => dept.value === 'design' && (isLead.value || auth.hasRole('admin', 'manager')))
+const spareVisible = ref(false)
+const spareSubmitting = ref(false)
+const spareForm = ref({ code: '', name: '', qty: 1, unit: '台', depts: ['produce', 'electric'], req_text: '' })
+async function openSpare() {
+  let suggested = ''
+  try { suggested = await salesApi.nextCode() } catch { /* 留空人工填 */ }
+  spareForm.value = { code: suggested, name: '', qty: 1, unit: '台', depts: ['produce', 'electric'], req_text: '' }
+  spareVisible.value = true
+}
+async function submitSpare() {
+  const f = spareForm.value
+  if (!f.code.trim()) { ElMessage.warning('请填写项目编号'); return }
+  if (!f.name.trim()) { ElMessage.warning('请填写设备名称'); return }
+  if (!f.depts.length) { ElMessage.warning('请至少选择一个派往部门'); return }
+  spareSubmitting.value = true
+  try {
+    const r = await ordersApi.spareOrder({ ...f })
+    ElMessage.success(`备机下单成功（${r.code}），已派 ${r.order_ids.length} 个部门`)
+    spareVisible.value = false
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '下单失败')
+  } finally {
+    spareSubmitting.value = false
+  }
+}
 
 const loading = ref(false)
 const orders = ref<DeptOrder[]>([])
 const options = ref<DeptOptions | null>(null)
 const activeTab = ref('')
+// 🆕 生产部两组项目列表
+const sheetmetalRows = ref<GroupProjectRow[]>([])
+const assemblyRows = ref<GroupProjectRow[]>([])
 
 // ---- 数据加载 ----
 async function load() {
   loading.value = true
   try {
+    if (isProduce.value) {
+      // 生产部：主管/管理层走「派发/跟踪」+ 两组概览；钣金组/装配组仅取本组项目
+      const tasks: Promise<any>[] = []
+      if (isLead.value || isMgr.value) {
+        tasks.push(ordersApi.list('produce').then((os) => { orders.value = os }))
+        tasks.push(ordersApi.options('produce').then((o) => { options.value = o }))
+        tasks.push(produceApi.sheetmetalProjects().then((r) => { sheetmetalRows.value = r }))
+        tasks.push(produceApi.assemblyProjects().then((r) => { assemblyRows.value = r }))
+      } else {
+        if (isSheetmetal.value) tasks.push(produceApi.sheetmetalProjects().then((r) => { sheetmetalRows.value = r }))
+        if (isAssembler.value) tasks.push(produceApi.assemblyProjects().then((r) => { assemblyRows.value = r }))
+      }
+      await Promise.all(tasks)
+      if (!activeTab.value) {
+        activeTab.value = (isLead.value || isMgr.value) ? 'assign' : (isSheetmetal.value ? 'sm' : 'asm')
+      }
+      return
+    }
     const [os, opt] = await Promise.all([
       ordersApi.list(dept.value),
       ordersApi.options(dept.value),
@@ -57,6 +113,65 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+// 🆕 生产派发（主管手动）：把待分派的生产任务派给钣金组+装配组
+const dispatchVisible = ref(false)
+const dispatchOrder = ref<DeptOrder | null>(null)
+const dispatchDue = ref('')
+const dispatching = ref(false)
+function openDispatch(o: DeptOrder) {
+  dispatchOrder.value = o
+  dispatchDue.value = ''
+  dispatchVisible.value = true
+}
+async function doDispatch() {
+  const o = dispatchOrder.value
+  if (!o) return
+  dispatching.value = true
+  try {
+    await produceApi.dispatch(o.id, dispatchDue.value || undefined)
+    ElMessage.success('已派发到钣金组、装配组')
+    dispatchVisible.value = false
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '派发失败')
+  } finally { dispatching.value = false }
+}
+
+// 🆕 组内标记完成（两组都完成→生产任务单 done）
+async function toggleGroupDone(row: GroupProjectRow) {
+  try {
+    await produceApi.groupDone(row.task_id, !row.group_done)
+    ElMessage.success(!row.group_done ? '已标记本组完成' : '已撤销完成')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  }
+}
+
+// 🆕 钣金装配表只读预览（钣金组/装配组共用）
+const viewVisible = ref(false)
+const viewLoading = ref(false)
+const viewTitle = ref('')
+const viewFields = ref<{ id: number; name: string }[]>([])
+const viewRecords = ref<any[]>([])
+async function viewSheet(row: GroupProjectRow) {
+  if (!row.sheetmetal_datasheet_id) { ElMessage.info('该项目暂无钣金装配表'); return }
+  viewTitle.value = `${row.code} · 钣金装配表（只读引用）`
+  viewVisible.value = true
+  viewLoading.value = true
+  try {
+    const [fs, recs] = await Promise.all([
+      datasheetsApi.listFields(row.sheetmetal_datasheet_id),
+      datasheetsApi.listRecords(row.sheetmetal_datasheet_id),
+    ])
+    viewFields.value = fs.map((f: any) => ({ id: f.id, name: f.name }))
+    viewRecords.value = recs
+  } finally { viewLoading.value = false }
+}
+function cellVal(rec: any, fid: number) {
+  return rec.values?.[String(fid)] ?? ''
 }
 watch(dept, () => { activeTab.value = ''; load() })
 onMounted(load)
@@ -236,14 +351,53 @@ const stockVisible = ref(false)
         </div>
       </div>
       <div class="spacer"></div>
+      <el-button v-if="canSpare" type="primary" @click="openSpare">➕ 备机下单</el-button>
       <el-button v-if="dept === 'design'" @click="stockVisible = true">🔎 查库存(只读)</el-button>
       <el-button v-if="isLead || isMgr" type="primary" plain @click="openReport">📊 {{ deptName }}报表</el-button>
     </div>
 
+    <!-- ===== 🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账 ===== -->
+    <el-dialog v-model="spareVisible" title="➕ 备机下单" width="560px" :close-on-click-modal="false">
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px"
+                title="备机不走销售台账；下单后建项目并推送所选部门待分派，同样进入项目目录/详单。" />
+      <el-form label-position="top">
+        <div style="display:flex; gap:12px">
+          <el-form-item label="项目编号" required style="flex:1">
+            <el-input v-model="spareForm.code" placeholder="如 2026-058B" maxlength="64" clearable />
+          </el-form-item>
+          <el-form-item label="设备名称" required style="flex:1">
+            <el-input v-model="spareForm.name" placeholder="如 100L真空乳化机(备机)" />
+          </el-form-item>
+        </div>
+        <div style="display:flex; gap:12px">
+          <el-form-item label="数量" style="flex:0 0 160px">
+            <el-input-number v-model="spareForm.qty" :min="1" :controls="false" style="width:80px" />
+            <el-select v-model="spareForm.unit" style="width:64px; margin-left:6px">
+              <el-option label="台" value="台" /><el-option label="套" value="套" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="派往部门" required style="flex:1">
+            <el-checkbox-group v-model="spareForm.depts">
+              <el-checkbox value="design">📐 设计部</el-checkbox>
+              <el-checkbox value="electric">⚡ 电工部</el-checkbox>
+              <el-checkbox value="produce">🏭 生产部</el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+        </div>
+        <el-form-item label="下单要求">
+          <el-input v-model="spareForm.req_text" type="textarea" :rows="2" placeholder="技术要求/交底说明（选填）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="spareVisible = false">取消</el-button>
+        <el-button type="primary" :loading="spareSubmitting" @click="submitSpare">确认下单</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ===== 部门工作台：负责人(待分派/跟踪) + 工人(待办/已完成) 并存；多角色用户全部显示 ===== -->
-    <template v-if="isWorker || isLead || isMgr">
+    <template v-if="isWorker || isLead || isMgr || isSheetmetal">
       <el-tabs v-model="activeTab">
-        <el-tab-pane v-if="isWorker" :label="`📥 我的待办 (${myTodo.length})`" name="todo">
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`📥 我的待办 (${myTodo.length})`" name="todo">
           <EmptyHint v-if="!loading && myTodo.length === 0" text="暂无待办任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in myTodo" :key="o.id" shadow="hover"
@@ -314,7 +468,7 @@ const stockVisible = ref(false)
           </div>
         </el-tab-pane>
 
-        <el-tab-pane v-if="isWorker" :label="`✅ 已完成 (${myDone.length})`" name="done">
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`✅ 已完成 (${myDone.length})`" name="done">
           <el-table :data="myDone" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目" min-width="120">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
@@ -369,7 +523,12 @@ const stockVisible = ref(false)
                 <el-tag v-for="f in o.input_files" :key="f.id" size="small" effect="plain"
                         class="file-chip" @click="downloadAttachment(f)">{{ f.name }}</el-tag>
               </div>
-              <div class="assign-bar">
+              <!-- 🆕 生产部：派发到钣金组+装配组（取代单人分派） -->
+              <div v-if="isProduce" class="assign-bar">
+                <el-button type="primary" size="small" :icon="Promotion" @click="openDispatch(o)">派发钣金/装配</el-button>
+                <el-button size="small" @click="doVoid(o)">作废单号</el-button>
+              </div>
+              <div v-else class="assign-bar">
                 <el-select v-model="assignSel[o.id]" placeholder="分派给…" size="small" style="flex: 1">
                   <el-option v-for="w in options?.workers || []" :key="w.id" :label="w.name" :value="w.id" />
                 </el-select>
@@ -385,8 +544,13 @@ const stockVisible = ref(false)
             <el-table-column label="项目" min-width="130">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
             </el-table-column>
-            <el-table-column label="负责人" width="90">
-              <template #default="{ row }">{{ row.worker_name || '待分派' }}</template>
+            <el-table-column :label="isProduce ? '派发' : '负责人'" width="110">
+              <template #default="{ row }">
+                <template v-if="isProduce">
+                  {{ row.status === 'pending_assign' ? '待派发' : (row.status === 'done' ? '钣金/装配已完成' : '已派发钣金/装配') }}
+                </template>
+                <template v-else>{{ row.worker_name || '待分派' }}</template>
+              </template>
             </el-table-column>
             <el-table-column label="下发资料" min-width="140">
               <template #default="{ row }">
@@ -426,7 +590,7 @@ const stockVisible = ref(false)
             </el-table-column>
             <el-table-column label="操作" width="190" fixed="right">
               <template #default="{ row }">
-                <el-button v-if="['assigned', 'in_progress'].includes(row.status)"
+                <el-button v-if="['assigned', 'in_progress'].includes(row.status) && !isProduce"
                            size="small" :icon="SwitchIcon" @click="openReassign(row)">换人</el-button>
                 <el-button v-if="row.status === 'done'" size="small" :icon="RefreshLeft" @click="doReopen(row)">改回</el-button>
                 <el-button v-if="!['done', 'voided'].includes(row.status)" size="small" type="danger" plain
@@ -434,6 +598,64 @@ const stockVisible = ref(false)
               </template>
             </el-table-column>
           </el-table>
+        </el-tab-pane>
+
+        <!-- ===== 🆕 生产部-钣金组 tab（被派发项目；只读钣金装配表引用） ===== -->
+        <el-tab-pane v-if="isProduce && (isSheetmetal || isLead || isMgr)" :label="`🔧 钣金组 (${sheetmetalRows.length})`" name="sm">
+          <el-table :data="sheetmetalRows" stripe v-loading="loading" max-height="calc(100vh - 260px)" :scrollbar-always-on="true">
+            <el-table-column type="index" label="#" width="50" />
+            <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+            <el-table-column prop="name" label="项目名称" min-width="150" show-overflow-tooltip />
+            <el-table-column label="设计师" width="90"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="钣金装配表(引用)" width="150">
+              <template #default="{ row }">
+                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" @click="viewSheet(row)">
+                  钣金装配表<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:4px"><CircleCheck /></el-icon>
+                </el-button>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="钣金完成" width="150" fixed="right">
+              <template #default="{ row }">
+                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
+                <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
+                  {{ row.group_done ? '撤销' : '标记完成' }}
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <EmptyHint v-if="!loading && !sheetmetalRows.length" text="暂无派发给钣金组的项目" size="sm" />
+        </el-tab-pane>
+
+        <!-- ===== 🆕 生产部-装配组 tab（被派发项目 + 标准件清单/外协加工 备齐状态） ===== -->
+        <el-tab-pane v-if="isProduce && (isAssembler || isLead || isMgr)" :label="`🔩 装配组 (${assemblyRows.length})`" name="asm">
+          <el-table :data="assemblyRows" stripe v-loading="loading" max-height="calc(100vh - 260px)" :scrollbar-always-on="true">
+            <el-table-column type="index" label="#" width="50" />
+            <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+            <el-table-column prop="name" label="项目名称" min-width="150" show-overflow-tooltip />
+            <el-table-column label="设计师" width="90"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="钣金装配表(引用)" width="140">
+              <template #default="{ row }">
+                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" @click="viewSheet(row)">钣金装配表</el-button>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="标准件清单" width="110">
+              <template #default="{ row }"><StatusPill :text="row.standard_ready ? '已备齐' : '进行中'" :variant="row.standard_ready ? 'success' : 'warn'" /></template>
+            </el-table-column>
+            <el-table-column label="外协加工" width="110">
+              <template #default="{ row }"><StatusPill :text="row.outsource_ready ? '已备齐' : '进行中'" :variant="row.outsource_ready ? 'success' : 'warn'" /></template>
+            </el-table-column>
+            <el-table-column label="装配完成" width="150" fixed="right">
+              <template #default="{ row }">
+                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
+                <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
+                  {{ row.group_done ? '撤销' : '标记完成' }}
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <EmptyHint v-if="!loading && !assemblyRows.length" text="暂无派发给装配组的项目" size="sm" />
         </el-tab-pane>
       </el-tabs>
     </template>
@@ -524,6 +746,36 @@ const stockVisible = ref(false)
         <el-button @click="reassignVisible = false">取消</el-button>
         <el-button type="primary" :loading="reassigning" @click="doReassign">确认转交</el-button>
       </template>
+    </el-dialog>
+
+    <!-- ===== 🆕 生产派发弹窗（派给钣金组+装配组） ===== -->
+    <el-dialog v-model="dispatchVisible" :title="`🚀 派发生产任务 · ${dispatchOrder?.project_code || ''}`" width="460px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 14px"
+                title="派发后该项目同时进入「钣金组」「装配组」两个工作 tab；两组都标记完成即视为生产完成（可发货）。" />
+      <el-form label-position="top">
+        <el-form-item label="预计完成日期（选填，供部门报表/逾期统计）">
+          <el-date-picker v-model="dispatchDue" type="date" value-format="YYYY-MM-DD" style="width: 100%" placeholder="可不填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dispatchVisible = false">取消</el-button>
+        <el-button type="primary" :icon="Promotion" :loading="dispatching" @click="doDispatch">确认派发</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 🆕 钣金装配表只读预览（钣金组/装配组） ===== -->
+    <el-dialog v-model="viewVisible" :title="viewTitle" width="880px" class="v3-scroll-dialog">
+      <div v-loading="viewLoading">
+        <el-alert type="info" :closable="false" style="margin-bottom:10px"
+                  title="只读引用——钣金装配表数据由设计部维护，生产部不可编辑" />
+        <el-table :data="viewRecords" border size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table-column type="index" label="#" width="50" />
+          <el-table-column v-for="f in viewFields" :key="f.id" :label="f.name" min-width="110">
+            <template #default="{ row }">{{ cellVal(row, f.id) }}</template>
+          </el-table-column>
+        </el-table>
+        <EmptyHint v-if="!viewLoading && !viewRecords.length" text="钣金装配表暂无数据" />
+      </div>
     </el-dialog>
   </div>
 </template>
