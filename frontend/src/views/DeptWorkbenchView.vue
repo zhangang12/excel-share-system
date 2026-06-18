@@ -603,11 +603,11 @@ const stockVisible = ref(false)
         <!-- ===== 🆕 生产部-钣金组 tab（被派发项目；只读钣金装配表引用） ===== -->
         <el-tab-pane v-if="isProduce && (isSheetmetal || isLead || isMgr)" :label="`🔧 钣金组 (${sheetmetalRows.length})`" name="sm">
           <el-table :data="sheetmetalRows" stripe v-loading="loading" max-height="calc(100vh - 260px)" :scrollbar-always-on="true">
-            <el-table-column type="index" label="#" width="50" />
-            <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
-            <el-table-column prop="name" label="项目名称" min-width="150" show-overflow-tooltip />
-            <el-table-column label="设计师" width="90"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
-            <el-table-column label="钣金装配表(引用)" width="150">
+            <el-table-column type="index" label="#" width="56" align="center" />
+            <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+            <el-table-column prop="name" label="项目名称" min-width="240" show-overflow-tooltip />
+            <el-table-column label="设计师" min-width="110" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="钣金装配表(引用)" min-width="160" align="center">
               <template #default="{ row }">
                 <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" @click="viewSheet(row)">
                   钣金装配表<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:4px"><CircleCheck /></el-icon>
@@ -615,7 +615,7 @@ const stockVisible = ref(false)
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="钣金完成" width="150" fixed="right">
+            <el-table-column label="钣金完成" min-width="180" align="center">
               <template #default="{ row }">
                 <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
@@ -630,23 +630,23 @@ const stockVisible = ref(false)
         <!-- ===== 🆕 生产部-装配组 tab（被派发项目 + 标准件清单/外协加工 备齐状态） ===== -->
         <el-tab-pane v-if="isProduce && (isAssembler || isLead || isMgr)" :label="`🔩 装配组 (${assemblyRows.length})`" name="asm">
           <el-table :data="assemblyRows" stripe v-loading="loading" max-height="calc(100vh - 260px)" :scrollbar-always-on="true">
-            <el-table-column type="index" label="#" width="50" />
-            <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
-            <el-table-column prop="name" label="项目名称" min-width="150" show-overflow-tooltip />
-            <el-table-column label="设计师" width="90"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
-            <el-table-column label="钣金装配表(引用)" width="140">
+            <el-table-column type="index" label="#" width="56" align="center" />
+            <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+            <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
+            <el-table-column label="设计师" min-width="100" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="钣金装配表(引用)" min-width="150" align="center">
               <template #default="{ row }">
                 <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" @click="viewSheet(row)">钣金装配表</el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="标准件清单" width="110">
+            <el-table-column label="标准件清单" min-width="120" align="center">
               <template #default="{ row }"><StatusPill :text="row.standard_ready ? '已备齐' : '进行中'" :variant="row.standard_ready ? 'success' : 'warn'" /></template>
             </el-table-column>
-            <el-table-column label="外协加工" width="110">
+            <el-table-column label="外协加工" min-width="120" align="center">
               <template #default="{ row }"><StatusPill :text="row.outsource_ready ? '已备齐' : '进行中'" :variant="row.outsource_ready ? 'success' : 'warn'" /></template>
             </el-table-column>
-            <el-table-column label="装配完成" width="150" fixed="right">
+            <el-table-column label="装配完成" min-width="180" align="center">
               <template #default="{ row }">
                 <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
