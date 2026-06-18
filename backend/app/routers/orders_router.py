@@ -17,7 +17,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_
 
 from ..database import get_db
 from .. import models, schemas
@@ -311,9 +311,17 @@ async def order_options(
     cfg = _dept_or_400(dept)
 
     async def _role_users(code: str) -> list[schemas.OrderOptionUser]:
+        # 多角色感知：锚点角色 role_id 命中，或 user_roles 关联命中任一即算该角色
+        # （修复：兼任负责人/管理层的设计师等，因锚点非该角色而漏出可分派名单）
+        rres = await db.execute(select(models.Role.id).where(models.Role.code == code))
+        role_id = rres.scalar_one_or_none()
+        if role_id is None:
+            return []
+        sub = select(models.UserRole.user_id).where(models.UserRole.role_id == role_id)
         res = await db.execute(
-            select(models.User).join(models.Role).where(
-                models.Role.code == code, models.User.is_active == True,  # noqa: E712
+            select(models.User).where(
+                models.User.is_active == True,  # noqa: E712
+                or_(models.User.role_id == role_id, models.User.id.in_(sub)),
             ).order_by(models.User.id)
         )
         return [schemas.OrderOptionUser(id=u.id, name=_uname(u)) for u in res.scalars().all()]
