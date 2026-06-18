@@ -153,8 +153,17 @@ async def get_overview(
 
     # admin / manager 免权限校验
     is_super = current.has_role("admin", "manager")
+    # 🆕 行级可见性：纯设计师/电工/装配/销售只看自己经手的项目（与项目目录 list_projects 同源）；
+    # 部门负责人/管理层看全部（口径 2026-06-19：负责人仍看全部）。其余角色按项目成员可见。
+    from ..deps import restricted_dir_pids
+    restricted, my_pids = await restricted_dir_pids(db, current)
     if is_super:
         visible_rows = [_project_row(p) for p in all_projects]
+    elif restricted:
+        visible_rows = [
+            _project_row(p) for p in all_projects
+            if p.id in my_pids or current.id in ((p.extra or {}).get("__viz_uids__") or [])
+        ]
     else:
         # 一次性查所有成员关系，避免 N+1
         mres = await db.execute(
@@ -201,8 +210,14 @@ async def export_overview(
     all_projects = pres.scalars().all()
 
     is_super = current.has_role("admin", "manager")
+    # 🆕 导出与一览同口径行级可见性
+    from ..deps import restricted_dir_pids
+    restricted, my_pids = await restricted_dir_pids(db, current)
     if is_super:
         visible = list(all_projects)
+    elif restricted:
+        visible = [p for p in all_projects
+                   if p.id in my_pids or current.id in ((p.extra or {}).get("__viz_uids__") or [])]
     else:
         mres = await db.execute(
             select(models.ProjectMember.project_id).where(
