@@ -168,7 +168,6 @@ function fmtFileSize(n: number): string {
 async function submitOrder() {
   if (!orderForm.code.trim()) { ElMessage.warning('请填写项目编号'); return }
   if (!orderForm.name.trim()) { ElMessage.warning('请填写设备名称'); return }
-  if (!orderForm.depts.length) { ElMessage.warning('请至少选择一个派往部门'); return }
   ordering.value = true
   try {
     // 🆕 修改被退回的草稿 → 重新提交审批
@@ -856,12 +855,17 @@ async function openReport() {
           </el-form-item>
         </div>
         <div class="fsec">🛠 派单</div>
-        <el-form-item label="派往部门（可多选）" required>
-          <el-checkbox-group v-model="orderForm.depts">
-            <el-checkbox value="design">📐 设计部</el-checkbox>
-            <el-checkbox value="electric">⚡ 电工部</el-checkbox>
-            <el-checkbox value="produce">🏭 生产部</el-checkbox>
-          </el-checkbox-group>
+        <el-form-item label="派往部门（可多选，可不选）">
+          <div style="width: 100%">
+            <el-checkbox-group v-model="orderForm.depts">
+              <el-checkbox value="design">📐 设计部</el-checkbox>
+              <el-checkbox value="electric">⚡ 电工部</el-checkbox>
+              <el-checkbox value="produce">🏭 生产部</el-checkbox>
+            </el-checkbox-group>
+            <div v-if="!orderForm.depts.length" class="muted" style="font-size: 12px; margin-top: 4px">
+              ⓘ 未选任何部门 = 调货订单：不流转生产，仅创建发货待办同步发货部
+            </div>
+          </div>
         </el-form-item>
         <el-form-item label="下单要求">
           <el-input v-model="orderForm.req_text" type="textarea" :rows="2" placeholder="技术要求/交底说明" />

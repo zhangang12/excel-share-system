@@ -294,9 +294,8 @@ async def create_sales_order(
     name = data.name.strip()
     if not name:
         raise HTTPException(400, "请填写设备名称")
+    # 允许不选生产部门：调货订单不涉及生产，仅建发货待办同步发货部
     depts = [d for d in data.depts if d in DEPTS]
-    if not depts:
-        raise HTTPException(400, "请至少选择一个派往部门")
     if data.cust_type not in ("经销商", "终端客户"):
         raise HTTPException(400, "客户分类必须是 经销商/终端客户")
 
@@ -953,7 +952,7 @@ async def order_approve(
         raise HTTPException(400, "该下单不在待审批状态")
     p = led.project
     payload = _pending_payload(p)
-    depts = [d for d in (payload.get("depts") or []) if d in DEPTS] or ["design"]
+    depts = [d for d in (payload.get("depts") or []) if d in DEPTS]  # 可为空(调货订单)
     req = payload.get("req_text") or f"（销售下单）{p.name if p else ''}"
     rcv = payload.get("receiver") or {}
     order_ids = await _materialize_order_downstream(
@@ -1019,9 +1018,8 @@ async def order_draft_resubmit(
     name = data.name.strip()
     if not name:
         raise HTTPException(400, "请填写设备名称")
+    # 允许不选生产部门：调货订单不涉及生产，仅建发货待办同步发货部
     depts = [d for d in data.depts if d in DEPTS]
-    if not depts:
-        raise HTTPException(400, "请至少选择一个派往部门")
     if data.cust_type not in ("经销商", "终端客户"):
         raise HTTPException(400, "客户分类必须是 经销商/终端客户")
     if p:

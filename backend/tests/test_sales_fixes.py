@@ -89,6 +89,28 @@ async def main():
         nc0 = (await c.get("/api/sales/next-code", headers=Hs)).json()
         chk(not nc0["code"].startswith("2027-"), f"#A 不传年度=当年(非2027): {nc0}")
 
+        # #C 调货订单：不选任何生产部门 → 可下单，仅建发货待办 + 推送发货部，无部门任务
+        logi_uid = (await c.post("/api/admin/users", headers=H, json={
+            "username": "dh_logi", "password": "pass123", "role_ids": [rid["logistics"]]})).json()["id"]
+        r = await c.post("/api/sales/orders", headers=H, json={
+            "code": "DH-1", "name": "调货测试", "customer": "客户A", "cust_type": "经销商",
+            "contract": "无", "amount": 0, "tax_rate": "/", "prepay": 0, "prepay_note": "",
+            "before_ship": 0, "before_ship_note": "", "ship_receivable": 0, "balance": 0,
+            "balance_date": "", "depts": [], "req_text": "", "receiver": {"name": "", "phone": "", "addr": ""}})
+        chk(r.status_code == 200, f"#C 调货订单(空部门)可下单: {r.status_code} {r.text[:120]}")
+        chk(r.json()["order_ids"] == [], f"#C 调货订单无部门任务: {r.json().get('order_ids')}")
+        dh_pid = r.json()["project_id"]
+        async with SessionLocal() as db:
+            n_orders = (await db.execute(select(func.count()).select_from(models.DeptOrder)
+                                         .where(models.DeptOrder.project_id == dh_pid))).scalar()
+            n_ship = (await db.execute(select(func.count()).select_from(models.Shipment)
+                                       .where(models.Shipment.project_id == dh_pid))).scalar()
+            got_logi = (await db.execute(select(func.count()).select_from(models.Message).where(
+                models.Message.to_user_id == logi_uid, models.Message.text.like("%发货待办%")))).scalar()
+        chk(n_orders == 0, f"#C 调货无 DeptOrder: {n_orders}")
+        chk(n_ship == 1, f"#C 调货有发货待办: {n_ship}")
+        chk(got_logi >= 1, f"#C 发货部收到推送: {got_logi}")
+
     # #3 电工采购单去重
     async with SessionLocal() as db:
         pid = (await db.execute(select(models.Project.id).where(models.Project.code == "SF-1"))).scalar_one()
