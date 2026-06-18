@@ -84,8 +84,8 @@ async function loadDatasheets() {
 const workflow = ref<Workflow | null>(null)
 const wfLoading = ref(false)
 const STATUS_OPTIONS = ['进行中', '已完成', '已归档']
-// 四表校验 slots（钣金装配/标准件清单/外协外购/原料下料单 — 仅模板四表，不含电工采购单第5表）
-const FOUR_SHEETS = ['钣金装配', '标准件清单', '外协外购', '原料下料单']
+// 四表校验 slots（钣金装配/标准件清单/外协加工/不锈钢原料下料单 — 仅模板四表，不含电工采购单第5表）
+const FOUR_SHEETS = ['钣金装配', '标准件清单', '外协加工', '不锈钢原料下料单']
 const fourSheetStatus = computed(() =>
   FOUR_SHEETS.map(name => {
     const d = datasheets.value.find(x => x.name === name)

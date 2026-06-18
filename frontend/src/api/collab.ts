@@ -42,4 +42,4 @@ export const collabApi = {
     http.put(`/datasheets/${did}/done-flag`, { done }).then((r) => r.data),
 }
 
-export const ASSEMBLY_SHEETS = ['钣金装配', '标准件清单', '外协外购']
+export const ASSEMBLY_SHEETS = ['钣金装配', '标准件清单', '外协加工']

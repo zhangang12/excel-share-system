@@ -389,6 +389,23 @@ async def cleanup_filler_columns(db: AsyncSession) -> dict:
     return {"deleted": len(to_delete), "with_data": with_data}
 
 
+async def rename_known_sheets_v3(db: AsyncSession) -> dict:
+    """🆕 2026-06-19 存量数据表改名：外协外购→外协加工、原料下料单→不锈钢原料下料单
+    （仅改 datasheet.name，字段/记录不动）。必须在 migrate_sheet_template_v2/align/cleanup 之前跑，
+    使后续按新模板名(SHEET_TEMPLATES)对齐时能命中。幂等：旧名不存在则空操作。"""
+    from sqlalchemy import update as _upd
+    RENAME = {'外协外购': '外协加工', '原料下料单': '不锈钢原料下料单'}
+    renamed = 0
+    for old, new in RENAME.items():
+        res = await db.execute(
+            _upd(models.Datasheet).where(models.Datasheet.name == old).values(name=new))
+        renamed += res.rowcount or 0
+    if renamed:
+        await db.commit()
+        log.info("[rename_known_sheets_v3] 存量数据表改名 %d 张", renamed)
+    return {"renamed": renamed}
+
+
 async def migrate_sheet_template_v2(db: AsyncSession) -> dict:
     """把存量数据表迁移到「模板 v2」：钣金装配字段改名 + 钣金装配/外协外购补「备注」列。
 
@@ -410,7 +427,7 @@ async def migrate_sheet_template_v2(db: AsyncSession) -> dict:
         '封板发出日期': '工艺2发出日期',
         '封板完成日期': '工艺2完成日期',
     }
-    ADD_REMARK_SHEETS = {'钣金装配', '外协外购'}
+    ADD_REMARK_SHEETS = {'钣金装配', '外协加工'}  # 2026-06-19 外协外购→外协加工(rename 在前)
 
     res = await db.execute(select(models.Datasheet))
     datasheets = res.scalars().all()
@@ -418,7 +435,7 @@ async def migrate_sheet_template_v2(db: AsyncSession) -> dict:
     remark_added = 0
 
     for d in datasheets:
-        if d.name not in ('钣金装配', '外协外购'):
+        if d.name not in ('钣金装配', '外协加工'):
             continue
         res = await db.execute(
             select(models.Field).where(models.Field.datasheet_id == d.id)
@@ -1341,6 +1358,10 @@ async def run_all(db: AsyncSession) -> None:
         await cleanup_filler_columns(db)
     except Exception as e:
         log.warning("cleanup_filler_columns failed: %s", e)
+    try:
+        await rename_known_sheets_v3(db)   # 改名须在模板对齐/清理之前
+    except Exception as e:
+        log.warning("rename_known_sheets_v3 failed: %s", e)
     try:
         await migrate_sheet_template_v2(db)
     except Exception as e:

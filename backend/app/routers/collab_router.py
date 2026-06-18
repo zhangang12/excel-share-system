@@ -208,7 +208,7 @@ async def set_done_flag(
     if not d:
         raise HTTPException(404, "数据表不存在")
     if d.name not in ASSEMBLY_PRECHECK_SHEETS:
-        raise HTTPException(400, "仅装配前置三表（钣金装配/标准件清单/外协外购）支持完成标记")
+        raise HTTPException(400, "仅装配前置三表（钣金装配/标准件清单/外协加工）支持完成标记")
     d.done_flag = data.done
     d.done_at = datetime.now(timezone.utc) if data.done else None
     await db.commit()

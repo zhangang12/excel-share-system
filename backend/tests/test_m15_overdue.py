@@ -93,7 +93,7 @@ async def main():
         from datetime import datetime, timezone
         async with SessionLocal() as db:
             await db.execute(_upd(M.Datasheet).where(M.Datasheet.project_id==pid,
-                M.Datasheet.name.in_(['钣金装配','标准件清单','外协外购','原料下料单']))
+                M.Datasheet.name.in_(['钣金装配','标准件清单','外协加工','不锈钢原料下料单']))
                 .values(imported_at=datetime.now(timezone.utc)))
             await db.commit()
         await c.post(f"/api/orders/{od}/complete", headers=Hd1, json={"notify_user_id":ids["lo"]})

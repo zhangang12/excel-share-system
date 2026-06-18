@@ -19,7 +19,8 @@ sys.path.insert(0, os.getcwd())
 from sqlalchemy import select, func
 from app.database import engine, SessionLocal, Base
 from app.seed import seed
-from app.data_migration import run_all, ensure_schema_columns, cleanup_misaligned_known_sheets
+from app.data_migration import (run_all, ensure_schema_columns,
+                                cleanup_misaligned_known_sheets, rename_known_sheets_v3)
 from app.sheet_templates import SHEET_TEMPLATES
 from app.routers.projects_router import create_default_template_sheets
 from app import models
@@ -47,8 +48,8 @@ async def main():
     async with SessionLocal() as db:
         await seed(db); await run_all(db)
 
-    # 模板常量已是新 9 列
-    chk(SHEET_TEMPLATES['外协外购'] == NEW_COLS, f"模板=新9列: {SHEET_TEMPLATES['外协外购']}")
+    # 模板常量已是新 9 列（表名 2026-06-19 改为「外协加工」）
+    chk(SHEET_TEMPLATES['外协加工'] == NEW_COLS, f"模板=新9列: {SHEET_TEMPLATES['外协加工']}")
 
     async with SessionLocal() as db:
         # 1) 新建项目 → 外协外购 = 新 9 列、进度 select、日期 date
@@ -57,10 +58,10 @@ async def main():
         await create_default_template_sheets(db, p.id)
         await db.commit()
         r = await db.execute(select(models.Datasheet).where(
-            models.Datasheet.project_id == p.id, models.Datasheet.name == '外协外购'))
+            models.Datasheet.project_id == p.id, models.Datasheet.name == '外协加工'))
         ds_new = r.scalar_one()
         fs = await fields_of(db, ds_new.id)
-        chk([f.name for f in fs] == NEW_COLS, f"新项目外协外购=9列: {[f.name for f in fs]}")
+        chk([f.name for f in fs] == NEW_COLS, f"新项目外协加工=9列: {[f.name for f in fs]}")
         tmap = {f.name: f.type for f in fs}
         chk(tmap.get('进度') == 'select', f"进度=select: {tmap.get('进度')}")
         chk(tmap.get('发出日期') == 'date' and tmap.get('到货日期') == 'date', f"日期=date: {tmap}")
@@ -83,7 +84,13 @@ async def main():
                                 .where(models.Record.datasheet_id == old_dsid))).scalar()
         chk(cnt == 2, f"存量旧表有2行数据: {cnt}")
 
-    # 3) 跑 cleanup → 旧表被清空并按新模板重建
+    # 3) 先 rename(外协外购→外协加工) → 再 cleanup 旧表清空并按新模板重建
+    async with SessionLocal() as db:
+        rn = await rename_known_sheets_v3(db)
+    chk(rn["renamed"] >= 1, f"存量外协外购已改名外协加工: {rn}")
+    async with SessionLocal() as db:
+        d = (await db.execute(select(models.Datasheet).where(models.Datasheet.id == old_dsid))).scalar_one()
+        chk(d.name == '外协加工', f"改名后表名=外协加工: {d.name}")
     async with SessionLocal() as db:
         res = await cleanup_misaligned_known_sheets(db)
     chk(res["cleared"] >= 1, f"cleanup 清空了错位表: {res}")

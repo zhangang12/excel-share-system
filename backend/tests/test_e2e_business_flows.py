@@ -183,7 +183,7 @@ async def main():
         r = await c.get("/api/assembly/sheet-status", headers=Ha1)
         chk(r.status_code == 200, f"[§十七] 装配工人查前置三表: {r.status_code}")
         row = [x for x in r.json() if x["project_id"] == pid_17]
-        chk(row and set(row[0]["sheets"].keys()) == {"钣金装配","标准件清单","外协外购"},
+        chk(row and set(row[0]["sheets"].keys()) == {"钣金装配","标准件清单","外协加工"},
             f"[§十七] 三张前置表 key 正确")
         chk(all(v is False for v in row[0]["sheets"].values()),
             f"[§十七] 初始三表均未完成: {row[0]['sheets']}")
