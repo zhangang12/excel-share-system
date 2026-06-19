@@ -24,13 +24,12 @@ const auth = useAuthStore()
 const loading = ref(false)
 const rows = ref<Row[]>([])
 
-// 列可见性：子角色优先；无子角色则全显
-const isOutsource = computed(() => auth.hasRole('buyer_outsource'))
-const isStandard = computed(() => auth.hasRole('buyer_standard'))
-// 有任意子角色时不走 seeAll，让具体列控制可见性
-const seeAll = computed(() => !isOutsource.value && !isStandard.value)
-const showOutsource = computed(() => seeAll.value || isOutsource.value)
-const showStandard = computed(() => seeAll.value || isStandard.value)
+// 列可见性：统一采购部角色，按账号名区分分工
+const isFangbusen = computed(() => auth.user?.username === 'fangbusen')
+const isLixinxin  = computed(() => auth.user?.username === 'lixinxin')
+const seeAll = computed(() => !isFangbusen.value && !isLixinxin.value)
+const showOutsource = computed(() => seeAll.value || isFangbusen.value)
+const showStandard  = computed(() => seeAll.value || isLixinxin.value)
 
 async function load() {
   loading.value = true
