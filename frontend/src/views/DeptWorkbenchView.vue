@@ -674,7 +674,7 @@ const stockVisible = ref(false)
                     </div>
                     <el-button type="success" size="small" :icon="Check"
                                :disabled="!canShipReady(o)"
-                               @click="openComplete(o)">发货准备</el-button>
+                               @click="openComplete(o)">发货准备完成</el-button>
                     <div v-if="!canShipReady(o)" class="tc-hint">需上传产品说明书和铭牌</div>
                   </template>
                 </template>
@@ -712,7 +712,7 @@ const stockVisible = ref(false)
                     </div>
                     <el-button type="success" size="small" :icon="Check"
                                :disabled="!canElectricShipReady(o)"
-                               @click="openComplete(o)">发货准备</el-button>
+                               @click="openComplete(o)">发货准备完成</el-button>
                     <div v-if="!canElectricShipReady(o)" class="tc-hint">需上传电路图</div>
                   </template>
                 </template>

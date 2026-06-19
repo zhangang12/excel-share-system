@@ -625,6 +625,15 @@ async function openReport() {
             <span v-else>—</span>
           </template>
         </el-table-column>
+        <el-table-column label="订单类别" width="110">
+          <template #default="{ row }">
+            <el-tag size="small"
+                    :type="row.order_type === '调货订单' ? 'warning' : 'info'"
+                    effect="plain">
+              {{ row.order_type || '工厂制作订单' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="销售" width="80">
           <template #default="{ row }">{{ row.sales_name || '—' }}</template>
         </el-table-column>

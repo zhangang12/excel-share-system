@@ -185,6 +185,7 @@ class SalesLedgerRow(BaseModel):
     balance: float = 0
     balance_date: Optional[str] = None
     ship_date: Optional[str] = None
+    order_type: Optional[str] = None       # 🆕 调货订单 / 工厂制作订单
 
 
 class SalesLedgerTotals(BaseModel):

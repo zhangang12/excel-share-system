@@ -168,6 +168,7 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
             prepay_note=l.prepay_note, before_ship_note=l.before_ship_note,
             ship_receivable=l.ship_receivable or 0, balance=l.balance or 0,
             balance_date=l.balance_date, ship_date=l.ship_date,
+            order_type=l.order_type,
         ))
     return rows
 
@@ -358,6 +359,7 @@ async def create_sales_order(
         ship_receivable=data.ship_receivable or 0, balance=data.balance or 0,
         # 🆕 尾款为0时尾款日期自动留空(显示横杠)
         balance_date=(normalize_date_str(data.balance_date) or None) if (data.balance or 0) else None,
+        order_type="调货订单" if not depts else "工厂制作订单",
     )
     db.add(led)
 
@@ -983,6 +985,7 @@ async def order_approve(
         db, p, depts, req, (rcv.get("name"), rcv.get("phone"), rcv.get("addr")),
         led.sales_user or current)
     led.order_state = None
+    led.order_type = "调货订单" if not depts else "工厂制作订单"
     extra = dict(p.extra or {})
     extra.pop("__pending_order__", None)
     p.extra = extra

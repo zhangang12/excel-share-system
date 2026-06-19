@@ -37,6 +37,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("void_state", "VARCHAR(20)"),             # 🆕 订单作废流: applying/voided
         ("void_reason", "TEXT"),                   # 🆕 作废原因
         ("order_state", "VARCHAR(20)"),            # 🆕 下单审批流: pending/draft
+        ("order_type", "VARCHAR(16)"),             # 🆕 调货订单 / 工厂制作订单
     ],
 }
 
@@ -1333,6 +1334,68 @@ async def normalize_tax_rate_no_invoice(db: AsyncSession) -> dict:
     return {"updated": n}
 
 
+async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
+    """🆕 2026-06-20 两件事（幂等）：
+    1. 给存量 SalesLedger 补 order_type（默认工厂制作订单，2026-008 为调货订单）。
+    2. 为所有进行中的活跃项目补建 design/electric/produce 三个部门任务单（若不存在）。
+    """
+    from sqlalchemy import update as _upd
+
+    # —— 1. order_type ——
+    res = await db.execute(
+        _upd(models.SalesLedger)
+        .where(models.SalesLedger.order_type == None)   # noqa: E711
+        .values(order_type="工厂制作订单")
+    )
+    type_set = res.rowcount or 0
+
+    # 把 2026-008 单独改成调货订单
+    res008 = await db.execute(
+        select(models.Project).where(models.Project.code == "2026-008")
+    )
+    p008 = res008.scalar_one_or_none()
+    if p008:
+        await db.execute(
+            _upd(models.SalesLedger)
+            .where(models.SalesLedger.project_id == p008.id)
+            .values(order_type="调货订单")
+        )
+
+    # —— 2. 补建部门任务单 ——
+    res = await db.execute(
+        select(models.Project).where(
+            models.Project.is_deleted == False,
+            models.Project.status == "进行中",
+        )
+    )
+    projects = res.scalars().all()
+
+    # 取所有已存在（未作废）的 dept_orders
+    res = await db.execute(
+        select(models.DeptOrder.project_id, models.DeptOrder.dept)
+        .where(models.DeptOrder.status != "voided")
+    )
+    existing = {(r[0], r[1]) for r in res.all()}
+
+    orders_created = 0
+    for p in projects:
+        for dept in ("design", "electric", "produce"):
+            if (p.id, dept) not in existing:
+                db.add(models.DeptOrder(
+                    project_id=p.id, dept=dept,
+                    req_text=None, created_by=None,
+                ))
+                orders_created += 1
+
+    if type_set or orders_created:
+        await db.commit()
+    log.info(
+        "[backfill_order_type_and_dept_orders] order_type 补 %d 行，dept_orders 补 %d 条",
+        type_set, orders_created,
+    )
+    return {"order_type_set": type_set, "orders_created": orders_created}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -1439,3 +1502,7 @@ async def run_all(db: AsyncSession) -> None:
         await normalize_tax_rate_no_invoice(db)
     except Exception as e:
         log.warning("normalize_tax_rate_no_invoice failed: %s", e)
+    try:
+        await backfill_order_type_and_dept_orders(db)
+    except Exception as e:
+        log.warning("backfill_order_type_and_dept_orders failed: %s", e)

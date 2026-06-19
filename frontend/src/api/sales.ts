@@ -39,6 +39,7 @@ export interface SalesLedgerRow {
   balance: number
   balance_date?: string | null
   ship_date?: string | null
+  order_type?: string | null  // 调货订单 / 工厂制作订单
 }
 
 export interface SalesLedgerTotals {
