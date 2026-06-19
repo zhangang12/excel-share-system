@@ -238,6 +238,8 @@ def _order_to_out(o: models.DeptOrder, files: dict[str, list],
         eff_pct=eff if o.status == "done" else None,
         on_time=on_time if o.status == "done" else None,
         overdue=overdue, created_at=o.created_at,
+        design_done_flag=bool(getattr(o, "design_done_flag", False)),
+        electric_done_flag=bool(getattr(o, "electric_done_flag", False)),
         input_files=files.get("input", []),
         start_files=files.get("start", []),
         output_files=files.get("output", []),
@@ -545,6 +547,19 @@ async def output_upload(
                               kind=kind, project_id=o.project_id, user=current)
         outs.append(a)
     await db.commit()
+
+    # 产物上传后按 dept_config.outputs[].to_role 推送给下游部门
+    ot_cfg = next((x for x in cfg["outputs"] if x["k"] == kind), None)
+    if ot_cfg and ot_cfg.get("to_role"):
+        p = o.project
+        await push_message(
+            db, to_role=ot_cfg["to_role"], kind="info",
+            text=f"【{ot_cfg['label']}】{cfg['name']}已上传 {p.code} {ot_cfg['label']} {len(outs)} 个文件，请查收。",
+            biz_type="order", biz_id=o.id,
+        )
+
+    await write_audit(db, user=current, action="upload", target_type="dept_order",
+                      target_id=o.id, detail=f"output:{kind} x{len(outs)}")
     return [schemas.AttachmentOut.model_validate(a) for a in outs]
 
 
@@ -643,13 +658,84 @@ async def start_order(
     return schemas.Msg(message="已开始" + ("，已回传项目目录" if cfg["writeback_worker"] else ""))
 
 
+@router.post("/{oid}/design_done", response_model=schemas.Msg)
+async def mark_design_done(
+    oid: int,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """设计完成第一步：校验 CAD激光图纸+外购附图已上传 + 四表已导入，然后置 design_done_flag。"""
+    o = await _order_or_404(db, oid)
+    if o.dept != "design":
+        raise HTTPException(400, "仅设计部任务可用")
+    if not (_is_mgr(current) or o.worker_id == current.id):
+        raise HTTPException(403, "仅任务负责人可操作")
+    if o.status != "in_progress":
+        raise HTTPException(400, "仅进行中任务可操作")
+
+    # 起始上传校验（CAD激光图纸、外购附图）
+    res = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "order_start_output",
+        models.Attachment.biz_id == o.id,
+    ))
+    kinds_present = {a.kind for a in res.scalars().all()}
+    for so in DEPTS["design"]["start_outputs"]:
+        if so["k"] not in kinds_present:
+            raise HTTPException(400, f"请先上传【{so['label']}】")
+
+    # 四表已导入校验
+    res = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.project_id == o.project_id,
+        models.Datasheet.name.in_(tuple(SHEET_TEMPLATES.keys())),
+    ))
+    sheets = {d.name: d for d in res.scalars().all()}
+    missing = [n for n in SHEET_TEMPLATES.keys() if n not in sheets or sheets[n].imported_at is None]
+    if missing:
+        raise HTTPException(400, f"四表未导入齐：缺 {'、'.join(missing)}")
+
+    o.design_done_flag = True
+    await db.commit()
+    await write_audit(db, user=current, action="design_done", target_type="dept_order", target_id=o.id)
+    return schemas.Msg(message="已标记设计完成，请继续上传产品说明书和铭牌")
+
+
+@router.post("/{oid}/electric_done", response_model=schemas.Msg)
+async def mark_electric_done(
+    oid: int,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """接线完成第一步：校验采购清单已上传，然后置 electric_done_flag。"""
+    o = await _order_or_404(db, oid)
+    if o.dept != "electric":
+        raise HTTPException(400, "仅电工部任务可用")
+    if not (_is_mgr(current) or o.worker_id == current.id):
+        raise HTTPException(403, "仅任务负责人可操作")
+    if o.status != "in_progress":
+        raise HTTPException(400, "仅进行中任务可操作")
+
+    # 校验采购清单已上传
+    res = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "order_start_output",
+        models.Attachment.biz_id == o.id,
+        models.Attachment.kind == "plist",
+    ))
+    if not res.scalars().first():
+        raise HTTPException(400, "请先上传【采购清单 (Excel)】")
+
+    o.electric_done_flag = True
+    await db.commit()
+    await write_audit(db, user=current, action="electric_done", target_type="dept_order", target_id=o.id)
+    return schemas.Msg(message="已标记接线完成，请继续上传电路图")
+
+
 @router.post("/{oid}/complete", response_model=schemas.Msg)
 async def complete_order(
     oid: int, data: schemas.OrderCompleteIn,
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """完成任务：D1 四表校验（设计）→ 必传产物校验 → 通知人必选 → done；
+    """完成任务：设计部须先完成第一步（design_done_flag）→ 必传产物校验 → 通知人必选 → done；
     逾期则推部门主管+抄送管理层（含效率%）。"""
     o = await _order_or_404(db, oid)
     cfg = DEPTS[o.dept]
@@ -658,17 +744,11 @@ async def complete_order(
     if o.status != "in_progress":
         raise HTTPException(400, "仅进行中任务可完成")
 
-    # D1：设计完成前置校验四表已导入（P-16 读 imported_at）
-    if cfg["sheet_check"]:
-        res = await db.execute(select(models.Datasheet).where(
-            models.Datasheet.project_id == o.project_id,
-            models.Datasheet.name.in_(tuple(SHEET_TEMPLATES.keys())),
-        ))
-        sheets = {d.name: d for d in res.scalars().all()}
-        missing = [n for n in SHEET_TEMPLATES.keys()
-                   if n not in sheets or sheets[n].imported_at is None]
-        if missing:
-            raise HTTPException(400, f"四表未导入齐，无法完成：缺 {('、'.join(missing))}（请在项目详情导入 Excel）")
+    # 两步完成流第一步闸门
+    if o.dept == "design" and not getattr(o, "design_done_flag", False):
+        raise HTTPException(400, "请先点击「设计完成」完成第一步")
+    if o.dept == "electric" and not getattr(o, "electric_done_flag", False):
+        raise HTTPException(400, "请先点击「接线完成」完成第一步")
 
     # 必传产物校验
     res = await db.execute(select(models.Attachment).where(

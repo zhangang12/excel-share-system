@@ -169,7 +169,7 @@ async def delete_datasheet(
 @router.get("/datasheets/{did}/fields", response_model=List[schemas.FieldOut])
 async def list_fields(
     did: int,
-    current: models.User = Depends(require_can_view_detail),  # 🆕 #91 详单闸门
+    current: models.User = Depends(get_current_user),  # 只读；项目级授权由 user_can_view_project 把守
     db: AsyncSession = Depends(get_db),
 ):
     d = await _get_datasheet_or_404(db, did)
@@ -273,7 +273,7 @@ async def delete_field(
 @router.get("/datasheets/{did}/records", response_model=List[schemas.RecordOut])
 async def list_records(
     did: int,
-    current: models.User = Depends(require_can_view_detail),  # 🆕 #91 详单闸门
+    current: models.User = Depends(get_current_user),  # 只读；项目级授权由 user_can_view_project 把守
     db: AsyncSession = Depends(get_db),
 ):
     d = await _get_datasheet_or_404(db, did)

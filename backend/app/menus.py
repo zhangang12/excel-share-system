@@ -61,7 +61,7 @@ ROLE_MENUS: dict[str, list[str]] = {
     "electric_lead":    ["catalog", "electric"],              # 无详单（与 design_lead 不对称是有意口径）
     "assembler":        ["catalog", "produce"],               # 无详单；装配组 tab 在生产部菜单内
     "pm_lead":          ["catalog", "list", "produce"],
-    "sheetmetal":       ["catalog", "list", "produce"],        # 🆕 钣金组并入生产部菜单(tab)
+    "sheetmetal":       ["catalog", "produce"],                 # 🆕 钣金组并入生产部菜单(tab)；无详单（同 assembler 口径）
     "buyer":            ["catalog", "list", "purchase"],
     "warehouse_lead":   ["catalog", "list", "warehouse"],
     "logistics":        ["catalog", "list", "logistics"],

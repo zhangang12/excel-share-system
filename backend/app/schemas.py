@@ -134,6 +134,8 @@ class OrderOut(BaseModel):
     on_time: Optional[bool] = None
     overdue: bool = False              # 进行中且超预计 / 完成且逾期
     created_at: datetime
+    design_done_flag:   bool = False  # 🆕 设计完成第一步标记
+    electric_done_flag: bool = False  # 🆕 接线完成第一步标记
     input_files: list[AttachmentOut] = []
     start_files: list[AttachmentOut] = []
     output_files: list[AttachmentOut] = []

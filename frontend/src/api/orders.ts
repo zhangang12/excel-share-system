@@ -31,6 +31,8 @@ export interface DeptOrder {
   on_time?: boolean | null
   overdue: boolean
   created_at: string
+  design_done_flag: boolean
+  electric_done_flag: boolean
   input_files: OrderAttachment[]
   start_files: OrderAttachment[]
   output_files: OrderAttachment[]
@@ -101,6 +103,12 @@ export const ordersApi = {
   // 🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账
   spareOrder: (data: { code: string; name: string; qty: number; unit: string; depts: string[]; req_text: string }) =>
     http.post<{ project_id: number; code: string; order_ids: number[] }>('/orders/spare', data).then((r) => r.data),
+
+  // 🆕 设计完成第一步：CAD图纸+外购附图+四表齐才可点
+  markDesignDone: (id: number) => http.post(`/orders/${id}/design_done`).then((r) => r.data),
+
+  // 🆕 接线完成第一步：采购清单上传后才可点
+  markElectricDone: (id: number) => http.post(`/orders/${id}/electric_done`).then((r) => r.data),
 }
 
 // 🆕 2026-06-19 生产部分组派发（钣金组/装配组）

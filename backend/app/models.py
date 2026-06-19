@@ -227,6 +227,8 @@ class DeptOrder(Base):
     due_date: Mapped[Optional[str]] = mapped_column(String(10))
     done_date: Mapped[Optional[str]] = mapped_column(String(10))
     notify_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    design_done_flag:   Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 设计完成第一步
+    electric_done_flag: Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 接线完成第一步
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

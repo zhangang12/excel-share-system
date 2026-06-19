@@ -204,12 +204,81 @@ async function toggleGroupDone(row: GroupProjectRow) {
   }
 }
 
+// 🆕 设计完成第一步（设计完成按钮）
+const markingDesignDone = ref<number | null>(null)
+function canDesignDone(o: DeptOrder) {
+  return startFilesOf(o, 'sheetpkg').length > 0
+    && startFilesOf(o, 'outsource_img').length > 0
+    && fourReady(o.project_id)
+    && !o.design_done_flag
+}
+function canShipReady(o: DeptOrder) {
+  return o.design_done_flag
+    && o.output_files.some(f => f.kind === 'manual')
+    && o.output_files.some(f => f.kind === 'nameplate')
+}
+async function doDesignDone(o: DeptOrder) {
+  markingDesignDone.value = o.id
+  try {
+    await ordersApi.markDesignDone(o.id)
+    ElMessage.success('已标记设计完成，请上传产品说明书和铭牌')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  } finally {
+    markingDesignDone.value = null
+  }
+}
+
+// 🆕 电工部两步完成流
+const markingElectricDone = ref<number | null>(null)
+function canElectricDone(o: DeptOrder) {
+  return startFilesOf(o, 'plist').length > 0 && !o.electric_done_flag
+}
+function canElectricShipReady(o: DeptOrder) {
+  return o.electric_done_flag && o.output_files.some(f => f.kind === 'circuit')
+}
+async function doElectricDone(o: DeptOrder) {
+  markingElectricDone.value = o.id
+  try {
+    await ordersApi.markElectricDone(o.id)
+    ElMessage.success('已标记接线完成，请上传电路图')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  } finally {
+    markingElectricDone.value = null
+  }
+}
+function cardOutputFiles(o: DeptOrder, kind: string) {
+  return o.output_files.filter(f => f.kind === kind)
+}
+async function pickCardOutputUpload(o: DeptOrder, kind: string) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.onchange = async () => {
+    const files = Array.from(input.files || [])
+    if (!files.length) return
+    await ordersApi.outputUpload(o.id, kind, files)
+    ElMessage.success('已上传')
+    await load()
+  }
+  input.click()
+}
+
 // 🆕 钣金装配表只读预览（钣金组/装配组共用）
 const viewVisible = ref(false)
 const viewLoading = ref(false)
 const viewTitle = ref('')
 const viewFields = ref<{ id: number; name: string }[]>([])
 const viewRecords = ref<any[]>([])
+// 全屏模式下动态计算列宽，让所有列尽量铺满一屏无需横向滚动
+const viewColWidth = computed(() => {
+  const n = viewFields.value.length
+  if (!n) return 110
+  const usable = (typeof window !== 'undefined' ? window.innerWidth : 1280) - 50 - 32
+  return Math.max(80, Math.floor(usable / n))
+})
 async function viewSheet(row: GroupProjectRow) {
   if (!row.sheetmetal_datasheet_id) { ElMessage.info('该项目暂无钣金装配表'); return }
   viewTitle.value = `${row.code} · 钣金装配表（只读引用）`
@@ -552,7 +621,103 @@ const stockVisible = ref(false)
                   </div>
                 </div>
 
-                <el-button type="success" size="small" :icon="Check" @click="openComplete(o)">完成…</el-button>
+                <!-- 设计部两步完成流 -->
+                <template v-if="dept === 'design'">
+                  <!-- 第一步：设计完成 -->
+                  <template v-if="!o.design_done_flag">
+                    <el-button type="primary" size="small" :icon="Check"
+                               :disabled="!canDesignDone(o)"
+                               :loading="markingDesignDone === o.id"
+                               @click="doDesignDone(o)">设计完成</el-button>
+                    <div v-if="!canDesignDone(o)" class="tc-hint">需上传 CAD激光图纸、外购附图并完成四表导入</div>
+                  </template>
+                  <!-- 第二步：上传说明书/铭牌 + 发货准备 -->
+                  <template v-else>
+                    <el-tag type="success" size="small" style="margin-bottom:8px">✅ 设计已完成</el-tag>
+                    <div class="up-sec">
+                      <div class="up-h">
+                        <el-icon><UploadFilled /></el-icon> 产品说明书 (Word)
+                        <span style="margin-left:auto">
+                          <StatusPill :text="cardOutputFiles(o,'manual').length ? `已上传 ${cardOutputFiles(o,'manual').length} 个` : '待上传'"
+                                      :variant="cardOutputFiles(o,'manual').length ? 'success' : 'warn'" />
+                        </span>
+                      </div>
+                      <div class="up-b">
+                        <div v-if="cardOutputFiles(o,'manual').length" class="tc-files">
+                          <el-tag v-for="f in cardOutputFiles(o,'manual')" :key="f.id" size="small" effect="plain" class="file-chip">
+                            <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
+                          </el-tag>
+                        </div>
+                        <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickCardOutputUpload(o,'manual')">
+                          {{ cardOutputFiles(o,'manual').length ? '继续添加' : '上传说明书' }}
+                        </el-button>
+                      </div>
+                    </div>
+                    <div class="up-sec">
+                      <div class="up-h">
+                        <el-icon><UploadFilled /></el-icon> 铭牌 (CAD)
+                        <span style="margin-left:auto">
+                          <StatusPill :text="cardOutputFiles(o,'nameplate').length ? `已上传 ${cardOutputFiles(o,'nameplate').length} 个` : '待上传'"
+                                      :variant="cardOutputFiles(o,'nameplate').length ? 'success' : 'warn'" />
+                        </span>
+                      </div>
+                      <div class="up-b">
+                        <div v-if="cardOutputFiles(o,'nameplate').length" class="tc-files">
+                          <el-tag v-for="f in cardOutputFiles(o,'nameplate')" :key="f.id" size="small" effect="plain" class="file-chip">
+                            <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
+                          </el-tag>
+                        </div>
+                        <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickCardOutputUpload(o,'nameplate')">
+                          {{ cardOutputFiles(o,'nameplate').length ? '继续添加' : '上传铭牌' }}
+                        </el-button>
+                      </div>
+                    </div>
+                    <el-button type="success" size="small" :icon="Check"
+                               :disabled="!canShipReady(o)"
+                               @click="openComplete(o)">发货准备</el-button>
+                    <div v-if="!canShipReady(o)" class="tc-hint">需上传产品说明书和铭牌</div>
+                  </template>
+                </template>
+                <!-- 电工部两步完成流 -->
+                <template v-else-if="dept === 'electric'">
+                  <!-- 第一步：接线完成（采购清单已上传） -->
+                  <template v-if="!o.electric_done_flag">
+                    <el-button type="primary" size="small" :icon="Check"
+                               :disabled="!canElectricDone(o)"
+                               :loading="markingElectricDone === o.id"
+                               @click="doElectricDone(o)">接线完成</el-button>
+                    <div v-if="!canElectricDone(o)" class="tc-hint">需上传采购清单</div>
+                  </template>
+                  <!-- 第二步：上传电路图 + 发货准备 -->
+                  <template v-else>
+                    <el-tag type="success" size="small" style="margin-bottom:8px">✅ 接线已完成</el-tag>
+                    <div class="up-sec">
+                      <div class="up-h">
+                        <el-icon><UploadFilled /></el-icon> 电路图 (PDF)
+                        <span style="margin-left:auto">
+                          <StatusPill :text="cardOutputFiles(o,'circuit').length ? `已上传 ${cardOutputFiles(o,'circuit').length} 个` : '待上传'"
+                                      :variant="cardOutputFiles(o,'circuit').length ? 'success' : 'warn'" />
+                        </span>
+                      </div>
+                      <div class="up-b">
+                        <div v-if="cardOutputFiles(o,'circuit').length" class="tc-files">
+                          <el-tag v-for="f in cardOutputFiles(o,'circuit')" :key="f.id" size="small" effect="plain" class="file-chip">
+                            <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
+                          </el-tag>
+                        </div>
+                        <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickCardOutputUpload(o,'circuit')">
+                          {{ cardOutputFiles(o,'circuit').length ? '继续添加' : '上传电路图' }}
+                        </el-button>
+                      </div>
+                    </div>
+                    <el-button type="success" size="small" :icon="Check"
+                               :disabled="!canElectricShipReady(o)"
+                               @click="openComplete(o)">发货准备</el-button>
+                    <div v-if="!canElectricShipReady(o)" class="tc-hint">需上传电路图</div>
+                  </template>
+                </template>
+                <!-- 其他部门：原完成按钮 -->
+                <el-button v-else type="success" size="small" :icon="Check" @click="openComplete(o)">完成…</el-button>
               </template>
             </el-card>
           </div>
@@ -704,8 +869,6 @@ const stockVisible = ref(false)
                   <el-button size="small" link type="primary" @click="viewSheet(row)">
                     预览<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
                   </el-button>
-                  <el-button size="small" link type="primary" :icon="Download"
-                             @click="downloadSheet(row.sheetmetal_datasheet_id, `${row.code}-钣金装配表`)">下载</el-button>
                 </template>
                 <span v-else class="muted">—</span>
               </template>
@@ -734,8 +897,6 @@ const stockVisible = ref(false)
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
                   <el-button size="small" link type="primary" @click="viewSheet(row)">预览</el-button>
-                  <el-button size="small" link type="primary" :icon="Download"
-                             @click="downloadSheet(row.sheetmetal_datasheet_id, `${row.code}-钣金装配表`)">下载</el-button>
                 </template>
                 <span v-else class="muted">—</span>
               </template>
@@ -802,9 +963,14 @@ const stockVisible = ref(false)
       </div>
     </el-dialog>
 
-    <!-- ===== 完成弹窗 ===== -->
-    <el-dialog v-model="completeVisible" :title="`✓ 完成任务 · ${completeOrder?.project_code || ''}（${deptName}）`" width="560px">
-      <el-alert v-if="options?.sheet_check" type="info" :closable="false" style="margin-bottom: 14px"
+    <!-- ===== 完成弹窗（设计部第二步时仅选通知人；其他部门保持原完整流程） ===== -->
+    <el-dialog v-model="completeVisible"
+               :title="(dept === 'design' && completeOrder?.design_done_flag) || (dept === 'electric' && completeOrder?.electric_done_flag)
+                 ? `✓ 发货准备 · ${completeOrder?.project_code || ''}（${deptName}）`
+                 : `✓ 完成任务 · ${completeOrder?.project_code || ''}（${deptName}）`"
+               width="560px">
+      <el-alert v-if="options?.sheet_check && !(dept === 'design' && completeOrder?.design_done_flag)"
+                type="info" :closable="false" style="margin-bottom: 14px"
                 title="完成前将校验四个数据表均已通过 Excel 导入（项目详情页头「导入 Excel」）" />
       <el-form label-position="top">
         <el-form-item :label="`${options?.notify_label}（必选，企业微信/站内通知）`" required>
@@ -812,7 +978,11 @@ const stockVisible = ref(false)
             <el-option v-for="u in options?.notify_pool || []" :key="u.id" :label="u.name" :value="u.id" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="options?.outputs.length" label="上传产物（完成后按目标推送下游）">
+        <!-- 两步流第二步时产物已在卡片上传，弹窗不再重复显示 -->
+        <el-form-item v-if="options?.outputs.length
+                            && !(dept === 'design' && completeOrder?.design_done_flag)
+                            && !(dept === 'electric' && completeOrder?.electric_done_flag)"
+                      label="上传产物（完成后按目标推送下游）">
           <div class="out-rows">
             <div v-for="ot in options?.outputs || []" :key="ot.k" class="out-row">
               <span class="ol">{{ ot.label }}<span v-if="ot.required" class="req-star">*必传</span></span>
@@ -824,7 +994,10 @@ const stockVisible = ref(false)
       </el-form>
       <template #footer>
         <el-button @click="completeVisible = false">取消</el-button>
-        <el-button type="success" :loading="completing" @click="doComplete">确认完成</el-button>
+        <el-button type="success" :loading="completing" @click="doComplete">
+          {{ (dept === 'design' && completeOrder?.design_done_flag) || (dept === 'electric' && completeOrder?.electric_done_flag)
+            ? '确认发货准备' : '确认完成' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -871,13 +1044,13 @@ const stockVisible = ref(false)
     </el-dialog>
 
     <!-- ===== 🆕 钣金装配表只读预览（钣金组/装配组） ===== -->
-    <el-dialog v-model="viewVisible" :title="viewTitle" width="880px" class="v3-scroll-dialog">
+    <el-dialog v-model="viewVisible" :title="viewTitle" fullscreen>
       <div v-loading="viewLoading">
         <el-alert type="info" :closable="false" style="margin-bottom:10px"
                   title="只读引用——钣金装配表数据由设计部维护，生产部不可编辑" />
-        <el-table :data="viewRecords" border size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+        <el-table :data="viewRecords" border size="small" max-height="calc(100vh - 130px)" :scrollbar-always-on="true">
           <el-table-column type="index" label="#" width="50" />
-          <el-table-column v-for="f in viewFields" :key="f.id" :label="f.name" min-width="110">
+          <el-table-column v-for="f in viewFields" :key="f.id" :label="f.name" :min-width="viewColWidth">
             <template #default="{ row }">{{ cellVal(row, f.id) }}</template>
           </el-table-column>
         </el-table>
