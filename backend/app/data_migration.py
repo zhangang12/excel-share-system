@@ -1334,6 +1334,47 @@ async def normalize_tax_rate_no_invoice(db: AsyncSession) -> dict:
     return {"updated": n}
 
 
+async def fix_buyer_sub_roles(db: AsyncSession) -> dict:
+    """🆕 2026-06-20：把采购子角色用户的锚点角色和 user_roles 都指向正确的子角色。
+    fangbusen → buyer_outsource；lixinxin → buyer_standard。幂等。"""
+    from sqlalchemy import delete as _del
+    mapping = {
+        "fangbusen": "buyer_outsource",
+        "lixinxin":  "buyer_standard",
+    }
+    fixed = 0
+    for uname, role_code in mapping.items():
+        res_u = await db.execute(select(models.User).where(models.User.username == uname))
+        u = res_u.scalar_one_or_none()
+        if not u:
+            continue
+        res_r = await db.execute(select(models.Role).where(models.Role.code == role_code))
+        role = res_r.scalar_one_or_none()
+        if not role:
+            continue
+        # 移除 buyer / buyer_outsource / buyer_standard 已有 UserRole 条目（幂等）
+        buyer_roles_res = await db.execute(
+            select(models.Role).where(models.Role.code.in_(("buyer", "buyer_outsource", "buyer_standard")))
+        )
+        buyer_role_ids = [r.id for r in buyer_roles_res.scalars().all()]
+        await db.execute(
+            _del(models.UserRole).where(
+                models.UserRole.user_id == u.id,
+                models.UserRole.role_id.in_(buyer_role_ids),
+            )
+        )
+        await db.flush()
+        # 添加正确子角色
+        db.add(models.UserRole(user_id=u.id, role_id=role.id))
+        # 更新锚点
+        u.role_id = role.id
+        fixed += 1
+    if fixed:
+        await db.commit()
+        log.info("[fix_buyer_sub_roles] 已修正 %d 个采购子角色用户", fixed)
+    return {"fixed": fixed}
+
+
 async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
     """🆕 2026-06-20 两件事（幂等）：
     1. 给存量 SalesLedger 补 order_type（默认工厂制作订单，2026-008 为调货订单）。
@@ -1502,6 +1543,10 @@ async def run_all(db: AsyncSession) -> None:
         await normalize_tax_rate_no_invoice(db)
     except Exception as e:
         log.warning("normalize_tax_rate_no_invoice failed: %s", e)
+    try:
+        await fix_buyer_sub_roles(db)
+    except Exception as e:
+        log.warning("fix_buyer_sub_roles failed: %s", e)
     try:
         await backfill_order_type_and_dept_orders(db)
     except Exception as e:
