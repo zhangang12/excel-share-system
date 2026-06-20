@@ -786,7 +786,7 @@ async function openReport() {
                     <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
                     <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
                     <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
-                    <el-dropdown-item v-if="allView && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
+                    <el-dropdown-item v-if="allView && row.invoice_state && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
                     <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
                     <el-dropdown-item v-else divided style="color: var(--el-color-danger)" @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
                   </template>
@@ -813,7 +813,7 @@ async function openReport() {
                     <el-dropdown-menu>
                       <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
                       <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
-                      <el-dropdown-item v-if="allView && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
+                      <el-dropdown-item v-if="allView && row.invoice_state && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
                       <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
                       <el-dropdown-item v-else divided style="color: var(--el-color-danger)" @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
                     </el-dropdown-menu>
@@ -1062,7 +1062,7 @@ async function openReport() {
                :title="`🧾 开票申请 · ${invoiceApplyRow?.code || ''}`"
                width="480px" @close="invoiceApplyFile = null">
       <el-alert type="info" :closable="false" style="margin-bottom: 16px"
-                title="上传开票申请表后，将提交给销售主管审批；审批通过后自动同步至财务部待开票列表" />
+                :title="allView ? '主管/管理员提交后直接同步至财务部待开票列表，无需额外审批' : '上传后提交给销售主管审批，审批通过后同步至财务部待开票列表'" />
       <el-descriptions :column="2" border size="small" style="margin-bottom: 16px">
         <el-descriptions-item label="项目编号">{{ invoiceApplyRow?.code }}</el-descriptions-item>
         <el-descriptions-item label="设备名称">{{ invoiceApplyRow?.name }}</el-descriptions-item>

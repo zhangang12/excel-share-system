@@ -524,16 +524,27 @@ async def invoice_apply(
         raise HTTPException(400, "开票申请已在流程中")
     a = await save_upload(db, file, biz_type="invoice_apply", biz_id=led.id,
                           project_id=led.project_id, user=current)
-    led.invoice_state = "applying"
     led.invoice_apply_file_id = a.id
-    await db.commit()
     p = led.project
-    await push_message(db, to_role="sales_lead", kind="info",
-                       text=f"【开票申请】{p.code} {p.name} 待销售主管审批：{a.name}",
-                       biz_type="sales_ledger", biz_id=led.id)
-    await write_audit(db, user=current, action="invoice_apply",
-                      target_type="sales_ledger", target_id=lid)
-    return schemas.Msg(message="开票申请已提交，等待销售主管审批")
+    # 管理层/销售主管提交时直接进入待开票，无需再自行审批
+    if _all_view(current):
+        led.invoice_state = "pending_invoice"
+        await db.commit()
+        await push_message(db, to_role="finance", kind="info",
+                           text=f"【待开票】{p.code} {p.name} 金额 ¥{led.amount:,.0f} 税票 {led.tax_rate or '—'}，请财务开票。",
+                           biz_type="sales_ledger", biz_id=led.id)
+        await write_audit(db, user=current, action="invoice_apply",
+                          target_type="sales_ledger", target_id=lid)
+        return schemas.Msg(message="开票申请已提交，已同步至财务部待开票")
+    else:
+        led.invoice_state = "applying"
+        await db.commit()
+        await push_message(db, to_role="sales_lead", kind="info",
+                           text=f"【开票申请】{p.code} {p.name} 待销售主管审批：{a.name}",
+                           biz_type="sales_ledger", biz_id=led.id)
+        await write_audit(db, user=current, action="invoice_apply",
+                          target_type="sales_ledger", target_id=lid)
+        return schemas.Msg(message="开票申请已提交，等待销售主管审批")
 
 
 @router.get("/invoice-approvals", response_model=schemas.SalesLedgerListOut)
