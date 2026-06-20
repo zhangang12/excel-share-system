@@ -184,6 +184,7 @@ async def list_ledger(
     contract: Optional[str] = Query(None),
     sales_uid: Optional[int] = Query(None),
     balance_month: Optional[str] = Query(None),   # 🆕 尾款日期筛选(YYYY-MM)
+    year: Optional[str] = Query(None),             # 🆕 年份筛选(YYYY)
     page: int = Query(1, ge=1),                   # 🆕 分页（性能优化：只构建当前页的附件名等重数据）
     page_size: int = Query(50, ge=1, le=200),
     current: models.User = Depends(require_roles("sales", "sales_lead")),
@@ -193,6 +194,8 @@ async def list_ledger(
         models.Project, models.SalesLedger.project_id == models.Project.id
     ).where(models.Project.is_deleted == False)  # noqa: E712
 
+    if year:
+        q = q.where(models.Project.code.like(f"{year}-%"))
     if not _all_view(current):
         q = q.where(models.SalesLedger.sales_uid == current.id)  # 销售员仅本人
     elif sales_uid:

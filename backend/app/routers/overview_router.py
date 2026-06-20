@@ -130,6 +130,7 @@ async def delete_field(
 # ==================== 一览数据 ====================
 @router.get("", response_model=schemas.OverviewBundle)
 async def get_overview(
+    year: Optional[str] = None,
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -143,11 +144,10 @@ async def get_overview(
     fields = [_field_to_out(f) for f in fres.scalars().all()]
     t1 = time.perf_counter()
 
-    pres = await db.execute(
-        select(models.Project)
-        .where(models.Project.is_deleted == False)
-        .order_by(models.Project.code)
-    )
+    proj_q = select(models.Project).where(models.Project.is_deleted == False)
+    if year:
+        proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
+    pres = await db.execute(proj_q.order_by(models.Project.code))
     all_projects = pres.scalars().all()
     t2 = time.perf_counter()
 

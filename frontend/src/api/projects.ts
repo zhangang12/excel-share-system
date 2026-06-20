@@ -2,10 +2,11 @@ import { http } from './index'
 import type { Project, ProjectMember } from '@/types'
 
 export const projectsApi = {
-  list: (q?: string, status?: string) => {
+  list: (q?: string, status?: string, year?: string) => {
     const params: Record<string, string> = {}
     if (q) params.q = q
     if (status) params.status = status
+    if (year) params.year = year
     return http.get<Project[]>('/projects', { params }).then(r => r.data)
   },
   get: (id: number) => http.get<Project>(`/projects/${id}`).then(r => r.data),

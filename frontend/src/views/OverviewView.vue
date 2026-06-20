@@ -385,11 +385,19 @@ async function onExport() {
   await fetchExport('/api/overview/export', '项目目录.xlsx', '项目目录导出')
 }
 
+// 年份筛选
+const curYear = String(new Date().getFullYear())
+const yearFilter = ref(curYear)
+const yearOptions = computed(() => {
+  const y = parseInt(curYear)
+  return [y - 1, y, y + 1].map(String)
+})
+
 async function load() {
   loading.value = true
   try {
     const [b, perms] = await Promise.all([
-      overviewApi.get(),
+      overviewApi.get(yearFilter.value),
       permApi.myOverviewPerms(),
     ])
     fields.value = b.fields
@@ -671,6 +679,9 @@ onMounted(load)
         <el-switch v-model="fitScreen" active-text="适应屏幕"
                    @change="onFitScreenChange" />
       </el-tooltip>
+      <el-select v-model="yearFilter" size="large" style="width: 100px" @change="load">
+        <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+      </el-select>
       <el-select v-model="statusFilter" placeholder="全部状态" size="large"
                  style="width: 130px" @change="onStatusFilterChange">
         <el-option label="全部" value="">

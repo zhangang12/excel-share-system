@@ -82,15 +82,16 @@ def _gate(orders: list[models.DeptOrder]) -> tuple[bool, list[str]]:
 
 @router.get("/board", response_model=List[BoardRow])
 async def board(
+    year: Optional[str] = None,
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """发货看板（物流/管理层；其它角色只读不限制——数据无敏感金额）。"""
-    res = await db.execute(
-        select(models.Shipment).join(models.Project).where(
-            models.Project.is_deleted == False)  # noqa: E712
-        .order_by(models.Shipment.id.desc()).limit(300)
-    )
+    ship_q = select(models.Shipment).join(models.Project).where(
+        models.Project.is_deleted == False)  # noqa: E712
+    if year:
+        ship_q = ship_q.where(models.Project.code.like(f"{year}-%"))
+    res = await db.execute(ship_q.order_by(models.Shipment.id.desc()).limit(300))
     ships = list(res.scalars().all())
     pids = [s.project_id for s in ships]
     if not pids:

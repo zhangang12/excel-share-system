@@ -17,6 +17,13 @@ const statusFilter = ref('')
 const canCreate = computed(() => auth.hasRole('admin', 'manager'))
 const canDelete = computed(() => auth.hasRole('admin', 'manager'))
 
+const curYear = String(new Date().getFullYear())
+const yearFilter = ref(curYear)
+const yearOptions = computed(() => {
+  const y = parseInt(curYear)
+  return [y - 1, y, y + 1].map(String)
+})
+
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const form = reactive({
@@ -25,7 +32,7 @@ const form = reactive({
 
 async function load() {
   loading.value = true
-  try { list.value = await projectsApi.list(keyword.value || undefined, statusFilter.value || undefined) }
+  try { list.value = await projectsApi.list(keyword.value || undefined, statusFilter.value || undefined, yearFilter.value || undefined) }
   finally { loading.value = false }
 }
 
@@ -98,6 +105,9 @@ onMounted(load)
         <div class="desc">点项目编号进入维护进度表</div>
       </div>
       <div class="spacer"></div>
+      <el-select v-model="yearFilter" size="large" style="width: 100px" @change="load">
+        <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+      </el-select>
       <el-input v-model="keyword" placeholder="搜索编号/名称" style="width: 240px"
                 size="large" clearable :prefix-icon="Search" @keyup.enter="load" />
       <el-select v-model="statusFilter" placeholder="全部状态" style="width: 140px"

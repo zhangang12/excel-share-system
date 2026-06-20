@@ -34,6 +34,13 @@ const rows = ref<SalesLedgerRow[]>([])
 const totals = ref<SalesLedgerTotals | null>(null)
 const filters = reactive({ kw: '', cust_type: '', contract: '', sales_uid: undefined as number | undefined, balance_month: '' })
 
+const curYear = String(new Date().getFullYear())
+const listYear = ref(curYear)
+const listYearOptions = computed(() => {
+  const y = parseInt(curYear)
+  return [y - 1, y, y + 1].map(String)
+})
+
 // 销售员筛选下拉：用真实销售员名单（salesStaff，分页后不能再从当前页 rows 聚合）
 const salesOptions = computed(() => salesStaff.value)
 
@@ -75,6 +82,7 @@ async function load() {
       contract: filters.contract || undefined,
       sales_uid: filters.sales_uid,
       balance_month: filters.balance_month || undefined,
+      year: listYear.value || undefined,
       page: page.value,
       page_size: pageSize.value,
     })
@@ -602,6 +610,9 @@ async function openReport() {
 
     <el-card shadow="never" style="margin-bottom: 12px">
       <div class="filter-bar">
+        <el-select v-model="listYear" size="default" style="width: 100px" @change="reload">
+          <el-option v-for="y in listYearOptions" :key="y" :label="y + '年'" :value="y" />
+        </el-select>
         <el-input v-model="filters.kw" placeholder="搜索 编号/设备/客户" clearable style="width: 220px" @change="reload" />
         <el-select v-if="allView" v-model="filters.sales_uid" placeholder="销售员(全部)" clearable style="width: 150px" @change="reload">
           <el-option v-for="s in salesOptions" :key="s.id" :label="s.name" :value="s.id" />

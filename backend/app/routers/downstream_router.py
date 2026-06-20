@@ -101,15 +101,16 @@ class PurchaseProjectRow(BaseModel):
 
 @router.get("/purchase/projects", response_model=List[PurchaseProjectRow])
 async def purchase_projects(
+    year: Optional[str] = None,
     _: models.User = Depends(require_roles("buyer", "buyer_standard", "buyer_outsource", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 采购部项目列表：按项目汇总采购所需数据表(引用下载)与设计师推送的图纸附件。
     前端按采购员子角色(外协采购员/标准件采购员)显示对应列；未细分的 buyer 看全部列。"""
-    res = await db.execute(
-        select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
-        .order_by(models.Project.code)
-    )
+    proj_q = select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
+    if year:
+        proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
+    res = await db.execute(proj_q.order_by(models.Project.code))
     projects = list(res.scalars().all())
     pids = [p.id for p in projects]
     if not pids:

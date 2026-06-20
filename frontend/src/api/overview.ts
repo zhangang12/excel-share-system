@@ -2,7 +2,7 @@ import { http } from './index'
 import type { OverviewBundle, OverviewField, OverviewRow, FieldType, FieldConfig } from '@/types'
 
 export const overviewApi = {
-  get: () => http.get<OverviewBundle>('/overview').then(r => r.data),
+  get: (year?: string) => http.get<OverviewBundle>('/overview', { params: year ? { year } : {} }).then(r => r.data),
 
   listFields: () => http.get<OverviewField[]>('/overview/fields').then(r => r.data),
   createField: (data: { name: string; type: FieldType; config?: FieldConfig }) =>

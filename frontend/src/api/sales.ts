@@ -81,7 +81,7 @@ export interface SalesOrderForm {
 }
 
 export const salesApi = {
-  ledger: (params?: { kw?: string; cust_type?: string; contract?: string; sales_uid?: number; balance_month?: string; page?: number; page_size?: number }) =>
+  ledger: (params?: { kw?: string; cust_type?: string; contract?: string; sales_uid?: number; balance_month?: string; year?: string; page?: number; page_size?: number }) =>
     http.get<SalesLedgerList>('/sales/ledger', { params }).then((r) => r.data),
 
   nextCode: (year?: string) =>

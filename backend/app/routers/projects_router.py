@@ -287,10 +287,13 @@ async def _project_to_out(p: models.Project, db: AsyncSession) -> schemas.Projec
 async def list_projects(
     q: Optional[str] = Query(None),
     status: Optional[str] = None,
+    year: Optional[str] = Query(None),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(models.Project).where(models.Project.is_deleted == False)
+    if year:
+        query = query.where(models.Project.code.like(f"{year}-%"))
     if q:
         # 转义 LIKE 通配符（_ 和 %）和反斜杠，让搜索按字面量匹配
         q_esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

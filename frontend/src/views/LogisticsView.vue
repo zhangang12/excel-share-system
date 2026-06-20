@@ -38,10 +38,17 @@ const isMgr = computed(() => auth.isAdmin)
 const loading = ref(false)
 const rows = ref<BoardRow[]>([])
 
+const curYear = String(new Date().getFullYear())
+const yearFilter = ref(curYear)
+const yearOptions = computed(() => {
+  const y = parseInt(curYear)
+  return [y - 1, y, y + 1].map(String)
+})
+
 async function load() {
   loading.value = true
   try {
-    rows.value = (await http.get<BoardRow[]>('/logistics/board')).data
+    rows.value = (await http.get<BoardRow[]>('/logistics/board', { params: { year: yearFilter.value } })).data
   } finally {
     loading.value = false
   }
@@ -118,6 +125,10 @@ async function confirmShip(force = false) {
           <b>发货闸门：已下单任务全部完成才可发（D5）</b>；发货日期自动回传销售台账
         </div>
       </div>
+      <div class="spacer"></div>
+      <el-select v-model="yearFilter" size="large" style="width: 100px" @change="load">
+        <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+      </el-select>
     </div>
 
     <el-card shadow="never">
