@@ -7,6 +7,10 @@ import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/api/sales'
 import EmptyHint from '@/components/EmptyHint.vue'
+import { useAuthStore } from '@/stores/auth'
+
+const auth = useAuthStore()
+const isManager = computed(() => auth.hasRole('admin', 'manager'))
 
 interface InvoiceRow {
   ledger_id: number; code: string; name: string; customer?: string | null
@@ -90,6 +94,22 @@ async function uploadInvoice(row: ViewRow) {
   input.click()
 }
 
+// 管理员/主管作废待开票申请，退回未申请状态
+async function voidPendingInvoice(row: ViewRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确认作废「${row._codes}」的开票申请？将退回未申请状态，申请表文件删除，销售需重新提交。`,
+      '作废开票申请', { type: 'warning', confirmButtonText: '确认作废' })
+  } catch { return }
+  try {
+    await http.post(`/sales/ledger/${row.ledger_id}/invoice-void`)
+    ElMessage.success('已作废，退回未申请状态')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  }
+}
+
 // #2 财务开票纠错：作废原发票退回待开票，可重新上传正确发票（合并发票暂不支持单项目作废）
 async function revokeInvoice(row: ViewRow) {
   try {
@@ -137,10 +157,14 @@ async function revokeInvoice(row: ViewRow) {
                 </el-tooltip>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="140">
+            <el-table-column label="操作" width="200">
               <template #default="{ row }">
                 <el-button size="small" type="primary" :icon="UploadFilled" @click="uploadInvoice(row)">
                   {{ row._isBatch ? '上传合并发票' : '上传发票' }}
+                </el-button>
+                <el-button v-if="isManager && !row._isBatch" size="small" link type="danger"
+                           style="margin-left:6px" @click="voidPendingInvoice(row)">
+                  作废
                 </el-button>
               </template>
             </el-table-column>

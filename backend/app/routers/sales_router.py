@@ -617,6 +617,39 @@ async def invoice_reject(
     return schemas.Msg(message="已驳回")
 
 
+@router.post("/ledger/{lid}/invoice-void", response_model=schemas.Msg)
+async def invoice_void(
+    lid: int,
+    current: models.User = Depends(require_roles("admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员/主管作废待开票申请，退回未申请状态，销售可重新提交。"""
+    led = await _ledger_or_404(db, lid)
+    if led.invoice_state != "pending_invoice":
+        raise HTTPException(400, "只能作废「待开票」状态的申请")
+    if led.invoice_batch_id is not None:
+        raise HTTPException(400, "合并开票批次请使用批量作废")
+    att_to_del = None
+    if led.invoice_apply_file_id:
+        res = await db.execute(select(models.Attachment).where(
+            models.Attachment.id == led.invoice_apply_file_id))
+        att_to_del = res.scalar_one_or_none()
+    led.invoice_apply_file_id = None
+    led.invoice_state = None
+    await db.flush()
+    if att_to_del:
+        await delete_attachment_file(db, att_to_del)
+    await db.commit()
+    p = led.project
+    if led.sales_uid:
+        await push_message(db, to_user_id=led.sales_uid, kind="warn",
+                           text=f"【开票作废】{p.code} 开票申请已被管理员作废，如需开票请重新提交申请。",
+                           biz_type="sales_ledger", biz_id=led.id)
+    await write_audit(db, user=current, action="invoice_void",
+                      target_type="sales_ledger", target_id=lid)
+    return schemas.Msg(message="已作废，退回未申请状态")
+
+
 @router.post("/ledger/{lid}/admin-mark-invoiced", response_model=schemas.Msg)
 async def admin_mark_invoiced(
     lid: int,
