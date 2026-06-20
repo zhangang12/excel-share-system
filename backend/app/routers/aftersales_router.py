@@ -208,3 +208,33 @@ async def finance_void(
                        biz_type="aftersales", biz_id=aid)
     await write_audit(db, user=current, action="finance_void", target_type="aftersales", target_id=aid)
     return schemas.Msg(message="已作废并退回售后部重新审批")
+
+
+@router.delete("/{aid}", response_model=schemas.Msg)
+async def delete_aftersale(
+    aid: int,
+    current: models.User = Depends(require_roles("admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理层永久删除售后记录（物料清单附件一并删除）。"""
+    r = await db.execute(select(models.AfterSales).where(models.AfterSales.id == aid))
+    a = r.scalar_one_or_none()
+    if not a:
+        raise HTTPException(404, "记录不存在")
+    p_code = a.project.code if a.project else f"#{a.project_id}"
+    # 删除关联附件
+    if a.mat_file_id:
+        att_r = await db.execute(select(models.Attachment).where(models.Attachment.id == a.mat_file_id))
+        att = att_r.scalar_one_or_none()
+        if att:
+            import os
+            try:
+                os.remove(att.path)
+            except OSError:
+                pass
+            await db.delete(att)
+    await db.delete(a)
+    await db.commit()
+    await write_audit(db, user=current, action="delete", target_type="aftersales", target_id=aid,
+                      detail=f"{p_code} 售后记录已删除")
+    return schemas.Msg(message=f"{p_code} 售后记录已删除")

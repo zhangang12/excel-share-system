@@ -2,7 +2,7 @@
 // 🆕 v3 M10 售后部：登记(物料清单必传)→主管审批→同步财务
 import { ref, onMounted, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Check } from '@element-plus/icons-vue'
+import { Plus, Check, Delete } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
@@ -23,6 +23,7 @@ interface Stats { total: number; pending: number; approved_cost: number; total_c
 const auth = useAuthStore()
 const canReg = computed(() => auth.hasRole('as_worker', 'admin', 'manager'))
 const canApprove = computed(() => auth.hasRole('as_lead', 'admin', 'manager'))
+const isManager = computed(() => auth.hasRole('admin', 'manager'))
 
 const loading = ref(false)
 const rows = ref<Row[]>([])
@@ -75,6 +76,22 @@ async function submitReg() {
 }
 
 const actingId = ref<number | null>(null)
+
+async function deleteRow(r: Row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除「${r.code}」的售后记录（${r.problem.slice(0, 20)}）？物料清单附件将一并删除，此操作不可撤回。`,
+      '删除售后记录', { type: 'warning', confirmButtonText: '确认删除', confirmButtonClass: 'el-button--danger' })
+  } catch { return }
+  try {
+    await http.delete(`/aftersales/${r.id}`)
+    ElMessage.success('售后记录已删除')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '删除失败')
+  }
+}
+
 async function approve(r: Row, ok: boolean) {
   if (ok) {
     try {
@@ -150,14 +167,19 @@ async function approve(r: Row, ok: boolean) {
             <StatusPill :text="STATUS_TXT[row.status]" :variant="STATUS_VARIANT[row.status] || 'muted'" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150">
+        <el-table-column label="操作" width="190">
           <template #default="{ row }">
-            <template v-if="row.status === 'pending' && canApprove">
-              <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="approve(row, true)">通过</el-button>
-              <el-button size="small" :loading="actingId === row.id" @click="approve(row, false)">驳回</el-button>
-            </template>
-            <span v-else-if="row.status === 'approved'" class="muted small">已同步财务</span>
-            <span v-else class="muted small">—</span>
+            <div class="op-cell">
+              <template v-if="row.status === 'pending' && canApprove">
+                <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="approve(row, true)">通过</el-button>
+                <el-button size="small" :loading="actingId === row.id" @click="approve(row, false)">驳回</el-button>
+              </template>
+              <span v-else-if="row.status === 'approved'" class="muted small">已同步财务</span>
+              <span v-else class="muted small">—</span>
+              <el-tooltip v-if="isManager" content="删除此售后记录" placement="top">
+                <el-button size="small" link type="danger" :icon="Delete" @click="deleteRow(row)" style="margin-left:4px" />
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -196,4 +218,5 @@ async function approve(r: Row, ok: boolean) {
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }
 .kpi-grid { margin-bottom: 14px; }
+.op-cell { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 </style>
