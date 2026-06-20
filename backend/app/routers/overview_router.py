@@ -144,7 +144,13 @@ async def get_overview(
     fields = [_field_to_out(f) for f in fres.scalars().all()]
     t1 = time.perf_counter()
 
-    proj_q = select(models.Project).where(models.Project.is_deleted == False)
+    delivery_pids = select(models.SalesLedger.project_id).where(
+        models.SalesLedger.order_type == "调货订单"
+    )
+    proj_q = select(models.Project).where(
+        models.Project.is_deleted == False,
+        models.Project.id.not_in(delivery_pids),
+    )
     if year:
         proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
     pres = await db.execute(proj_q.order_by(models.Project.code))

@@ -291,7 +291,13 @@ async def list_projects(
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(models.Project).where(models.Project.is_deleted == False)
+    delivery_pids = select(models.SalesLedger.project_id).where(
+        models.SalesLedger.order_type == "调货订单"
+    )
+    query = select(models.Project).where(
+        models.Project.is_deleted == False,
+        models.Project.id.not_in(delivery_pids),
+    )
     if year:
         query = query.where(models.Project.code.like(f"{year}-%"))
     if q:

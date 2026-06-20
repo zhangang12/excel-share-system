@@ -872,9 +872,7 @@ async def invoice_batch_upload(
 # 口径(用户 2026-06-18)：销售员申请、负责人审批(负责人可一键直接作废)；已开票/已发货禁止作废；
 # 软删可追溯；必填原因；通过后仅通知管理层。项目软删后各列表(目录/详单/各部门工作台)按 is_deleted 自动隐藏。
 async def _assert_voidable(db: AsyncSession, led: models.SalesLedger) -> None:
-    """作废前置校验：已开票/已发货禁止；开票流程进行中先处理。"""
-    if led.invoice_state == "invoiced":
-        raise HTTPException(400, "该订单已开票，不可作废")
+    """作废前置校验：已发货禁止；开票流程进行中先处理；已开票允许作废。"""
     if led.invoice_state in ("applying", "pending_invoice"):
         raise HTTPException(400, "该订单开票流程进行中，请先处理/驳回开票后再作废")
     sr = await db.execute(select(models.Shipment).where(

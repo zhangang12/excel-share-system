@@ -153,7 +153,7 @@ function cellVal(rec: any, fid: number) {
             <span v-if="!row.cad_laser_files.length" class="muted">待设计推送</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="showOutsource" label="外购附图(设计推送)" min-width="180">
+        <el-table-column v-if="showStandard" label="外购附图(设计推送)" min-width="180">
           <template #default="{ row }">
             <el-tag v-for="f in row.outsource_img_files" :key="f.id" size="small" effect="plain" class="fc" @click="downloadAttachment(f)">
               {{ f.name }}<el-icon class="dl"><Download /></el-icon>
