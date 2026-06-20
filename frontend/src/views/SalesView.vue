@@ -473,6 +473,22 @@ async function approveGroup(g: any, ok: boolean) {
   await load()
 }
 
+// ===== 管理员直接标记已开票（历史存量补录） =====
+async function adminMarkInvoiced(r: SalesLedgerRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确认将「${r.code} ${r.name}」标记为已开票？此操作跳过正常开票流程，适用于历史存量数据补录。`,
+      '管理员标记已开票', { type: 'warning', confirmButtonText: '确认标记' })
+  } catch { return }
+  try {
+    const res = await salesApi.adminMarkInvoiced(r.id)
+    ElMessage.success(res.message || '已标记为已开票')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  }
+}
+
 // ===== 🆕 订单作废（销售员申请 → 负责人审批；负责人点即一键直接作废） =====
 async function applyVoid(r: SalesLedgerRow) {
   let reason = ''
@@ -778,6 +794,7 @@ async function openReport() {
                     <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
                     <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
                     <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
+                    <el-dropdown-item v-if="allView && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
                     <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
                     <el-dropdown-item v-else divided @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
                   </template>

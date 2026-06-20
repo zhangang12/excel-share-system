@@ -153,6 +153,10 @@ export const salesApi = {
   draftResubmit: (id: number, data: SalesOrderForm) =>
     http.put<{ project_id: number; code: string; ledger_id?: number }>(`/sales/orders/${id}/draft-resubmit`, data).then((r) => r.data),
   orderDiscard: (id: number) => http.post(`/sales/ledger/${id}/order-discard`).then((r) => r.data),
+
+  // 管理员直接标记已开票（历史存量数据补录）
+  adminMarkInvoiced: (id: number) =>
+    http.post<{ message: string }>(`/sales/ledger/${id}/admin-mark-invoiced`).then((r) => r.data),
 }
 
 export function fmtMoney(n?: number | null): string {

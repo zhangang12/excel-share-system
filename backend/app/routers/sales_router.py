@@ -603,6 +603,29 @@ async def invoice_reject(
     return schemas.Msg(message="已驳回")
 
 
+@router.post("/ledger/{lid}/admin-mark-invoiced", response_model=schemas.Msg)
+async def admin_mark_invoiced(
+    lid: int,
+    current: models.User = Depends(require_roles("admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员直接标记已开票（历史存量数据补录，跳过正常开票流程）。"""
+    led = await _ledger_or_404(db, lid)
+    if led.invoice_state == "invoiced":
+        raise HTTPException(400, "该订单已是开票状态")
+    if _is_no_invoice(led.tax_rate):
+        raise HTTPException(400, "该项目税票为「不开票」，无需标记")
+    # 清除可能残留的开票流状态，直接置为已开票
+    led.invoice_apply_file_id = None
+    led.invoice_batch_id = None
+    led.invoice_state = "invoiced"
+    await db.commit()
+    await write_audit(db, user=current, action="admin_mark_invoiced",
+                      target_type="sales_ledger", target_id=lid,
+                      detail=f"管理员直接标记已开票")
+    return schemas.Msg(message="已标记为已开票")
+
+
 @router.post("/ledger/{lid}/invoice-upload", response_model=schemas.Msg)
 async def invoice_upload(
     lid: int,
