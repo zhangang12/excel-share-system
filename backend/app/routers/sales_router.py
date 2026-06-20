@@ -7,9 +7,12 @@
 - 开票状态机：None 未申请 → applying 待主管审批 → pending_invoice 待财务开票 → invoiced 已开票
   （驳回回到 None 并清申请文件）；发货日期由物流回传只读（M08）
 """
+import logging
 import re
 from datetime import datetime, timezone
 from typing import List, Optional
+
+log = logging.getLogger("sales_router")
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -636,22 +639,29 @@ async def invoice_revoke(
         raise HTTPException(400, "该项目属于合并开票批次，暂不支持单项目作废")
     if led.invoice_state != "invoiced":
         raise HTTPException(400, "仅已开票项目可作废重开")
+    # 先取到附件对象，再清 FK 引用，flush 后才删除行——避免 ORM flush 先 DELETE 再 UPDATE 触发 FK 约束
+    att_to_del = None
     if led.invoice_file_id:
         res = await db.execute(select(models.Attachment).where(
             models.Attachment.id == led.invoice_file_id))
-        a = res.scalar_one_or_none()
-        if a:
-            await delete_attachment_file(db, a)
+        att_to_del = res.scalar_one_or_none()
     led.invoice_file_id = None
     led.invoice_state = "pending_invoice"
+    await db.flush()   # FK 引用已清，现在可以安全删附件行
+    if att_to_del:
+        await delete_attachment_file(db, att_to_del)
     await db.commit()
+    # 通知/审计失败不影响主流程（push_message 内部有独立 commit，异常不应回滚已提交的发票状态变更）
     p = led.project
-    if led.sales_uid:
-        await push_message(db, to_user_id=led.sales_uid, kind="warn",
-                           text=f"【发票作废】{p.code} 财务作废了原发票并将重新开票，请留意。",
-                           biz_type="sales_ledger", biz_id=led.id)
-    await write_audit(db, user=current, action="invoice_revoke",
-                      target_type="sales_ledger", target_id=lid)
+    try:
+        if led.sales_uid:
+            await push_message(db, to_user_id=led.sales_uid, kind="warn",
+                               text=f"【发票作废】{p.code} 财务作废了原发票并将重新开票，请留意。",
+                               biz_type="sales_ledger", biz_id=led.id)
+        await write_audit(db, user=current, action="invoice_revoke",
+                          target_type="sales_ledger", target_id=lid)
+    except Exception as e:
+        log.warning("invoice_revoke 通知/审计失败（主流程已提交）: %s", e)
     return schemas.Msg(message="已作废原发票，退回待开票，可重新上传")
 
 
