@@ -129,10 +129,12 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column prop="tax_rate" label="税票" width="70"><template #default="{ row }">{{ row.tax_rate || '—' }}</template></el-table-column>
             <el-table-column label="开票申请表" min-width="130">
               <template #default="{ row }">
-                <el-button v-if="row.apply_file_id" size="small" link type="primary"
-                           @click="downloadAttachment({ id: row.apply_file_id, name: row.apply_file_name || '申请表' })">
-                  {{ row.apply_file_name }}
-                </el-button>
+                <el-tooltip v-if="row.apply_file_id" :content="row.apply_file_name" placement="top">
+                  <el-button size="small" link type="primary"
+                             @click="downloadAttachment({ id: row.apply_file_id, name: row.apply_file_name || '申请表' })">
+                    📎 申请表
+                  </el-button>
+                </el-tooltip>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="140">
