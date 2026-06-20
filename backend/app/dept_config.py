@@ -41,8 +41,8 @@ DEPTS: dict[str, dict] = {
         "outputs": [
             {"k": "circuit", "label": "电路图 (PDF)", "to_role": "logistics", "required": True},
         ],
-        "notify_pool": "buyer",
-        "notify_label": "完成后通知采购部人员",
+        "notify_pool": "logistics",
+        "notify_label": "完成后通知物流部人员",
         "start_label": "接线开始", "end_label": "预计完成", "done_label": "接线完成",
         "writeback_worker": "电工", "writeback_start": None, "writeback_done": None,
     },
