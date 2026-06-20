@@ -91,7 +91,7 @@ async def board(
         models.Project.is_deleted == False)  # noqa: E712
     if year:
         ship_q = ship_q.where(models.Project.code.like(f"{year}-%"))
-    res = await db.execute(ship_q.order_by(models.Shipment.id.desc()).limit(300))
+    res = await db.execute(ship_q.order_by(models.Project.code.desc()).limit(300))
     ships = list(res.scalars().all())
     pids = [s.project_id for s in ships]
     if not pids:
