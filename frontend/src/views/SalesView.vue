@@ -2,7 +2,7 @@
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
 import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation, UploadFilled, DocumentCopy, CircleClose, Select } from '@element-plus/icons-vue'
+import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, UploadFilled, DocumentCopy, CircleClose, Select } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment, ordersApi } from '@/api/orders'
@@ -61,12 +61,6 @@ const editSalesOptions = computed(() => {
   return list
 })
 
-// 🆕 操作列折叠：宽操作列占版面，支持收起为「⋯」下拉，偏好持久化（按浏览器记忆）
-const opCompact = ref(localStorage.getItem('sales_op_compact') === '1')
-function toggleOpCompact() {
-  opCompact.value = !opCompact.value
-  localStorage.setItem('sales_op_compact', opCompact.value ? '1' : '0')
-}
 
 
 // 🆕 分页（性能优化：后端按编号自然序分页，前端不再整表渲染/排序）
@@ -628,10 +622,6 @@ async function openReport() {
         <el-date-picker v-model="filters.balance_month" type="month" value-format="YYYY-MM"
                         placeholder="尾款月份" clearable style="width: 150px" @change="reload" />
         <span class="muted">共 {{ total }} 个项目</span>
-        <span class="spacer" style="flex:1"></span>
-        <el-tooltip :content="opCompact ? '展开操作列（显示全部按钮）' : '收起操作列（省版面，操作收进 ⋯ 菜单）'" placement="top">
-          <el-button :icon="Operation" @click="toggleOpCompact">{{ opCompact ? '展开操作列' : '收起操作列' }}</el-button>
-        </el-tooltip>
       </div>
     </el-card>
 
@@ -753,65 +743,42 @@ async function openReport() {
         <el-table-column label="尾款日期" width="118">
           <template #default="{ row }">{{ fmtDate(row.balance_date) }}</template>
         </el-table-column>
-        <el-table-column label="操作" :width="opCompact ? 72 : 300" fixed="right" :align="opCompact ? 'center' : 'left'">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <!-- 展开：行内按钮（原样） -->
-            <div v-if="!opCompact" class="op-cell">
-              <!-- 🆕 下单审批流：待审批/已退回时只显示对应动作（项目尚未生效，无详单/流程） -->
+            <div class="op-cell">
+              <!-- 下单待审批 / 已退回：只显示对应动作 -->
               <template v-if="row.order_state === 'pending'">
                 <el-tag size="small" type="info" effect="plain">待审批</el-tag>
-                <span class="op-sep">·</span>
                 <el-button size="small" link class="op-del" @click="discardOrder(row)">放弃</el-button>
               </template>
               <template v-else-if="row.order_state === 'draft'">
                 <el-tag size="small" type="warning" effect="plain">已退回</el-tag>
-                <span class="op-sep">·</span>
                 <el-button size="small" link class="op-main" @click="openDraftEdit(row)">修改重提</el-button>
-                <span class="op-sep">·</span>
                 <el-button size="small" link class="op-del" @click="discardOrder(row)">放弃</el-button>
               </template>
+              <!-- 正常状态：编辑 + 流程（高频）固定显示；其余收进 ⋯ -->
               <template v-else>
-                <el-button v-if="allView" size="small" link type="primary" class="op-main" @click="openEdit(row)">编辑</el-button>
-                <span v-if="allView" class="op-sep">·</span>
-                <el-button size="small" link class="op-sub" @click="openWorkflow(row)">流程</el-button>
-                <span class="op-sep">·</span>
-                <el-button size="small" link class="op-sub" @click="openContract(row)">
-                  {{ row.contract_file_id ? '换合同' : '上传合同' }}
-                </el-button>
-                <template v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)">
-                  <span class="op-sep">·</span>
-                  <el-button size="small" link class="op-sub" @click="applyInvoice(row)">开票申请</el-button>
-                </template>
-                <span class="op-sep">·</span>
-                <el-tag v-if="row.void_state === 'applying'" size="small" type="warning" effect="plain">作废待审批</el-tag>
-                <el-button v-else size="small" link class="op-del" @click="applyVoid(row)">{{ allView ? '作废' : '申请作废' }}</el-button>
+                <el-button v-if="allView" size="small" link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button size="small" link @click="openWorkflow(row)">流程</el-button>
+                <el-dropdown trigger="click" placement="bottom-end">
+                  <el-button size="small" text :icon="MoreFilled" class="op-more" />
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item @click="openContract(row)">
+                        {{ row.contract_file_id ? '换合同' : '上传合同' }}
+                      </el-dropdown-item>
+                      <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)"
+                                        @click="applyInvoice(row)">开票申请</el-dropdown-item>
+                      <el-dropdown-item v-if="allView && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)"
+                                        @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
+                      <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
+                      <el-dropdown-item v-else divided style="color: var(--el-color-danger)"
+                                        @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
               </template>
             </div>
-            <!-- 收起：操作收进「⋯」下拉，省版面 -->
-            <el-dropdown v-else trigger="click" placement="bottom-end">
-              <el-button size="small" text :icon="MoreFilled" class="op-more" />
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <template v-if="row.order_state === 'pending'">
-                    <el-dropdown-item disabled>待审批</el-dropdown-item>
-                    <el-dropdown-item divided @click="discardOrder(row)">放弃下单</el-dropdown-item>
-                  </template>
-                  <template v-else-if="row.order_state === 'draft'">
-                    <el-dropdown-item @click="openDraftEdit(row)">修改重提</el-dropdown-item>
-                    <el-dropdown-item divided @click="discardOrder(row)">放弃下单</el-dropdown-item>
-                  </template>
-                  <template v-else>
-                    <el-dropdown-item v-if="allView" @click="openEdit(row)">编辑</el-dropdown-item>
-                    <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
-                    <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
-                    <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
-                    <el-dropdown-item v-if="allView && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
-                    <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
-                    <el-dropdown-item v-else divided @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
-                  </template>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
