@@ -1333,12 +1333,13 @@ async function openReport() {
 .ct-cell .ct-dl:hover { color: var(--primary, #2563eb); }
 .totals-bar {
   display: flex; gap: 22px; flex-wrap: wrap;
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  position: fixed; bottom: 0; left: var(--sidebar-w); right: 0; z-index: 100;
   padding: 10px 20px; margin-top: 0;
   background: var(--el-bg-color); border-top: 1px solid var(--el-border-color-light);
   box-shadow: 0 -2px 8px rgba(0,0,0,.06);
   font-size: 13px; color: var(--el-text-color-secondary);
 }
+.layout.collapsed .totals-bar { left: var(--sidebar-w-collapsed); }
 .totals-bar b { color: var(--el-text-color-primary); }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 .totals-bar .warn { color: var(--warning); }
