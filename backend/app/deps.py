@@ -89,15 +89,15 @@ def ensure_can_export(user: models.User) -> None:
 
 
 # 🆕 项目目录/一览行级可见性：仅这些岗位"只看自己经手的项目"（被派单 worker_id / 下单 sales_uid）
-_DIR_RESTRICTED_CODES = {"designer", "electrician", "assembler", "sales"}
+_DIR_RESTRICTED_CODES = {"designer", "electrician", "assembler", "sheetmetal", "sales"}
 
 
 async def restricted_dir_pids(db: AsyncSession, user: models.User):
     """项目目录/一览行级可见性共享判定（list_projects 与 overview 同源，避免分叉）。
 
     返回 (restricted, my_pids)：
-    - restricted=True 表示该用户是"受限岗位"（全部角色 ∈ designer/electrician/assembler/sales
-      且开关 project_dir_own_only 开），my_pids=其被派单(DeptOrder.worker_id)+下单(SalesLedger.sales_uid)的项目 id 集；
+    - restricted=True 表示该用户是"受限岗位"（全部角色 ∈ designer/electrician/assembler/sheetmetal/sales
+      且开关 project_dir_own_only 开），my_pids=其被派单+下单的项目 id 集；
     - 只要兼任部门负责人/管理层等更宽角色，则 restricted=False（看全部）。
     调用方还需把 project.extra['__viz_uids__'] 命中的项目并入可见（存量按姓名补授）。"""
     from .config import settings as _cfg
@@ -109,9 +109,15 @@ async def restricted_dir_pids(db: AsyncSession, user: models.User):
         r = await db.execute(
             select(models.SalesLedger.project_id).where(models.SalesLedger.sales_uid == user.id))
         my_pids |= {x[0] for x in r.all()}
-    if codes & {"designer", "electrician", "assembler"}:
+    if codes & {"designer", "electrician"}:
         r = await db.execute(
             select(models.DeptOrder.project_id).where(models.DeptOrder.worker_id == user.id))
+        my_pids |= {x[0] for x in r.all()}
+    # 装配组(assembler)/钣金组(sheetmetal)通过 ProduceGroupTask 派发，DeptOrder.worker_id 始终为 NULL
+    if codes & {"assembler", "sheetmetal"}:
+        r = await db.execute(
+            select(models.ProduceGroupTask.project_id).where(
+                models.ProduceGroupTask.worker_id == user.id))
         my_pids |= {x[0] for x in r.all()}
     return (True, my_pids)
 
