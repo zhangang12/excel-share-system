@@ -579,22 +579,27 @@ async def invoice_reject(
     if led.invoice_state != "applying":
         raise HTTPException(400, "该申请不在待审批状态")
     # 清申请文件（含磁盘），状态退回未申请
+    att_to_del = None
     if led.invoice_apply_file_id:
         res = await db.execute(select(models.Attachment).where(
             models.Attachment.id == led.invoice_apply_file_id))
-        a = res.scalar_one_or_none()
-        if a:
-            await delete_attachment_file(db, a)
-    led.invoice_apply_file_id = None
+        att_to_del = res.scalar_one_or_none()
+    led.invoice_apply_file_id = None   # 先清 FK
     led.invoice_state = None
+    await db.flush()                   # flush FK 清除，再删附件行
+    if att_to_del:
+        await delete_attachment_file(db, att_to_del)
     await db.commit()
-    if led.sales_uid:
-        p = led.project
-        await push_message(db, to_user_id=led.sales_uid, kind="warn",
-                           text=f"【开票驳回】{p.code} 开票申请被销售主管驳回，可修改后重新申请。",
-                           biz_type="sales_ledger", biz_id=led.id)
-    await write_audit(db, user=current, action="invoice_reject",
-                      target_type="sales_ledger", target_id=lid)
+    try:
+        if led.sales_uid:
+            p = led.project
+            await push_message(db, to_user_id=led.sales_uid, kind="warn",
+                               text=f"【开票驳回】{p.code} 开票申请被销售主管驳回，可修改后重新申请。",
+                               biz_type="sales_ledger", biz_id=led.id)
+        await write_audit(db, user=current, action="invoice_reject",
+                          target_type="sales_ledger", target_id=lid)
+    except Exception as e:
+        log.warning("invoice_reject 通知/审计失败（主流程已提交）: %s", e)
     return schemas.Msg(message="已驳回")
 
 
@@ -783,24 +788,29 @@ async def invoice_batch_reject(
         raise HTTPException(400, "该合并批次不在待审批状态")
     # 组内共享的申请文件只删一次
     apply_fid = next((l.invoice_apply_file_id for l in leds if l.invoice_apply_file_id), None)
+    att_to_del = None
     if apply_fid:
         res = await db.execute(select(models.Attachment).where(models.Attachment.id == apply_fid))
-        a = res.scalar_one_or_none()
-        if a:
-            await delete_attachment_file(db, a)
+        att_to_del = res.scalar_one_or_none()
     sales_uid = leds[0].sales_uid
     codes = _codes(leds)
-    for l in leds:
+    for l in leds:        # 先清所有 FK
         l.invoice_state = None
         l.invoice_batch_id = None
         l.invoice_apply_file_id = None
+    await db.flush()      # flush FK 清除，再删附件行
+    if att_to_del:
+        await delete_attachment_file(db, att_to_del)
     await db.commit()
-    if sales_uid:
-        await push_message(db, to_user_id=sales_uid, kind="warn",
-                           text=f"【合并开票驳回】项目 {codes} 的合并开票申请被销售主管驳回，可修改后重新申请。",
-                           biz_type="invoice_batch", biz_id=batch_id)
-    await write_audit(db, user=current, action="invoice_batch_reject",
-                      target_type="invoice_batch", target_id=batch_id)
+    try:
+        if sales_uid:
+            await push_message(db, to_user_id=sales_uid, kind="warn",
+                               text=f"【合并开票驳回】项目 {codes} 的合并开票申请被销售主管驳回，可修改后重新申请。",
+                               biz_type="invoice_batch", biz_id=batch_id)
+        await write_audit(db, user=current, action="invoice_batch_reject",
+                          target_type="invoice_batch", target_id=batch_id)
+    except Exception as e:
+        log.warning("invoice_batch_reject 通知/审计失败（主流程已提交）: %s", e)
     return schemas.Msg(message="已驳回合并开票申请")
 
 
