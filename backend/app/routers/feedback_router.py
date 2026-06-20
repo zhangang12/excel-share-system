@@ -98,14 +98,15 @@ async def my_projects(
     current: models.User = Depends(require_roles("assembler")),
     db: AsyncSession = Depends(get_db),
 ):
-    """装配工人「在手项目」：自己被派 produce 任务（非作废）的项目。"""
-    r = await db.execute(
-        select(models.DeptOrder.project_id).where(
-            models.DeptOrder.dept == "produce",
-            models.DeptOrder.worker_id == current.id,
-            models.DeptOrder.status != "voided",
-        ).distinct()
+    """在手项目列表：管理层/主管返回所有有生产任务的项目；装配工人只返回分派给自己的。"""
+    from .sales_router import _all_view
+    q = select(models.DeptOrder.project_id).where(
+        models.DeptOrder.dept == "produce",
+        models.DeptOrder.status != "voided",
     )
+    if not _all_view(current):
+        q = q.where(models.DeptOrder.worker_id == current.id)
+    r = await db.execute(q.distinct())
     pids = [x[0] for x in r.all()]
     if not pids:
         return []
