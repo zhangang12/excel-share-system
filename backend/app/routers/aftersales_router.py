@@ -176,3 +176,35 @@ async def reject(
                            biz_type="aftersales", biz_id=aid)
     await write_audit(db, user=current, action="reject", target_type="aftersales", target_id=aid)
     return schemas.Msg(message="已驳回")
+
+
+@router.post("/{aid}/finance-void", response_model=schemas.Msg)
+async def finance_void(
+    aid: int,
+    current: models.User = Depends(require_roles("admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """财务部管理层作废已审批的售后费用记录，退回待审批状态供售后部重新处理。"""
+    r = await db.execute(select(models.AfterSales).where(models.AfterSales.id == aid))
+    a = r.scalar_one_or_none()
+    if not a:
+        raise HTTPException(404, "记录不存在")
+    if a.status != "approved":
+        raise HTTPException(400, "只能作废已审批的售后费用记录")
+    p_code = a.project.code if a.project else f"#{a.project_id}"
+    p_name = a.project.name if a.project else ""
+    problem = a.problem
+    creator_id = a.created_by
+    a.status = "pending"
+    a.appr_by = None
+    a.appr_at = None
+    await db.commit()
+    if creator_id:
+        await push_message(db, to_user_id=creator_id, kind="warn",
+                           text=f"【售后费用退回】{p_code} {p_name}：{problem[:20]}… 财务已退回，请售后主管重新审核。",
+                           biz_type="aftersales", biz_id=aid)
+    await push_message(db, to_role="as_lead", kind="warn",
+                       text=f"【售后费用退回】{p_code} 财务退回售后费用记录，请重新处理。",
+                       biz_type="aftersales", biz_id=aid)
+    await write_audit(db, user=current, action="finance_void", target_type="aftersales", target_id=aid)
+    return schemas.Msg(message="已作废并退回售后部重新审批")

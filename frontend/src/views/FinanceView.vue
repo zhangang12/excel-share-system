@@ -110,6 +110,22 @@ async function voidPendingInvoice(row: ViewRow) {
   }
 }
 
+// 财务管理层作废售后费用，退回售后部重审
+async function voidAfterSales(row: AsRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确认作废「${row.code}」的售后费用（¥${row.cost}）？将退回售后部重新审批，财务列表中移除。`,
+      '作废售后费用', { type: 'warning', confirmButtonText: '确认作废' })
+  } catch { return }
+  try {
+    await http.post(`/aftersales/${row.id}/finance-void`)
+    ElMessage.success('已作废，退回售后部重新审批')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  }
+}
+
 // #2 财务开票纠错：作废原发票退回待开票，可重新上传正确发票（合并发票暂不支持单项目作废）
 async function revokeInvoice(row: ViewRow) {
   try {
@@ -217,6 +233,11 @@ async function revokeInvoice(row: ViewRow) {
                   {{ row.mat_file_name }}
                 </el-button>
                 <span v-else>—</span>
+              </template>
+            </el-table-column>
+            <el-table-column v-if="isManager" label="操作" width="80">
+              <template #default="{ row }">
+                <el-button size="small" link type="danger" @click="voidAfterSales(row)">作废</el-button>
               </template>
             </el-table-column>
           </el-table>
