@@ -1,5 +1,6 @@
 """主入口"""
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -43,7 +44,10 @@ async def lifespan(app: FastAPI):
     async with SessionLocal() as db:
         await seed(db)
         await run_data_migrations(db)
-    log.info("启动完成 · DB=%s", settings.database_url.split("@")[-1])
+    files_path = Path(settings.files_dir).resolve()
+    log.info("启动完成 · DB=%s · 文件目录=%s (可写=%s)",
+             settings.database_url.split("@")[-1], files_path,
+             os.access(files_path, os.W_OK))
     task = asyncio.create_task(overdue_scheduler())  # 🆕 v3 M15 逾期每日提醒
     yield
     task.cancel()
