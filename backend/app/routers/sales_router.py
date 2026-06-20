@@ -285,33 +285,36 @@ async def _distribute_pending_files(db: AsyncSession, project_id: int,
 async def _materialize_order_downstream(db: AsyncSession, p: models.Project, depts: list[str],
                                         req_text: str, receiver: tuple, creator: models.User) -> list[int]:
     """下单生效：补全员成员 + 建发货待办 + 各部门待派任务 + 转挂暂存下单资料。返回 order_ids。
-    不 commit、不推送。供「主管/管理层直接下单」与「销售员下单经主管审批通过」共用。"""
+    不 commit、不推送。供「主管/管理层直接下单」与「销售员下单经主管审批通过」共用。
+    调货订单（depts 为空）：不建发货待办、不派部门任务，只在销售部留档。"""
     await _add_all_active_users_as_members(db, p.id)
-    name_, phone_, addr_ = receiver
-    db.add(models.Shipment(
-        project_id=p.id,
-        receiver_name=(name_ or "").strip() or None,
-        receiver_phone=(phone_ or "").strip() or None,
-        receiver_addr=(addr_ or "").strip() or None,
-    ))
     order_ids = []
-    for d in depts:
-        o = await create_order_internal(db, project=p, dept=d, req_text=req_text, created_by=creator.id)
-        order_ids.append(o.id)
+    if depts:  # 调货订单 depts=[] 时跳过发货待办和部门任务
+        name_, phone_, addr_ = receiver
+        db.add(models.Shipment(
+            project_id=p.id,
+            receiver_name=(name_ or "").strip() or None,
+            receiver_phone=(phone_ or "").strip() or None,
+            receiver_addr=(addr_ or "").strip() or None,
+        ))
+        for d in depts:
+            o = await create_order_internal(db, project=p, dept=d, req_text=req_text, created_by=creator.id)
+            order_ids.append(o.id)
     # 待审批暂存的下单资料 → 转挂到各部门任务单（主管/管理层直接下单时无暂存件，自动跳过）
     await _distribute_pending_files(db, p.id, order_ids, creator.id)
     return order_ids
 
 
 async def _push_order_dispatched(db: AsyncSession, p: models.Project, depts: list[str], creator_name) -> None:
-    """下单生效后推送各部门负责人 + 物流（事务提交后调用）。"""
+    """下单生效后推送各部门负责人 + 物流（事务提交后调用）。调货订单 depts=[] 时仅跳过推送。"""
     for d in depts:
         await push_message(db, to_role=DEPTS[d]["lead_role"], kind="info",
                            text=f"【销售下单】{p.code} {p.name} 新{DEPTS[d]['name']}任务待分派（销售：{creator_name}）。",
                            biz_type="project", biz_id=p.id)
-    await push_message(db, to_role="logistics", kind="info",
-                       text=f"【新项目】{p.code} {p.name} 已创建发货待办。",
-                       biz_type="project", biz_id=p.id)
+    if depts:  # 调货订单不通知物流
+        await push_message(db, to_role="logistics", kind="info",
+                           text=f"【新项目】{p.code} {p.name} 已创建发货待办。",
+                           biz_type="project", biz_id=p.id)
 
 
 @router.post("/orders", response_model=schemas.SalesOrderOut)
