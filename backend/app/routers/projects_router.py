@@ -310,7 +310,7 @@ async def list_projects(
         ))
     if status:
         query = query.where(models.Project.status == status)
-    query = query.order_by(models.Project.updated_at.desc())
+    query = query.order_by(models.Project.code.desc())
     res = await db.execute(query)
     items = list(res.scalars().all())
     # 🆕 下单审批流：待审批/草稿(order_state pending/draft)的项目在通过前仅「销售本人 + 销售主管 + 管理层」可见，

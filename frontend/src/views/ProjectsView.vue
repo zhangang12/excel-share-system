@@ -12,7 +12,7 @@ const auth = useAuthStore()
 const list = ref<Project[]>([])
 const loading = ref(false)
 const keyword = ref('')
-const statusFilter = ref('')
+const statusFilter = ref('进行中')
 
 const canCreate = computed(() => auth.hasRole('admin', 'manager'))
 const canDelete = computed(() => auth.hasRole('admin', 'manager'))
