@@ -47,13 +47,18 @@ SELECT sl.id,
        COALESCE(a.name, ''),
        COALESCE(a.path, '')
 FROM sales_ledger sl
-JOIN project p ON p.id = sl.project_id
-LEFT JOIN attachment a ON a.id = sl.invoice_apply_file_id
+JOIN projects p ON p.id = sl.project_id
+LEFT JOIN attachments a ON a.id = sl.invoice_apply_file_id
 WHERE p.code = '$PROJECT_CODE'
 LIMIT 1;" 2>&1 || true)
 
-# 过滤掉 psql 提示行（如果有）
-RECORD=$(echo "$RECORD" | grep -v '^$' | grep -v '^(' | head -1)
+# 过滤掉 psql 提示行和错误行
+RECORD=$(echo "$RECORD" | grep -v '^$' | grep -v '^(' | grep -v '^ERROR' | grep -v '^psql' | head -1)
+
+if echo "$RECORD" | grep -qi 'error\|does not exist'; then
+  echo "  ✗ 查询出错：$RECORD"
+  exit 1
+fi
 
 if [[ -z "$RECORD" ]]; then
   echo "  ✗ 未找到项目 $PROJECT_CODE 的销售台账，退出。"
@@ -127,7 +132,7 @@ UPDATE sales_ledger
    SET invoice_apply_file_id = NULL,
        invoice_state = NULL
  WHERE id = $LEDGER_ID;
-DELETE FROM attachment WHERE id = $ATT_ID;
+DELETE FROM attachments WHERE id = $ATT_ID;
 COMMIT;"
 
 echo ""
