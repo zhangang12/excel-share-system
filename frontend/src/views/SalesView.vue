@@ -351,18 +351,30 @@ async function submitContract() {
 }
 
 // ===== 开票申请 =====
-async function applyInvoice(r: SalesLedgerRow) {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = '.pdf,.xls,.xlsx,.doc,.docx'
-  input.onchange = async () => {
-    const f = input.files?.[0]
-    if (!f) return
-    await salesApi.invoiceApply(r.id, f)
-    ElMessage.success('开票申请已提交，等待销售主管审批')
+const invoiceApplyVisible = ref(false)
+const invoiceApplyRow = ref<SalesLedgerRow | null>(null)
+const invoiceApplyFile = ref<File | null>(null)
+const invoiceApplying = ref(false)
+
+function applyInvoice(r: SalesLedgerRow) {
+  invoiceApplyRow.value = r
+  invoiceApplyFile.value = null
+  invoiceApplyVisible.value = true
+}
+
+async function submitInvoiceApply() {
+  if (!invoiceApplyFile.value) { ElMessage.warning('请先上传开票申请表'); return }
+  invoiceApplying.value = true
+  try {
+    await salesApi.invoiceApply(invoiceApplyRow.value!.id, invoiceApplyFile.value)
+    ElMessage.success('开票申请已提交，等待销售主管审批后同步至财务部')
+    invoiceApplyVisible.value = false
     await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '提交失败')
+  } finally {
+    invoiceApplying.value = false
   }
-  input.click()
 }
 
 // ===== 🆕 合并开票申请（同客户多项目，一份申请 + 一张合并发票） =====
@@ -1042,6 +1054,33 @@ async function openReport() {
       <template #footer>
         <el-button @click="contractVisible = false">取消</el-button>
         <el-button type="primary" @click="submitContract">提交</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 开票申请 ===== -->
+    <el-dialog v-model="invoiceApplyVisible"
+               :title="`🧾 开票申请 · ${invoiceApplyRow?.code || ''}`"
+               width="480px" @close="invoiceApplyFile = null">
+      <el-alert type="info" :closable="false" style="margin-bottom: 16px"
+                title="上传开票申请表后，将提交给销售主管审批；审批通过后自动同步至财务部待开票列表" />
+      <el-descriptions :column="2" border size="small" style="margin-bottom: 16px">
+        <el-descriptions-item label="项目编号">{{ invoiceApplyRow?.code }}</el-descriptions-item>
+        <el-descriptions-item label="设备名称">{{ invoiceApplyRow?.name }}</el-descriptions-item>
+        <el-descriptions-item label="客户单位">{{ invoiceApplyRow?.customer }}</el-descriptions-item>
+        <el-descriptions-item label="金额">{{ invoiceApplyRow?.amount ? '¥' + Number(invoiceApplyRow.amount).toLocaleString() : '—' }}</el-descriptions-item>
+      </el-descriptions>
+      <el-form label-position="top">
+        <el-form-item label="开票申请表" required>
+          <FilePicker v-model="invoiceApplyFile"
+                      accept=".pdf,.xls,.xlsx,.doc,.docx"
+                      placeholder="选择开票申请表（PDF / Excel / Word）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="invoiceApplyVisible = false">取消</el-button>
+        <el-button type="primary" :loading="invoiceApplying" @click="submitInvoiceApply">
+          提交申请
+        </el-button>
       </template>
     </el-dialog>
 
