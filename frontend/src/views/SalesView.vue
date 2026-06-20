@@ -627,7 +627,7 @@ async function openReport() {
 
     <el-card shadow="never">
       <el-table :data="rows" stripe v-loading="loading" :show-summary="false"
-                max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+                max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
         <el-table-column type="index" label="#" width="48" fixed />
         <el-table-column label="项目编号" width="120" fixed>
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
@@ -1264,8 +1264,10 @@ async function openReport() {
 .ct-cell .ct-dl:hover { color: var(--primary, #2563eb); }
 .totals-bar {
   display: flex; gap: 22px; flex-wrap: wrap;
-  padding: 12px 14px; margin-top: 8px;
-  background: var(--el-fill-color-light); border-radius: 8px;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  padding: 10px 20px; margin-top: 0;
+  background: var(--el-bg-color); border-top: 1px solid var(--el-border-color-light);
+  box-shadow: 0 -2px 8px rgba(0,0,0,.06);
   font-size: 13px; color: var(--el-text-color-secondary);
 }
 .totals-bar b { color: var(--el-text-color-primary); }
