@@ -238,7 +238,8 @@ async def _sheet_ready(db: AsyncSession, ds: Optional[models.Datasheet]) -> bool
     return all((r.values or {}).get(key) == "完成" for r in recs)
 
 
-async def _group_rows(db: AsyncSession, current: models.User, group: str) -> List[GroupProjectRow]:
+async def _group_rows(db: AsyncSession, current: models.User, group: str,
+                      year: Optional[str] = None, proj_status: Optional[str] = None) -> List[GroupProjectRow]:
     # 范围：本组组员只看派给自己的项目；生产主管/管理层看本组全部
     q = (select(models.ProduceGroupTask, models.DeptOrder)
          .join(models.DeptOrder, models.ProduceGroupTask.order_id == models.DeptOrder.id)
@@ -258,8 +259,13 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str) -> Lis
         wr = await db.execute(select(models.User).where(models.User.id.in_(wids)))
         wname_by_id = {u.id: _uname(u) for u in wr.scalars().all()}
 
-    res = await db.execute(select(models.Project).where(
-        models.Project.id.in_(pids), models.Project.is_deleted == False))  # noqa: E712
+    proj_q = select(models.Project).where(
+        models.Project.id.in_(pids), models.Project.is_deleted == False)  # noqa: E712
+    if year:
+        proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
+    if proj_status:
+        proj_q = proj_q.where(models.Project.status == proj_status)
+    res = await db.execute(proj_q)
     proj_by_id = {p.id: p for p in res.scalars().all()}
     designer_by_pid = await _designer_by_pid(db, pids)
     bj_by_pid = await _sheets_by_pid(db, pids, ("钣金装配",))
@@ -286,21 +292,25 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str) -> Lis
             row.standard_ready = await _sheet_ready(db, sheets.get("标准件清单"))
             row.outsource_ready = await _sheet_ready(db, sheets.get("外协加工"))
         rows.append(row)
-    rows.sort(key=lambda x: x.code)
+    rows.sort(key=lambda x: x.code, reverse=True)
     return rows
 
 
 @router.get("/sheetmetal-projects", response_model=List[GroupProjectRow])
 async def sheetmetal_projects(
+    year: Optional[str] = None,
+    proj_status: Optional[str] = None,
     current: models.User = Depends(require_roles("sheetmetal", "pm_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _group_rows(db, current, "sheetmetal")
+    return await _group_rows(db, current, "sheetmetal", year=year, proj_status=proj_status)
 
 
 @router.get("/assembly-projects", response_model=List[GroupProjectRow])
 async def assembly_projects(
+    year: Optional[str] = None,
+    proj_status: Optional[str] = None,
     current: models.User = Depends(require_roles("assembler", "pm_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _group_rows(db, current, "assembly")
+    return await _group_rows(db, current, "assembly", year=year, proj_status=proj_status)

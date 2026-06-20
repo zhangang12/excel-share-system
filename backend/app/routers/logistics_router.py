@@ -83,6 +83,7 @@ def _gate(orders: list[models.DeptOrder]) -> tuple[bool, list[str]]:
 @router.get("/board", response_model=List[BoardRow])
 async def board(
     year: Optional[str] = None,
+    proj_status: Optional[str] = None,
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -91,6 +92,8 @@ async def board(
         models.Project.is_deleted == False)  # noqa: E712
     if year:
         ship_q = ship_q.where(models.Project.code.like(f"{year}-%"))
+    if proj_status:
+        ship_q = ship_q.where(models.Project.status == proj_status)
     res = await db.execute(ship_q.order_by(models.Project.code.desc()).limit(300))
     ships = list(res.scalars().all())
     pids = [s.project_id for s in ships]

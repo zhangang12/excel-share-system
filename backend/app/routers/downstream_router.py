@@ -31,18 +31,23 @@ class SheetMetalRow(BaseModel):
 
 @router.get("/sheetmetal/projects", response_model=List[SheetMetalRow])
 async def sheetmetal_projects(
+    year: Optional[str] = None,
+    proj_status: Optional[str] = None,
     _: models.User = Depends(require_roles("sheetmetal")),
     db: AsyncSession = Depends(get_db),
 ):
     delivery_pids_sm = select(models.SalesLedger.project_id).where(
         models.SalesLedger.order_type == "调货订单"
     )
-    res = await db.execute(
-        select(models.Project).where(
-            models.Project.is_deleted == False,  # noqa: E712
-            models.Project.id.not_in(delivery_pids_sm),
-        ).order_by(models.Project.code)
+    sm_q = select(models.Project).where(
+        models.Project.is_deleted == False,  # noqa: E712
+        models.Project.id.not_in(delivery_pids_sm),
     )
+    if year:
+        sm_q = sm_q.where(models.Project.code.like(f"{year}-%"))
+    if proj_status:
+        sm_q = sm_q.where(models.Project.status == proj_status)
+    res = await db.execute(sm_q.order_by(models.Project.code.desc()))
     projects = list(res.scalars().all())
     pids = [p.id for p in projects]
     if not pids:
@@ -107,6 +112,7 @@ class PurchaseProjectRow(BaseModel):
 @router.get("/purchase/projects", response_model=List[PurchaseProjectRow])
 async def purchase_projects(
     year: Optional[str] = None,
+    proj_status: Optional[str] = None,
     _: models.User = Depends(require_roles("buyer", "buyer_standard", "buyer_outsource", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -121,7 +127,9 @@ async def purchase_projects(
     )
     if year:
         proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
-    res = await db.execute(proj_q.order_by(models.Project.code))
+    if proj_status:
+        proj_q = proj_q.where(models.Project.status == proj_status)
+    res = await db.execute(proj_q.order_by(models.Project.code.desc()))
     projects = list(res.scalars().all())
     pids = [p.id for p in projects]
     if not pids:

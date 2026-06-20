@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 🆕 v3 M05 钣金组：项目图纸包下载 + 钣金装配表只读引用
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, CircleCheck } from '@element-plus/icons-vue'
 import { http } from '@/api'
@@ -15,10 +15,18 @@ interface Row {
 const loading = ref(false)
 const rows = ref<Row[]>([])
 
+const curYear = String(new Date().getFullYear())
+const yearFilter = ref(curYear)
+const yearOptions = computed(() => { const y = parseInt(curYear); return [y - 1, y, y + 1].map(String) })
+const projStatusFilter = ref('进行中')
+
 async function load() {
   loading.value = true
-  try { rows.value = (await http.get<Row[]>('/sheetmetal/projects')).data }
-  finally { loading.value = false }
+  try {
+    rows.value = (await http.get<Row[]>('/sheetmetal/projects', {
+      params: { year: yearFilter.value, proj_status: projStatusFilter.value || undefined }
+    })).data
+  } finally { loading.value = false }
 }
 onMounted(load)
 
@@ -55,6 +63,14 @@ function cellVal(rec: any, fid: number) {
         <div class="desc">钣金装配表为设计数据表的只读引用</div>
       </div>
       <div class="spacer"></div>
+      <el-select v-model="yearFilter" size="large" style="width:100px" @change="load">
+        <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+      </el-select>
+      <el-select v-model="projStatusFilter" size="large" style="width:100px" @change="load">
+        <el-option label="进行中" value="进行中" />
+        <el-option label="已完成" value="已完成" />
+        <el-option label="全部" value="" />
+      </el-select>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 

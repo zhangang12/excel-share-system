@@ -81,6 +81,13 @@ const activeTab = ref('')
 const sheetmetalRows = ref<GroupProjectRow[]>([])
 const assemblyRows = ref<GroupProjectRow[]>([])
 
+const curYear = String(new Date().getFullYear())
+const yearFilter = ref(curYear)
+const yearOptions = computed(() => {
+  const y = parseInt(curYear); return [y - 1, y, y + 1].map(String)
+})
+const projStatusFilter = ref('进行中')
+
 // ---- 数据加载 ----
 async function load() {
   loading.value = true
@@ -89,13 +96,13 @@ async function load() {
       // 生产部：主管/管理层走「派发/跟踪」+ 两组概览；钣金组/装配组仅取本组项目
       const tasks: Promise<any>[] = []
       if (isLead.value || isMgr.value) {
-        tasks.push(ordersApi.list('produce').then((os) => { orders.value = os }))
+        tasks.push(ordersApi.list('produce', undefined, yearFilter.value, projStatusFilter.value).then((os) => { orders.value = os }))
         tasks.push(ordersApi.options('produce').then((o) => { options.value = o }))
-        tasks.push(produceApi.sheetmetalProjects().then((r) => { sheetmetalRows.value = r }))
-        tasks.push(produceApi.assemblyProjects().then((r) => { assemblyRows.value = r }))
+        tasks.push(produceApi.sheetmetalProjects(yearFilter.value, projStatusFilter.value).then((r) => { sheetmetalRows.value = r }))
+        tasks.push(produceApi.assemblyProjects(yearFilter.value, projStatusFilter.value).then((r) => { assemblyRows.value = r }))
       } else {
-        if (isSheetmetal.value) tasks.push(produceApi.sheetmetalProjects().then((r) => { sheetmetalRows.value = r }))
-        if (isAssembler.value) tasks.push(produceApi.assemblyProjects().then((r) => { assemblyRows.value = r }))
+        if (isSheetmetal.value) tasks.push(produceApi.sheetmetalProjects(yearFilter.value, projStatusFilter.value).then((r) => { sheetmetalRows.value = r }))
+        if (isAssembler.value) tasks.push(produceApi.assemblyProjects(yearFilter.value, projStatusFilter.value).then((r) => { assemblyRows.value = r }))
       }
       await Promise.all(tasks)
       if (!activeTab.value) {
@@ -104,7 +111,7 @@ async function load() {
       return
     }
     const [os, opt] = await Promise.all([
-      ordersApi.list(dept.value),
+      ordersApi.list(dept.value, undefined, yearFilter.value, projStatusFilter.value),
       ordersApi.options(dept.value),
     ])
     orders.value = os
@@ -486,6 +493,14 @@ const stockVisible = ref(false)
         </div>
       </div>
       <div class="spacer"></div>
+      <el-select v-model="yearFilter" size="large" style="width:100px" @change="load">
+        <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+      </el-select>
+      <el-select v-model="projStatusFilter" size="large" style="width:100px" @change="load">
+        <el-option label="进行中" value="进行中" />
+        <el-option label="已完成" value="已完成" />
+        <el-option label="全部" value="" />
+      </el-select>
       <el-button v-if="canSpare" type="primary" @click="openSpare">➕ 备机下单</el-button>
       <el-button v-if="dept === 'design'" @click="stockVisible = true">🔎 查库存(只读)</el-button>
       <el-button v-if="isLead || isMgr" type="primary" plain @click="openReport">📊 {{ deptName }}报表</el-button>

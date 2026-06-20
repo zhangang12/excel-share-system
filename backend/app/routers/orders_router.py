@@ -251,17 +251,20 @@ def _order_to_out(o: models.DeptOrder, files: dict[str, list],
 async def list_orders(
     dept: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    year: Optional[str] = Query(None),
+    proj_status: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=500),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """工作台列表：工人=本人任务；部门负责人=本部门全量；管理层=全量（可按 dept 过滤）。"""
-    # 🆕 排除已软删项目的任务单（项目作废/删除后，其他部门工作台不再显示该项目流程）
-    q = select(models.DeptOrder).where(
-        models.DeptOrder.project_id.in_(
-            select(models.Project.id).where(models.Project.is_deleted == False)  # noqa: E712
-        )
-    )
+    q = (select(models.DeptOrder)
+         .join(models.Project, models.DeptOrder.project_id == models.Project.id)
+         .where(models.Project.is_deleted == False))  # noqa: E712
+    if year:
+        q = q.where(models.Project.code.like(f"{year}-%"))
+    if proj_status:
+        q = q.where(models.Project.status == proj_status)
     if dept:
         _dept_or_400(dept)
         q = q.where(models.DeptOrder.dept == dept)
@@ -287,7 +290,7 @@ async def list_orders(
         if _is_worker_role(current, my_dept):
             q = q.where(models.DeptOrder.worker_id == current.id)
 
-    res = await db.execute(q.order_by(models.DeptOrder.id.desc()).limit(limit))
+    res = await db.execute(q.order_by(models.Project.code.desc()).limit(limit))
     orders = list(res.scalars().all())
     files = await _files_of(db, [o.id for o in orders])
 

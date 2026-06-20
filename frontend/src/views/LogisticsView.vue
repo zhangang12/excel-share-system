@@ -40,15 +40,15 @@ const rows = ref<BoardRow[]>([])
 
 const curYear = String(new Date().getFullYear())
 const yearFilter = ref(curYear)
-const yearOptions = computed(() => {
-  const y = parseInt(curYear)
-  return [y - 1, y, y + 1].map(String)
-})
+const yearOptions = computed(() => { const y = parseInt(curYear); return [y - 1, y, y + 1].map(String) })
+const projStatusFilter = ref('进行中')
 
 async function load() {
   loading.value = true
   try {
-    rows.value = (await http.get<BoardRow[]>('/logistics/board', { params: { year: yearFilter.value } })).data
+    rows.value = (await http.get<BoardRow[]>('/logistics/board', {
+      params: { year: yearFilter.value, proj_status: projStatusFilter.value || undefined }
+    })).data
   } finally {
     loading.value = false
   }
@@ -126,8 +126,13 @@ async function confirmShip(force = false) {
         </div>
       </div>
       <div class="spacer"></div>
-      <el-select v-model="yearFilter" size="large" style="width: 100px" @change="load">
+      <el-select v-model="yearFilter" size="large" style="width:100px" @change="load">
         <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+      </el-select>
+      <el-select v-model="projStatusFilter" size="large" style="width:100px" @change="load">
+        <el-option label="进行中" value="进行中" />
+        <el-option label="已完成" value="已完成" />
+        <el-option label="全部" value="" />
       </el-select>
     </div>
 

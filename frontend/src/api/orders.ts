@@ -54,8 +54,8 @@ export interface DeptOptions {
 }
 
 export const ordersApi = {
-  list: (dept?: string, status?: string) =>
-    http.get<DeptOrder[]>('/orders', { params: { dept, status } }).then((r) => r.data),
+  list: (dept?: string, status?: string, year?: string, proj_status?: string) =>
+    http.get<DeptOrder[]>('/orders', { params: { dept, status, year, proj_status } }).then((r) => r.data),
 
   options: (dept: string) =>
     http.get<DeptOptions>('/orders/options', { params: { dept } }).then((r) => r.data),
@@ -139,10 +139,10 @@ export const produceApi = {
       { sheetmetal_worker_id: sheetmetalWorkerId, assembly_worker_id: assemblyWorkerId }).then((r) => r.data),
   groupDone: (taskId: number, done: boolean) =>
     http.post(`/produce/group/${taskId}/done`, { done }).then((r) => r.data),
-  sheetmetalProjects: () =>
-    http.get<GroupProjectRow[]>('/produce/sheetmetal-projects').then((r) => r.data),
-  assemblyProjects: () =>
-    http.get<GroupProjectRow[]>('/produce/assembly-projects').then((r) => r.data),
+  sheetmetalProjects: (year?: string, proj_status?: string) =>
+    http.get<GroupProjectRow[]>('/produce/sheetmetal-projects', { params: { year, proj_status } }).then((r) => r.data),
+  assemblyProjects: (year?: string, proj_status?: string) =>
+    http.get<GroupProjectRow[]>('/produce/assembly-projects', { params: { year, proj_status } }).then((r) => r.data),
 }
 
 // 附件下载（带鉴权的 blob 下载，沿用现有 fetch+blob 模式）
