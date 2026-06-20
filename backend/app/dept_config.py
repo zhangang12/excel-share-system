@@ -36,7 +36,7 @@ DEPTS: dict[str, dict] = {
         "lead_role": "electric_lead",
         "sheet_check": False,
         "start_outputs": [
-            {"k": "plist", "label": "采购清单 (Excel)", "to_role": "buyer"},
+            {"k": "plist", "label": "电器清单 (Excel)", "to_role": "buyer"},
         ],
         "outputs": [
             {"k": "circuit", "label": "电路图 (PDF)", "to_role": "logistics", "required": True},
