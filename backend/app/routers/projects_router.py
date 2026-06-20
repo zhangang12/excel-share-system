@@ -543,12 +543,12 @@ async def delete_project(
     lr = await db.execute(
         select(models.SalesLedger).where(
             models.SalesLedger.project_id == pid,
-            models.SalesLedger.invoice_state.in_(("applying", "pending_invoice")),
+            models.SalesLedger.invoice_state.in_(("applying", "pending_invoice", "invoiced")),
         )
     )
     if lr.scalar_one_or_none() is not None:
         raise HTTPException(
-            409, "该项目有进行中的开票流程（待审批/待开票），请先在销售或财务处理完成/驳回后再删除")
+            409, "该项目有开票记录（待审批/待开票/已开票），请先在财务处理发票后再删除")
 
     # 清理派生数据 + 作废各部门任务单 + 软删项目（统一走 soft_delete_project）
     counts = await soft_delete_project(db, p, void_dept_orders=True)
