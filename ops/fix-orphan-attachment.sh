@@ -12,9 +12,6 @@
 set -euo pipefail
 
 PROJECT_CODE="${1:-2026-024B}"
-COMPOSE_FILE="docker-compose.prod.yml"
-ENV_FILE=".env.prod"
-UPLOADS_VOL=$(docker volume ls -q | grep -E 'uploads_data$' | head -1)
 
 cd "$(dirname "$0")/.."
 
@@ -22,24 +19,47 @@ echo "========================================"
 echo "  孤立附件排查 · 项目 $PROJECT_CODE"
 echo "========================================"
 
+# ── 自动探测 postgres 容器名和 DB 用户 ──────────
+PG_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E 'postgres|pms.*db|db.*pms' | head -1)
+if [[ -z "$PG_CONTAINER" ]]; then
+  echo "  ✗ 未找到运行中的 postgres 容器"
+  echo "  当前所有容器："
+  docker ps --format '  {{.Names}}  ({{.Image}})'
+  exit 1
+fi
+echo "  [postgres 容器] $PG_CONTAINER"
+
+# 从容器环境变量中读取 DB 用户和数据库名
+DB_USER=$(docker exec "$PG_CONTAINER" env 2>/dev/null | grep '^POSTGRES_USER=' | cut -d= -f2)
+DB_NAME=$(docker exec "$PG_CONTAINER" env 2>/dev/null | grep '^POSTGRES_DB='   | cut -d= -f2)
+DB_USER="${DB_USER:-pms}"
+DB_NAME="${DB_NAME:-pms}"
+echo "  [DB 用户] $DB_USER  [DB 名] $DB_NAME"
+
 # ── 1. 查 DB ──────────────────────────────
 echo ""
 echo "[1/3] 查数据库记录..."
-RECORD=$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T postgres \
-  psql -U pms_prod -d pms -t -A -F'|' -c "
+RECORD=$(docker exec "$PG_CONTAINER" \
+  psql -U "$DB_USER" -d "$DB_NAME" -t -A -F'|' -c "
 SELECT sl.id,
-       sl.invoice_state,
-       sl.invoice_apply_file_id,
+       COALESCE(sl.invoice_state, ''),
+       COALESCE(sl.invoice_apply_file_id::text, ''),
        COALESCE(a.name, ''),
        COALESCE(a.path, '')
 FROM sales_ledger sl
 JOIN project p ON p.id = sl.project_id
 LEFT JOIN attachment a ON a.id = sl.invoice_apply_file_id
 WHERE p.code = '$PROJECT_CODE'
-LIMIT 1;" 2>/dev/null || true)
+LIMIT 1;" 2>&1 || true)
+
+# 过滤掉 psql 提示行（如果有）
+RECORD=$(echo "$RECORD" | grep -v '^$' | grep -v '^(' | head -1)
 
 if [[ -z "$RECORD" ]]; then
   echo "  ✗ 未找到项目 $PROJECT_CODE 的销售台账，退出。"
+  echo ""
+  echo "  提示：可用以下命令查看数据库中实际的项目编号："
+  echo "  docker exec $PG_CONTAINER psql -U $DB_USER -d $DB_NAME -c \"SELECT code FROM project ORDER BY code;\""
   exit 1
 fi
 
@@ -64,8 +84,11 @@ fi
 # ── 2. 检查物理文件 ────────────────────────
 echo ""
 echo "[2/3] 检查物理文件是否存在..."
+UPLOADS_VOL=$(docker volume ls -q | grep -E 'uploads_data' | head -1)
 if [[ -z "$UPLOADS_VOL" ]]; then
-  echo "  ✗ 未找到 uploads 卷，无法检查物理文件。"
+  echo "  ✗ 未找到 uploads_data 卷，无法检查物理文件。"
+  echo "  所有卷："
+  docker volume ls -q
   exit 1
 fi
 
@@ -97,15 +120,15 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
   exit 0
 fi
 
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec -T postgres \
-  psql -U pms_prod -d pms -c "
+docker exec "$PG_CONTAINER" \
+  psql -U "$DB_USER" -d "$DB_NAME" -c "
 BEGIN;
 UPDATE sales_ledger
    SET invoice_apply_file_id = NULL,
        invoice_state = NULL
  WHERE id = $LEDGER_ID;
 DELETE FROM attachment WHERE id = $ATT_ID;
-COMMIT;" 2>/dev/null
+COMMIT;"
 
 echo ""
 echo "  ✓ 清除完成。"
