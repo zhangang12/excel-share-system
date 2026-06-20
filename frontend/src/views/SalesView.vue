@@ -1090,7 +1090,7 @@ async function openReport() {
         <el-table-column label="金额" width="110" align="right">
           <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
         </el-table-column>
-        <el-table-column label="申请表" min-width="160">
+        <el-table-column label="申请表" min-width="100">
           <template #default="{ row }">
             <el-tooltip v-if="row.apply_file_id" :content="row.apply_file_name" placement="top">
               <el-button size="small" link type="primary"
@@ -1100,7 +1100,7 @@ async function openReport() {
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="156">
+        <el-table-column label="操作" width="190">
           <template #default="{ row }">
             <el-button size="small" type="success" :icon="Check" @click="approveGroup(row, true)">通过</el-button>
             <el-button size="small" @click="approveGroup(row, false)">驳回</el-button>
