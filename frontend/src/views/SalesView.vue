@@ -1072,16 +1072,16 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 开票审批（主管）：单项目 + 🆕 合并批次 ===== -->
-    <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="760px" class="v3-scroll-dialog">
+    <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="900px" class="v3-scroll-dialog">
       <EmptyHint v-if="!approvalGroups.length" text="暂无待审批的开票申请" size="sm" />
       <el-table v-else :data="approvalGroups" row-key="key" stripe>
-        <el-table-column label="项目编号" min-width="150">
+        <el-table-column label="项目编号" min-width="160">
           <template #default="{ row }">
             <el-tag v-if="row.isBatch" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row.count }}</el-tag>
             <span>{{ row.codes }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="客户" min-width="110">
+        <el-table-column label="客户" min-width="140">
           <template #default="{ row }">{{ row.customer || '—' }}</template>
         </el-table-column>
         <el-table-column label="销售" width="84">
