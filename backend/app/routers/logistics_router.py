@@ -101,11 +101,6 @@ async def board(
                     select(models.Shipment.project_id).where(models.Shipment.status == "shipped")
                 ),
                 models.Project.status == "已完成",
-                # 调货订单：不走本厂发货闸门，直接视为已完成（无 Shipment 记录，走下方占位逻辑）
-                models.Project.id.in_(
-                    select(models.SalesLedger.project_id).where(
-                        models.SalesLedger.order_type == "调货订单")
-                ),
             )
         )
         res = await db.execute(proj_q.order_by(models.Project.code.desc()).limit(300))
