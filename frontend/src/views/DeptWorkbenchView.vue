@@ -959,7 +959,7 @@ const stockVisible = ref(false)
               <template #default="{ row }">
                 <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
                   size="small" placeholder="设置" style="width:132px" :clearable="false"
-                  :disabled="!!row.due_date && !isMgr" @change="(v) => setGroupDue(row, v)" />
+                  :disabled="!!row.due_date && !isMgr" @change="(v: string | null) => setGroupDue(row, v)" />
               </template>
             </el-table-column>
             <el-table-column label="钣金完成" min-width="180" align="center">
@@ -1000,7 +1000,7 @@ const stockVisible = ref(false)
               <template #default="{ row }">
                 <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
                   size="small" placeholder="设置" style="width:132px" :clearable="false"
-                  :disabled="!!row.due_date && !isMgr" @change="(v) => setGroupDue(row, v)" />
+                  :disabled="!!row.due_date && !isMgr" @change="(v: string | null) => setGroupDue(row, v)" />
               </template>
             </el-table-column>
             <el-table-column label="装配完成" min-width="180" align="center">
