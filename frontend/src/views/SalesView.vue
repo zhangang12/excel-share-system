@@ -70,6 +70,17 @@ function toggleOpCompact() {
   localStorage.setItem('sales_op_compact', opCompact.value ? '1' : '0')
 }
 
+// 适屏模式：缩小字号+列宽，让所有列在一屏内显示无需横向滚动
+const fitScreen = ref(localStorage.getItem('sales_fit_screen') === '1')
+function toggleFitScreen() {
+  fitScreen.value = !fitScreen.value
+  localStorage.setItem('sales_fit_screen', fitScreen.value ? '1' : '0')
+}
+// 列宽辅助：适屏时返回 compact 值，否则返回 normal 值
+function cw(normal: number, compact: number): number {
+  return fitScreen.value ? compact : normal
+}
+
 // 🆕 分页（性能优化：后端按编号自然序分页，前端不再整表渲染/排序）
 const page = ref(1)
 const pageSize = ref(50)
@@ -642,48 +653,51 @@ async function openReport() {
                         placeholder="尾款月份" clearable style="width: 150px" @change="reload" />
         <span class="muted">共 {{ total }} 个项目</span>
         <span class="spacer" style="flex:1"></span>
+        <el-tooltip :content="fitScreen ? '关闭适屏模式，恢复正常宽度' : '适屏模式：缩小列宽与字号，所有列在一屏内显示'" placement="top">
+          <el-button :type="fitScreen ? 'primary' : ''" @click="toggleFitScreen">⛶ 适屏</el-button>
+        </el-tooltip>
         <el-tooltip :content="opCompact ? '展开操作列' : '收起操作列'" placement="top">
           <el-button :icon="Operation" @click="toggleOpCompact">{{ opCompact ? '展开' : '收起操作列' }}</el-button>
         </el-tooltip>
       </div>
     </el-card>
 
-    <el-card shadow="never">
+    <el-card shadow="never" :class="{ 'fit-screen-card': fitScreen }">
       <el-table :data="rows" stripe v-loading="loading" :show-summary="false"
                 max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
-        <el-table-column type="index" label="#" width="48" fixed />
-        <el-table-column label="项目编号" width="120" fixed>
+        <el-table-column type="index" label="#" :width="cw(48, 36)" fixed />
+        <el-table-column label="项目编号" :width="cw(120, 92)" fixed>
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
-        <el-table-column prop="name" label="设备名称" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="customer" label="客户单位" min-width="130" show-overflow-tooltip>
+        <el-table-column prop="name" label="设备名称" :min-width="cw(150, 100)" show-overflow-tooltip />
+        <el-table-column prop="customer" label="客户单位" :min-width="cw(130, 90)" show-overflow-tooltip>
           <template #default="{ row }">{{ row.customer || '—' }}</template>
         </el-table-column>
-        <el-table-column label="客户分类" width="92">
+        <el-table-column label="客户分类" :width="cw(92, 68)">
           <template #default="{ row }">
             <el-tag v-if="row.cust_type" size="small" :type="row.cust_type === '经销商' ? 'primary' : 'success'" effect="plain">{{ row.cust_type }}</el-tag>
             <span v-else>—</span>
           </template>
         </el-table-column>
-        <el-table-column label="订单类别" width="150">
+        <el-table-column label="订单类别" :width="cw(150, 80)">
           <template #default="{ row }">
             <el-tag size="small"
                     :type="row.order_type === '调货订单' ? 'warning' : 'info'"
                     effect="plain">
-              {{ row.order_type || '工厂制作订单' }}
+              {{ fitScreen ? (row.order_type === '调货订单' ? '调货' : '工厂') : (row.order_type || '工厂制作订单') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="销售" width="80">
+        <el-table-column label="销售" :width="cw(80, 56)">
           <template #default="{ row }">{{ row.sales_name || '—' }}</template>
         </el-table-column>
-        <el-table-column label="下单日期" width="108">
+        <el-table-column label="下单日期" :width="cw(108, 82)">
           <template #default="{ row }">{{ fmtDate(row.sign_date) }}</template>
         </el-table-column>
-        <el-table-column label="交货日期" width="108">
+        <el-table-column label="交货日期" :width="cw(108, 82)">
           <template #default="{ row }">{{ fmtDate(row.deliver_date) }}</template>
         </el-table-column>
-        <el-table-column label="合同" width="86">
+        <el-table-column label="合同" :width="cw(86, 60)">
           <template #default="{ row }">
             <span v-if="row.contract_file_id" class="ct-cell">
               <StatusPill text="已签" variant="success" />
@@ -697,30 +711,30 @@ async function openReport() {
             <StatusPill v-else text="无" variant="muted" />
           </template>
         </el-table-column>
-        <el-table-column label="金额" width="100" align="right">
+        <el-table-column label="金额" :width="cw(100, 80)" align="right">
           <template #default="{ row }">{{ fmtPay(row.amount) }}</template>
         </el-table-column>
-        <el-table-column prop="tax_rate" label="税票" width="70">
+        <el-table-column prop="tax_rate" label="税票" :width="cw(70, 48)">
           <template #default="{ row }">{{ row.tax_rate || '—' }}</template>
         </el-table-column>
-        <el-table-column label="发票情况" width="124" align="center">
+        <el-table-column label="发票情况" :width="cw(124, 92)" align="center">
           <template #default="{ row }">
             <div class="inv-cell">
               <template v-if="row.invoice_state === 'invoiced'">
                 <StatusPill text="已开票" variant="success" />
-                <el-button v-if="row.invoice_file_id" size="small" link type="primary" class="inv-dl"
+                <el-button v-if="row.invoice_file_id && !fitScreen" size="small" link type="primary" class="inv-dl"
                            @click="downloadAttachment({ id: row.invoice_file_id!, name: row.invoice_file_name || '发票' })">
                   <el-icon><Download /></el-icon><span>下载发票</span>
                 </el-button>
               </template>
-              <StatusPill v-else-if="row.invoice_state === 'applying'" text="待主管审批" variant="warn" />
-              <StatusPill v-else-if="row.invoice_state === 'pending_invoice'" text="待财务开票" variant="primary" />
+              <StatusPill v-else-if="row.invoice_state === 'applying'" :text="fitScreen ? '待审批' : '待主管审批'" variant="warn" />
+              <StatusPill v-else-if="row.invoice_state === 'pending_invoice'" :text="fitScreen ? '待开票' : '待财务开票'" variant="primary" />
               <StatusPill v-else-if="row.amount" text="未开票" variant="muted" />
               <span v-else class="muted">—</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="预付" width="106" align="right">
+        <el-table-column label="预付" :width="cw(106, 82)" align="right">
           <template #default="{ row }">
             <div class="pay-cell">
               <span>{{ fmtPay(row.prepay) }}</span>
@@ -735,7 +749,7 @@ async function openReport() {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="发货前付" width="106" align="right">
+        <el-table-column label="发货前付" :width="cw(106, 82)" align="right">
           <template #default="{ row }">
             <div class="pay-cell">
               <span>{{ fmtPay(row.before_ship) }}</span>
@@ -750,26 +764,26 @@ async function openReport() {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="发货款应收" width="100" align="right">
+        <el-table-column label="发货款应收" :width="cw(100, 78)" align="right">
           <template #default="{ row }">{{ fmtPay(row.ship_receivable) }}</template>
         </el-table-column>
-        <el-table-column label="尾款" width="92" align="right">
+        <el-table-column label="尾款" :width="cw(92, 70)" align="right">
           <template #default="{ row }">{{ fmtPay(row.balance) }}</template>
         </el-table-column>
-        <el-table-column label="发货日期 📦" width="105">
+        <el-table-column :label="fitScreen ? '发货日期' : '发货日期 📦'" :width="cw(105, 80)">
           <template #default="{ row }">
             <el-tooltip content="物流发货部确认发货时自动回传，销售不可填" placement="top">
               <span>{{ fmtDate(row.ship_date) }}</span>
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="尾款日期" width="118">
+        <el-table-column label="尾款日期" :width="cw(118, 80)">
           <template #default="{ row }">{{ fmtDate(row.balance_date) }}</template>
         </el-table-column>
-        <el-table-column label="操作" :width="opCompact ? 52 : 150" fixed="right" align="center">
+        <el-table-column label="操作" :width="(fitScreen || opCompact) ? 52 : 150" fixed="right" align="center">
           <template #default="{ row }">
             <!-- 收起：只显示 ⋯ -->
-            <el-dropdown v-if="opCompact" trigger="click" placement="bottom-end">
+            <el-dropdown v-if="opCompact || fitScreen" trigger="click" placement="bottom-end">
               <el-button size="small" text :icon="MoreFilled" class="op-more" />
               <template #dropdown>
                 <el-dropdown-menu>
@@ -1356,4 +1370,9 @@ async function openReport() {
 .inv-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .inv-dl { height: auto; padding: 0; font-size: 12px; }
 .inv-dl :deep(.el-icon) { margin-right: 2px; }
+/* 适屏模式：缩小表格字号与 padding，所有列在一屏内显示 */
+.fit-screen-card :deep(.el-table__cell) { padding: 2px 3px !important; }
+.fit-screen-card :deep(.el-table__cell .cell) { font-size: 11.5px; line-height: 1.5; padding: 0 4px; }
+.fit-screen-card :deep(.el-tag) { font-size: 10.5px; padding: 0 4px; height: 18px; line-height: 18px; }
+.fit-screen-card :deep(.el-table__header .cell) { font-size: 11px; }
 </style>
