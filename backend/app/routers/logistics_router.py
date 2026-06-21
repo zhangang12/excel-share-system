@@ -93,9 +93,17 @@ async def board(
     if year:
         ship_q = ship_q.where(models.Project.code.like(f"{year}-%"))
     if proj_status == "已完成":
-        ship_q = ship_q.where(models.Shipment.status == "shipped")
+        # 兼容两种完成路径：物流确认发货 OR 项目目录手动标已完成（历史存量）
+        from sqlalchemy import or_
+        ship_q = ship_q.where(
+            or_(models.Shipment.status == "shipped",
+                models.Project.status == "已完成")
+        )
     elif proj_status == "进行中":
-        ship_q = ship_q.where(models.Shipment.status == "pending")
+        ship_q = ship_q.where(
+            models.Shipment.status == "pending",
+            models.Project.status != "已完成"
+        )
     res = await db.execute(ship_q.order_by(models.Project.code.desc()).limit(300))
     ships = list(res.scalars().all())
     pids = [s.project_id for s in ships]
