@@ -529,7 +529,7 @@ const stockVisible = ref(false)
     <template v-if="isWorker || isLead || isMgr || isSheetmetal">
       <el-tabs v-model="activeTab">
         <!-- ===== 待接单 tab ===== -->
-        <el-tab-pane v-if="isWorker && !isProduce" :label="`📩 待接单 (${myPending.length})`" name="pending">
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`📩 我的订单（待接单 ${myPending.length}）`" name="pending">
           <EmptyHint v-if="!loading && myPending.length === 0" text="暂无待接单任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in myPending" :key="o.id" shadow="hover"
@@ -564,7 +564,7 @@ const stockVisible = ref(false)
         </el-tab-pane>
 
         <!-- ===== 进行中 tab ===== -->
-        <el-tab-pane v-if="isWorker && !isProduce" :label="`⚙️ 进行中 (${myWorking.length})`" name="working">
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`⚙️ 我的订单（进行中 ${myWorking.length}）`" name="working">
           <EmptyHint v-if="!loading && myWorking.length === 0" text="暂无进行中任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in myWorking" :key="o.id" shadow="hover"
@@ -739,7 +739,7 @@ const stockVisible = ref(false)
           </div>
         </el-tab-pane>
 
-        <el-tab-pane v-if="isWorker && !isProduce" :label="`✅ 已完成 (${myDone.length})`" name="done">
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`✅ 我的订单（已完成 ${myDone.length}）`" name="done">
           <el-table :data="myDone" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目" min-width="120">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
