@@ -171,6 +171,7 @@ class DeptReport(BaseModel):
 @router.get("/dept/{dept}", response_model=DeptReport)
 async def dept_report(
     dept: str,
+    year: Optional[str] = Query(None),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -180,7 +181,12 @@ async def dept_report(
     if not current.has_role("admin", "manager", cfg["lead_role"]):
         raise HTTPException(403, "仅本部门负责人或管理层可看部门报表")
 
-    r = await db.execute(select(models.DeptOrder).where(models.DeptOrder.dept == dept))
+    q = (select(models.DeptOrder)
+         .join(models.Project, models.DeptOrder.project_id == models.Project.id)
+         .where(models.DeptOrder.dept == dept, models.Project.is_deleted == False))  # noqa: E712
+    if year:
+        q = q.where(models.Project.code.like(f"{year}-%"))
+    r = await db.execute(q)
     orders = [o for o in r.scalars().all() if o.status not in ("voided", "pending_assign")]
     stats, overdue_items = _agg_workers(orders)
     done = [o for o in orders if o.status == "done"]

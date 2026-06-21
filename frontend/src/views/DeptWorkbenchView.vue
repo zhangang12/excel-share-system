@@ -446,7 +446,7 @@ const deptName = computed(() => options.value?.dept_name || '')
 const reportVisible = ref(false)
 const report = ref<DeptReport | null>(null)
 async function openReport() {
-  report.value = await reportsApi.dept(dept.value)
+  report.value = await reportsApi.dept(dept.value, yearFilter.value)
   reportVisible.value = true
 }
 
