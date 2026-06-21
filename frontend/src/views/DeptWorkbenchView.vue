@@ -96,6 +96,8 @@ const monthOptions = Array.from({ length: 12 }, (_, i) => {
 })
 // 拼成 YYYY-MM 传给后端；未选月份返回 undefined
 const ymParam = () => (monthFilter.value ? `${yearFilter.value}-${monthFilter.value}` : undefined)
+// 负责人筛选（仅负责人/管理层可用）：undefined = 全部负责人
+const workerFilter = ref<number | undefined>(undefined)
 
 // ---- 数据加载 ----
 async function load() {
@@ -121,7 +123,7 @@ async function load() {
       return
     }
     const [os, opt] = await Promise.all([
-      ordersApi.list(dept.value, undefined, yearFilter.value, projStatusFilter.value, ym),
+      ordersApi.list(dept.value, undefined, yearFilter.value, projStatusFilter.value, ym, workerFilter.value),
       ordersApi.options(dept.value),
     ])
     orders.value = os
@@ -495,6 +497,10 @@ const stockVisible = ref(false)
         <el-option label="进行中" value="进行中" />
         <el-option label="已完成" value="已完成" />
         <el-option label="全部" value="" />
+      </el-select>
+      <el-select v-if="(isLead || isMgr) && !isProduce" v-model="workerFilter" size="large"
+                 style="width:140px" clearable filterable placeholder="全部负责人" @change="load">
+        <el-option v-for="w in options?.workers || []" :key="w.id" :label="w.name" :value="w.id" />
       </el-select>
       <el-button v-if="canSpare" type="primary" @click="openSpare">➕ 备机下单</el-button>
       <el-button v-if="dept === 'design'" @click="stockVisible = true">🔎 查库存(只读)</el-button>

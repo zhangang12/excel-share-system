@@ -254,6 +254,7 @@ async def list_orders(
     year: Optional[str] = Query(None),
     proj_status: Optional[str] = Query(None),
     month: Optional[str] = Query(None, description="YYYY-MM；按接单/制图开始(start_date)月份过滤"),
+    worker_id: Optional[int] = Query(None, description="按负责人筛选；仅负责人/管理层可用"),
     limit: int = Query(200, ge=1, le=500),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -279,10 +280,13 @@ async def list_orders(
     if status:
         q = q.where(models.DeptOrder.status == status)
 
+    # can_filter_worker：能看全部门的负责人/管理层才允许按指定负责人筛选；
+    # 工人被强制只看自己，忽略其传入的 worker_id（防越权看他人）
+    can_filter_worker = False
     if _is_mgr(current):
-        pass
+        can_filter_worker = True
     elif dept and _is_lead(current, dept):
-        pass
+        can_filter_worker = True
     elif dept and _is_worker_role(current, dept):
         q = q.where(models.DeptOrder.worker_id == current.id)
     else:
@@ -297,6 +301,11 @@ async def list_orders(
         q = q.where(models.DeptOrder.dept == my_dept)
         if _is_worker_role(current, my_dept):
             q = q.where(models.DeptOrder.worker_id == current.id)
+        else:
+            can_filter_worker = True
+
+    if worker_id and can_filter_worker:
+        q = q.where(models.DeptOrder.worker_id == worker_id)
 
     res = await db.execute(q.order_by(models.Project.code.desc()).limit(limit))
     orders = list(res.scalars().all())
