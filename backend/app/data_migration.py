@@ -1361,11 +1361,14 @@ async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
             .values(order_type="调货订单")
         )
 
-    # —— 2. 补建部门任务单 ——
+    # —— 2. 补建部门任务单（排除调货订单：不流转生产，不应有 design/electric/produce 任务单）——
+    delivery_pids = select(models.SalesLedger.project_id).where(
+        models.SalesLedger.order_type == "调货订单")
     res = await db.execute(
         select(models.Project).where(
             models.Project.is_deleted == False,
             models.Project.status == "进行中",
+            models.Project.id.not_in(delivery_pids),
         )
     )
     projects = res.scalars().all()

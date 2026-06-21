@@ -261,6 +261,10 @@ async def list_orders(
     q = (select(models.DeptOrder)
          .join(models.Project, models.DeptOrder.project_id == models.Project.id)
          .where(models.Project.is_deleted == False))  # noqa: E712
+    # 调货订单不流转生产，工作台不展示其任务单（防御：存量被误建的 DeptOrder 也隐藏）
+    delivery_pids = select(models.SalesLedger.project_id).where(
+        models.SalesLedger.order_type == "调货订单")
+    q = q.where(models.DeptOrder.project_id.not_in(delivery_pids))
     if year:
         q = q.where(models.Project.code.like(f"{year}-%"))
     if proj_status:
