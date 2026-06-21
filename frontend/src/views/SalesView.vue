@@ -786,7 +786,7 @@ async function openReport() {
                     <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
                     <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
                     <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
-                    <el-dropdown-item v-if="allView && row.invoice_state && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
+                    <el-dropdown-item v-if="allView && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
                     <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
                     <el-dropdown-item v-else divided style="color: var(--el-color-danger)" @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
                   </template>
@@ -813,7 +813,7 @@ async function openReport() {
                     <el-dropdown-menu>
                       <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
                       <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
-                      <el-dropdown-item v-if="allView && row.invoice_state && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
+                      <el-dropdown-item v-if="allView && row.invoice_state !== 'invoiced' && !isNoInvoice(row.tax_rate)" @click="adminMarkInvoiced(row)">标记已开票</el-dropdown-item>
                       <el-dropdown-item v-if="row.void_state === 'applying'" disabled divided>作废待审批</el-dropdown-item>
                       <el-dropdown-item v-else divided style="color: var(--el-color-danger)" @click="applyVoid(row)">{{ allView ? '作废订单' : '申请作废' }}</el-dropdown-item>
                     </el-dropdown-menu>
