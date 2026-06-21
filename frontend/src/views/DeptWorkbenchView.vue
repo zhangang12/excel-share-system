@@ -586,8 +586,8 @@ const stockVisible = ref(false)
                 </el-tag>
               </div>
 
-              <!-- 进行中：起始上传 + 完成 -->
-              <template>
+              <!-- 进行中：起始上传 + 完成（v-if 让 Vue 编译为片段，避免裸 template 被当作惰性 DOM <template> 元素而不渲染） -->
+              <template v-if="o.status === 'in_progress'">
                 <div class="tc-kv">
                   {{ options?.start_label }}：<b>{{ fmtDate(o.start_date) }}</b>
                   ｜ {{ options?.end_label }}：<b>{{ fmtDate(o.due_date) }}</b>
