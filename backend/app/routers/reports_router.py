@@ -8,7 +8,7 @@
 报表为只读聚合，无新表。
 """
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -41,6 +41,7 @@ class OverdueItem(BaseModel):
     dept_name: str
     worker_name: str
     code: str
+    name: str = ""        # 项目名称（逾期清单展示用）
     due_date: Optional[str] = None
     done_date: Optional[str] = None
     over_days: int = 0
@@ -68,7 +69,8 @@ def _agg_workers(orders: list[models.DeptOrder]) -> tuple[list[WorkerStat], list
             elif over_days > 0:
                 r["over"] += 1
                 overdue.append(OverdueItem(
-                    dept_name=DEPTS[o.dept]["name"], worker_name=wname, code=o.project.code if o.project else "",
+                    dept_name=DEPTS[o.dept]["name"], worker_name=wname,
+                    code=o.project.code if o.project else "", name=o.project.name if o.project else "",
                     due_date=o.due_date, done_date=o.done_date, over_days=over_days, eff=eff))
     stats = []
     for r in by.values():
@@ -81,6 +83,88 @@ def _agg_workers(orders: list[models.DeptOrder]) -> tuple[list[WorkerStat], list
         ))
     stats.sort(key=lambda s: -s.total)
     return stats, overdue
+
+
+# ==================== 生产部专用聚合（钣金组 + 装配组分组任务） ====================
+# 生产部不走 DeptOrder.worker_id（父生产单 worker_id 恒为空），实际工人与完成都在
+# ProduceGroupTask（每项目最多 2 条：钣金组 + 装配组）。报表须按分组任务统计，否则
+# 「已完成」永远为 0、人员明细缺失。完成时效以父生产单的 start/due + 本组 done_at 计算。
+GROUP_NAMES = {"sheetmetal": "钣金组", "assembly": "装配组"}
+
+
+def _china_date_str(dt: Optional[datetime]) -> Optional[str]:
+    """UTC 时间戳 → 中国自然日(UTC+8) 的 YYYY-MM-DD，与系统其它处自然日口径一致。"""
+    if not dt:
+        return None
+    return (dt + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+
+def _agg_produce(rows: list, umap: dict, month: Optional[str] = None):
+    """rows: list[(ProduceGroupTask, DeptOrder parent, Project)]；按 (组, 工人) 聚合。
+    返回 (stats, overdue_items, total, done, ontime, effs)。"""
+    by: dict[tuple, dict] = {}
+    overdue: list[OverdueItem] = []
+    total = done_cnt = ontime_cnt = 0
+    effs: list[int] = []
+    for gt, parent, proj in rows:
+        if month:  # 按父生产单的接单/下单月过滤（与其它部门口径一致）
+            base = parent.start_date or (parent.created_at.strftime("%Y-%m-%d") if parent.created_at else "")
+            if not (base and base.startswith(month)):
+                continue
+        gname = GROUP_NAMES.get(gt.group, gt.group)
+        u = umap.get(gt.worker_id) if gt.worker_id else None
+        wname = (u.full_name or u.username) if u else "（未指派）"
+        key = (gt.group, gt.worker_id)
+        r = by.setdefault(key, {"name": f"{wname} · {gname}", "gname": gname,
+                                "total": 0, "done": 0, "ontime": 0, "over": 0, "effs": []})
+        r["total"] += 1
+        total += 1
+        if gt.status == "done":
+            r["done"] += 1
+            done_cnt += 1
+            dstr = _china_date_str(gt.done_at)
+            eff, on_time, over_days = compute_efficiency(parent.start_date, parent.due_date, dstr)
+            if eff is not None:
+                r["effs"].append(eff)
+                effs.append(eff)
+            if on_time:
+                r["ontime"] += 1
+                ontime_cnt += 1
+            elif over_days > 0:
+                r["over"] += 1
+                overdue.append(OverdueItem(
+                    dept_name=gname, worker_name=wname,
+                    code=proj.code if proj else "", name=proj.name if proj else "",
+                    due_date=parent.due_date, done_date=dstr, over_days=over_days, eff=eff))
+    stats = []
+    for r in by.values():
+        e = r["effs"]
+        stats.append(WorkerStat(
+            dept="produce", dept_name=r["gname"], worker_name=r["name"],
+            total=r["total"], done=r["done"], ontime=r["ontime"], over=r["over"],
+            rate=round(r["ontime"] / r["done"] * 100) if r["done"] else None,
+            avg_eff=round(sum(e) / len(e)) if e else None,
+        ))
+    stats.sort(key=lambda s: -s.total)
+    return stats, overdue, total, done_cnt, ontime_cnt, effs
+
+
+async def _load_produce_rows(db: AsyncSession, year: Optional[str] = None):
+    """拉取所有有效（父单非作废、项目未删）的生产分组任务，连带父生产单与项目。"""
+    q = (select(models.ProduceGroupTask, models.DeptOrder, models.Project)
+         .join(models.DeptOrder, models.ProduceGroupTask.order_id == models.DeptOrder.id)
+         .join(models.Project, models.ProduceGroupTask.project_id == models.Project.id)
+         .where(models.Project.is_deleted == False,            # noqa: E712
+                models.DeptOrder.status != "voided"))
+    if year:
+        q = q.where(models.Project.code.like(f"{year}-%"))
+    rows = [(row[0], row[1], row[2]) for row in (await db.execute(q)).all()]
+    wids = {gt.worker_id for gt, _, _ in rows if gt.worker_id}
+    umap = {}
+    if wids:
+        ur = await db.execute(select(models.User).where(models.User.id.in_(wids)))
+        umap = {u.id: u for u in ur.scalars().all()}
+    return rows, umap
 
 
 # ==================== 月度工作报表（仅管理层） ====================
@@ -121,9 +205,23 @@ async def monthly(
         if on_time:
             ontime += 1
 
+    # 🆕 生产部分组任务（C4 按父单下单月 created_at 归月）——供生产部卡片用分组口径
+    prows, pumap = await _load_produce_rows(db)
+    p_month = [(gt, parent, proj) for gt, parent, proj in prows
+               if parent.created_at and parent.created_at.strftime("%Y-%m") == ym]
+    _ps, p_over, p_total, p_done, p_ontime, p_effs = _agg_produce(p_month, pumap)
+
     # 部门概览
     dept_cards = []
     for dept, cfg in DEPTS.items():
+        if dept == "produce":  # 生产部用钣金组/装配组分组任务统计，而非父生产单
+            dept_cards.append({
+                "dept": dept, "name": cfg["name"], "total": p_total, "done": p_done,
+                "over": len(p_over),
+                "rate": round(p_ontime / p_done * 100) if p_done else None,
+                "avg_eff": round(sum(p_effs) / len(p_effs)) if p_effs else None,
+            })
+            continue
         ds = [o for o in orders if o.dept == dept and o.status not in ("voided", "pending_assign")]
         dd = [o for o in ds if o.status == "done"]
         de = [compute_efficiency(o.start_date, o.due_date, o.done_date) for o in dd]
@@ -181,6 +279,18 @@ async def dept_report(
         raise HTTPException(400, "未知部门")
     if not current.has_role("admin", "manager", cfg["lead_role"]):
         raise HTTPException(403, "仅本部门负责人或管理层可看部门报表")
+
+    # 🆕 生产部走分组任务（钣金组+装配组）统计，而非父生产单 worker_id（恒为空）
+    if dept == "produce":
+        rows, umap = await _load_produce_rows(db, year)
+        stats, overdue_items, total, done_cnt, ontime_cnt, effs = _agg_produce(rows, umap, month)
+        return DeptReport(
+            dept="produce", dept_name=cfg["name"], total=total, done=done_cnt,
+            overdue=len(overdue_items),
+            ontime_rate=round(ontime_cnt / done_cnt * 100) if done_cnt else None,
+            avg_eff=round(sum(effs) / len(effs)) if effs else None,
+            workers=stats, overdue_items=overdue_items,
+        )
 
     q = (select(models.DeptOrder)
          .join(models.Project, models.DeptOrder.project_id == models.Project.id)

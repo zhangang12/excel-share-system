@@ -17,7 +17,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, or_
+from sqlalchemy import select, update, or_, delete
 
 from ..database import get_db
 from .. import models, schemas
@@ -891,6 +891,47 @@ async def void_order(
                        biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="void", target_type="dept_order", target_id=o.id)
     return schemas.Msg(message="已作废单号，已通知管理层")
+
+
+@router.delete("/{oid}", response_model=schemas.Msg)
+async def delete_order(
+    oid: int,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 管理层直接删除任务单（彻底删除，区别于「作废」留痕）。仅 admin/manager。
+    清理：① 生产分组任务 ProduceGroupTask（FK order_id）② 订单关联附件（DB 行 + 磁盘文件）
+    ③ 设计任务的「待设计接收」反馈归属置空（与作废同口径）。删除后下游（采购/钣金/物流）
+    因 JOIN 不到该单而自动消失。任意状态均可删（含已作废残留）。"""
+    o = await _order_or_404(db, oid)
+    if not _is_mgr(current):
+        raise HTTPException(403, "仅管理层可删除任务单")
+    cfg = DEPTS[o.dept]
+    code = o.project.code if o.project else str(o.project_id)
+    old_status = o.status
+    # 1) 生产部：先删两组分组任务（FK order_id → dept_orders.id，否则删父单违反外键）
+    if o.dept == "produce":
+        await db.execute(delete(models.ProduceGroupTask).where(models.ProduceGroupTask.order_id == oid))
+    # 2) 删除订单关联附件（DB 行 + 磁盘文件），避免孤儿文件
+    ar = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_id == oid,
+        models.Attachment.biz_type.in_(("order_input", "order_start_output", "order_output")),
+    ))
+    for a in ar.scalars().all():
+        await delete_attachment_file(db, a)
+    # 3) 设计任务：其「待设计接收」反馈归属置空（避免悬挂到已删任务的负责人）
+    if o.dept == "design" and o.worker_id:
+        await db.execute(update(models.Feedback).where(
+            models.Feedback.project_id == o.project_id,
+            models.Feedback.status == "pending_design",
+            models.Feedback.designer_uid == o.worker_id,
+        ).values(designer_uid=None))
+    # 4) 删除任务单本身
+    await db.delete(o)
+    await db.commit()
+    await write_audit(db, user=current, action="delete", target_type="dept_order",
+                      target_id=oid, detail=f"{cfg['name']} {code} 任务单已删除（原状态={old_status}）")
+    return schemas.Msg(message="已删除任务单")
 
 
 @router.post("/{oid}/reassign", response_model=schemas.Msg)

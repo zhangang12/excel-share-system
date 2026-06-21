@@ -7,7 +7,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Document, Download, Close, UploadFilled, Check, RefreshLeft, Switch as SwitchIcon, Lock,
-  Promotion, CircleCheck,
+  Promotion, CircleCheck, Delete,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -432,6 +432,14 @@ async function doReopen(o: DeptOrder) {
   ElMessage.success('已改回进行中')
   await load()
 }
+async function doDelete(o: DeptOrder) {
+  await ElMessageBox.confirm(
+    `确认彻底删除 ${o.project_code} 的任务单？将一并删除其上传附件，且不可恢复（区别于「作废」留痕）。`,
+    '删除任务单', { type: 'warning', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' })
+  await ordersApi.del(o.id)
+  ElMessage.success('已删除任务单')
+  await load()
+}
 
 const reassignVisible = ref(false)
 const reassignOrder = ref<DeptOrder | null>(null)
@@ -761,9 +769,10 @@ const stockVisible = ref(false)
 
         <el-tab-pane v-if="isWorker && !isProduce" :label="`✅ 我的订单（已完成 ${myDone.length}）`" name="done">
           <el-table :data="myDone" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-            <el-table-column label="项目" min-width="120">
-              <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
+            <el-table-column label="项目编号" min-width="112">
+              <template #default="{ row }"><b>{{ row.project_code }}</b></template>
             </el-table-column>
+            <el-table-column prop="project_name" label="项目名称" min-width="180" show-overflow-tooltip />
             <el-table-column prop="start_date" :label="options?.start_label" width="120">
               <template #default="{ row }">{{ fmtDate(row.start_date) }}</template>
             </el-table-column>
@@ -791,7 +800,7 @@ const stockVisible = ref(false)
             <el-table-column label="通知" width="110">
               <template #default="{ row }">{{ row.notify_user_name ? '📲 ' + row.notify_user_name : '—' }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="130">
+            <el-table-column label="操作" width="130" fixed="right">
               <template #default="{ row }">
                 <el-button size="small" :icon="RefreshLeft" @click="doReopen(row)">改回进行中</el-button>
               </template>
@@ -832,9 +841,10 @@ const stockVisible = ref(false)
 
         <el-tab-pane v-if="isLead || isMgr" label="📋 任务跟踪" name="track">
           <el-table :data="orders.filter(matchSearch)" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-            <el-table-column label="项目" min-width="130">
-              <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
+            <el-table-column label="项目编号" min-width="112">
+              <template #default="{ row }"><b>{{ row.project_code }}</b></template>
             </el-table-column>
+            <el-table-column prop="project_name" label="项目名称" min-width="180" show-overflow-tooltip />
             <el-table-column :label="isProduce ? '派发' : '负责人'" width="110">
               <template #default="{ row }">
                 <template v-if="isProduce">
@@ -879,13 +889,15 @@ const stockVisible = ref(false)
                 <span v-else>—</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="190" fixed="right">
+            <el-table-column label="操作" width="248" fixed="right">
               <template #default="{ row }">
                 <el-button v-if="['assigned', 'in_progress'].includes(row.status) && !isProduce"
                            size="small" :icon="SwitchIcon" @click="openReassign(row)">换人</el-button>
                 <el-button v-if="row.status === 'done'" size="small" :icon="RefreshLeft" @click="doReopen(row)">改回</el-button>
                 <el-button v-if="!['done', 'voided'].includes(row.status)" size="small" type="danger" plain
                            @click="doVoid(row)">作废</el-button>
+                <!-- 🆕 管理层直接删除任务单（含已作废残留）：彻底删除、不留痕 -->
+                <el-button v-if="isMgr" size="small" type="danger" :icon="Delete" @click="doDelete(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -996,7 +1008,8 @@ const stockVisible = ref(false)
         <div class="sec-title" style="margin-top:16px">逾期任务（{{ report.overdue_items.length }}）</div>
         <el-table v-if="report.overdue_items.length" :data="report.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="worker_name" label="人员" width="100" />
-          <el-table-column prop="code" label="项目" width="120" />
+          <el-table-column prop="code" label="项目编号" width="120" />
+          <el-table-column prop="name" label="项目名称" min-width="160" show-overflow-tooltip />
           <el-table-column prop="due_date" label="预计" width="110">
             <template #default="{ row }">{{ fmtDate(row.due_date) }}</template>
           </el-table-column>

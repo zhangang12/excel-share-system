@@ -7,7 +7,7 @@ export interface WorkerStat {
   rate?: number | null; avg_eff?: number | null
 }
 export interface OverdueItem {
-  dept_name: string; worker_name: string; code: string
+  dept_name: string; worker_name: string; code: string; name?: string
   due_date?: string | null; done_date?: string | null; over_days: number; eff?: number | null
 }
 export interface MonthlyReport {

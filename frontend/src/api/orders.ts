@@ -97,6 +97,8 @@ export const ordersApi = {
 
   void: (id: number) => http.post(`/orders/${id}/void`).then((r) => r.data),
 
+  del: (id: number) => http.delete(`/orders/${id}`).then((r) => r.data),
+
   reassign: (id: number, workerId: number) =>
     http.post(`/orders/${id}/reassign`, { worker_id: workerId }).then((r) => r.data),
 

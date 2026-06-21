@@ -90,7 +90,8 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
         <el-table v-if="rep.overdue_items.length" :data="rep.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="dept_name" label="部门" width="90" />
           <el-table-column prop="worker_name" label="人员" width="100" />
-          <el-table-column prop="code" label="项目" width="120" />
+          <el-table-column prop="code" label="项目编号" width="120" />
+          <el-table-column prop="name" label="项目名称" min-width="160" show-overflow-tooltip />
           <el-table-column label="预计完成" width="110"><template #default="{ row }">{{ fmtDate(row.due_date) }}</template></el-table-column>
           <el-table-column label="实际完成" width="110"><template #default="{ row }">{{ fmtDate(row.done_date) }}</template></el-table-column>
           <el-table-column label="逾期" width="90"><template #default="{ row }"><StatusPill :text="`超 ${row.over_days} 天`" variant="danger" /></template></el-table-column>

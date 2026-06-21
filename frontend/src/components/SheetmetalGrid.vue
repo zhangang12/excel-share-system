@@ -161,7 +161,7 @@ async function deleteRow(row: SheetRow) {
                 @blur="saveEdit(row, f)"
                 @keydown="onKeydown($event, row, f)"
               />
-              <span v-else class="smg-cell-text">{{ getCellVal(row, f.id) || ' ' }}</span>
+              <span v-else class="smg-cell-text" :title="getCellVal(row, f.id)">{{ getCellVal(row, f.id) || ' ' }}</span>
             </td>
             <td v-if="canEdit" class="smg-td smg-op">
               <el-button size="small" link type="danger" :icon="Delete" @click.stop="deleteRow(row)" />
@@ -187,26 +187,30 @@ async function deleteRow(row: SheetRow) {
 .smg-actions { display: flex; gap: 8px; }
 
 .smg-table-wrap {
-  overflow-x: hidden;
+  /* 列放不下时横向滚动，不再裁切表头（14 寸笔记本下 18 列可滚动查看） */
+  overflow-x: auto;
   overflow-y: auto;
   max-height: calc(100vh - 280px);
   border: 1px solid var(--el-border-color);
   border-radius: 4px;
 }
 .smg-table {
-  width: 100%; border-collapse: collapse;
-  font-size: 13px; table-layout: fixed;
+  /* 列按内容自适应宽度：表头与日期完整显示，整表可超出容器宽度后横向滚动 */
+  width: max-content; min-width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px; table-layout: auto;
 }
+.smg-th, .smg-td { min-width: 58px; }
 .smg-th {
   position: sticky; top: 0; z-index: 1;
   background: var(--el-color-primary-dark-2, #1e3a5f);
   color: #fff; font-weight: 500;
-  padding: 8px 10px; text-align: left; white-space: nowrap;
+  padding: 7px 9px; text-align: left; white-space: nowrap;
   border-right: 1px solid rgba(255,255,255,.15);
 }
 .smg-th:last-child { border-right: none; }
-.smg-idx { width: 44px; text-align: center; }
-.smg-op { width: 52px; text-align: center; }
+.smg-idx { width: 44px; min-width: 44px; text-align: center; }
+.smg-op { width: 52px; min-width: 52px; text-align: center; }
 
 .smg-td {
   padding: 0; border-bottom: 1px solid var(--el-border-color-light);
@@ -223,13 +227,15 @@ async function deleteRow(row: SheetRow) {
 .smg-editing { background: #fff !important; padding: 0 !important; }
 
 .smg-cell-text {
-  display: block; padding: 7px 10px;
-  white-space: pre-wrap; word-break: break-all;
+  display: block; padding: 6px 9px;
+  /* 单行显示，过长用省略号；点击单元格即可查看/编辑完整内容，悬停 title 显示全文 */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 260px;
 }
 .smg-input {
   width: 100%; height: 100%;
   border: 2px solid var(--el-color-primary);
-  padding: 5px 8px; font-size: 13px;
+  padding: 5px 8px; font-size: 12.5px;
   outline: none; background: #fff;
   box-sizing: border-box;
 }
