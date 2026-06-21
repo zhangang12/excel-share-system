@@ -1,12 +1,14 @@
 <script setup lang="ts">
 // 🆕 v3 M14 月度工作报表（仅管理层）
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { reportsApi, type MonthlyReport } from '@/api/reports'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtDate } from '@/utils/format'
 
 const month = ref(new Date().toISOString().slice(0, 7))
+const curYear = new Date().getFullYear()
+const yearOptions = computed(() => [curYear - 1, curYear, curYear + 1].map(String))
 const loading = ref(false)
 const rep = ref<MonthlyReport | null>(null)
 
@@ -29,6 +31,11 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
         <div class="desc">全公司任务量 / 按时率 / 完成效率 / 逾期清单（仅管理层）</div>
       </div>
       <div class="spacer"></div>
+      <el-select size="large" style="width:90px"
+                 :model-value="month.slice(0,4)"
+                 @update:model-value="(v: string) => { month = v + month.slice(4); load() }">
+        <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+      </el-select>
       <el-date-picker v-model="month" type="month" value-format="YYYY-MM" @change="load" />
     </div>
 

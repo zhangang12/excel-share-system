@@ -172,6 +172,7 @@ class DeptReport(BaseModel):
 async def dept_report(
     dept: str,
     year: Optional[str] = Query(None),
+    month: Optional[str] = Query(None, description="YYYY-MM；按派单月份过滤，缺省=全年"),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -186,6 +187,12 @@ async def dept_report(
          .where(models.DeptOrder.dept == dept, models.Project.is_deleted == False))  # noqa: E712
     if year:
         q = q.where(models.Project.code.like(f"{year}-%"))
+    if month:
+        # 按派单（接单开始）月份过滤：start_date 或 created_at 前缀匹配
+        q = q.where(
+            (models.DeptOrder.start_date.like(f"{month}%")) |
+            (models.DeptOrder.start_date.is_(None) & models.DeptOrder.created_at.like(f"{month}%"))
+        )
     r = await db.execute(q)
     orders = [o for o in r.scalars().all() if o.status not in ("voided", "pending_assign")]
     stats, overdue_items = _agg_workers(orders)

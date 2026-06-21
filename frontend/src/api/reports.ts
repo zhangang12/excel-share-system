@@ -29,7 +29,7 @@ export interface SalesReport {
 
 export const reportsApi = {
   monthly: (month?: string) => http.get<MonthlyReport>('/reports/monthly', { params: { month } }).then((r) => r.data),
-  dept: (dept: string, year?: string) =>
-    http.get<DeptReport>(`/reports/dept/${dept}`, { params: year ? { year } : {} }).then((r) => r.data),
+  dept: (dept: string, year?: string, month?: string) =>
+    http.get<DeptReport>(`/reports/dept/${dept}`, { params: { ...(year ? { year } : {}), ...(month ? { month } : {}) } }).then((r) => r.data),
   sales: () => http.get<SalesReport>('/reports/sales').then((r) => r.data),
 }

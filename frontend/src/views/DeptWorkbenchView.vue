@@ -288,12 +288,20 @@ function viewSheet(row: GroupProjectRow) {
 watch(dept, () => { activeTab.value = ''; load() })
 onMounted(load)
 
+// ---- 工作台搜索 ----
+const searchQuery = ref('')
+function matchSearch(o: DeptOrder) {
+  if (!searchQuery.value) return true
+  const q = searchQuery.value.toLowerCase()
+  return (o.project_code || '').toLowerCase().includes(q) ||
+         (o.project_name || '').toLowerCase().includes(q)
+}
 // ---- 工人视角数据 ----
-const myPending  = computed(() => orders.value.filter(o => o.status === 'assigned'))
-const myWorking  = computed(() => orders.value.filter(o => o.status === 'in_progress'))
-const myDone     = computed(() => orders.value.filter(o => o.status === 'done'))
+const myPending  = computed(() => orders.value.filter(o => o.status === 'assigned'    && matchSearch(o)))
+const myWorking  = computed(() => orders.value.filter(o => o.status === 'in_progress' && matchSearch(o)))
+const myDone     = computed(() => orders.value.filter(o => o.status === 'done'        && matchSearch(o)))
 // ---- 负责人视角数据 ----
-const pendingAssign = computed(() => orders.value.filter(o => o.status === 'pending_assign'))
+const pendingAssign = computed(() => orders.value.filter(o => o.status === 'pending_assign' && matchSearch(o)))
 
 // ---- 接单（填时间开始） ----
 const startDates = ref<Record<number, { start: string; due: string }>>({})
@@ -445,8 +453,9 @@ const deptName = computed(() => options.value?.dept_name || '')
 // 🆕 M14 部门报表（负责人/管理层）
 const reportVisible = ref(false)
 const report = ref<DeptReport | null>(null)
+const reportMonth = ref('')  // YYYY-MM，空=全年
 async function openReport() {
-  report.value = await reportsApi.dept(dept.value, yearFilter.value)
+  report.value = await reportsApi.dept(dept.value, yearFilter.value, reportMonth.value || undefined)
   reportVisible.value = true
 }
 
@@ -464,6 +473,7 @@ const stockVisible = ref(false)
         </div>
       </div>
       <div class="spacer"></div>
+      <el-input v-model="searchQuery" placeholder="搜索项目编号/名称" clearable size="large" style="width:200px" />
       <el-select v-model="yearFilter" size="large" style="width:100px" @change="load">
         <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
       </el-select>
@@ -801,7 +811,7 @@ const stockVisible = ref(false)
         </el-tab-pane>
 
         <el-tab-pane v-if="isLead || isMgr" label="📋 任务跟踪" name="track">
-          <el-table :data="orders" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table :data="orders.filter(matchSearch)" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目" min-width="130">
               <template #default="{ row }"><b>{{ row.project_code }}</b> {{ row.project_name }}</template>
             </el-table-column>
@@ -937,6 +947,16 @@ const stockVisible = ref(false)
 
     <!-- 🆕 M14 部门报表弹窗 -->
     <el-dialog v-model="reportVisible" :title="`📊 ${report?.dept_name || ''}报表（仅本部门数据）`" width="720px" class="v3-scroll-dialog">
+      <!-- 筛选栏 -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <span style="font-size:13px;color:var(--el-text-color-secondary)">筛选：</span>
+        <el-select v-model="yearFilter" size="small" style="width:90px" @change="openReport">
+          <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+        </el-select>
+        <el-date-picker v-model="reportMonth" type="month" value-format="YYYY-MM" placeholder="全年"
+                        clearable size="small" style="width:120px" @change="openReport" />
+        <span style="font-size:12px;color:var(--el-text-color-secondary)">留空=全年统计</span>
+      </div>
       <div v-if="report">
         <div class="kpi-grid">
           <div class="kpi is-primary"><div class="kpi-v">{{ report.total }}</div><div class="kpi-l">任务总数</div></div>
