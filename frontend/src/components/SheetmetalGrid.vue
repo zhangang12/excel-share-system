@@ -8,7 +8,7 @@
  */
 import { ref, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Download } from '@element-plus/icons-vue'
+import { Plus, Delete } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { datasheetsApi } from '@/api/datasheets'
 
@@ -114,19 +114,6 @@ async function deleteRow(row: SheetRow) {
   }
 }
 
-async function downloadExcel() {
-  try {
-    const res = await http.get(`/datasheets/${props.datasheetId}/export`, { responseType: 'blob' })
-    const url = URL.createObjectURL(res.data as Blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${props.projectCode}_钣金装配表.xlsx`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch {
-    ElMessage.error('下载失败')
-  }
-}
 </script>
 
 <template>
@@ -139,7 +126,6 @@ async function downloadExcel() {
       <span class="smg-tip smg-ro" v-else>只读引用</span>
       <div class="smg-actions">
         <el-button v-if="canEdit" size="small" :icon="Plus" @click="addRow">新增行</el-button>
-        <el-button size="small" :icon="Download" @click="downloadExcel">导出 Excel</el-button>
       </div>
     </div>
 
