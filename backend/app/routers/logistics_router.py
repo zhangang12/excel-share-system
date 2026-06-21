@@ -92,8 +92,10 @@ async def board(
         models.Project.is_deleted == False)  # noqa: E712
     if year:
         ship_q = ship_q.where(models.Project.code.like(f"{year}-%"))
-    if proj_status:
-        ship_q = ship_q.where(models.Project.status == proj_status)
+    if proj_status == "已完成":
+        ship_q = ship_q.where(models.Shipment.status == "shipped")
+    elif proj_status == "进行中":
+        ship_q = ship_q.where(models.Shipment.status == "pending")
     res = await db.execute(ship_q.order_by(models.Project.code.desc()).limit(300))
     ships = list(res.scalars().all())
     pids = [s.project_id for s in ships]

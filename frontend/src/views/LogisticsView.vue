@@ -219,7 +219,7 @@ async function confirmShip(force = false) {
           </template>
         </el-table-column>
       </el-table>
-      <EmptyHint v-if="!loading && !rows.length" text="暂无待发货项目" />
+      <EmptyHint v-if="!loading && !rows.length" :text="projStatusFilter === '已完成' ? '暂无已发货项目' : '暂无待发货项目'" />
     </el-card>
 
     <!-- 收货信息 -->
