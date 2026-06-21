@@ -33,4 +33,12 @@ export const datasheetsApi = {
     http.put<DataRecord>(`/records/${recordId}/cell`, { field_id, value }).then(r => r.data),
   deleteRecord: (id: number) =>
     http.delete<{ message: string }>(`/records/${id}`).then(r => r.data),
+
+  // ── 生产组专用：钣金/装配角色编辑「钣金装配」表（绕开详单闸门）──
+  produceUpdateCell: (datasheetId: number, recordId: number, field_id: number, value: unknown) =>
+    http.put(`/datasheets/${datasheetId}/produce-edit/records/${recordId}/cell`, { field_id, value }).then(r => r.data),
+  produceCreateRecord: (datasheetId: number) =>
+    http.post(`/datasheets/${datasheetId}/produce-edit/records`, { values: {} }).then(r => r.data),
+  produceDeleteRecord: (datasheetId: number, recordId: number) =>
+    http.delete(`/datasheets/${datasheetId}/produce-edit/records/${recordId}`).then(r => r.data),
 }

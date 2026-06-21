@@ -9,7 +9,7 @@ from ..database import get_db
 from .. import models, schemas
 from .ws_router import broadcast_cell_changed
 from ..deps import (
-    get_current_user, require_can_view_detail,
+    get_current_user, require_can_view_detail, require_roles,
     user_can_view_project, user_can_edit_project,
 )
 
@@ -394,6 +394,107 @@ async def delete_record(
     p = await _get_project_or_404(db, d.project_id)
     if not await user_can_edit_project(db, current, p):
         raise HTTPException(403, "无权删除")
+    await db.delete(r)
+    await db.commit()
+    return schemas.Msg(message="已删除")
+
+
+# ══════════════════════════════════════════════════════════
+# 生产组专用：钣金/装配角色编辑「钣金装配」数据表
+# 绕开 require_can_view_detail（详单门槛），但有独立的双重校验：
+#   1. 角色必须是 sheetmetal / assembler（admin/manager 也通）
+#   2. 当前用户必须已被派单到该项目（ProduceGroupTask），admin/manager 豁免
+# ══════════════════════════════════════════════════════════
+
+SHEETMETAL_DS_NAME = "钣金装配"
+
+
+async def _produce_edit_check(
+    did: int,
+    current: models.User,
+    db: AsyncSession,
+) -> models.Datasheet:
+    """验证数据表是「钣金装配」且用户有生产组编辑权，返回 Datasheet 对象。"""
+    d = await _get_datasheet_or_404(db, did)
+    if d.name != SHEETMETAL_DS_NAME:
+        raise HTTPException(403, "此端点仅限编辑「钣金装配」数据表")
+    if not current.has_role("admin", "manager"):
+        r = await db.execute(
+            select(models.ProduceGroupTask).where(
+                models.ProduceGroupTask.project_id == d.project_id,
+                models.ProduceGroupTask.worker_id == current.id,
+            )
+        )
+        if not r.scalar_one_or_none():
+            raise HTTPException(403, "您未被派单到此项目，无法编辑")
+    return d
+
+
+@router.put("/datasheets/{did}/produce-edit/records/{rid}/cell", response_model=schemas.RecordOut)
+async def produce_update_cell(
+    did: int, rid: int,
+    data: schemas.RecordCellUpdate,
+    current: models.User = Depends(require_roles("sheetmetal", "assembler")),
+    db: AsyncSession = Depends(get_db),
+):
+    """生产组（钣金/装配）编辑钣金装配表单元格，绕开详单闸门。"""
+    await _produce_edit_check(did, current, db)
+    res = await db.execute(select(models.Record).where(models.Record.id == rid))
+    r = res.scalar_one_or_none()
+    if not r or r.datasheet_id != did:
+        raise HTTPException(404, "行不存在")
+    values = dict(r.values or {})
+    if data.value is None or data.value == "":
+        values.pop(str(data.field_id), None)
+    else:
+        values[str(data.field_id)] = data.value
+    r.values = values
+    r.updated_by = current.id
+    await db.commit()
+    await db.refresh(r)
+    await broadcast_cell_changed(
+        scope="datasheet", scope_id=r.datasheet_id,
+        record_id=r.id, project_id=None,
+        field_id=data.field_id, value=data.value, by_user_id=current.id,
+    )
+    return _record_to_out(r)
+
+
+@router.post("/datasheets/{did}/produce-edit/records", response_model=schemas.RecordOut)
+async def produce_create_record(
+    did: int,
+    data: schemas.RecordCreate,
+    current: models.User = Depends(require_roles("sheetmetal", "assembler")),
+    db: AsyncSession = Depends(get_db),
+):
+    """生产组新增钣金装配表行。"""
+    await _produce_edit_check(did, current, db)
+    res = await db.execute(
+        select(func.max(models.Record.sort_order)).where(models.Record.datasheet_id == did)
+    )
+    max_order = res.scalar() or -1
+    r = models.Record(
+        datasheet_id=did, sort_order=max_order + 1,
+        values=data.values or {}, created_by=current.id, updated_by=current.id,
+    )
+    db.add(r)
+    await db.commit()
+    await db.refresh(r)
+    return _record_to_out(r)
+
+
+@router.delete("/datasheets/{did}/produce-edit/records/{rid}", response_model=schemas.Msg)
+async def produce_delete_record(
+    did: int, rid: int,
+    current: models.User = Depends(require_roles("sheetmetal", "assembler")),
+    db: AsyncSession = Depends(get_db),
+):
+    """生产组删除钣金装配表行。"""
+    await _produce_edit_check(did, current, db)
+    res = await db.execute(select(models.Record).where(models.Record.id == rid))
+    r = res.scalar_one_or_none()
+    if not r or r.datasheet_id != did:
+        raise HTTPException(404, "行不存在")
     await db.delete(r)
     await db.commit()
     return schemas.Msg(message="已删除")

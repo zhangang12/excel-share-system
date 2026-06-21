@@ -16,6 +16,7 @@ import {
 } from '@/api/orders'
 import { datasheetsApi } from '@/api/datasheets'
 import { http } from '@/api'
+import SheetmetalGrid from '@/components/SheetmetalGrid.vue'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
 import StockQueryDialog from '@/components/StockQueryDialog.vue'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -273,47 +274,16 @@ async function pickCardOutputUpload(o: DeptOrder, kind: string) {
   input.click()
 }
 
-// 🆕 钣金装配表只读预览（钣金组/装配组共用）
+// 🆕 钣金装配表可编辑预览（钣金组/装配组共用）
 const viewVisible = ref(false)
-const viewLoading = ref(false)
 const viewTitle = ref('')
-const viewFields = ref<{ id: number; name: string }[]>([])
-const viewRecords = ref<any[]>([])
-// 全屏模式下动态计算列宽，让所有列尽量铺满一屏无需横向滚动
-const viewColWidth = computed(() => {
-  const n = viewFields.value.length
-  if (!n) return 110
-  const usable = (typeof window !== 'undefined' ? window.innerWidth : 1280) - 50 - 32
-  return Math.max(80, Math.floor(usable / n))
-})
-async function viewSheet(row: GroupProjectRow) {
+const viewRow = ref<GroupProjectRow | null>(null)
+const canEditSheet = computed(() => isSheetmetal.value || isAssembler.value || isLead.value || isMgr.value)
+function viewSheet(row: GroupProjectRow) {
   if (!row.sheetmetal_datasheet_id) { ElMessage.info('该项目暂无钣金装配表'); return }
-  viewTitle.value = `${row.code} · 钣金装配表（只读引用）`
+  viewTitle.value = `${row.code} · 钣金装配表`
+  viewRow.value = row
   viewVisible.value = true
-  viewLoading.value = true
-  try {
-    const [fs, recs] = await Promise.all([
-      datasheetsApi.listFields(row.sheetmetal_datasheet_id),
-      datasheetsApi.listRecords(row.sheetmetal_datasheet_id),
-    ])
-    viewFields.value = fs.map((f: any) => ({ id: f.id, name: f.name }))
-    viewRecords.value = recs
-  } finally { viewLoading.value = false }
-}
-function cellVal(rec: any, fid: number) {
-  return rec.values?.[String(fid)] ?? ''
-}
-// 🆕 钣金装配表导出下载（xlsx）——与采购部同口径
-async function downloadSheet(did: number | null | undefined, label: string) {
-  if (!did) { ElMessage.info('该项目暂无钣金装配表'); return }
-  try {
-    const res = await http.get(`/datasheets/${did}/export`, { responseType: 'blob' })
-    const url = URL.createObjectURL(res.data as Blob)
-    const a = document.createElement('a'); a.href = url; a.download = `${label}.xlsx`; a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch (e: any) {
-    ElMessage.error(e?.response?.status === 403 ? '无权下载' : '下载失败')
-  }
 }
 watch(dept, () => { activeTab.value = ''; load() })
 onMounted(load)
@@ -878,11 +848,11 @@ const stockVisible = ref(false)
             <el-table-column prop="name" label="项目名称" min-width="240" show-overflow-tooltip />
             <el-table-column label="设计师" min-width="100" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
             <el-table-column label="派给" min-width="100" align="center"><template #default="{ row }">{{ row.worker_name || '—' }}</template></el-table-column>
-            <el-table-column label="钣金装配表(引用)" min-width="200" align="center">
+            <el-table-column label="钣金装配表" min-width="200" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
                   <el-button size="small" link type="primary" @click="viewSheet(row)">
-                    预览<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
+                    编辑装配表<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
                   </el-button>
                 </template>
                 <span v-else class="muted">—</span>
@@ -908,10 +878,10 @@ const stockVisible = ref(false)
             <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
             <el-table-column label="设计师" min-width="90" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
             <el-table-column label="派给" min-width="90" align="center"><template #default="{ row }">{{ row.worker_name || '—' }}</template></el-table-column>
-            <el-table-column label="钣金装配表(引用)" min-width="180" align="center">
+            <el-table-column label="钣金装配表" min-width="180" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
-                  <el-button size="small" link type="primary" @click="viewSheet(row)">预览</el-button>
+                  <el-button size="small" link type="primary" @click="viewSheet(row)">编辑装配表</el-button>
                 </template>
                 <span v-else class="muted">—</span>
               </template>
@@ -1058,19 +1028,14 @@ const stockVisible = ref(false)
       </template>
     </el-dialog>
 
-    <!-- ===== 🆕 钣金装配表只读预览（钣金组/装配组） ===== -->
-    <el-dialog v-model="viewVisible" :title="viewTitle" fullscreen>
-      <div v-loading="viewLoading">
-        <el-alert type="info" :closable="false" style="margin-bottom:10px"
-                  title="只读引用——钣金装配表数据由设计部维护，生产部不可编辑" />
-        <el-table :data="viewRecords" border size="small" max-height="calc(100vh - 130px)" :scrollbar-always-on="true">
-          <el-table-column type="index" label="#" width="50" />
-          <el-table-column v-for="f in viewFields" :key="f.id" :label="f.name" :min-width="viewColWidth">
-            <template #default="{ row }">{{ cellVal(row, f.id) }}</template>
-          </el-table-column>
-        </el-table>
-        <EmptyHint v-if="!viewLoading && !viewRecords.length" text="钣金装配表暂无数据" />
-      </div>
+    <!-- ===== 钣金装配表可编辑预览（钣金组/装配组） ===== -->
+    <el-dialog v-model="viewVisible" :title="viewTitle" width="1000px" destroy-on-close>
+      <SheetmetalGrid
+        v-if="viewRow?.sheetmetal_datasheet_id"
+        :datasheetId="viewRow.sheetmetal_datasheet_id"
+        :projectCode="viewRow.code"
+        :canEdit="canEditSheet"
+      />
     </el-dialog>
   </div>
 </template>
