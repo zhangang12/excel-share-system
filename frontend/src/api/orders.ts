@@ -134,7 +134,7 @@ export interface DispatchOptions {
 export const produceApi = {
   dispatchOptions: () =>
     http.get<DispatchOptions>('/produce/dispatch-options').then((r) => r.data),
-  dispatch: (orderId: number, sheetmetalWorkerId: number, assemblyWorkerId: number) =>
+  dispatch: (orderId: number, sheetmetalWorkerId: number | null, assemblyWorkerId: number | null) =>
     http.post(`/produce/dispatch/${orderId}`,
       { sheetmetal_worker_id: sheetmetalWorkerId, assembly_worker_id: assemblyWorkerId }).then((r) => r.data),
   groupDone: (taskId: number, done: boolean) =>

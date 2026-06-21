@@ -147,12 +147,12 @@ async function openDispatch(o: DeptOrder) {
 async function doDispatch() {
   const o = dispatchOrder.value
   if (!o) return
-  if (!dispatchSmWid.value) { ElMessage.warning('请选择派给钣金组的人员'); return }
-  if (!dispatchAsmWid.value) { ElMessage.warning('请选择派给装配组的人员'); return }
+  if (!dispatchSmWid.value && !dispatchAsmWid.value) { ElMessage.warning('至少选择一组（钣金组或装配组）'); return }
   dispatching.value = true
   try {
     await produceApi.dispatch(o.id, dispatchSmWid.value, dispatchAsmWid.value)
-    ElMessage.success('已派发到钣金组、装配组')
+    const label = [dispatchSmWid.value && '钣金组', dispatchAsmWid.value && '装配组'].filter(Boolean).join('、')
+    ElMessage.success(`已派发到${label}`)
     dispatchVisible.value = false
     await load()
   } catch (e: any) {
@@ -1009,15 +1009,15 @@ const stockVisible = ref(false)
     <!-- ===== 🆕 生产派发弹窗（派给钣金组+装配组） ===== -->
     <el-dialog v-model="dispatchVisible" :title="`🚀 派发生产任务 · ${dispatchOrder?.project_code || ''}`" width="460px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
-                title="分别选定钣金组、装配组各一名人员（两组都必选）；两人各自标记完成后即视为生产完成（可发货）。" />
+                title="钣金组、装配组可各自选派，至少选择一组；各组标记完成后即视为生产完成（可发货）。" />
       <el-form label-position="top">
-        <el-form-item label="派给 · 生产部-钣金组" required>
-          <el-select v-model="dispatchSmWid" placeholder="选择钣金组人员" style="width: 100%">
+        <el-form-item label="派给 · 生产部-钣金组（可不选）">
+          <el-select v-model="dispatchSmWid" placeholder="不派发钣金组则留空" clearable style="width: 100%">
             <el-option v-for="w in dispatchOpts.sheetmetal" :key="w.id" :label="w.name" :value="w.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="派给 · 生产部-装配组" required>
-          <el-select v-model="dispatchAsmWid" placeholder="选择装配组人员" style="width: 100%">
+        <el-form-item label="派给 · 生产部-装配组（可不选）">
+          <el-select v-model="dispatchAsmWid" placeholder="不派发装配组则留空" clearable style="width: 100%">
             <el-option v-for="w in dispatchOpts.assembly" :key="w.id" :label="w.name" :value="w.id" />
           </el-select>
         </el-form-item>

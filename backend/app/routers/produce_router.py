@@ -80,8 +80,8 @@ async def dispatch_options(
 
 # ==================== 派发（主管手动，分别指定两组的人） ====================
 class DispatchIn(BaseModel):
-    sheetmetal_worker_id: int   # 派给钣金组的人
-    assembly_worker_id: int     # 派给装配组的人
+    sheetmetal_worker_id: Optional[int] = None   # 派给钣金组的人（可选）
+    assembly_worker_id: Optional[int] = None     # 派给装配组的人（可选）
 
 
 @router.post("/dispatch/{order_id}", response_model=schemas.Msg)
@@ -91,13 +91,19 @@ async def dispatch_produce(
     current: models.User = Depends(require_roles("pm_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """生产部主管派发：分别选定钣金组、装配组各一名人员（两组都必选）。"""
+    """生产部主管派发：钣金组、装配组各自可选，至少选一组。"""
     o = await _produce_order(db, order_id)
     if o.status in ("done", "voided"):
         raise HTTPException(400, "已完成/已作废的任务单不可派发")
 
-    worker_of = {"sheetmetal": data.sheetmetal_worker_id, "assembly": data.assembly_worker_id}
-    # 校验两人各自具备对应组角色
+    worker_of = {g: wid for g, wid in [
+        ("sheetmetal", data.sheetmetal_worker_id),
+        ("assembly",   data.assembly_worker_id),
+    ] if wid is not None}
+    if not worker_of:
+        raise HTTPException(400, "至少选择一组（钣金组或装配组）进行派发")
+
+    # 校验各组人员角色
     for g, wid in worker_of.items():
         w = (await db.execute(select(models.User).where(models.User.id == wid))).scalar_one_or_none()
         if not w or not w.is_active or not w.has_role(GROUP_ROLE[g]):
@@ -106,14 +112,14 @@ async def dispatch_produce(
     res = await db.execute(select(models.ProduceGroupTask).where(
         models.ProduceGroupTask.order_id == o.id))
     by_group = {t.group: t for t in res.scalars().all()}
-    for g in GROUPS:
+    for g, wid in worker_of.items():
         t = by_group.get(g)
         if t:
-            t.worker_id = worker_of[g]      # 重新派发=换人
+            t.worker_id = wid
         else:
             db.add(models.ProduceGroupTask(
                 order_id=o.id, project_id=o.project_id, group=g,
-                status="dispatched", worker_id=worker_of[g], dispatched_by=current.id))
+                status="dispatched", worker_id=wid, dispatched_by=current.id))
 
     o.status = "in_progress"
     if not o.start_date:
@@ -126,9 +132,10 @@ async def dispatch_produce(
                            text=f"【生产派发】{p.code if p else ''} {p.name if p else ''} "
                                 f"已派发给你（{GROUP_NAME[g]}，派发：{_uname(current)}）。",
                            biz_type="project", biz_id=o.project_id)
+    groups_label = "、".join(GROUP_NAME[g] for g in worker_of)
     await write_audit(db, user=current, action="produce_dispatch", target_type="dept_order",
-                      target_id=o.id, detail=f"派发 钣金组#{data.sheetmetal_worker_id}/装配组#{data.assembly_worker_id}")
-    return schemas.Msg(message="已派发到钣金组、装配组")
+                      target_id=o.id, detail=f"派发 {groups_label}")
+    return schemas.Msg(message=f"已派发到{groups_label}")
 
 
 # ==================== 组员标记完成 ====================
