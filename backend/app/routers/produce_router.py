@@ -9,7 +9,7 @@
 两组都完成时把父生产任务单（dept_orders.dept==produce）置 done，保持发货闸门 D5 /
 部门报表口径不变（它们只看生产单 status==done）。
 """
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -191,6 +191,51 @@ async def group_mark_done(
     return schemas.Msg(message="已标记完成" if data.done else "已撤销完成")
 
 
+# ==================== 组员设置本组「预计完成」 ====================
+def _valid_ymd(s: str) -> bool:
+    try:
+        y, m, d = str(s).split("-")
+        date(int(y), int(m), int(d))
+        return True
+    except Exception:
+        return False
+
+
+class GroupDueIn(BaseModel):
+    due_date: str
+
+
+@router.post("/group/{task_id}/due", response_model=schemas.Msg)
+async def set_group_due(
+    task_id: int,
+    data: GroupDueIn,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """钣金组/装配组各自设置本组「预计完成」日期（部门报表按此算效率/逾期）。
+    口径：组员（或主管/管理层）填写；填写一次后锁定，仅管理层可改正。"""
+    res = await db.execute(select(models.ProduceGroupTask).where(
+        models.ProduceGroupTask.id == task_id))
+    t = res.scalar_one_or_none()
+    if not t:
+        raise HTTPException(404, "分组任务不存在")
+    if not current.has_role(GROUP_ROLE[t.group], "pm_lead", "admin", "manager"):
+        raise HTTPException(403, f"仅{GROUP_NAME[t.group]}或生产主管/管理层可设置")
+    # 填写一次后锁定（仅管理层可改正）
+    if t.due_date and not current.has_role("admin", "manager"):
+        raise HTTPException(403, "预计完成已填写，不可修改（仅管理层可改）")
+    if not _valid_ymd(data.due_date):
+        raise HTTPException(400, "请填写有效日期 (YYYY-MM-DD)")
+    o = await _produce_order(db, t.order_id)
+    if o.start_date and data.due_date < o.start_date:
+        raise HTTPException(400, "预计完成不能早于生产开始")
+    t.due_date = data.due_date
+    await db.commit()
+    await write_audit(db, user=current, action="produce_group_due", target_type="produce_group_task",
+                      target_id=t.id, detail=f"{GROUP_NAME[t.group]} 预计完成={data.due_date}")
+    return schemas.Msg(message="已设置本组预计完成")
+
+
 # ==================== 组项目列表（tab） ====================
 class GroupProjectRow(BaseModel):
     project_id: int
@@ -200,6 +245,9 @@ class GroupProjectRow(BaseModel):
     task_id: int
     worker_name: Optional[str] = None   # 派给谁（主管/管理层视角展示）
     group_done: bool = False
+    start_date: Optional[str] = None    # 🆕 生产开始(父单派发日)
+    due_date: Optional[str] = None      # 🆕 本组预计完成(组员填，填后锁定)
+    done_date: Optional[str] = None     # 🆕 本组完成日期(中国自然日)
     sheetmetal_datasheet_id: Optional[int] = None   # 钣金装配表（只读引用）
     sheetmetal_done: bool = False
     # 仅装配组用：标准件清单/外协加工 是否已备齐
@@ -291,6 +339,8 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
             designer=(p.extra or {}).get("__o__设计师") or designer_by_pid.get(p.id),
             task_id=t.id, worker_name=wname_by_id.get(t.worker_id) if t.worker_id else None,
             group_done=(t.status == "done"),
+            start_date=_o.start_date, due_date=t.due_date,
+            done_date=(t.done_at + timedelta(hours=8)).strftime("%Y-%m-%d") if t.done_at else None,
             sheetmetal_datasheet_id=bj.id if bj else None,
             sheetmetal_done=bool(bj.done_flag) if bj else False,
         )

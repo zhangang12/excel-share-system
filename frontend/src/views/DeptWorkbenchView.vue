@@ -222,6 +222,27 @@ async function toggleGroupDone(row: GroupProjectRow) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   }
 }
+// 🆕 本组各自设置「预计完成」(填后锁定，仅管理层可改)
+async function setGroupDue(row: GroupProjectRow, val: string | null) {
+  if (!val) return
+  try {
+    await produceApi.setGroupDue(row.task_id, val)
+    ElMessage.success('已设置本组预计完成')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '设置失败')
+    await load()   // 失败回滚显示
+  }
+}
+// 🆕 任务跟踪父视图：取生产单某组(钣金/装配)的预计完成 / 完成日期
+function pgDue(row: DeptOrder, group: string): string {
+  const b = (row.produce_groups || []).find(g => g.group === group)
+  return b && b.due_date ? fmtDate(b.due_date) : '—'
+}
+function pgDone(row: DeptOrder, group: string): string {
+  const b = (row.produce_groups || []).find(g => g.group === group)
+  return b && b.done_date ? fmtDate(b.done_date) : '—'
+}
 
 // 🆕 设计完成第一步（设计完成按钮）
 const markingDesignDone = ref<number | null>(null)
@@ -877,11 +898,24 @@ const stockVisible = ref(false)
             <el-table-column prop="start_date" :label="options?.start_label" width="120">
               <template #default="{ row }">{{ row.start_date ? fmtDate(row.start_date) : '—' }}</template>
             </el-table-column>
-            <el-table-column prop="due_date" :label="options?.end_label" width="120">
-              <template #default="{ row }">{{ row.due_date ? fmtDate(row.due_date) : '—' }}</template>
+            <el-table-column :label="options?.end_label" :width="isProduce ? 150 : 120">
+              <template #default="{ row }">
+                <!-- 🆕 生产部：钣金/装配两组各自的预计完成 -->
+                <div v-if="isProduce" style="display:flex;flex-direction:column;gap:2px;font-size:12px;line-height:1.35;">
+                  <span>钣金 {{ pgDue(row, 'sheetmetal') }}</span>
+                  <span>装配 {{ pgDue(row, 'assembly') }}</span>
+                </div>
+                <template v-else>{{ row.due_date ? fmtDate(row.due_date) : '—' }}</template>
+              </template>
             </el-table-column>
-            <el-table-column label="完成" width="120">
-              <template #default="{ row }">{{ row.done_date ? fmtDate(row.done_date) : '—' }}</template>
+            <el-table-column label="完成" :width="isProduce ? 150 : 120">
+              <template #default="{ row }">
+                <div v-if="isProduce" style="display:flex;flex-direction:column;gap:2px;font-size:12px;line-height:1.35;">
+                  <span>钣金 {{ pgDone(row, 'sheetmetal') }}</span>
+                  <span>装配 {{ pgDone(row, 'assembly') }}</span>
+                </div>
+                <template v-else>{{ row.done_date ? fmtDate(row.done_date) : '—' }}</template>
+              </template>
             </el-table-column>
             <el-table-column label="完成效率" width="96">
               <template #default="{ row }">
@@ -921,6 +955,13 @@ const stockVisible = ref(false)
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
+            <el-table-column label="预计完成" min-width="150" align="center">
+              <template #default="{ row }">
+                <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
+                  size="small" placeholder="设置" style="width:132px" :clearable="false"
+                  :disabled="!!row.due_date && !isMgr" @change="(v) => setGroupDue(row, v)" />
+              </template>
+            </el-table-column>
             <el-table-column label="钣金完成" min-width="180" align="center">
               <template #default="{ row }">
                 <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
@@ -954,6 +995,13 @@ const stockVisible = ref(false)
             </el-table-column>
             <el-table-column label="外协加工" min-width="120" align="center">
               <template #default="{ row }"><StatusPill :text="row.outsource_ready ? '已备齐' : '进行中'" :variant="row.outsource_ready ? 'success' : 'warn'" /></template>
+            </el-table-column>
+            <el-table-column label="预计完成" min-width="150" align="center">
+              <template #default="{ row }">
+                <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
+                  size="small" placeholder="设置" style="width:132px" :clearable="false"
+                  :disabled="!!row.due_date && !isMgr" @change="(v) => setGroupDue(row, v)" />
+              </template>
             </el-table-column>
             <el-table-column label="装配完成" min-width="180" align="center">
               <template #default="{ row }">

@@ -115,6 +115,14 @@ class OrderReassignIn(BaseModel):
     worker_id: int
 
 
+class ProduceGroupBrief(BaseModel):
+    """🆕 生产单两组(钣金/装配)概要，供任务跟踪父视图展示各组预计完成/完成。"""
+    group: str                       # sheetmetal / assembly
+    name: str                        # 钣金 / 装配
+    due_date: Optional[str] = None   # 本组预计完成
+    done_date: Optional[str] = None  # 本组完成日期
+
+
 class OrderOut(BaseModel):
     id: int
     project_id: int
@@ -139,6 +147,7 @@ class OrderOut(BaseModel):
     input_files: list[AttachmentOut] = []
     start_files: list[AttachmentOut] = []
     output_files: list[AttachmentOut] = []
+    produce_groups: Optional[list[ProduceGroupBrief]] = None  # 🆕 仅生产单：钣金/装配两组预计完成
 
 
 class OrderOptionUser(BaseModel):

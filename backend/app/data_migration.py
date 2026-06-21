@@ -24,7 +24,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("done_at", "TIMESTAMP"),
     ],
     "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
-    "produce_group_tasks": [("worker_id", "INTEGER")],  # 🆕 生产分组派给具体人(钣金组/装配组)
+    "produce_group_tasks": [("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)")],  # 🆕 派给具体人 + 本组预计完成
     "dept_orders": [
         ("design_done_flag",   "BOOLEAN DEFAULT FALSE"),  # 🆕 设计完成第一步标记
         ("electric_done_flag", "BOOLEAN DEFAULT FALSE"),  # 🆕 接线完成第一步标记

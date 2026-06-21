@@ -123,7 +123,8 @@ def _agg_produce(rows: list, umap: dict, month: Optional[str] = None):
             r["done"] += 1
             done_cnt += 1
             dstr = _china_date_str(gt.done_at)
-            eff, on_time, over_days = compute_efficiency(parent.start_date, parent.due_date, dstr)
+            # 🆕 生产部按「本组各自填的预计完成」算效率/逾期（gt.due_date），开始=父单派发日
+            eff, on_time, over_days = compute_efficiency(parent.start_date, gt.due_date, dstr)
             if eff is not None:
                 r["effs"].append(eff)
                 effs.append(eff)
@@ -135,7 +136,7 @@ def _agg_produce(rows: list, umap: dict, month: Optional[str] = None):
                 overdue.append(OverdueItem(
                     dept_name=gname, worker_name=wname,
                     code=proj.code if proj else "", name=proj.name if proj else "",
-                    due_date=parent.due_date, done_date=dstr, over_days=over_days, eff=eff))
+                    due_date=gt.due_date, done_date=dstr, over_days=over_days, eff=eff))
     stats = []
     for r in by.values():
         e = r["effs"]

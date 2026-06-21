@@ -36,6 +36,7 @@ export interface DeptOrder {
   input_files: OrderAttachment[]
   start_files: OrderAttachment[]
   output_files: OrderAttachment[]
+  produce_groups?: { group: string; name: string; due_date?: string | null; done_date?: string | null }[] | null
 }
 
 export interface OptionUser { id: number; name: string }
@@ -122,6 +123,9 @@ export interface GroupProjectRow {
   task_id: number
   worker_name?: string | null        // 派给谁（主管视角）
   group_done: boolean
+  start_date?: string | null         // 生产开始(派发日)
+  due_date?: string | null           // 本组预计完成(组员填，填后锁定)
+  done_date?: string | null          // 本组完成日期
   sheetmetal_datasheet_id?: number | null
   sheetmetal_done: boolean
   standard_ready?: boolean | null    // 仅装配组
@@ -141,6 +145,8 @@ export const produceApi = {
       { sheetmetal_worker_id: sheetmetalWorkerId, assembly_worker_id: assemblyWorkerId }).then((r) => r.data),
   groupDone: (taskId: number, done: boolean) =>
     http.post(`/produce/group/${taskId}/done`, { done }).then((r) => r.data),
+  setGroupDue: (taskId: number, dueDate: string) =>
+    http.post(`/produce/group/${taskId}/due`, { due_date: dueDate }).then((r) => r.data),
   sheetmetalProjects: (year?: string, proj_status?: string) =>
     http.get<GroupProjectRow[]>('/produce/sheetmetal-projects', { params: { year, proj_status } }).then((r) => r.data),
   assemblyProjects: (year?: string, proj_status?: string) =>

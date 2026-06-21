@@ -12,7 +12,7 @@
 - 接单/换人回传一览「设计师/电工」列，设计开始/完成回传「制图开始/制图结束」
 """
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
@@ -218,8 +218,12 @@ async def _files_of(db: AsyncSession, order_ids: list[int]) -> dict[int, dict[st
     return out
 
 
+_PG_NAME = {"sheetmetal": "钣金", "assembly": "装配"}  # 任务跟踪父视图短标签
+
+
 def _order_to_out(o: models.DeptOrder, files: dict[str, list],
-                  notify_name: Optional[str] = None) -> schemas.OrderOut:
+                  notify_name: Optional[str] = None,
+                  produce_groups: Optional[list] = None) -> schemas.OrderOut:
     eff, on_time, _od = compute_efficiency(o.start_date, o.due_date, o.done_date)
     today_s = date.today().isoformat()
     overdue = bool(
@@ -243,6 +247,7 @@ def _order_to_out(o: models.DeptOrder, files: dict[str, list],
         input_files=files.get("input", []),
         start_files=files.get("start", []),
         output_files=files.get("output", []),
+        produce_groups=produce_groups,
     )
 
 
@@ -317,8 +322,21 @@ async def list_orders(
     if nids:
         r2 = await db.execute(select(models.User).where(models.User.id.in_(nids)))
         names = {u.id: _uname(u) for u in r2.scalars().all()}
+
+    # 🆕 生产单两组(钣金/装配)预计完成/完成，批量取（任务跟踪父视图展示「钣金 X / 装配 Y」）
+    pg_map: dict[int, list] = {}
+    produce_oids = [o.id for o in orders if o.dept == "produce"]
+    if produce_oids:
+        gr = await db.execute(select(models.ProduceGroupTask).where(
+            models.ProduceGroupTask.order_id.in_(produce_oids)))
+        for gt in gr.scalars().all():
+            pg_map.setdefault(gt.order_id, []).append(schemas.ProduceGroupBrief(
+                group=gt.group, name=_PG_NAME.get(gt.group, gt.group),
+                due_date=gt.due_date,
+                done_date=(gt.done_at + timedelta(hours=8)).strftime("%Y-%m-%d") if gt.done_at else None,
+            ))
     return [
-        _order_to_out(o, files[o.id], names.get(o.notify_user_id))
+        _order_to_out(o, files[o.id], names.get(o.notify_user_id), pg_map.get(o.id))
         for o in orders
     ]
 
