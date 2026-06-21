@@ -54,8 +54,8 @@ export interface DeptOptions {
 }
 
 export const ordersApi = {
-  list: (dept?: string, status?: string, year?: string, proj_status?: string) =>
-    http.get<DeptOrder[]>('/orders', { params: { dept, status, year, proj_status } }).then((r) => r.data),
+  list: (dept?: string, status?: string, year?: string, proj_status?: string, month?: string) =>
+    http.get<DeptOrder[]>('/orders', { params: { dept, status, year, proj_status, month } }).then((r) => r.data),
 
   options: (dept: string) =>
     http.get<DeptOptions>('/orders/options', { params: { dept } }).then((r) => r.data),

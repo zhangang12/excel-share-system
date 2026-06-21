@@ -253,6 +253,7 @@ async def list_orders(
     status: Optional[str] = Query(None),
     year: Optional[str] = Query(None),
     proj_status: Optional[str] = Query(None),
+    month: Optional[str] = Query(None, description="YYYY-MM；按接单/制图开始(start_date)月份过滤"),
     limit: int = Query(200, ge=1, le=500),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -269,6 +270,9 @@ async def list_orders(
         q = q.where(models.Project.code.like(f"{year}-%"))
     if proj_status:
         q = q.where(models.Project.status == proj_status)
+    if month:
+        # 按接单/制图开始月份过滤（start_date 为 'YYYY-MM-DD' 字符串，前缀匹配）
+        q = q.where(models.DeptOrder.start_date.like(f"{month}%"))
     if dept:
         _dept_or_400(dept)
         q = q.where(models.DeptOrder.dept == dept)

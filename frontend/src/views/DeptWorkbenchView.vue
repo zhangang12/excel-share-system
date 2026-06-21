@@ -88,16 +88,25 @@ const yearOptions = computed(() => {
   const y = parseInt(curYear); return [y - 1, y, y + 1].map(String)
 })
 const projStatusFilter = ref('进行中')
+// 月份筛选（按接单/制图开始 start_date 月份）：'' = 全部月份，否则 '01'..'12'
+const monthFilter = ref('')
+const monthOptions = Array.from({ length: 12 }, (_, i) => {
+  const v = String(i + 1).padStart(2, '0')
+  return { v, l: `${i + 1}月` }
+})
+// 拼成 YYYY-MM 传给后端；未选月份返回 undefined
+const ymParam = () => (monthFilter.value ? `${yearFilter.value}-${monthFilter.value}` : undefined)
 
 // ---- 数据加载 ----
 async function load() {
   loading.value = true
   try {
+    const ym = ymParam()
     if (isProduce.value) {
       // 生产部：主管/管理层走「派发/跟踪」+ 两组概览；钣金组/装配组仅取本组项目
       const tasks: Promise<any>[] = []
       if (isLead.value || isMgr.value) {
-        tasks.push(ordersApi.list('produce', undefined, yearFilter.value, projStatusFilter.value).then((os) => { orders.value = os }))
+        tasks.push(ordersApi.list('produce', undefined, yearFilter.value, projStatusFilter.value, ym).then((os) => { orders.value = os }))
         tasks.push(ordersApi.options('produce').then((o) => { options.value = o }))
         tasks.push(produceApi.sheetmetalProjects(yearFilter.value, projStatusFilter.value).then((r) => { sheetmetalRows.value = r }))
         tasks.push(produceApi.assemblyProjects(yearFilter.value, projStatusFilter.value).then((r) => { assemblyRows.value = r }))
@@ -112,7 +121,7 @@ async function load() {
       return
     }
     const [os, opt] = await Promise.all([
-      ordersApi.list(dept.value, undefined, yearFilter.value, projStatusFilter.value),
+      ordersApi.list(dept.value, undefined, yearFilter.value, projStatusFilter.value, ym),
       ordersApi.options(dept.value),
     ])
     orders.value = os
@@ -478,6 +487,9 @@ const stockVisible = ref(false)
       <el-input v-model="searchQuery" placeholder="搜索项目编号/名称" clearable size="large" style="width:200px" />
       <el-select v-model="yearFilter" size="large" style="width:100px" @change="load">
         <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
+      </el-select>
+      <el-select v-model="monthFilter" size="large" style="width:110px" clearable placeholder="全部月份" @change="load">
+        <el-option v-for="m in monthOptions" :key="m.v" :label="m.l" :value="m.v" />
       </el-select>
       <el-select v-model="projStatusFilter" size="large" style="width:100px" @change="load">
         <el-option label="进行中" value="进行中" />
