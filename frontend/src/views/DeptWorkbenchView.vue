@@ -296,10 +296,12 @@ function matchSearch(o: DeptOrder) {
   return (o.project_code || '').toLowerCase().includes(q) ||
          (o.project_name || '').toLowerCase().includes(q)
 }
-// ---- 工人视角数据 ----
-const myPending  = computed(() => orders.value.filter(o => o.status === 'assigned'    && matchSearch(o)))
-const myWorking  = computed(() => orders.value.filter(o => o.status === 'in_progress' && matchSearch(o)))
-const myDone     = computed(() => orders.value.filter(o => o.status === 'done'        && matchSearch(o)))
+// ---- 工人视角数据（只显示派给自己的订单，兼容多角色账号） ----
+const myUid = computed(() => auth.user?.id)
+function isMyOrder(o: DeptOrder) { return o.worker_id === myUid.value }
+const myPending  = computed(() => orders.value.filter(o => o.status === 'assigned'    && isMyOrder(o) && matchSearch(o)))
+const myWorking  = computed(() => orders.value.filter(o => o.status === 'in_progress' && isMyOrder(o) && matchSearch(o)))
+const myDone     = computed(() => orders.value.filter(o => o.status === 'done'        && isMyOrder(o) && matchSearch(o)))
 // ---- 负责人视角数据 ----
 const pendingAssign = computed(() => orders.value.filter(o => o.status === 'pending_assign' && matchSearch(o)))
 
