@@ -175,7 +175,7 @@ async function downloadExcel() {
                 @blur="saveEdit(row, f)"
                 @keydown="onKeydown($event, row, f)"
               />
-              <span v-else class="smg-cell-text">{{ getCellVal(row, f) || ' ' }}</span>
+              <span v-else class="smg-cell-text">{{ getCellVal(row, f.id) || ' ' }}</span>
             </td>
             <td v-if="canEdit" class="smg-td smg-op">
               <el-button size="small" link type="danger" :icon="Delete" @click.stop="deleteRow(row)" />
