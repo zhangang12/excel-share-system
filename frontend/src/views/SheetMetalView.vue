@@ -83,7 +83,7 @@ function viewSheet(row: Row) {
       <EmptyHint v-if="!loading && !rows.length" text="暂无承接项目" />
     </el-card>
 
-    <el-dialog v-model="viewVisible" :title="viewTitle" width="1000px" class="v3-scroll-dialog" destroy-on-close>
+    <el-dialog v-model="viewVisible" :title="viewTitle" width="90vw" class="v3-scroll-dialog" destroy-on-close>
       <SheetmetalGrid
         v-if="viewRow?.sheetmetal_datasheet_id"
         :datasheetId="viewRow.sheetmetal_datasheet_id"

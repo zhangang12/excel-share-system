@@ -201,14 +201,15 @@ async function downloadExcel() {
 .smg-actions { display: flex; gap: 8px; }
 
 .smg-table-wrap {
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   max-height: calc(100vh - 280px);
   border: 1px solid var(--el-border-color);
   border-radius: 4px;
 }
 .smg-table {
   width: 100%; border-collapse: collapse;
-  font-size: 13px; table-layout: auto;
+  font-size: 13px; table-layout: fixed;
 }
 .smg-th {
   position: sticky; top: 0; z-index: 1;
@@ -224,7 +225,7 @@ async function downloadExcel() {
 .smg-td {
   padding: 0; border-bottom: 1px solid var(--el-border-color-light);
   border-right: 1px solid var(--el-border-color-lighter);
-  vertical-align: middle; min-width: 80px;
+  vertical-align: middle;
 }
 .smg-td:last-child { border-right: none; }
 .smg-row:last-child .smg-td { border-bottom: none; }

@@ -1029,7 +1029,7 @@ const stockVisible = ref(false)
     </el-dialog>
 
     <!-- ===== 钣金装配表可编辑预览（钣金组/装配组） ===== -->
-    <el-dialog v-model="viewVisible" :title="viewTitle" width="1000px" destroy-on-close>
+    <el-dialog v-model="viewVisible" :title="viewTitle" width="90vw" destroy-on-close>
       <SheetmetalGrid
         v-if="viewRow?.sheetmetal_datasheet_id"
         :datasheetId="viewRow.sheetmetal_datasheet_id"
