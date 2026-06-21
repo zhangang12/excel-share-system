@@ -123,8 +123,8 @@ async function load() {
         if (o.status === 'in_progress') loadSheetStatus(o.project_id)
       }
     }
-    // 负责人(含同时是工人的多角色)默认进「待分派」；纯工人进「我的待办」
-    if (!activeTab.value) activeTab.value = (isLead.value || isMgr.value) ? 'assign' : 'todo'
+    // 负责人(含同时是工人的多角色)默认进「待分派」；纯工人进「待接单」
+    if (!activeTab.value) activeTab.value = (isLead.value || isMgr.value) ? 'assign' : 'pending'
   } finally {
     loading.value = false
   }
@@ -289,8 +289,9 @@ watch(dept, () => { activeTab.value = ''; load() })
 onMounted(load)
 
 // ---- 工人视角数据 ----
-const myTodo = computed(() => orders.value.filter(o => ['assigned', 'in_progress'].includes(o.status)))
-const myDone = computed(() => orders.value.filter(o => o.status === 'done'))
+const myPending  = computed(() => orders.value.filter(o => o.status === 'assigned'))
+const myWorking  = computed(() => orders.value.filter(o => o.status === 'in_progress'))
+const myDone     = computed(() => orders.value.filter(o => o.status === 'done'))
 // ---- 负责人视角数据 ----
 const pendingAssign = computed(() => orders.value.filter(o => o.status === 'pending_assign'))
 
@@ -517,10 +518,46 @@ const stockVisible = ref(false)
     <!-- ===== 部门工作台：负责人(待分派/跟踪) + 工人(待办/已完成) 并存；多角色用户全部显示 ===== -->
     <template v-if="isWorker || isLead || isMgr || isSheetmetal">
       <el-tabs v-model="activeTab">
-        <el-tab-pane v-if="isWorker && !isProduce" :label="`📥 我的待办 (${myTodo.length})`" name="todo">
-          <EmptyHint v-if="!loading && myTodo.length === 0" text="暂无待办任务" />
+        <!-- ===== 待接单 tab ===== -->
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`📩 待接单 (${myPending.length})`" name="pending">
+          <EmptyHint v-if="!loading && myPending.length === 0" text="暂无待接单任务" />
           <div v-else class="todo-grid" v-loading="loading">
-            <el-card v-for="o in myTodo" :key="o.id" shadow="hover"
+            <el-card v-for="o in myPending" :key="o.id" shadow="hover"
+                     class="todo-card" :class="{ urgent: o.overdue }">
+              <div class="tc-head work-card-head">
+                <span class="tc-code">{{ o.project_code }}</span>
+                <StatusPill :text="ORDER_STATUS_TEXT[o.status]" :variant="PILL_VARIANT[ORDER_STATUS_TAG[o.status]] || 'muted'" />
+                <StatusPill v-if="o.overdue" text="已超预计" variant="danger" />
+              </div>
+              <div class="tc-name">{{ o.project_name }}</div>
+              <div v-if="o.req_text" class="tc-req">📌 {{ o.req_text }}</div>
+              <div v-if="o.input_files.length" class="tc-files">
+                <el-tag v-for="f in o.input_files" :key="f.id" size="small" effect="plain"
+                        class="file-chip" @click="downloadAttachment(f)">
+                  <el-icon><Document /></el-icon>{{ f.name }}<el-icon class="dl"><Download /></el-icon>
+                </el-tag>
+              </div>
+              <div class="tc-dates">
+                <div class="fd">
+                  <label>{{ options?.start_label }}</label>
+                  <el-date-picker v-model="dateOf(o).start" type="date" value-format="YYYY-MM-DD" size="small" style="width: 100%" />
+                </div>
+                <div class="fd">
+                  <label>{{ options?.end_label }}</label>
+                  <el-date-picker v-model="dateOf(o).due" type="date" value-format="YYYY-MM-DD" size="small" style="width: 100%" />
+                </div>
+              </div>
+              <div class="tc-hint">时间一经填写本人不可改（仅管理层可改）</div>
+              <el-button type="primary" size="small" @click="doStart(o)">开始</el-button>
+            </el-card>
+          </div>
+        </el-tab-pane>
+
+        <!-- ===== 进行中 tab ===== -->
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`⚙️ 进行中 (${myWorking.length})`" name="working">
+          <EmptyHint v-if="!loading && myWorking.length === 0" text="暂无进行中任务" />
+          <div v-else class="todo-grid" v-loading="loading">
+            <el-card v-for="o in myWorking" :key="o.id" shadow="hover"
                      class="todo-card" :class="{ urgent: o.overdue }">
               <div class="tc-head work-card-head">
                 <span class="tc-code">{{ o.project_code }}</span>
@@ -537,24 +574,8 @@ const stockVisible = ref(false)
                 </el-tag>
               </div>
 
-              <!-- 待接单：填时间开始 -->
-              <template v-if="o.status === 'assigned'">
-                <div class="tc-dates">
-                  <div class="fd">
-                    <label>{{ options?.start_label }}</label>
-                    <el-date-picker v-model="dateOf(o).start" type="date" value-format="YYYY-MM-DD" size="small" style="width: 100%" />
-                  </div>
-                  <div class="fd">
-                    <label>{{ options?.end_label }}</label>
-                    <el-date-picker v-model="dateOf(o).due" type="date" value-format="YYYY-MM-DD" size="small" style="width: 100%" />
-                  </div>
-                </div>
-                <div class="tc-hint">时间一经填写本人不可改（仅管理层可改）</div>
-                <el-button type="primary" size="small" @click="doStart(o)">开始</el-button>
-              </template>
-
               <!-- 进行中：起始上传 + 完成 -->
-              <template v-else-if="o.status === 'in_progress'">
+              <template>
                 <div class="tc-kv">
                   {{ options?.start_label }}：<b>{{ fmtDate(o.start_date) }}</b>
                   ｜ {{ options?.end_label }}：<b>{{ fmtDate(o.due_date) }}</b>
