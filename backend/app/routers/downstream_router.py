@@ -4,9 +4,16 @@
 - 钣金组：项目列表 + PDF 图纸包(order_start_output/sheetpkg) + 钣金装配表只读引用(datasheet_id)
 - 采购部：采购清单收件箱(order_start_output/plist) — 编号/名称/来源/文件/收到时间
 """
+import io
+import re
+import zipfile
+from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -14,6 +21,7 @@ from sqlalchemy import select
 from ..database import get_db
 from .. import models, schemas
 from ..deps import require_roles
+from ..config import settings
 
 router = APIRouter(prefix="/api", tags=["下游承接"])
 
@@ -178,6 +186,106 @@ async def purchase_projects(
             outsource_img_files=img_by_pid.get(p.id, []),
         ))
     return rows
+
+
+# ---------- 采购资料打包下载（勾选表格/附件 → zip） ----------
+_PURCHASE_SHEET_NAMES = ("外协加工", "不锈钢原料下料单", "电工采购单", "标准件清单")
+
+
+def _safe_fname(s: str) -> str:
+    """去掉文件名里不安全/跨平台不兼容的字符。"""
+    return re.sub(r'[\\/:*?"<>|\r\n]', "_", str(s)).strip() or "未命名"
+
+
+def _uniq_name(used: set, name: str) -> str:
+    """zip 内重名时追加 (2)(3)… 避免覆盖。"""
+    if name not in used:
+        used.add(name)
+        return name
+    stem, dot, ext = name.rpartition(".")
+    i = 2
+    while True:
+        cand = f"{stem}({i}).{ext}" if dot else f"{name}({i})"
+        if cand not in used:
+            used.add(cand)
+            return cand
+        i += 1
+
+
+class PurchasePackageReq(BaseModel):
+    project_id: int
+    sheet_ids: list[int] = []        # 采购数据表（导出为 xlsx）
+    attachment_ids: list[int] = []   # 设计推送附件（原始文件）
+
+
+@router.post("/purchase/package")
+async def purchase_package(
+    req: PurchasePackageReq,
+    _: models.User = Depends(require_roles("buyer", "buyer_standard", "buyer_outsource", "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """采购部：把勾选的采购数据表(导出 xlsx)与设计推送附件(CAD激光图纸/外购附图)打包成一个 zip 下载。
+    仅打包属于该项目、且属于采购可见范围的内容；逐项校验归属，避免越权下载他项目文件。"""
+    pr = await db.execute(select(models.Project).where(
+        models.Project.id == req.project_id, models.Project.is_deleted == False))  # noqa: E712
+    p = pr.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "项目不存在")
+
+    buf = io.BytesIO()
+    used: set = set()
+    count = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1) 采购数据表 → 各导出一个 xlsx（仅限本项目的 4 张采购表）
+        if req.sheet_ids:
+            dres = await db.execute(select(models.Datasheet).where(
+                models.Datasheet.id.in_(req.sheet_ids),
+                models.Datasheet.project_id == req.project_id,
+                models.Datasheet.name.in_(_PURCHASE_SHEET_NAMES)))
+            for d in dres.scalars().all():
+                fres = await db.execute(select(models.Field).where(
+                    models.Field.datasheet_id == d.id).order_by(models.Field.sort_order, models.Field.id))
+                fields = list(fres.scalars().all())
+                rres = await db.execute(select(models.Record).where(
+                    models.Record.datasheet_id == d.id).order_by(models.Record.sort_order, models.Record.id))
+                records = list(rres.scalars().all())
+                wb = Workbook()
+                ws = wb.active
+                ws.title = (d.name or "Sheet")[:31]
+                ws.append([f.name for f in fields])
+                for r in records:
+                    line = []
+                    for f in fields:
+                        v = (r.values or {}).get(str(f.id))
+                        if isinstance(v, list):
+                            v = "、".join(str(x) for x in v)
+                        line.append(v)
+                    ws.append(line)
+                xbuf = io.BytesIO()
+                wb.save(xbuf)
+                zf.writestr(_uniq_name(used, f"{p.code}_{_safe_fname(d.name)}.xlsx"), xbuf.getvalue())
+                count += 1
+        # 2) 设计推送附件 → 原始文件（仅限本项目的 sheetpkg/outsource_img）
+        if req.attachment_ids:
+            ares = await db.execute(select(models.Attachment).where(
+                models.Attachment.id.in_(req.attachment_ids),
+                models.Attachment.project_id == req.project_id,
+                models.Attachment.biz_type == "order_start_output",
+                models.Attachment.kind.in_(("sheetpkg", "outsource_img"))))
+            for a in ares.scalars().all():
+                fp = Path(settings.files_dir) / a.path
+                if not fp.is_file():
+                    continue
+                zf.write(fp, _uniq_name(used, _safe_fname(a.name)))
+                count += 1
+
+    if count == 0:
+        raise HTTPException(400, "没有可打包的内容（所选项目暂无对应表格/附件）")
+    buf.seek(0)
+    zipname = f"{p.code}_采购资料.zip"
+    return StreamingResponse(buf, media_type="application/zip", headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(zipname)}",
+    })
 
 
 @router.get("/purchase/inbox", response_model=List[PurchaseInboxRow])
