@@ -51,6 +51,22 @@ function getCellVal(row: SheetRow, fid: number): string {
   return v == null ? '' : String(v)
 }
 
+// 进度列整格着色（完成绿 / 进行中红），口径与项目详单 DatasheetGrid 一致
+const PROGRESS_FIELD_NAMES = new Set(['进度', '进度100%', '完成度', '状态', '完工度'])
+const STATUS_DONE_WORDS = new Set(['完成', '已完成', '完工', '已结束'])
+const STATUS_DOING_WORDS = new Set([
+  '进行中', '正在做', '处理中', '在做', '未开始', '待开始', '待处理', '未开工',
+  '延期', '逾期', '超期', '暂停', '搁置', '挂起', '取消', '作废', '待审核', '审核中',
+])
+function cellStateClass(field: Field, row: SheetRow): string {
+  if (!PROGRESS_FIELD_NAMES.has((field.name || '').trim())) return ''
+  const v = getCellVal(row, field.id).trim()
+  if (!v) return ''
+  if (STATUS_DONE_WORDS.has(v)) return 'smg-done'
+  if (STATUS_DOING_WORDS.has(v)) return 'smg-doing'
+  return ''
+}
+
 function startEdit(row: SheetRow, field: Field) {
   if (!props.canEdit) return
   editingCell.value = { rowId: row.id, fieldId: field.id }
@@ -150,7 +166,7 @@ async function deleteRow(row: SheetRow) {
             <td
               v-for="f in fields" :key="f.id"
               class="smg-td"
-              :class="{ 'smg-editable': canEdit, 'smg-editing': isEditing(row, f) }"
+              :class="[cellStateClass(f, row), { 'smg-editable': canEdit, 'smg-editing': isEditing(row, f) }]"
               @click="startEdit(row, f)"
             >
               <input
@@ -186,63 +202,81 @@ async function deleteRow(row: SheetRow) {
 .smg-ro { color: var(--el-color-info); }
 .smg-actions { display: flex; gap: 8px; }
 
+/* ===== 表格：石板灰主题，与项目详单 DatasheetGrid 视觉一致 ===== */
 .smg-table-wrap {
-  /* 列放不下时横向滚动，不再裁切表头（14 寸笔记本下 18 列可滚动查看） */
+  /* 列放不下时横向滚动；外框 2px 深灰 + 圆角，整体更有分量 */
   overflow-x: auto;
   overflow-y: auto;
   max-height: calc(100vh - 280px);
-  border: 1px solid var(--el-border-color);
-  border-radius: 4px;
+  border: 2px solid #64748b;
+  border-radius: 10px;
 }
 .smg-table {
-  /* 列按内容自适应宽度：表头与日期完整显示，整表可超出容器宽度后横向滚动 */
+  /* 列按内容自适应宽度，整表可超出容器后横向滚动 */
   width: max-content; min-width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate; border-spacing: 0;
   font-size: 12.5px; table-layout: auto;
+  color: #1e293b;
 }
-.smg-th, .smg-td { min-width: 58px; }
-.smg-th {
-  position: sticky; top: 0; z-index: 1;
-  background: var(--el-color-primary-dark-2, #1e3a5f);
-  color: #fff; font-weight: 500;
-  padding: 7px 9px; text-align: left; white-space: nowrap;
-  border-right: 1px solid rgba(255,255,255,.15);
+.smg-th, .smg-td {
+  min-width: 58px; text-align: center;
+  border-right: 2px solid #94a3b8;
+  border-bottom: 2px solid #94a3b8;
 }
-.smg-th:last-child { border-right: none; }
-.smg-idx { width: 44px; min-width: 44px; text-align: center; }
-.smg-op { width: 52px; min-width: 52px; text-align: center; }
-
-.smg-td {
-  padding: 0; border-bottom: 1px solid var(--el-border-color-light);
-  border-right: 1px solid var(--el-border-color-lighter);
-  vertical-align: middle;
-}
-.smg-td:last-child { border-right: none; }
+.smg-th:last-child, .smg-td:last-child { border-right: none; }
 .smg-row:last-child .smg-td { border-bottom: none; }
-.smg-row:nth-child(even) { background: var(--el-fill-color-lighter, #f9fafb); }
-.smg-row:hover { background: var(--el-fill-color-light, #f0f4ff); }
 
-.smg-editable { cursor: pointer; }
-.smg-editable:hover { background: #eff6ff !important; }
-.smg-editing { background: #fff !important; padding: 0 !important; }
+/* 表头：石板渐变 + 深色粗体 + 吸顶 */
+.smg-th {
+  position: sticky; top: 0; z-index: 2;
+  background: linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%);
+  color: #0f172a; font-weight: 700;
+  padding: 7px 10px; white-space: nowrap;
+  border-bottom: 2px solid #64748b;
+}
+.smg-idx, .smg-op { color: #475569; font-weight: 600; }
+.smg-idx { width: 44px; min-width: 44px; }
+.smg-op { width: 56px; min-width: 56px; }
+
+/* 数据单元格：白底 / 斑马灰 / 悬停浅蓝 */
+.smg-td { padding: 0; vertical-align: middle; background: #ffffff; }
+.smg-row:nth-child(even) .smg-td { background: #e2e8f0; }
+.smg-row:hover .smg-td { background: #dbeafe; }
+
+.smg-editable { cursor: cell; }
+.smg-editable:hover {
+  background: rgba(37, 99, 235, .10) !important;
+  outline: 1px dashed var(--el-color-primary, #2563eb);
+  outline-offset: -2px;
+}
+.smg-editing { background: #f5f9ff !important; padding: 0 !important; }
 
 .smg-cell-text {
-  display: block; padding: 6px 9px;
-  /* 单行显示，过长用省略号；点击单元格即可查看/编辑完整内容，悬停 title 显示全文 */
+  display: block; padding: 6px 10px;
+  /* 单行显示，过长省略号；点击单元格查看/编辑完整内容，悬停 title 显示全文 */
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: 260px;
+  font-weight: 600; color: #0f172a;
 }
 .smg-input {
   width: 100%; height: 100%;
-  border: 2px solid var(--el-color-primary);
+  border: 2px solid var(--el-color-primary, #2563eb);
   padding: 5px 8px; font-size: 12.5px;
-  outline: none; background: #fff;
-  box-sizing: border-box;
+  outline: none; background: #f5f9ff;
+  box-sizing: border-box; text-align: center;
 }
+
+/* 进度列整格着色：完成绿 / 进行中红（与项目详单一致） */
+.smg-td.smg-done { background: #d1fae5 !important; }
+.smg-td.smg-done .smg-cell-text { color: #065f46; font-weight: 800; }
+.smg-td.smg-doing { background: #fee2e2 !important; }
+.smg-td.smg-doing .smg-cell-text { color: #991b1b; font-weight: 800; }
+.smg-row:hover .smg-td.smg-done { background: #b7f0d2 !important; }
+.smg-row:hover .smg-td.smg-doing { background: #fbcfcf !important; }
 
 .smg-empty {
   text-align: center; color: var(--el-text-color-secondary);
-  padding: 32px; font-size: 13px;
+  padding: 32px; font-size: 13px; background: #fff;
 }
 .smg-footer {
   font-size: 12px; color: var(--el-text-color-secondary);
