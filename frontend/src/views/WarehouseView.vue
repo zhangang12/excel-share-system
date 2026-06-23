@@ -6,10 +6,11 @@ import { Plus, Search, Lock, View, Download, Delete } from '@element-plus/icons-
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListItem } from '@/api/warehouse'
-import { attachmentBlobUrl, isImageAtt, isPdfAtt, canInlinePreview } from '@/api/attachments'
+import { canInlinePreview } from '@/api/attachments'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import AttachmentPreview from '@/components/AttachmentPreview.vue'
 import { fmtDate } from '@/utils/format'
 
 const auth = useAuthStore()
@@ -135,23 +136,8 @@ async function deleteShipList(item: ShipListItem) {
   await loadShipLists()
 }
 // 预览：图片弹窗 / PDF 新标签 / 其它直接下载
-const slImgVisible = ref(false)
-const slImgSrc = ref('')
-const slImgName = ref('')
-async function previewShipList(item: ShipListItem) {
-  if (isImageAtt(item.name)) {
-    if (slImgSrc.value) URL.revokeObjectURL(slImgSrc.value)
-    slImgSrc.value = await attachmentBlobUrl(item.id)
-    slImgName.value = item.name
-    slImgVisible.value = true
-  } else if (isPdfAtt(item.name)) {
-    const url = await attachmentBlobUrl(item.id)
-    window.open(url, '_blank'); setTimeout(() => URL.revokeObjectURL(url), 60_000)
-  } else {
-    downloadAttachment({ id: item.id, name: item.name })
-  }
-}
-function closeSlImg() { if (slImgSrc.value) { URL.revokeObjectURL(slImgSrc.value); slImgSrc.value = '' } }
+const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
+function previewShipList(item: ShipListItem) { previewRef.value?.open({ id: item.id, name: item.name }) }
 
 function onTab(name: string) {
   if (name === 'txn' && !txns.value.length) loadTxns()
@@ -359,10 +345,8 @@ function onTab(name: string) {
       </template>
     </el-dialog>
 
-    <!-- 🆕 #9 发货清单图片预览 -->
-    <el-dialog v-model="slImgVisible" :title="slImgName" width="80%" top="6vh" append-to-body @close="closeSlImg">
-      <div style="text-align:center"><img v-if="slImgSrc" :src="slImgSrc" :alt="slImgName" style="max-width:100%;max-height:78vh" /></div>
-    </el-dialog>
+    <!-- 🆕 #9 发货清单统一预览（图片/PDF/Excel/Word） -->
+    <AttachmentPreview ref="previewRef" />
   </div>
 </template>
 

@@ -903,20 +903,16 @@ const stockVisible = ref(false)
                 <template v-else>{{ row.worker_name || '待分派' }}</template>
               </template>
             </el-table-column>
-            <el-table-column label="合同技术资料" min-width="150">
+            <el-table-column label="合同技术资料" width="118" align="center">
               <template #default="{ row }">
-                <el-tag v-for="f in row.input_files" :key="f.id" size="small" effect="plain"
-                        class="file-chip" @click="downloadAttachment(f)">{{ f.name }}</el-tag>
-                <span v-if="!row.input_files.length">—</span>
+                <el-tag v-if="row.input_files.length" size="small" type="success" effect="light" round>已收到 {{ row.input_files.length }}</el-tag>
+                <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="上传资料" min-width="140">
+            <el-table-column label="上传资料" width="110" align="center">
               <template #default="{ row }">
-                <template v-if="row.start_files.length || row.output_files.length">
-                  <el-tag v-for="f in [...row.start_files, ...row.output_files]" :key="f.id"
-                          size="small" effect="plain" class="file-chip" @click="downloadAttachment(f)">{{ f.name }}</el-tag>
-                </template>
-                <span v-else>—</span>
+                <el-tag v-if="row.start_files.length + row.output_files.length" size="small" type="success" effect="light" round>已收到 {{ row.start_files.length + row.output_files.length }}</el-tag>
+                <span v-else class="muted">—</span>
               </template>
             </el-table-column>
             <el-table-column label="状态" width="106" align="center">

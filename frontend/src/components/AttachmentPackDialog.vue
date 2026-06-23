@@ -2,9 +2,10 @@
 // 🆕 通用「资料预览 + 打包下载」抽屉：任务跟踪/物流/仓库等处复用
 import { ref, computed, watch } from 'vue'
 import { Download, View } from '@element-plus/icons-vue'
-import { packageAttachments, canInlinePreview, isImageAtt, isPdfAtt, attachmentBlobUrl } from '@/api/attachments'
+import { packageAttachments, canInlinePreview } from '@/api/attachments'
 import { downloadAttachment } from '@/api/orders'
 import { ElMessage } from 'element-plus'
+import AttachmentPreview from './AttachmentPreview.vue'
 
 interface Item { id: number; name: string }
 interface Group { label: string; items: Item[] }
@@ -33,31 +34,15 @@ async function doPack() {
   await packageAttachments(sel.value, props.zipname || '资料打包')
 }
 
-// 内联预览：图片 → 弹窗看；pdf → 新标签打开；其它 → 直接下载
-const imgVisible = ref(false)
-const imgSrc = ref('')
-const imgName = ref('')
-async function preview(it: Item) {
-  if (isImageAtt(it.name)) {
-    if (imgSrc.value) URL.revokeObjectURL(imgSrc.value)
-    imgSrc.value = await attachmentBlobUrl(it.id)
-    imgName.value = it.name
-    imgVisible.value = true
-  } else if (isPdfAtt(it.name)) {
-    const url = await attachmentBlobUrl(it.id)
-    window.open(url, '_blank')
-    setTimeout(() => URL.revokeObjectURL(url), 60_000)
-  } else {
-    downloadAttachment(it)  // 非图片/PDF 无法网页预览，直接下载
-  }
-}
-function closeImg() { if (imgSrc.value) URL.revokeObjectURL(imgSrc.value); imgSrc.value = '' }
+// 内联预览：交给统一预览组件（图片/PDF/xls/xlsx/docx；doc/dwg 自动下载）
+const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
+function preview(it: Item) { previewRef.value?.open(it) }
 </script>
 
 <template>
   <el-drawer v-model="visible" :title="title || '资料预览 / 打包下载'" direction="rtl" size="440px" destroy-on-close>
     <template v-if="allItems.length">
-      <div class="apd-tip">勾选需要的资料，点「打包下载」打成 zip；可点「预览」在线查看（图片/PDF）。</div>
+      <div class="apd-tip">勾选需要的资料，点「打包下载」打成 zip；可点「预览」在线查看（图片/PDF/Excel/Word）。</div>
       <div class="apd-head">
         <el-checkbox :model-value="sel.length === allItems.length"
                      :indeterminate="sel.length > 0 && sel.length < allItems.length"
@@ -84,10 +69,8 @@ function closeImg() { if (imgSrc.value) URL.revokeObjectURL(imgSrc.value); imgSr
       <el-button type="primary" :icon="Download" :disabled="!sel.length" @click="doPack">打包下载（{{ sel.length }}）</el-button>
     </template>
 
-    <!-- 图片预览 -->
-    <el-dialog v-model="imgVisible" :title="imgName" width="80%" top="6vh" append-to-body @close="closeImg">
-      <div style="text-align:center"><img v-if="imgSrc" :src="imgSrc" :alt="imgName" style="max-width:100%;max-height:78vh" /></div>
-    </el-dialog>
+    <!-- 统一预览（图片/PDF/Excel/Word） -->
+    <AttachmentPreview ref="previewRef" />
   </el-drawer>
 </template>
 
