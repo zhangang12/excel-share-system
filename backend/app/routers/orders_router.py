@@ -711,7 +711,8 @@ async def mark_design_done(
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """设计完成第一步：校验 CAD激光图纸+外购附图已上传 + 四表已导入，然后置 design_done_flag。"""
+    """设计完成 = 直接完成(考核按设计完成日期)：校验 CAD激光图纸+外购附图已上传 + 四表已导入，
+    然后置 status=done、计入考核。产品说明书/铭牌属「发货准备」，为完成后可选上传，不纳入考核。"""
     o = await _order_or_404(db, oid)
     if o.dept != "design":
         raise HTTPException(400, "仅设计部任务可用")
@@ -740,10 +741,27 @@ async def mark_design_done(
     if missing:
         raise HTTPException(400, f"四表未导入齐：缺 {'、'.join(missing)}")
 
+    # 🆕 点「设计完成」即完成：置 done + 写完成日期 + 计考核（发货准备的说明书/铭牌不在此校验/考核）
+    cfg = DEPTS["design"]
+    today_s = date.today().isoformat()
     o.design_done_flag = True
+    o.status = "done"
+    o.done_date = today_s
+    p = o.project
+    if cfg["writeback_done"]:
+        _writeback_overview(p, cfg["writeback_done"], today_s)
     await db.commit()
-    await write_audit(db, user=current, action="design_done", target_type="dept_order", target_id=o.id)
-    return schemas.Msg(message="已标记设计完成，请继续上传产品说明书和铭牌")
+
+    eff, on_time, overdue_days = compute_efficiency(o.start_date, o.due_date, o.done_date)
+    if overdue_days > 0:
+        text = (f"【逾期完成】设计 {p.code} {p.name}：预计 {o.due_date}，实际 {o.done_date}，"
+                f"超 {overdue_days} 天，效率 {eff}%（负责人：{_uname(o.worker)}）")
+        await push_message(db, to_role=cfg["lead_role"], kind="warn", text=text, biz_type="order", biz_id=o.id)
+        await push_message(db, to_role="manager", kind="warn", text=text, biz_type="order", biz_id=o.id)
+    await write_audit(db, user=current, action="design_done", target_type="dept_order",
+                      target_id=o.id, detail=f"done eff={eff}% on_time={on_time}")
+    return schemas.Msg(message="设计完成，已计入考核。可继续上传产品说明书/铭牌（发货准备，不影响考核）"
+                       + (f"；逾期 {overdue_days} 天已提醒主管" if overdue_days else ""))
 
 
 @router.post("/{oid}/electric_done", response_model=schemas.Msg)
@@ -1000,3 +1018,26 @@ async def reassign_order(
     await write_audit(db, user=current, action="reassign", target_type="dept_order",
                       target_id=o.id, detail=f"{old_name}→{new_name}")
     return schemas.Msg(message=f"已将任务由 {old_name} 转交给 {new_name}")
+
+
+@router.post("/{oid}/edit-due", response_model=schemas.Msg)
+async def edit_due(
+    oid: int, data: schemas.OrderEditDueIn,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 管理层修改任务「预计完成时间」(due_date)。不受「本人填写后不可改」限制，
+    任意状态(待接单/进行中/已完成)均可改；仅 admin/manager。"""
+    if not _is_mgr(current):
+        raise HTTPException(403, "仅管理层可修改预计完成时间")
+    if not _valid_date(data.due_date):
+        raise HTTPException(400, "预计完成日期格式应为 YYYY-MM-DD")
+    o = await _order_or_404(db, oid)
+    if o.start_date and data.due_date < o.start_date:
+        raise HTTPException(400, "预计完成不能早于开始日期")
+    old = o.due_date
+    o.due_date = data.due_date
+    await db.commit()
+    await write_audit(db, user=current, action="edit_due", target_type="dept_order",
+                      target_id=o.id, detail=f"{old}→{data.due_date}")
+    return schemas.Msg(message="已更新预计完成时间")

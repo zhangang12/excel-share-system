@@ -115,6 +115,10 @@ class OrderReassignIn(BaseModel):
     worker_id: int
 
 
+class OrderEditDueIn(BaseModel):
+    due_date: str  # YYYY-MM-DD（管理层修改预计完成时间）
+
+
 class ProduceGroupBrief(BaseModel):
     """🆕 生产单两组(钣金/装配)概要，供任务跟踪父视图展示各组预计完成/完成。"""
     group: str                       # sheetmetal / assembly

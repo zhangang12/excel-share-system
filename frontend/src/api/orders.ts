@@ -103,6 +103,10 @@ export const ordersApi = {
   reassign: (id: number, workerId: number) =>
     http.post(`/orders/${id}/reassign`, { worker_id: workerId }).then((r) => r.data),
 
+  // 🆕 管理层改预计完成时间(任意状态可改,不受本人锁定)
+  editDue: (id: number, dueDate: string) =>
+    http.post(`/orders/${id}/edit-due`, { due_date: dueDate }).then((r) => r.data),
+
   // 🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账
   spareOrder: (data: { code: string; name: string; qty: number; unit: string; depts: string[]; req_text: string }) =>
     http.post<{ project_id: number; code: string; order_ids: number[] }>('/orders/spare', data).then((r) => r.data),

@@ -247,21 +247,16 @@ function pgDone(row: DeptOrder, group: string): string {
 // 🆕 设计完成第一步（设计完成按钮）
 const markingDesignDone = ref<number | null>(null)
 function canDesignDone(o: DeptOrder) {
+  // 完成只看设计交付物(CAD激光图纸/外购附图/四表)；说明书/铭牌为发货准备,选填不卡完成
   return startFilesOf(o, 'sheetpkg').length > 0
     && startFilesOf(o, 'outsource_img').length > 0
     && fourReady(o.project_id)
-    && !o.design_done_flag
-}
-function canShipReady(o: DeptOrder) {
-  return o.design_done_flag
-    && o.output_files.some(f => f.kind === 'manual')
-    && o.output_files.some(f => f.kind === 'nameplate')
 }
 async function doDesignDone(o: DeptOrder) {
   markingDesignDone.value = o.id
   try {
-    await ordersApi.markDesignDone(o.id)
-    ElMessage.success('已标记设计完成，请上传产品说明书和铭牌')
+    const r: any = await ordersApi.markDesignDone(o.id)
+    ElMessage.success(r?.message || '设计完成，已计入考核')
     await load()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
@@ -469,6 +464,18 @@ function openReassign(o: DeptOrder) {
   reassignOrder.value = o
   reassignWid.value = null
   reassignVisible.value = true
+}
+
+// 🆕 管理层改预计完成时间（设计/电工任务跟踪表内直接改）
+async function doEditDue(o: DeptOrder, due: string) {
+  if (!due || due === o.due_date) return
+  try {
+    await ordersApi.editDue(o.id, due)
+    ElMessage.success('已更新预计完成时间')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '更新失败')
+  }
 }
 const reassigning = ref(false)
 async function doReassign() {
@@ -686,62 +693,44 @@ const stockVisible = ref(false)
                   </div>
                 </div>
 
-                <!-- 设计部两步完成流 -->
+                <!-- 设计部：点「设计完成」即完成并计考核；说明书/铭牌为发货准备，选填、不影响考核 -->
                 <template v-if="dept === 'design'">
-                  <!-- 第一步：设计完成 -->
-                  <template v-if="!o.design_done_flag">
-                    <el-button type="primary" size="small" :icon="Check"
-                               :disabled="!canDesignDone(o)"
-                               :loading="markingDesignDone === o.id"
-                               @click="doDesignDone(o)">设计完成</el-button>
-                    <div v-if="!canDesignDone(o)" class="tc-hint">需上传 CAD激光图纸、外购附图并完成四表导入</div>
-                  </template>
-                  <!-- 第二步：上传说明书/铭牌 + 发货准备 -->
-                  <template v-else>
-                    <el-tag type="success" size="small" style="margin-bottom:8px">✅ 设计已完成</el-tag>
-                    <div class="up-sec">
-                      <div class="up-h">
-                        <el-icon><UploadFilled /></el-icon> 产品说明书 (Word)
-                        <span style="margin-left:auto">
-                          <StatusPill :text="cardOutputFiles(o,'manual').length ? `已上传 ${cardOutputFiles(o,'manual').length} 个` : '待上传'"
-                                      :variant="cardOutputFiles(o,'manual').length ? 'success' : 'warn'" />
-                        </span>
-                      </div>
-                      <div class="up-b">
-                        <div v-if="cardOutputFiles(o,'manual').length" class="tc-files">
-                          <el-tag v-for="f in cardOutputFiles(o,'manual')" :key="f.id" size="small" effect="plain" class="file-chip">
-                            <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
-                          </el-tag>
-                        </div>
-                        <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickCardOutputUpload(o,'manual')">
-                          {{ cardOutputFiles(o,'manual').length ? '继续添加' : '上传说明书' }}
-                        </el-button>
-                      </div>
+                  <div class="up-sec">
+                    <div class="up-h">
+                      <el-icon><UploadFilled /></el-icon> 产品说明书 (Word)
+                      <span style="margin-left:auto"><span class="muted" style="font-size:11px">发货准备 · 不计考核</span></span>
                     </div>
-                    <div class="up-sec">
-                      <div class="up-h">
-                        <el-icon><UploadFilled /></el-icon> 铭牌 (CAD)
-                        <span style="margin-left:auto">
-                          <StatusPill :text="cardOutputFiles(o,'nameplate').length ? `已上传 ${cardOutputFiles(o,'nameplate').length} 个` : '待上传'"
-                                      :variant="cardOutputFiles(o,'nameplate').length ? 'success' : 'warn'" />
-                        </span>
+                    <div class="up-b">
+                      <div v-if="cardOutputFiles(o,'manual').length" class="tc-files">
+                        <el-tag v-for="f in cardOutputFiles(o,'manual')" :key="f.id" size="small" effect="plain" class="file-chip">
+                          <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
+                        </el-tag>
                       </div>
-                      <div class="up-b">
-                        <div v-if="cardOutputFiles(o,'nameplate').length" class="tc-files">
-                          <el-tag v-for="f in cardOutputFiles(o,'nameplate')" :key="f.id" size="small" effect="plain" class="file-chip">
-                            <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
-                          </el-tag>
-                        </div>
-                        <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickCardOutputUpload(o,'nameplate')">
-                          {{ cardOutputFiles(o,'nameplate').length ? '继续添加' : '上传铭牌' }}
-                        </el-button>
-                      </div>
+                      <el-button size="small" plain :icon="UploadFilled" @click="pickCardOutputUpload(o,'manual')">
+                        {{ cardOutputFiles(o,'manual').length ? '继续添加' : '上传说明书' }}
+                      </el-button>
                     </div>
-                    <el-button type="success" size="small" :icon="Check"
-                               :disabled="!canShipReady(o)"
-                               @click="openComplete(o)">发货准备完成</el-button>
-                    <div v-if="!canShipReady(o)" class="tc-hint">需上传产品说明书和铭牌</div>
-                  </template>
+                  </div>
+                  <div class="up-sec">
+                    <div class="up-h">
+                      <el-icon><UploadFilled /></el-icon> 铭牌 (CAD)
+                      <span style="margin-left:auto"><span class="muted" style="font-size:11px">发货准备 · 不计考核</span></span>
+                    </div>
+                    <div class="up-b">
+                      <div v-if="cardOutputFiles(o,'nameplate').length" class="tc-files">
+                        <el-tag v-for="f in cardOutputFiles(o,'nameplate')" :key="f.id" size="small" effect="plain" class="file-chip">
+                          <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
+                        </el-tag>
+                      </div>
+                      <el-button size="small" plain :icon="UploadFilled" @click="pickCardOutputUpload(o,'nameplate')">
+                        {{ cardOutputFiles(o,'nameplate').length ? '继续添加' : '上传铭牌' }}
+                      </el-button>
+                    </div>
+                  </div>
+                  <el-button type="primary" size="small" :icon="Check"
+                             :disabled="!canDesignDone(o)" :loading="markingDesignDone === o.id"
+                             @click="doDesignDone(o)">设计完成</el-button>
+                  <div v-if="!canDesignDone(o)" class="tc-hint">需上传 CAD激光图纸、外购附图并完成四表导入即可完成（说明书/铭牌选填）</div>
                 </template>
                 <!-- 电工部两步完成流 -->
                 <template v-else-if="dept === 'electric'">
@@ -905,6 +894,10 @@ const stockVisible = ref(false)
                   <span>钣金 {{ pgDue(row, 'sheetmetal') }}</span>
                   <span>装配 {{ pgDue(row, 'assembly') }}</span>
                 </div>
+                <!-- 🆕 设计/电工：管理层可直接改预计完成(不受本人锁定) -->
+                <el-date-picker v-else-if="isMgr" :model-value="row.due_date || ''" type="date"
+                                value-format="YYYY-MM-DD" size="small" style="width: 132px" placeholder="设预计完成"
+                                @update:model-value="(v: string | null) => { if (v) doEditDue(row, v) }" />
                 <template v-else>{{ row.due_date ? fmtDate(row.due_date) : '—' }}</template>
               </template>
             </el-table-column>
