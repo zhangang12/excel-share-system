@@ -167,12 +167,12 @@ async function packDownload() {
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
         <el-table-column prop="name" label="项目名称" min-width="170" show-overflow-tooltip />
-        <el-table-column v-if="showOutsource" label="设计师" width="84" align="center">
+        <el-table-column v-if="showOutsource" label="设计师" min-width="90" align="center">
           <template #default="{ row }">{{ row.designer || '—' }}</template>
         </el-table-column>
 
         <!-- 外协采购：数据表只做预览 -->
-        <el-table-column v-if="showOutsource" label="外协加工表" width="96" align="center">
+        <el-table-column v-if="showOutsource" label="外协加工表" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.outsource_sheet_id" size="small" link type="primary"
                        @click="openPreview(row.outsource_sheet_id, `${row.code} · 外协加工表`)">
@@ -181,7 +181,7 @@ async function packDownload() {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="showOutsource" label="不锈钢原料下料单" width="120" align="center">
+        <el-table-column v-if="showOutsource" label="不锈钢原料下料单" min-width="120" align="center">
           <template #default="{ row }">
             <el-button v-if="row.material_sheet_id" size="small" link type="primary"
                        @click="openPreview(row.material_sheet_id, `${row.code} · 不锈钢原料下料单`)">
@@ -191,7 +191,7 @@ async function packDownload() {
           </template>
         </el-table-column>
         <!-- 附件列：只显示上传状态，悬停看附件名 -->
-        <el-table-column v-if="showOutsource" label="CAD激光图纸" width="116" align="center">
+        <el-table-column v-if="showOutsource" label="CAD激光图纸" min-width="120" align="center">
           <template #default="{ row }">
             <el-tooltip v-if="row.cad_laser_files.length" placement="top">
               <template #content>
@@ -204,7 +204,7 @@ async function packDownload() {
         </el-table-column>
 
         <!-- 标准件采购：数据表只做预览 -->
-        <el-table-column v-if="showStandard" label="电工采购单" width="96" align="center">
+        <el-table-column v-if="showStandard" label="电工采购单" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.elec_po_sheet_id" size="small" link type="primary"
                        @click="openPreview(row.elec_po_sheet_id, `${row.code} · 电工采购单`)">
@@ -213,7 +213,7 @@ async function packDownload() {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="showStandard" label="标准件清单" width="96" align="center">
+        <el-table-column v-if="showStandard" label="标准件清单" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.standard_sheet_id" size="small" link type="primary"
                        @click="openPreview(row.standard_sheet_id, `${row.code} · 标准件清单`)">
@@ -222,7 +222,7 @@ async function packDownload() {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="showStandard" label="外购附图" width="110" align="center">
+        <el-table-column v-if="showStandard" label="外购附图" min-width="116" align="center">
           <template #default="{ row }">
             <el-tooltip v-if="row.outsource_img_files.length" placement="top">
               <template #content>

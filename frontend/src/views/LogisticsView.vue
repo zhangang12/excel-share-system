@@ -173,7 +173,7 @@ async function confirmShip(force = false) {
             <span v-if="!row.electric_files.length" class="muted">暂无</span>
           </template>
         </el-table-column>
-        <el-table-column label="生产状态" width="92">
+        <el-table-column label="生产状态" min-width="100">
           <template #default="{ row }">
             <StatusPill :text="row.produce_state.label" :variant="stateTag(row.produce_state)" />
           </template>
@@ -209,14 +209,14 @@ async function confirmShip(force = false) {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90" align="center">
+        <el-table-column label="状态" min-width="96" align="center">
           <template #default="{ row }">
             <StatusPill
               :text="row.status === 'shipped' ? '已发货' : (row.can_ship ? '可发货' : '待齐')"
               :variant="row.status === 'shipped' ? 'success' : (row.can_ship ? 'primary' : 'warn')" />
           </template>
         </el-table-column>
-        <el-table-column label="资料" width="100" align="center">
+        <el-table-column label="资料" min-width="104" align="center">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="openPack(row)">预览/下载</el-button>
           </template>

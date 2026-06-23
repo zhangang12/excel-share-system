@@ -817,16 +817,16 @@ const stockVisible = ref(false)
               <template #default="{ row }"><b>{{ row.project_code }}</b></template>
             </el-table-column>
             <el-table-column prop="project_name" label="项目名称" min-width="180" show-overflow-tooltip />
-            <el-table-column prop="start_date" :label="options?.start_label" width="120">
+            <el-table-column prop="start_date" :label="options?.start_label" min-width="116">
               <template #default="{ row }">{{ fmtDate(row.start_date) }}</template>
             </el-table-column>
-            <el-table-column prop="due_date" :label="options?.end_label" width="120">
+            <el-table-column prop="due_date" :label="options?.end_label" min-width="116">
               <template #default="{ row }">{{ fmtDate(row.due_date) }}</template>
             </el-table-column>
-            <el-table-column prop="done_date" label="完成" width="120">
+            <el-table-column prop="done_date" label="完成" min-width="116">
               <template #default="{ row }">{{ fmtDate(row.done_date) }}</template>
             </el-table-column>
-            <el-table-column label="完成效率" width="96">
+            <el-table-column label="完成效率" min-width="100">
               <template #default="{ row }">
                 <span v-if="row.eff_pct != null" :class="effClass(row)">{{ row.eff_pct }}%</span>
                 <span v-else>—</span>
@@ -841,13 +841,13 @@ const stockVisible = ref(false)
                 <span v-if="!row.start_files.length && !row.output_files.length">—</span>
               </template>
             </el-table-column>
-            <el-table-column v-if="dept === 'electric'" label="标准件清单" width="120" align="center">
+            <el-table-column v-if="dept === 'electric'" label="标准件清单" min-width="116" align="center">
               <template #default="{ row }">
                 <el-button v-if="row.standard_datasheet_id" size="small" link type="primary" :icon="Document" @click="openStdSheet(row)">查看</el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="通知" width="110">
+            <el-table-column label="通知" min-width="110">
               <template #default="{ row }">{{ row.notify_user_name ? '📲 ' + row.notify_user_name : '—' }}</template>
             </el-table-column>
             <el-table-column label="操作" width="130" fixed="right">
@@ -895,7 +895,7 @@ const stockVisible = ref(false)
               <template #default="{ row }"><b>{{ row.project_code }}</b></template>
             </el-table-column>
             <el-table-column prop="project_name" label="项目名称" min-width="180" show-overflow-tooltip />
-            <el-table-column :label="isProduce ? '派发' : '负责人'" width="110">
+            <el-table-column :label="isProduce ? '派发' : '负责人'" min-width="110">
               <template #default="{ row }">
                 <template v-if="isProduce">
                   {{ row.status === 'pending_assign' ? '待派发' : (row.status === 'done' ? '钣金/装配已完成' : '已派发钣金/装配') }}
@@ -903,27 +903,27 @@ const stockVisible = ref(false)
                 <template v-else>{{ row.worker_name || '待分派' }}</template>
               </template>
             </el-table-column>
-            <el-table-column label="合同技术资料" width="118" align="center">
+            <el-table-column label="合同技术资料" min-width="118" align="center">
               <template #default="{ row }">
                 <el-tag v-if="row.input_files.length" size="small" type="success" effect="light" round>已收到 {{ row.input_files.length }}</el-tag>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="上传资料" width="110" align="center">
+            <el-table-column label="上传资料" min-width="110" align="center">
               <template #default="{ row }">
                 <el-tag v-if="row.start_files.length + row.output_files.length" size="small" type="success" effect="light" round>已收到 {{ row.start_files.length + row.output_files.length }}</el-tag>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="106" align="center">
+            <el-table-column label="状态" min-width="100" align="center">
               <template #default="{ row }">
                 <StatusPill :text="ORDER_STATUS_TEXT[row.status]" :variant="PILL_VARIANT[ORDER_STATUS_TAG[row.status]] || 'muted'" />
               </template>
             </el-table-column>
-            <el-table-column prop="start_date" :label="options?.start_label" width="120">
+            <el-table-column prop="start_date" :label="options?.start_label" min-width="118">
               <template #default="{ row }">{{ row.start_date ? fmtDate(row.start_date) : '—' }}</template>
             </el-table-column>
-            <el-table-column :label="options?.end_label" :width="isProduce ? 150 : 120">
+            <el-table-column :label="options?.end_label" :min-width="isProduce ? 150 : 132">
               <template #default="{ row }">
                 <!-- 🆕 生产部：钣金/装配两组各自的预计完成 -->
                 <div v-if="isProduce" style="display:flex;flex-direction:column;gap:2px;font-size:12px;line-height:1.35;">
@@ -937,7 +937,7 @@ const stockVisible = ref(false)
                 <template v-else>{{ row.due_date ? fmtDate(row.due_date) : '—' }}</template>
               </template>
             </el-table-column>
-            <el-table-column label="完成" :width="isProduce ? 150 : 120">
+            <el-table-column label="完成" :min-width="isProduce ? 150 : 120">
               <template #default="{ row }">
                 <div v-if="isProduce" style="display:flex;flex-direction:column;gap:2px;font-size:12px;line-height:1.35;">
                   <span>钣金 {{ pgDone(row, 'sheetmetal') }}</span>
@@ -946,13 +946,13 @@ const stockVisible = ref(false)
                 <template v-else>{{ row.done_date ? fmtDate(row.done_date) : '—' }}</template>
               </template>
             </el-table-column>
-            <el-table-column label="完成效率" width="96">
+            <el-table-column label="完成效率" min-width="100">
               <template #default="{ row }">
                 <span v-if="row.eff_pct != null" :class="effClass(row)">{{ row.eff_pct }}%</span>
                 <span v-else>—</span>
               </template>
             </el-table-column>
-            <el-table-column label="资料" width="100" align="center">
+            <el-table-column label="资料" min-width="104" align="center">
               <template #default="{ row }">
                 <el-button size="small" link type="primary" @click="openPack(row)">预览/下载</el-button>
               </template>
