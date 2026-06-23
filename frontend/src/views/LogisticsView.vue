@@ -159,18 +159,16 @@ async function confirmShip(force = false) {
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
         <el-table-column prop="name" label="名称" min-width="130" show-overflow-tooltip />
-        <el-table-column label="设计资料" min-width="130">
+        <el-table-column label="设计资料" min-width="104" align="center">
           <template #default="{ row }">
-            <el-tag v-for="f in row.design_files" :key="f.id" size="small" effect="plain"
-                    class="fc" @click="downloadAttachment(f)">{{ f.name }}</el-tag>
-            <span v-if="!row.design_files.length" class="muted">暂无</span>
+            <el-tag v-if="row.design_files.length" size="small" type="success" effect="light" round>已收到 {{ row.design_files.length }}</el-tag>
+            <span v-else class="muted">暂无</span>
           </template>
         </el-table-column>
-        <el-table-column label="电工资料" min-width="130">
+        <el-table-column label="电工资料" min-width="104" align="center">
           <template #default="{ row }">
-            <el-tag v-for="f in row.electric_files" :key="f.id" size="small" effect="plain"
-                    class="fc" @click="downloadAttachment(f)">{{ f.name }}</el-tag>
-            <span v-if="!row.electric_files.length" class="muted">暂无</span>
+            <el-tag v-if="row.electric_files.length" size="small" type="success" effect="light" round>已收到 {{ row.electric_files.length }}</el-tag>
+            <span v-else class="muted">暂无</span>
           </template>
         </el-table-column>
         <el-table-column label="生产状态" min-width="100">
@@ -178,11 +176,10 @@ async function confirmShip(force = false) {
             <StatusPill :text="row.produce_state.label" :variant="stateTag(row.produce_state)" />
           </template>
         </el-table-column>
-        <el-table-column label="仓库发货清单" min-width="120">
+        <el-table-column label="仓库发货清单" min-width="116" align="center">
           <template #default="{ row }">
-            <el-tag v-for="f in row.ship_list_files" :key="f.id" size="small" effect="plain"
-                    class="fc" @click="downloadAttachment(f)">{{ f.name }}</el-tag>
-            <span v-if="!row.ship_list_files.length" class="muted">暂无</span>
+            <el-tag v-if="row.ship_list_files.length" size="small" type="success" effect="light" round>已收到 {{ row.ship_list_files.length }}</el-tag>
+            <span v-else class="muted">暂无</span>
           </template>
         </el-table-column>
         <el-table-column label="收货信息" min-width="240">
