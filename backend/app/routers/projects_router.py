@@ -424,8 +424,12 @@ async def update_project(
     p = res.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "项目不存在")
+    # 🆕 #5 生产主管(pm_lead)可在项目目录调整项目状态——仅限"只改状态"，不放开编号/名称/描述/负责人
+    status_only = (data.status is not None and data.code is None and data.name is None
+                   and data.description is None and data.manager_id is None)
     if not await user_can_edit_project(db, current, p):
-        raise HTTPException(403, "无权修改项目")
+        if not (status_only and current.has_role("pm_lead")):
+            raise HTTPException(403, "无权修改项目")
     if data.code is not None:
         new_code = data.code.strip()
         if not new_code:

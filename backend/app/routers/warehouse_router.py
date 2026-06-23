@@ -20,7 +20,7 @@ from ..deps import get_current_user, require_roles
 from ..notify import push_message
 from ..utils import write_audit
 from ..sheet_templates import normalize_date_str
-from .attachments_router import save_upload
+from .attachments_router import save_upload, delete_attachment_file
 
 router = APIRouter(prefix="/api/wh", tags=["仓库组"])
 
@@ -318,3 +318,39 @@ async def upload_ship_list(
                        text=f"【发货清单】{p.code} {p.name} 仓库组已上传发货清单，请安排发货。",
                        biz_type="project", biz_id=project_id)
     return schemas.Msg(message="发货清单已上传并推送物流发货部")
+
+
+@router.get("/ship-list/{project_id}", response_model=List[schemas.AttachmentOut])
+async def list_ship_lists(
+    project_id: int,
+    _: models.User = Depends(require_roles("warehouse", "warehouse_lead", "logistics", "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #9 某项目历史发货清单列表（仓库/物流/管理层可查看，按上传时间倒序，最新在前）。"""
+    r = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "ship_list",
+        models.Attachment.biz_id == project_id,
+    ).order_by(models.Attachment.id.desc()))
+    return [schemas.AttachmentOut.model_validate(a) for a in r.scalars().all()]
+
+
+@router.delete("/ship-list/item/{aid}", response_model=schemas.Msg)
+async def delete_ship_list(
+    aid: int,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #9 删除某条发货清单（上传者本人或仓库主管/管理层）。删除后物流看板同步消失，可再传新清单以「更换」。"""
+    r = await db.execute(select(models.Attachment).where(
+        models.Attachment.id == aid, models.Attachment.biz_type == "ship_list"))
+    a = r.scalar_one_or_none()
+    if not a:
+        raise HTTPException(404, "发货清单不存在")
+    if not (_can_write(current) or a.uploaded_by == current.id):
+        raise HTTPException(403, "仅上传者本人或仓库主管/管理层可删除")
+    name = a.name
+    await delete_attachment_file(db, a)
+    await db.commit()
+    await write_audit(db, user=current, action="delete", target_type="ship_list",
+                      target_id=aid, detail=name)
+    return schemas.Msg(message="已删除该发货清单")

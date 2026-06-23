@@ -103,6 +103,19 @@ export const salesApi = {
   updateLedger: (id: number, data: Partial<SalesLedgerRow>) =>
     http.put(`/sales/ledger/${id}`, data).then((r) => r.data),
 
+  // 🆕 #3 补充/修改客户收件信息 → 同步物流
+  getReceiver: (id: number) =>
+    http.get<{ name: string; phone: string; addr: string; shipped: boolean }>(`/sales/ledger/${id}/receiver`).then((r) => r.data),
+  updateReceiver: (id: number, data: { name: string; phone: string; addr: string }) =>
+    http.put(`/sales/ledger/${id}/receiver`, data).then((r) => r.data),
+
+  // 🆕 #2 更换合同技术资料 → 同步替换各部门下发资料
+  replaceTechFiles: (id: number, files: File[]) => {
+    const fd = new FormData()
+    files.forEach((f) => fd.append('files', f))
+    return http.post(`/sales/ledger/${id}/replace-tech-files`, fd).then((r) => r.data)
+  },
+
   // 🆕 收款批注（预付/发货前付）独立更新，销售本人即可记录
   paymentNote: (id: number, field: 'prepay' | 'before_ship', note: string) =>
     http.put(`/sales/ledger/${id}/payment-note`, { field, note }).then((r) => r.data),

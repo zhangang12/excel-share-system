@@ -152,6 +152,7 @@ class OrderOut(BaseModel):
     start_files: list[AttachmentOut] = []
     output_files: list[AttachmentOut] = []
     produce_groups: Optional[list[ProduceGroupBrief]] = None  # 🆕 仅生产单：钣金/装配两组预计完成
+    standard_datasheet_id: Optional[int] = None  # 🆕 #6 所属项目「标准件清单」数据表 id（电工部只读引用）
 
 
 class OrderOptionUser(BaseModel):

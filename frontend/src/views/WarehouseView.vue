@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // 🆕 v3 M07 仓库组：总览/出入库/收发存/流水/物料主数据/发货清单 六 tab
-import { ref, onMounted, reactive, computed } from 'vue'
+import { ref, onMounted, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Lock } from '@element-plus/icons-vue'
+import { Plus, Search, Lock, View, Download, Delete } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow } from '@/api/warehouse'
+import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListItem } from '@/api/warehouse'
+import { attachmentBlobUrl, isImageAtt, isPdfAtt, canInlinePreview } from '@/api/attachments'
+import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtDate } from '@/utils/format'
@@ -101,6 +103,16 @@ async function loadProjects() {
   try { projects.value = (await http.get('/projects')).data.map((p: any) => ({ id: p.id, code: p.code, name: p.name })) }
   catch { projects.value = [] }
 }
+// 🆕 #9 历史发货清单 列表 / 预览 / 更换(删除+重传)
+const shipLists = ref<ShipListItem[]>([])
+const shipListsLoading = ref(false)
+async function loadShipLists() {
+  if (!shipProj.value) { shipLists.value = []; return }
+  shipListsLoading.value = true
+  try { shipLists.value = await whApi.shipLists(shipProj.value) }
+  finally { shipListsLoading.value = false }
+}
+watch(shipProj, () => loadShipLists())  // 选项目即加载其历史发货清单
 async function uploadShipList() {
   if (!shipProj.value) { ElMessage.warning('请选择项目'); return }
   const input = document.createElement('input')
@@ -110,9 +122,36 @@ async function uploadShipList() {
     const fd = new FormData(); fd.append('file', f)
     await http.post(`/wh/ship-list/${shipProj.value}`, fd)
     ElMessage.success('发货清单已上传并推送物流')
+    await loadShipLists()  // 上传后刷新列表
   }
   input.click()
 }
+async function deleteShipList(item: ShipListItem) {
+  try {
+    await ElMessageBox.confirm(`确认删除发货清单「${item.name}」？删除后物流看板将同步移除。`, '删除发货清单', { type: 'warning', confirmButtonText: '删除' })
+  } catch { return }
+  await whApi.deleteShipList(item.id)
+  ElMessage.success('已删除')
+  await loadShipLists()
+}
+// 预览：图片弹窗 / PDF 新标签 / 其它直接下载
+const slImgVisible = ref(false)
+const slImgSrc = ref('')
+const slImgName = ref('')
+async function previewShipList(item: ShipListItem) {
+  if (isImageAtt(item.name)) {
+    if (slImgSrc.value) URL.revokeObjectURL(slImgSrc.value)
+    slImgSrc.value = await attachmentBlobUrl(item.id)
+    slImgName.value = item.name
+    slImgVisible.value = true
+  } else if (isPdfAtt(item.name)) {
+    const url = await attachmentBlobUrl(item.id)
+    window.open(url, '_blank'); setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  } else {
+    downloadAttachment({ id: item.id, name: item.name })
+  }
+}
+function closeSlImg() { if (slImgSrc.value) { URL.revokeObjectURL(slImgSrc.value); slImgSrc.value = '' } }
 
 function onTab(name: string) {
   if (name === 'txn' && !txns.value.length) loadTxns()
@@ -245,9 +284,27 @@ function onTab(name: string) {
               <el-select v-model="shipProj" filterable placeholder="选择项目" style="width:300px">
                 <el-option v-for="p in projects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
               </el-select>
-              <el-button type="primary" @click="uploadShipList">上传发货清单 → 推物流</el-button>
+              <el-button type="primary" @click="uploadShipList">上传 / 更换发货清单 → 推物流</el-button>
             </div>
-            <div class="muted small" style="margin-top:10px">上传后物流发货部看板「仓库发货清单」列出现该文件。</div>
+            <div class="muted small" style="margin:10px 0">上传后物流发货部看板「仓库发货清单」列出现该文件；如需更换，上传新文件后删除旧的即可。</div>
+
+            <!-- 🆕 #9 历史发货清单列表（预览 / 下载 / 删除） -->
+            <el-table v-if="shipProj" :data="shipLists" v-loading="shipListsLoading" stripe size="small"
+                      max-height="calc(100vh - 360px)" :scrollbar-always-on="true">
+              <el-table-column type="index" label="#" width="50" align="center" />
+              <el-table-column prop="name" label="发货清单文件" min-width="240" show-overflow-tooltip />
+              <el-table-column label="上传时间" width="170">
+                <template #default="{ row }">{{ fmtDate(row.created_at) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="220" align="center">
+                <template #default="{ row }">
+                  <el-button v-if="canInlinePreview(row.name)" size="small" link type="primary" :icon="View" @click="previewShipList(row)">预览</el-button>
+                  <el-button size="small" link :icon="Download" @click="downloadAttachment({ id: row.id, name: row.name })">下载</el-button>
+                  <el-button v-if="canWrite" size="small" link type="danger" :icon="Delete" @click="deleteShipList(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <EmptyHint v-if="shipProj && !shipListsLoading && !shipLists.length" text="该项目暂无发货清单" size="sm" />
           </template>
         </el-tab-pane>
       </el-tabs>
@@ -300,6 +357,11 @@ function onTab(name: string) {
         <el-button @click="matVisible = false">取消</el-button>
         <el-button type="primary" :loading="matSubmitting" @click="submitMat">保存</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 🆕 #9 发货清单图片预览 -->
+    <el-dialog v-model="slImgVisible" :title="slImgName" width="80%" top="6vh" append-to-body @close="closeSlImg">
+      <div style="text-align:center"><img v-if="slImgSrc" :src="slImgSrc" :alt="slImgName" style="max-width:100%;max-height:78vh" /></div>
     </el-dialog>
   </div>
 </template>

@@ -17,7 +17,12 @@ export interface WhSummaryRow {
   opening: number; in_qty: number; out_qty: number; closing: number
 }
 
+// 🆕 #9 发货清单项
+export interface ShipListItem { id: number; name: string; created_at: string; uploaded_by?: number | null }
+
 export const whApi = {
+  shipLists: (pid: number) => http.get<ShipListItem[]>(`/wh/ship-list/${pid}`).then((r) => r.data),
+  deleteShipList: (aid: number) => http.delete<{ message: string }>(`/wh/ship-list/item/${aid}`).then((r) => r.data),
   materials: (kw?: string) =>
     http.get<{ materials: WhMaterial[]; total: number; low_count: number }>('/wh/materials', { params: { kw } }).then((r) => r.data),
   createMaterial: (data: Partial<WhMaterial>) => http.post('/wh/materials', data).then((r) => r.data),

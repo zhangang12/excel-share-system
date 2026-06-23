@@ -4,13 +4,18 @@
 售后物料清单…）统一经此存取，按附件 ID 关联与撤回（不按文件名匹配）。
 文件本体落 settings.files_dir/yyyymm/uuid.ext，原始文件名仅存库用于展示。
 """
+import io
+import re
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -168,6 +173,54 @@ async def download(
     if not f.is_file():
         raise HTTPException(404, "文件已丢失")
     return FileResponse(f, filename=a.name)
+
+
+def _safe_zip_name(s: str) -> str:
+    return re.sub(r'[\\/:*?"<>|\r\n]', "_", str(s)).strip() or "未命名"
+
+
+class AttachmentPackageReq(BaseModel):
+    attachment_ids: list[int] = []
+    zipname: str = "附件打包"
+
+
+@router.post("/package")
+async def package_attachments(
+    req: AttachmentPackageReq,
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 通用附件打包下载：传一组附件 ID → 打成 zip 流式返回。
+    供任务跟踪/物流/仓库等处的「打包下载」复用（与单文件下载同权限：登录即可）。"""
+    if not req.attachment_ids:
+        raise HTTPException(400, "未选择附件")
+    res = await db.execute(select(models.Attachment).where(models.Attachment.id.in_(req.attachment_ids)))
+    atts = list(res.scalars().all())
+    buf = io.BytesIO()
+    used: set = set()
+    n = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for a in atts:
+            fp = Path(settings.files_dir) / a.path
+            if not fp.is_file():
+                continue
+            base = _safe_zip_name(a.name)
+            name = base
+            i = 2
+            while name in used:
+                stem, dot, ext = base.rpartition(".")
+                name = f"{stem}({i}).{ext}" if dot else f"{base}({i})"
+                i += 1
+            used.add(name)
+            zf.write(fp, name)
+            n += 1
+    if n == 0:
+        raise HTTPException(400, "没有可下载的文件（可能已被撤回或丢失）")
+    buf.seek(0)
+    zipname = f"{_safe_zip_name(req.zipname)}.zip"
+    return StreamingResponse(buf, media_type="application/zip", headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(zipname)}",
+    })
 
 
 @router.delete("/{aid}", response_model=schemas.Msg)

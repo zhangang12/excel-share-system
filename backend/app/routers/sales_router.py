@@ -477,6 +477,97 @@ async def update_payment_note(
     return schemas.Msg(message="批注已保存")
 
 
+@router.get("/ledger/{lid}/receiver")
+async def get_receiver(
+    lid: int,
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #3 取该项目当前收件信息（编辑弹窗预填用）。"""
+    led = await _ledger_or_404(db, lid)
+    if not _all_view(current) and led.sales_uid != current.id:
+        raise HTTPException(403, "只能查看本人负责的台账行")
+    sr = await db.execute(select(models.Shipment).where(models.Shipment.project_id == led.project_id))
+    ship = sr.scalar_one_or_none()
+    return {
+        "name": (ship.receiver_name if ship else "") or "",
+        "phone": (ship.receiver_phone if ship else "") or "",
+        "addr": (ship.receiver_addr if ship else "") or "",
+        "shipped": bool(ship and ship.status == "shipped"),
+    }
+
+
+@router.put("/ledger/{lid}/receiver", response_model=schemas.Msg)
+async def update_receiver(
+    lid: int, data: schemas.SalesReceiverIn,
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #3 销售补充/修改客户收件信息 → 同步物流发货部(Shipment)；下单后亦可补填。"""
+    led = await _ledger_or_404(db, lid)
+    if not _all_view(current) and led.sales_uid != current.id:
+        raise HTTPException(403, "只能修改本人负责的台账行")
+    sr = await db.execute(select(models.Shipment).where(models.Shipment.project_id == led.project_id))
+    ship = sr.scalar_one_or_none()
+    if ship and ship.status == "shipped":
+        raise HTTPException(400, "该项目已发货，收件信息不可修改")
+    if not ship:
+        ship = models.Shipment(project_id=led.project_id, status="pending")
+        db.add(ship)
+    ship.receiver_name = (data.name or "").strip() or None
+    ship.receiver_phone = (data.phone or "").strip() or None
+    ship.receiver_addr = (data.addr or "").strip() or None
+    await db.commit()
+    await write_audit(db, user=current, action="update_receiver", target_type="shipment",
+                      target_id=led.project_id)
+    return schemas.Msg(message="收件信息已保存并同步物流发货部")
+
+
+@router.post("/ledger/{lid}/replace-tech-files", response_model=schemas.Msg)
+async def replace_tech_files(
+    lid: int,
+    files: list[UploadFile] = File(...),
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #2 更换合同技术资料：替换该项目所有部门任务单(dept_orders)的下发资料(order_input)，各部门同步更新。"""
+    led = await _ledger_or_404(db, lid)
+    if not _all_view(current) and led.sales_uid != current.id:
+        raise HTTPException(403, "只能更换本人负责的台账行")
+    if not files:
+        raise HTTPException(400, "请选择要上传的技术资料文件")
+    ors = await db.execute(select(models.DeptOrder).where(
+        models.DeptOrder.project_id == led.project_id,
+        models.DeptOrder.status != "voided"))
+    orders = list(ors.scalars().all())
+    if not orders:
+        raise HTTPException(400, "该项目暂无部门任务单，无需更换")
+    oids = [o.id for o in orders]
+    # 删除各部门任务单旧的下发资料(order_input)
+    ar = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "order_input",
+        models.Attachment.biz_id.in_(oids)))
+    for a in ar.scalars().all():
+        await delete_attachment_file(db, a)
+    # 上传新文件并分发到每个部门任务单（存一次→拷贝到其余单，避免重复读流）
+    for f in files:
+        first = await save_upload(db, f, biz_type="order_input", biz_id=oids[0],
+                                  project_id=led.project_id, user=current)
+        for oid in oids[1:]:
+            await copy_attachment(db, first, biz_type="order_input", biz_id=oid,
+                                  project_id=led.project_id, user_id=current.id)
+    # 通知各相关部门负责人技术资料已更换
+    code = led.project.code if led.project else ""
+    for role in {DEPTS[o.dept]["lead_role"] for o in orders if o.dept in DEPTS}:
+        await push_message(db, to_role=role, kind="warn",
+                           text=f"【技术资料更换】{code} 销售已更换合同技术资料，请以最新下发资料为准。",
+                           biz_type="project", biz_id=led.project_id)
+    await db.commit()
+    await write_audit(db, user=current, action="replace_tech_files", target_type="sales_ledger",
+                      target_id=lid, detail=f"{len(files)}文件→{len(orders)}任务单")
+    return schemas.Msg(message=f"已更换技术资料，并同步至 {len(orders)} 个部门任务单")
+
+
 @router.post("/ledger/{lid}/contract", response_model=schemas.Msg)
 async def upload_contract(
     lid: int,

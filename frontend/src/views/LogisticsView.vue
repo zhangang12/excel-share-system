@@ -9,6 +9,7 @@ import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
 import FilePicker from '@/components/FilePicker.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import AttachmentPackDialog from '@/components/AttachmentPackDialog.vue'
 
 interface DeptState { state: string; label: string }
 interface AttOut { id: number; name: string }
@@ -37,6 +38,22 @@ const auth = useAuthStore()
 const isMgr = computed(() => auth.isAdmin)
 const loading = ref(false)
 const rows = ref<BoardRow[]>([])
+
+// 🆕 #10 发货资料 预览 / 打包下载
+const packVisible = ref(false)
+const packTitle = ref('')
+const packZipname = ref('发货资料')
+const packGroups = ref<{ label: string; items: { id: number; name: string }[] }[]>([])
+function openPack(row: BoardRow) {
+  packTitle.value = `${row.code} 发货资料`
+  packZipname.value = `${row.code}_发货资料`
+  packGroups.value = [
+    { label: '设计资料', items: (row.design_files || []).map(f => ({ id: f.id, name: f.name })) },
+    { label: '电工资料', items: (row.electric_files || []).map(f => ({ id: f.id, name: f.name })) },
+    { label: '仓库发货清单', items: (row.ship_list_files || []).map(f => ({ id: f.id, name: f.name })) },
+  ]
+  packVisible.value = true
+}
 
 const curYear = String(new Date().getFullYear())
 const yearFilter = ref(curYear)
@@ -199,6 +216,11 @@ async function confirmShip(force = false) {
               :variant="row.status === 'shipped' ? 'success' : (row.can_ship ? 'primary' : 'warn')" />
           </template>
         </el-table-column>
+        <el-table-column label="资料" width="96" align="center">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" plain @click="openPack(row)">预览/下载</el-button>
+          </template>
+        </el-table-column>
         <el-table-column label="发货闸门" width="200" fixed="right">
           <template #default="{ row }">
             <template v-if="row.status === 'shipped'">
@@ -256,6 +278,9 @@ async function confirmShip(force = false) {
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 🆕 #10 发货资料 预览 / 打包下载 -->
+    <AttachmentPackDialog v-model="packVisible" :title="packTitle" :zipname="packZipname" :groups="packGroups" />
   </div>
 </template>
 

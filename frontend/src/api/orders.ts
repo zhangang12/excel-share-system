@@ -37,6 +37,7 @@ export interface DeptOrder {
   start_files: OrderAttachment[]
   output_files: OrderAttachment[]
   produce_groups?: { group: string; name: string; due_date?: string | null; done_date?: string | null }[] | null
+  standard_datasheet_id?: number | null   // 🆕 #6 电工部只读引用标准件清单
 }
 
 export interface OptionUser { id: number; name: string }

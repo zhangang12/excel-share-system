@@ -241,7 +241,11 @@ async function submitOrder() {
 const editVisible = ref(false)
 const editRow = ref<SalesLedgerRow | null>(null)
 const editForm = reactive<any>({})
-function openEdit(r: SalesLedgerRow) {
+// 🆕 #3 收件信息（编辑弹窗内合并维护）/ #2 更换技术资料
+const editRcv = reactive({ name: '', phone: '', addr: '' })
+const editRcvShipped = ref(false)
+const replacingTech = ref(false)
+async function openEdit(r: SalesLedgerRow) {
   editRow.value = r
   Object.assign(editForm, {
     name: r.name, customer: r.customer || '', cust_type: r.cust_type || '经销商',
@@ -251,14 +255,44 @@ function openEdit(r: SalesLedgerRow) {
     sign_date: r.sign_date || '', deliver_date: r.deliver_date || '',
     sales_uid: r.sales_uid ?? undefined,
   })
+  Object.assign(editRcv, { name: '', phone: '', addr: '' })
+  editRcvShipped.value = false
   editVisible.value = true
+  // 预填当前收件信息
+  try {
+    const rc = await salesApi.getReceiver(r.id)
+    Object.assign(editRcv, { name: rc.name, phone: rc.phone, addr: rc.addr })
+    editRcvShipped.value = rc.shipped
+  } catch { /* 静默 */ }
 }
 async function submitEdit() {
   if (!editRow.value) return
   await salesApi.updateLedger(editRow.value.id, { ...editForm })
+  // 同步收件信息（已发货则后端会拒绝，这里跳过避免报错）
+  if (!editRcvShipped.value) {
+    try { await salesApi.updateReceiver(editRow.value.id, { ...editRcv }) } catch { /* 静默 */ }
+  }
   ElMessage.success('已保存')
   editVisible.value = false
   await load()
+}
+// 🆕 #2 更换技术资料：选文件 → 替换该项目所有部门下发资料
+function replaceTechFiles() {
+  const row = editRow.value
+  if (!row) return
+  const input = document.createElement('input')
+  input.type = 'file'; input.multiple = true
+  input.onchange = async () => {
+    const fs = Array.from(input.files || []); if (!fs.length) return
+    replacingTech.value = true
+    try {
+      const r: any = await salesApi.replaceTechFiles(row.id, fs)  // 捕获 row 引用，避免弹窗切换后 editRow 变更
+      ElMessage.success(r?.message || '已更换技术资料')
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.detail || '更换失败')
+    } finally { replacingTech.value = false }
+  }
+  input.click()
 }
 
 // ===== 🆕 收款批注（预付 / 发货前付，支持插入时间戳） =====
@@ -1018,6 +1052,22 @@ async function openReport() {
             <el-date-picker v-model="editForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" :disabled="!editForm.balance" placeholder="尾款为0时无需填" />
           </el-form-item>
         </div>
+
+        <!-- 🆕 #3 收件信息（合并维护，保存时同步物流发货部） -->
+        <div class="fsec">📍 收件信息（同步物流发货部）</div>
+        <div v-if="editRcvShipped" class="muted small" style="margin-bottom:6px">该项目已发货，收件信息不可修改。</div>
+        <div class="frow">
+          <el-form-item label="收货人 / 单位" style="flex: 1"><el-input v-model="editRcv.name" :disabled="editRcvShipped" /></el-form-item>
+          <el-form-item label="联系电话" style="flex: 1"><el-input v-model="editRcv.phone" :disabled="editRcvShipped" /></el-form-item>
+        </div>
+        <el-form-item label="收货地址"><el-input v-model="editRcv.addr" :disabled="editRcvShipped" placeholder="省市区 + 详细地址" /></el-form-item>
+
+        <!-- 🆕 #2 更换技术资料（替换该项目所有部门下发资料） -->
+        <div class="fsec">📎 合同技术资料</div>
+        <el-form-item>
+          <el-button :icon="UploadFilled" :loading="replacingTech" @click="replaceTechFiles">更换技术资料</el-button>
+          <span class="muted small" style="margin-left:8px">上传新文件后将替换该项目所有部门任务单的「合同技术资料/下发资料」</span>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>

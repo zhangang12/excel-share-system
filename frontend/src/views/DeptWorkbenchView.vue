@@ -18,6 +18,7 @@ import { datasheetsApi } from '@/api/datasheets'
 import { http } from '@/api'
 import SheetmetalGrid from '@/components/SheetmetalGrid.vue'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
+import AttachmentPackDialog from '@/components/AttachmentPackDialog.vue'
 import StockQueryDialog from '@/components/StockQueryDialog.vue'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -81,6 +82,13 @@ const activeTab = ref('')
 // 🆕 生产部两组项目列表
 const sheetmetalRows = ref<GroupProjectRow[]>([])
 const assemblyRows = ref<GroupProjectRow[]>([])
+// 🆕 #1 钣金/装配组 人员筛选
+const smWorkerFilter = ref('')
+const asmWorkerFilter = ref('')
+const smWorkers = computed(() => Array.from(new Set(sheetmetalRows.value.map(r => r.worker_name).filter((n): n is string => !!n))))
+const asmWorkers = computed(() => Array.from(new Set(assemblyRows.value.map(r => r.worker_name).filter((n): n is string => !!n))))
+const smRowsView = computed(() => smWorkerFilter.value ? sheetmetalRows.value.filter(r => (r.worker_name || '') === smWorkerFilter.value) : sheetmetalRows.value)
+const asmRowsView = computed(() => asmWorkerFilter.value ? assemblyRows.value.filter(r => (r.worker_name || '') === asmWorkerFilter.value) : assemblyRows.value)
 
 const curYear = String(new Date().getFullYear())
 const yearFilter = ref(curYear)
@@ -244,13 +252,36 @@ function pgDone(row: DeptOrder, group: string): string {
   return b && b.done_date ? fmtDate(b.done_date) : '—'
 }
 
+// 🆕 #9 任务跟踪：资料预览 + 打包下载（复用 AttachmentPackDialog）
+const packVisible = ref(false)
+const packTitle = ref('')
+const packZipname = ref('资料')
+const packGroups = ref<{ label: string; items: { id: number; name: string }[] }[]>([])
+function openPack(row: DeptOrder) {
+  packTitle.value = `${row.project_code} 资料`
+  packZipname.value = `${row.project_code}_资料`
+  packGroups.value = [
+    { label: '合同技术资料', items: (row.input_files || []).map(f => ({ id: f.id, name: f.name })) },
+    { label: '上传资料', items: [...(row.start_files || []), ...(row.output_files || [])].map(f => ({ id: f.id, name: f.name })) },
+  ]
+  packVisible.value = true
+}
+
+// 🆕 #6 电工部：标准件清单只读引用（复用 SheetmetalGrid canEdit=false 读任意数据表）
+const stdVisible = ref(false)
+const stdRow = ref<DeptOrder | null>(null)
+const stdTitle = ref('')
+function openStdSheet(o: DeptOrder) {
+  stdRow.value = o
+  stdTitle.value = `${o.project_code} · 标准件清单（只读）`
+  stdVisible.value = true
+}
+
 // 🆕 设计完成第一步（设计完成按钮）
 const markingDesignDone = ref<number | null>(null)
 function canDesignDone(o: DeptOrder) {
-  // 完成只看设计交付物(CAD激光图纸/外购附图/四表)；说明书/铭牌为发货准备,选填不卡完成
-  return startFilesOf(o, 'sheetpkg').length > 0
-    && startFilesOf(o, 'outsource_img').length > 0
-    && fourReady(o.project_id)
+  // 🆕 #4 放开文件必传：图纸/外购图/四表均改为可选，进行中即可点设计完成
+  return o.status === 'in_progress'
 }
 async function doDesignDone(o: DeptOrder) {
   markingDesignDone.value = o.id
@@ -268,10 +299,10 @@ async function doDesignDone(o: DeptOrder) {
 // 🆕 电工部两步完成流
 const markingElectricDone = ref<number | null>(null)
 function canElectricDone(o: DeptOrder) {
-  return startFilesOf(o, 'plist').length > 0 && !o.electric_done_flag
+  return o.status === 'in_progress' && !o.electric_done_flag  // 🆕 #4 采购清单可选
 }
 function canElectricShipReady(o: DeptOrder) {
-  return o.electric_done_flag && o.output_files.some(f => f.kind === 'circuit')
+  return o.electric_done_flag  // 🆕 #4 电路图可选，接线完成后即可完成
 }
 async function doElectricDone(o: DeptOrder) {
   markingElectricDone.value = o.id
@@ -409,9 +440,7 @@ async function doComplete() {
   const o = completeOrder.value
   if (!o) return
   if (!notifyUserId.value) { ElMessage.warning(options.value?.notify_label || '请选择通知人'); return }
-  // #67 必传产物前端校验：完成前确认 required 产物都已上传，内联提示缺哪项
-  const miss = (options.value?.outputs || []).filter((ot: any) => ot.required && !outputFilesOf(ot.k).length)
-  if (miss.length) { ElMessage.warning('请先上传必传产物：' + miss.map((m: any) => m.label).join('、')); return }
+  // 🆕 #4 已放开必传产物校验：产物按需可选，不再拦截完成
   completing.value = true
   try {
     const r: any = await ordersApi.complete(o.id, notifyUserId.value)
@@ -640,6 +669,11 @@ const stockVisible = ref(false)
                 </el-tag>
               </div>
 
+              <!-- 🆕 #6 电工部：标准件清单只读引用（待接单/进行中卡片均显示） -->
+              <div v-if="dept === 'electric' && o.standard_datasheet_id" style="margin:6px 0">
+                <el-button size="small" plain :icon="Document" @click="openStdSheet(o)">查看标准件清单（只读）</el-button>
+              </div>
+
               <!-- 进行中：起始上传 + 完成（v-if 让 Vue 编译为片段，避免裸 template 被当作惰性 DOM <template> 元素而不渲染） -->
               <template v-if="o.status === 'in_progress'">
                 <div class="tc-kv">
@@ -807,6 +841,12 @@ const stockVisible = ref(false)
                 <span v-if="!row.start_files.length && !row.output_files.length">—</span>
               </template>
             </el-table-column>
+            <el-table-column v-if="dept === 'electric'" label="标准件清单" width="120" align="center">
+              <template #default="{ row }">
+                <el-button v-if="row.standard_datasheet_id" size="small" link type="primary" :icon="Document" @click="openStdSheet(row)">查看</el-button>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="通知" width="110">
               <template #default="{ row }">{{ row.notify_user_name ? '📲 ' + row.notify_user_name : '—' }}</template>
             </el-table-column>
@@ -863,14 +903,14 @@ const stockVisible = ref(false)
                 <template v-else>{{ row.worker_name || '待分派' }}</template>
               </template>
             </el-table-column>
-            <el-table-column label="下发资料" min-width="140">
+            <el-table-column label="合同技术资料" min-width="150">
               <template #default="{ row }">
                 <el-tag v-for="f in row.input_files" :key="f.id" size="small" effect="plain"
                         class="file-chip" @click="downloadAttachment(f)">{{ f.name }}</el-tag>
                 <span v-if="!row.input_files.length">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="上传产物" min-width="140">
+            <el-table-column label="上传资料" min-width="140">
               <template #default="{ row }">
                 <template v-if="row.start_files.length || row.output_files.length">
                   <el-tag v-for="f in [...row.start_files, ...row.output_files]" :key="f.id"
@@ -916,6 +956,11 @@ const stockVisible = ref(false)
                 <span v-else>—</span>
               </template>
             </el-table-column>
+            <el-table-column label="资料" width="92" align="center">
+              <template #default="{ row }">
+                <el-button size="small" type="primary" plain :icon="Document" @click="openPack(row)">预览/下载</el-button>
+              </template>
+            </el-table-column>
             <el-table-column label="操作" width="248" fixed="right">
               <template #default="{ row }">
                 <el-button v-if="['assigned', 'in_progress'].includes(row.status) && !isProduce"
@@ -932,7 +977,14 @@ const stockVisible = ref(false)
 
         <!-- ===== 🆕 生产部-钣金组 tab（被派发项目；只读钣金装配表引用） ===== -->
         <el-tab-pane v-if="isProduce && (isSheetmetal || isLead || isMgr)" :label="`🔧 钣金组 (${sheetmetalRows.length})`" name="sm">
-          <el-table :data="sheetmetalRows" stripe v-loading="loading" max-height="calc(100vh - 260px)" :scrollbar-always-on="true">
+          <div class="grp-filter">
+            <span class="muted small">按人员筛选：</span>
+            <el-select v-model="smWorkerFilter" placeholder="全部人员" clearable filterable size="small" style="width:160px">
+              <el-option v-for="w in smWorkers" :key="w" :label="w" :value="w" />
+            </el-select>
+            <span class="muted small">共 {{ smRowsView.length }} 项</span>
+          </div>
+          <el-table :data="smRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="240" show-overflow-tooltip />
@@ -964,12 +1016,19 @@ const stockVisible = ref(false)
               </template>
             </el-table-column>
           </el-table>
-          <EmptyHint v-if="!loading && !sheetmetalRows.length" text="暂无派发给钣金组的项目" size="sm" />
+          <EmptyHint v-if="!loading && !smRowsView.length" text="暂无派发给钣金组的项目" size="sm" />
         </el-tab-pane>
 
         <!-- ===== 🆕 生产部-装配组 tab（被派发项目 + 标准件清单/外协加工 备齐状态） ===== -->
         <el-tab-pane v-if="isProduce && (isAssembler || isLead || isMgr)" :label="`🔩 装配组 (${assemblyRows.length})`" name="asm">
-          <el-table :data="assemblyRows" stripe v-loading="loading" max-height="calc(100vh - 260px)" :scrollbar-always-on="true">
+          <div class="grp-filter">
+            <span class="muted small">按人员筛选：</span>
+            <el-select v-model="asmWorkerFilter" placeholder="全部人员" clearable filterable size="small" style="width:160px">
+              <el-option v-for="w in asmWorkers" :key="w" :label="w" :value="w" />
+            </el-select>
+            <span class="muted small">共 {{ asmRowsView.length }} 项</span>
+          </div>
+          <el-table :data="asmRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
@@ -1006,6 +1065,7 @@ const stockVisible = ref(false)
             </el-table-column>
           </el-table>
           <EmptyHint v-if="!loading && !assemblyRows.length" text="暂无派发给装配组的项目" size="sm" />
+          <!-- grp-filter 样式 -->
         </el-tab-pane>
       </el-tabs>
     </template>
@@ -1085,7 +1145,7 @@ const stockVisible = ref(false)
                       label="上传产物（完成后按目标推送下游）">
           <div class="out-rows">
             <div v-for="ot in options?.outputs || []" :key="ot.k" class="out-row">
-              <span class="ol">{{ ot.label }}<span v-if="ot.required" class="req-star">*必传</span></span>
+              <span class="ol">{{ ot.label }}<span class="opt-hint">（可选）</span></span>
               <el-tag v-for="f in outputFilesOf(ot.k)" :key="f.id" size="small" type="success" effect="plain"><el-icon><Check /></el-icon> {{ f.name }}</el-tag>
               <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickOutputUpload(ot.k)">上传</el-button>
             </div>
@@ -1152,6 +1212,19 @@ const stockVisible = ref(false)
         :canEdit="canEditSheet"
       />
     </el-dialog>
+
+    <!-- 🆕 #9 任务跟踪：资料预览 + 打包下载 -->
+    <AttachmentPackDialog v-model="packVisible" :title="packTitle" :zipname="packZipname" :groups="packGroups" />
+
+    <!-- 🆕 #6 电工部：标准件清单只读引用 -->
+    <el-dialog v-model="stdVisible" :title="stdTitle" width="90vw" destroy-on-close>
+      <SheetmetalGrid
+        v-if="stdRow?.standard_datasheet_id"
+        :datasheetId="stdRow.standard_datasheet_id"
+        :projectCode="stdRow.project_code"
+        :canEdit="false"
+      />
+    </el-dialog>
   </div>
 </template>
 
@@ -1202,4 +1275,8 @@ const stockVisible = ref(false)
 .out-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .out-row .ol { font-size: 13px; min-width: 130px; }
 .req-star { color: var(--danger); font-size: 12px; margin-left: 4px; }
+.opt-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 4px; }
+.grp-filter { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.grp-filter .muted { color: var(--el-text-color-secondary); }
+.grp-filter .small { font-size: 12px; }
 </style>

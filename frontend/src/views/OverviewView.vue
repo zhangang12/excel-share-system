@@ -32,6 +32,8 @@ const pageSize = ref(20)
 const currentPage = ref(1)
 
 const isAdmin = computed(() => auth.hasRole('admin', 'manager'))
+// 🆕 #5 生产主管(pm_lead)也可调整项目状态（仅状态，其它字段仍只读）
+const canEditStatus = computed(() => auth.hasRole('admin', 'manager', 'pm_lead'))
 const visibleFields = computed(() =>
   fields.value.filter(f => myPerms.value[String(f.id)]?.can_view !== false)
 )
@@ -732,7 +734,7 @@ onMounted(load)
           <template #default="{ row, $index }">
             <!-- 状态列：el-select 下拉（只显示 进行中/已完成；旧值显示禁用项）-->
             <template v-if="col.source === 'status'">
-              <el-select v-if="isAdmin"
+              <el-select v-if="canEditStatus"
                          :model-value="row.status" size="small" style="width: 100%"
                          @update:model-value="(v: any) => changeStatus(row, v as string)">
                 <el-option v-for="s in STATUS_OPTIONS_NEW" :key="s" :value="s" :label="s">
