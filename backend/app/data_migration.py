@@ -30,6 +30,12 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("electric_done_flag", "BOOLEAN DEFAULT FALSE"),  # 🆕 接线完成第一步标记
     ],
     "aftersales": [("reject_reason", "TEXT")],     # 🆕 #98 售后驳回原因
+    "user_feedback": [                             # 🆕 系统回信（处理意见回复）
+        ("reply", "TEXT"),
+        ("replied_at", "TIMESTAMP"),
+        ("replied_by", "INTEGER"),
+        ("reply_read", "BOOLEAN DEFAULT FALSE"),
+    ],
     "sales_ledger": [                              # 🆕 预付/发货前付收款批注(支持插入时间戳)
         ("prepay_note", "TEXT"),
         ("before_ship_note", "TEXT"),

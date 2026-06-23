@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   Fold, Expand,
   FolderOpened, User, OfficeBuilding, Document, DataLine,
@@ -11,6 +11,7 @@ import {
   Box, Van, Money, Service, TrendCharts, Bell, Stamp, ChatDotRound, ChatLineRound,
 } from '@element-plus/icons-vue'
 import { messagesApi } from '@/api/messages'
+import { userFeedbackApi } from '@/api/userFeedback'
 import HelperFloating from '@/components/HelperFloating.vue'
 
 const router = useRouter()
@@ -40,6 +41,23 @@ async function refreshUnread() {
 }
 // 🆕 消息中心标已读后即时清零角标（监听 MessagesView 派发的事件，免等 60s 轮询）
 function onMessagesRead() { unread.value = 0 }
+
+// 🆕 登录后检查用户反馈的「处理意见回复」，右下角弹窗提醒查看
+async function checkFeedbackReplies() {
+  if (!auth.isLoggedIn) return
+  try {
+    const rows = await userFeedbackApi.myUnreadReplies()
+    if (!rows.length) return
+    const n = ElNotification({
+      title: '反馈处理回复',
+      message: `您有 ${rows.length} 条反馈已收到处理意见回复，点击查看`,
+      type: 'success',
+      position: 'bottom-right',
+      duration: 0,
+      onClick: () => { window.dispatchEvent(new Event('pms:open-my-feedback')); n.close() },
+    })
+  } catch { /* 静默 */ }
+}
 
 const collapsed = ref(localStorage.getItem('pms_sidebar_collapsed') === '1')
 function toggleCollapse() {
@@ -99,6 +117,7 @@ onMounted(async () => {
   refreshUnread()
   unreadTimer = window.setInterval(refreshUnread, 60_000)
   window.addEventListener('pms:messages-read', onMessagesRead)
+  checkFeedbackReplies()   // 🆕 登录后提醒未读的反馈处理回复
 })
 
 onUnmounted(() => {

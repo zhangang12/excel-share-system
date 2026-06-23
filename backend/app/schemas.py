@@ -764,3 +764,8 @@ class UserFeedbackRow(BaseModel):
     user_role: Optional[str] = None
     shot_file_id: Optional[int] = None
     shot_file_name: Optional[str] = None
+    # 🆕 系统回信
+    reply: Optional[str] = None
+    replied_at: Optional[datetime] = None
+    replier_name: Optional[str] = None
+    reply_read: bool = False

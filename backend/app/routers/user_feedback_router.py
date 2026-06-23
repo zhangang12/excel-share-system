@@ -6,13 +6,15 @@
 - GET  /api/user-feedback/export.html  管理层导出为 HTML（截图 base64 内嵌，单文件自包含）
 """
 import base64
+from datetime import datetime, timezone
 from html import escape
 from typing import List, Optional
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, UploadFile, File, Query, Request
+from fastapi import APIRouter, Depends, Form, UploadFile, File, Query, Request, HTTPException
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -36,6 +38,10 @@ def _row_out(fb: models.UserFeedback) -> schemas.UserFeedbackRow:
         user_role=("/".join(sorted(fb.user.role_codes)) or None) if fb.user else None,
         shot_file_id=fb.shot_file_id,
         shot_file_name=fb.shot.name if fb.shot else None,
+        reply=fb.reply,
+        replied_at=fb.replied_at,
+        replier_name=(fb.replier.full_name or fb.replier.username) if fb.replier else None,
+        reply_read=bool(fb.reply_read),
     )
 
 
@@ -115,6 +121,68 @@ async def mark_done(
     await write_audit(db, user=current, action="user_feedback_done",
                       target_type="user_feedback", target_id=fid)
     return schemas.Msg(message="已标记为已处理")
+
+
+class ReplyIn(BaseModel):
+    reply: str
+
+
+@router.post("/{fid}/reply", response_model=schemas.UserFeedbackRow)
+async def reply_feedback(
+    fid: int,
+    body: ReplyIn,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 管理层回复处理意见（系统回信）。回复即视为已处理；提出人下次登录右下角弹窗提醒查看。"""
+    text = (body.reply or "").strip()
+    if not text:
+        raise HTTPException(400, "请填写处理意见回复")
+    r = await db.execute(select(models.UserFeedback).where(models.UserFeedback.id == fid))
+    fb = r.scalar_one_or_none()
+    if not fb:
+        raise HTTPException(404, "反馈不存在")
+    fb.reply = text[:5000]
+    fb.replied_at = datetime.now(timezone.utc)
+    fb.replied_by = current.id
+    fb.reply_read = False          # 新回复 → 提出人未读，触发登录弹窗
+    fb.status = "done"
+    await db.commit()
+    r2 = await db.execute(select(models.UserFeedback).where(models.UserFeedback.id == fid))
+    fb2 = r2.scalar_one()
+    await write_audit(db, user=current, action="user_feedback_reply",
+                      target_type="user_feedback", target_id=fid, detail=text[:80])
+    return _row_out(fb2)
+
+
+@router.get("/my-unread-replies", response_model=List[schemas.UserFeedbackRow])
+async def my_unread_replies(
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """提出人本人：有处理意见回复且未读的反馈（登录后右下角弹窗提醒用）。"""
+    q = (select(models.UserFeedback)
+         .where(models.UserFeedback.user_id == current.id,
+                models.UserFeedback.reply.is_not(None),
+                models.UserFeedback.reply_read == False)  # noqa: E712
+         .order_by(models.UserFeedback.id.desc()))
+    rows = list((await db.execute(q)).scalars().all())
+    return [_row_out(r) for r in rows]
+
+
+@router.post("/replies/read", response_model=schemas.Msg)
+async def mark_replies_read(
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """提出人查看后：把本人全部未读回复标记为已读（消除登录弹窗提醒）。"""
+    await db.execute(sa_update(models.UserFeedback)
+        .where(models.UserFeedback.user_id == current.id,
+               models.UserFeedback.reply.is_not(None),
+               models.UserFeedback.reply_read == False)  # noqa: E712
+        .values(reply_read=True))
+    await db.commit()
+    return schemas.Msg(message="已标记为已读")
 
 
 def _img_data_uri(path: Path) -> Optional[str]:

@@ -13,6 +13,11 @@ export interface UserFeedbackRow {
   user_role?: string | null
   shot_file_id?: number | null
   shot_file_name?: string | null
+  // 🆕 系统回信
+  reply?: string | null
+  replied_at?: string | null
+  replier_name?: string | null
+  reply_read?: boolean
 }
 
 export const userFeedbackApi = {
@@ -28,6 +33,13 @@ export const userFeedbackApi = {
     http.get<UserFeedbackRow[]>('/user-feedback', { params }).then((r) => r.data),
   markDone: (id: number) =>
     http.post<{ message: string }>(`/user-feedback/${id}/done`).then((r) => r.data),
+  // 🆕 系统回信
+  reply: (id: number, reply: string) =>
+    http.post<UserFeedbackRow>(`/user-feedback/${id}/reply`, { reply }).then((r) => r.data),
+  myUnreadReplies: () =>
+    http.get<UserFeedbackRow[]>('/user-feedback/my-unread-replies').then((r) => r.data),
+  markRepliesRead: () =>
+    http.post<{ message: string }>('/user-feedback/replies/read').then((r) => r.data),
   exportUrl: (params: { kind?: string; status?: string } = {}) => {
     const qs = new URLSearchParams()
     if (params.kind) qs.set('kind', params.kind)

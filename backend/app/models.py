@@ -473,9 +473,15 @@ class UserFeedback(Base):
     user_agent: Mapped[Optional[str]] = mapped_column(String(255))
     shot_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     status: Mapped[str] = mapped_column(String(16), default="open", index=True)  # open/done
+    # 🆕 系统回信：管理层处理意见回复
+    reply: Mapped[Optional[str]] = mapped_column(Text)
+    replied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    replied_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    reply_read: Mapped[bool] = mapped_column(default=False)  # 提出人是否已读回复
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
 
-    user: Mapped[Optional["User"]] = relationship(lazy="joined")
+    user: Mapped[Optional["User"]] = relationship(lazy="joined", foreign_keys=[user_id])
+    replier: Mapped[Optional["User"]] = relationship(lazy="joined", foreign_keys=[replied_by])
     shot: Mapped[Optional["Attachment"]] = relationship(lazy="joined")

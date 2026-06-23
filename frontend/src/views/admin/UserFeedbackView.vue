@@ -2,7 +2,7 @@
 // 🆕 v3 用户反馈管理后台（仅 admin/manager）
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Check, Download, Refresh } from '@element-plus/icons-vue'
+import { Check, Download, Refresh, ChatLineRound } from '@element-plus/icons-vue'
 import { userFeedbackApi, type UserFeedbackRow } from '@/api/userFeedback'
 import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -34,6 +34,30 @@ async function markDone(row: UserFeedbackRow) {
   await userFeedbackApi.markDone(row.id)
   ElMessage.success('已标记为已处理')
   row.status = 'done'
+}
+
+// 🆕 系统回信：回复处理意见
+const replyVisible = ref(false)
+const replyRow = ref<UserFeedbackRow | null>(null)
+const replyText = ref('')
+const replySaving = ref(false)
+function openReply(row: UserFeedbackRow) {
+  replyRow.value = row
+  replyText.value = row.reply || ''
+  replyVisible.value = true
+}
+async function submitReply() {
+  if (!replyRow.value) return
+  const t = replyText.value.trim()
+  if (!t) { ElMessage.warning('请填写处理意见回复'); return }
+  replySaving.value = true
+  try {
+    const updated = await userFeedbackApi.reply(replyRow.value.id, t)
+    const idx = list.value.findIndex(r => r.id === updated.id)
+    if (idx >= 0) list.value[idx] = updated
+    ElMessage.success('已回复，提出人登录后会收到提醒')
+    replyVisible.value = false
+  } finally { replySaving.value = false }
 }
 
 async function exportHtml() {
@@ -148,18 +172,38 @@ function closePreview() {
         <el-table-column label="时间" width="150">
           <template #default="{ row }">{{ fmtRelative(row.created_at) }}</template>
         </el-table-column>
+        <el-table-column label="处理意见回复" min-width="200">
+          <template #default="{ row }">
+            <span v-if="row.reply" class="reply-cell">{{ row.reply }}</span>
+            <span v-else class="muted small">未回复</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }"><StatusPill :text="STATUS_TXT[row.status]" :variant="row.status === 'done' ? 'success' : 'warn'" /></template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.status === 'open'" size="small" link type="success" :icon="Check" @click="markDone(row)">标记已处理</el-button>
-            <span v-else class="muted small">—</span>
+            <el-button size="small" link type="primary" :icon="ChatLineRound" @click="openReply(row)">{{ row.reply ? '修改回复' : '回复' }}</el-button>
+            <el-button v-if="row.status === 'open'" size="small" link type="success" :icon="Check" @click="markDone(row)">已处理</el-button>
           </template>
         </el-table-column>
       </el-table>
       <EmptyHint v-if="!loading && !list.length" text="暂无用户反馈" />
     </el-card>
+
+    <!-- 🆕 回复处理意见 -->
+    <el-dialog v-model="replyVisible" title="回复处理意见（系统回信）" width="540px" append-to-body>
+      <div v-if="replyRow" class="reply-orig">
+        <div class="reply-orig-h">{{ replyRow.user_name || '—' }} · {{ KIND_TXT[replyRow.kind] }} 反馈</div>
+        <div class="reply-orig-c">{{ replyRow.content }}</div>
+      </div>
+      <el-input v-model="replyText" type="textarea" :rows="5" maxlength="2000" show-word-limit
+                placeholder="填写处理意见 / 回复内容。提出人下次登录时右下角会弹出提醒，并可在「反馈」小助手的「我的反馈」中查看。" />
+      <template #footer>
+        <el-button @click="replyVisible = false">取消</el-button>
+        <el-button type="primary" :loading="replySaving" @click="submitReply">发送回复</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 截图预览 -->
     <el-dialog v-model="previewVisible" title="截图预览" width="80%" top="6vh" @close="closePreview" append-to-body>
@@ -176,4 +220,8 @@ function closePreview() {
 .small { font-size: 12px; }
 .content-cell { white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
 .page-code { font-size: 12px; background: var(--el-fill-color-light); padding: 1px 6px; border-radius: 4px; color: var(--el-text-color-secondary); }
+.reply-cell { white-space: pre-wrap; word-break: break-word; line-height: 1.5; color: #065f46; }
+.reply-orig { background: var(--el-fill-color-light); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.reply-orig-h { font-size: 12.5px; color: var(--el-text-color-secondary); margin-bottom: 4px; }
+.reply-orig-c { white-space: pre-wrap; word-break: break-word; line-height: 1.55; color: #1f2937; }
 </style>
