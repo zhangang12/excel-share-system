@@ -587,13 +587,13 @@ async function approveOrder(r: SalesLedgerRow, ok: boolean) {
   } else {
     let reason = ''
     try {
-      const { value } = await ElMessageBox.prompt('请填写退回原因（可留空），将通知销售修改后重新提交：',
-        '退回下单', { inputType: 'textarea', confirmButtonText: '退回', inputValue: '' })
+      const { value } = await ElMessageBox.prompt('请填写驳回原因（可留空），将通知销售修改后重新提交：',
+        '驳回下单', { inputType: 'textarea', confirmButtonText: '驳回', inputValue: '' })
       reason = value || ''
     } catch { return }
     await salesApi.orderReject(r.id, reason.trim())
   }
-  ElMessage.success(ok ? '已通过，各部门任务已派发' : '已退回销售修改')
+  ElMessage.success(ok ? '已通过，各部门任务已派发' : '已驳回，已通知销售修改后重新提交')
   orderApprovalRows.value = (await salesApi.orderApprovals()).rows
   await load()
 }
@@ -1251,29 +1251,29 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 🆕 下单审批（销售主管） ===== -->
-    <el-dialog v-model="orderApprovalVisible" title="📝 销售下单审批" width="760px" class="v3-scroll-dialog">
+    <el-dialog v-model="orderApprovalVisible" title="📝 销售下单审批" width="960px" top="6vh" class="v3-scroll-dialog">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 10px"
                 title="通过后才正式创建并推送各部门任务与物流发货待办；退回则销售可修改后重新提交。" />
       <EmptyHint v-if="!orderApprovalRows.length" text="暂无待审批的下单" size="sm" />
-      <el-table v-else :data="orderApprovalRows" stripe>
+      <el-table v-else :data="orderApprovalRows" stripe style="width: 100%">
         <el-table-column prop="code" label="项目编号" width="110" />
-        <el-table-column prop="name" label="设备名称" min-width="130" />
-        <el-table-column label="客户" min-width="100">
+        <el-table-column prop="name" label="设备名称" min-width="150" show-overflow-tooltip />
+        <el-table-column label="客户" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ row.customer || '—' }}</template>
         </el-table-column>
-        <el-table-column label="销售" width="84">
+        <el-table-column label="销售" width="90">
           <template #default="{ row }">{{ row.sales_name || '—' }}</template>
         </el-table-column>
-        <el-table-column label="金额" width="100" align="right">
+        <el-table-column label="金额" width="110" align="right">
           <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
         </el-table-column>
-        <el-table-column label="派往" min-width="120">
-          <template #default="{ row }">{{ (row.pending_order?.depts || []).map((d:string)=>({design:'设计',electric:'电工',produce:'生产'}[d]||d)).join('、') || '—' }}</template>
+        <el-table-column label="派往" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">{{ (row.pending_order?.depts || []).map((d:string)=>({design:'设计',electric:'电工',produce:'生产'}[d]||d)).join('、') || '调货(仅发货)' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150">
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="success" :icon="Check" @click="approveOrder(row, true)">通过</el-button>
-            <el-button size="small" @click="approveOrder(row, false)">退回</el-button>
+            <el-button size="small" type="danger" plain :icon="Close" @click="approveOrder(row, false)">驳回</el-button>
           </template>
         </el-table-column>
       </el-table>
