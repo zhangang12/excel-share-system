@@ -72,7 +72,7 @@ async def main():
             return od
 
         await design_done(p1, "2026-06-01", "2026-06-10", "2026-06-10")  # 按时, eff=round(9/9*100)=100
-        await design_done(p2, "2026-06-01", "2026-06-01", "2026-06-01")  # 预计0天→按1天, eff=round(0/1)=0→实际0天 round(0/1*100)=0
+        await design_done(p2, "2026-06-01", "2026-06-01", "2026-06-01")  # 预计/实际均0天→各按1天, eff=round(1/1*100)=100（越高越好）
 
         # ===== 部门报表 =====
         r = await c.get("/api/reports/dept/design", headers=Hdl)

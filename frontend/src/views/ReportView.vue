@@ -63,7 +63,7 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
       </el-row>
 
       <el-card shadow="never" style="margin-top:14px" v-if="rep">
-        <template #header>📈 人均完成效率（实际÷预计 · 越低越好，绿=按时）</template>
+        <template #header>📈 人均完成效率（预计÷实际 · 越高越好，绿=达标 ≥100%）</template>
         <div v-for="w in rep.workers.filter(x => x.avg_eff != null)" :key="w.dept + w.worker_name" class="bar-row">
           <span class="bl">{{ w.dept_name }} · {{ w.worker_name }}</span>
           <div class="bt"><div class="bf" :class="effClass(w.avg_eff)" :style="{ width: barWidth(w.avg_eff) + '%' }">{{ w.avg_eff }}%</div></div>
