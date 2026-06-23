@@ -1341,9 +1341,9 @@ async def normalize_tax_rate_no_invoice(db: AsyncSession) -> dict:
 
 
 async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
-    """🆕 2026-06-20 两件事（幂等）：
-    1. 给存量 SalesLedger 补 order_type（默认工厂制作订单，2026-008 为调货订单）。
-    2. 为所有进行中的活跃项目补建 design/electric/produce 三个部门任务单（若不存在）。
+    """🆕 2026-06-20（幂等）：给存量 SalesLedger 补 order_type（默认工厂制作订单，2026-008 为调货订单）。
+    注：原"为进行中项目补建 design/electric/produce 任务单"已于 2026-06-23 停用——它每次启动都跑、
+    会让管理层删除/作废的任务单复活成"待分派"，与删除语义冲突；现网项目均已派单，使命已完成。
     """
     from sqlalchemy import update as _upd
 
@@ -1367,36 +1367,14 @@ async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
             .values(order_type="调货订单")
         )
 
-    # —— 2. 补建部门任务单（排除调货订单：不流转生产，不应有 design/electric/produce 任务单）——
-    delivery_pids = select(models.SalesLedger.project_id).where(
-        models.SalesLedger.order_type == "调货订单")
-    res = await db.execute(
-        select(models.Project).where(
-            models.Project.is_deleted == False,
-            models.Project.status == "进行中",
-            models.Project.id.not_in(delivery_pids),
-        )
-    )
-    projects = res.scalars().all()
-
-    # 取所有已存在（未作废）的 dept_orders
-    res = await db.execute(
-        select(models.DeptOrder.project_id, models.DeptOrder.dept)
-        .where(models.DeptOrder.status != "voided")
-    )
-    existing = {(r[0], r[1]) for r in res.all()}
-
+    # —— 2.（已停用）补建部门任务单 ——
+    # 🆕 2026-06-23 停用：此一次性回填原为"上线前存量老项目"补建 design/electric/produce 任务单，
+    # 现网项目均已派单，使命已完成。且它每次启动都跑、按 (项目,部门) 缺失即补，会让管理层
+    # 「删除/作废」的任务单在重启后复活成"待分派"，与删除/作废语义冲突，故停用。
+    # 如个别老项目确需补单，请由销售/管理层手工下单。
     orders_created = 0
-    for p in projects:
-        for dept in ("design", "electric", "produce"):
-            if (p.id, dept) not in existing:
-                db.add(models.DeptOrder(
-                    project_id=p.id, dept=dept,
-                    req_text=None, created_by=None,
-                ))
-                orders_created += 1
 
-    if type_set or orders_created:
+    if type_set:
         await db.commit()
     log.info(
         "[backfill_order_type_and_dept_orders] order_type 补 %d 行，dept_orders 补 %d 条",
