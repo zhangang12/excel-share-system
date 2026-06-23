@@ -216,9 +216,9 @@ async function confirmShip(force = false) {
               :variant="row.status === 'shipped' ? 'success' : (row.can_ship ? 'primary' : 'warn')" />
           </template>
         </el-table-column>
-        <el-table-column label="资料" width="96" align="center">
+        <el-table-column label="资料" width="100" align="center">
           <template #default="{ row }">
-            <el-button size="small" type="primary" plain @click="openPack(row)">预览/下载</el-button>
+            <el-button size="small" link type="primary" @click="openPack(row)">预览/下载</el-button>
           </template>
         </el-table-column>
         <el-table-column label="发货闸门" width="200" fixed="right">

@@ -235,9 +235,9 @@ async function packDownload() {
         </el-table-column>
 
         <!-- 右侧：打包下载入口 -->
-        <el-table-column label="下载" width="92" fixed="right" align="center">
+        <el-table-column label="下载" width="84" fixed="right" align="center">
           <template #default="{ row }">
-            <el-button size="small" type="primary" plain :icon="Download" @click="openDownload(row)">打包</el-button>
+            <el-button size="small" link type="primary" :icon="Download" @click="openDownload(row)">打包</el-button>
           </template>
         </el-table-column>
       </el-table>
