@@ -19,7 +19,7 @@ async function load() {
 }
 onMounted(load)
 
-function effClass(v?: number | null) { return v == null ? '' : (v <= 100 ? 'good' : 'bad') }
+function effClass(v?: number | null) { return v == null ? '' : (v >= 100 ? 'good' : 'bad') }
 function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(v, 200) / 2, 8) }
 </script>
 
@@ -46,7 +46,7 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
         <div class="kpi is-good"><div class="kpi-v">{{ rep.done }}</div><div class="kpi-l">已完成</div></div>
         <div class="kpi" :class="rep.overdue ? 'is-bad' : ''"><div class="kpi-v">{{ rep.overdue }}</div><div class="kpi-l">逾期任务</div></div>
         <div class="kpi"><div class="kpi-v">{{ rep.ontime_rate ?? '—' }}%</div><div class="kpi-l">按时率</div></div>
-        <div class="kpi"><div class="kpi-v">{{ rep.avg_eff ?? '—' }}%</div><div class="kpi-l">平均效率（越低越好）</div></div>
+        <div class="kpi"><div class="kpi-v">{{ rep.avg_eff ?? '—' }}%</div><div class="kpi-l">平均效率（越高越好）</div></div>
       </div>
 
       <div class="sec-title" v-if="rep">部门概览</div>

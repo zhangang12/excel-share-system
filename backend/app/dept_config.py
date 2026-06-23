@@ -68,8 +68,9 @@ def compute_efficiency(start: str | None, due: str | None, done: str | None):
     """效率/按时口径（C1-C3，供完成流/逾期推送/报表共用单一实现）：
     - 自然日计（C1）
     - done == due 算按时（C2）
-    - 预计 0 天按 1 天算（C3）
-    - 效率% = round(实际天数 / max(预计天数,1) * 100)，≤100 为按时高效
+    - 预计/实际用时不足 1 天均按 1 天算（C3：避免除零，且当天完成不致 0%）
+    - 🆕 完成效率% = round(预计天数 / 实际天数 * 100)，越高越好：
+      100=按时，>100=提前完成（越快越高），<100=超期（越慢越低）
     返回 (eff_pct | None, on_time | None, overdue_days)
     """
     from datetime import date
@@ -84,9 +85,9 @@ def compute_efficiency(start: str | None, due: str | None, done: str | None):
     ds, dd, dn = _p(start), _p(due), _p(done)
     if not ds or not dd or not dn:
         return None, None, 0
-    planned = max((dd - ds).days, 1)   # C3
-    actual = max((dn - ds).days, 0)
-    eff = round(actual / planned * 100)
+    planned = max((dd - ds).days, 1)   # C3：预计不足 1 天按 1 天
+    actual = max((dn - ds).days, 1)    # 🆕 C3：实际不足 1 天按 1 天（当天完成=至少 100%，且避免除零）
+    eff = round(planned / actual * 100)  # 🆕 越高越好：预计 ÷ 实际
     on_time = dn <= dd                 # C2
     overdue_days = max((dn - dd).days, 0)
     return eff, on_time, overdue_days

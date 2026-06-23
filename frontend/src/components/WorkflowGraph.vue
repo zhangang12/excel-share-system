@@ -40,7 +40,7 @@ const shipTxt = computed(() =>
           <div class="wf-kv">负责人：{{ d.worker_name || '—' }}</div>
           <div class="wf-kv">预计完成：{{ d.due_date || '—' }}</div>
           <div class="wf-kv">实际完成：{{ d.done_date || '—' }}</div>
-          <div class="wf-kv">效率：<span v-if="d.eff_pct != null" :class="d.eff_pct <= 100 ? 'good' : 'bad'">{{ d.eff_pct }}%</span><span v-else>—</span></div>
+          <div class="wf-kv">效率：<span v-if="d.eff_pct != null" :class="d.eff_pct >= 100 ? 'good' : 'bad'">{{ d.eff_pct }}%</span><span v-else>—</span></div>
         </div>
       </div>
     </div>

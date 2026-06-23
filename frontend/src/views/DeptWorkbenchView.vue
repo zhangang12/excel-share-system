@@ -495,7 +495,7 @@ const reassignCandidates = computed(() =>
 // ---- 展示工具 ----
 function effClass(o: DeptOrder) {
   if (o.eff_pct == null) return ''
-  return o.eff_pct <= 100 ? 'eff-good' : 'eff-bad'
+  return o.eff_pct >= 100 ? 'eff-good' : 'eff-bad'
 }
 const deptName = computed(() => options.value?.dept_name || '')
 
@@ -1044,7 +1044,7 @@ const stockVisible = ref(false)
           <el-table-column prop="ontime" label="按时" width="70" />
           <el-table-column label="逾期" width="70"><template #default="{ row }">{{ row.over }}</template></el-table-column>
           <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate ?? '—' }}%</template></el-table-column>
-          <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff != null && row.avg_eff <= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff ?? '—' }}%</span></template></el-table-column>
+          <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff != null && row.avg_eff >= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff ?? '—' }}%</span></template></el-table-column>
         </el-table>
         <div class="sec-title" style="margin-top:16px">逾期任务（{{ report.overdue_items.length }}）</div>
         <el-table v-if="report.overdue_items.length" :data="report.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
