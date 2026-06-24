@@ -51,7 +51,8 @@ async function open(att: Att) {
     try {
       const buf = await (await attachmentBlob(att.id)).arrayBuffer()
       const XLSX = await import('xlsx')
-      xlsxWb = XLSX.read(buf, { type: 'array' })
+      // cellDates/cellNF：让日期格式单元格变 Date 并带上数字格式(.z)，便于识别并修复「常规」格式的日期序列号
+      xlsxWb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: true })
       xlsxSheets.value = xlsxWb.SheetNames || []
       await selectSheet(xlsxSheets.value[0] || '')
     } catch { ElMessage.error('表格预览失败，请下载查看'); visible.value = false } finally { loading.value = false }
@@ -72,11 +73,46 @@ async function open(att: Att) {
   downloadAttachment(att)
 }
 
+// 🆕 修复在线预览日期列：源表「发出/到货日期」等列若以「常规(General)」格式存储，
+// sheet_to_html 会原样输出 Excel 日期序列号(如 46174)。这里把日期列里的序列号补成 yyyy-mm-dd 再渲染，
+// 已是日期型(t==='d')的单元格 SheetJS 已带 .w，无需处理；不动单元格结构，故合并单元格(公司抬头行)仍正常。
+function fixDateCells(XLSX: any, ws: any) {
+  if (!ws || !ws['!ref']) return
+  const range = XLSX.utils.decode_range(ws['!ref'])
+  const enc = XLSX.utils.encode_cell
+  const isDateFmt = (z: any) => !!(z && XLSX.SSF && XLSX.SSF.is_date && XLSX.SSF.is_date(z))
+  // 1) 识别「日期列」：列中存在真正日期单元格(t==='d')、日期数字格式(.z)、或表头含「日期/date」
+  const dateCols = new Set<number>()
+  for (let C = range.s.c; C <= range.e.c; C++) {
+    for (let R = range.s.r; R <= range.e.r; R++) {
+      const c = ws[enc({ r: R, c: C })]
+      if (!c) continue
+      if (c.t === 'd' || isDateFmt(c.z) ||
+          (c.t === 's' && typeof c.v === 'string' && /日期|date/i.test(c.v))) {
+        dateCols.add(C); break
+      }
+    }
+  }
+  if (!dateCols.size) return
+  // 2) 把日期列里仍是「序列号数字」(合理日期序列号区间)的单元格补成 yyyy-mm-dd 显示
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    for (const C of dateCols) {
+      const c = ws[enc({ r: R, c: C })]
+      if (!c) continue
+      if (c.t === 'n' && typeof c.v === 'number' && c.v > 20000 && c.v < 90000) {
+        try { c.w = XLSX.SSF.format('yyyy-mm-dd', c.v) } catch { /* 保底不动 */ }
+      }
+    }
+  }
+}
+
 async function selectSheet(name: string) {
   if (!xlsxWb || !name) return
   const XLSX = await import('xlsx')
   xlsxActive.value = name
-  xlsxHtml.value = XLSX.utils.sheet_to_html(xlsxWb.Sheets[name])
+  const ws = xlsxWb.Sheets[name]
+  fixDateCells(XLSX, ws)
+  xlsxHtml.value = XLSX.utils.sheet_to_html(ws)
 }
 
 function onClose() { cleanup(); mode.value = '' }
