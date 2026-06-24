@@ -138,6 +138,16 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
         res = await db.execute(select(models.Attachment).where(models.Attachment.id.in_(att_ids)))
         names = {a.id: a.name for a in res.scalars().all()}
 
+    # 🆕 #1 未处理的技术资料修订意见（按项目；取最新一条内容供前端 tooltip）
+    pids = [l.project_id for l in ledgers]
+    rev_by_pid: dict[int, str] = {}
+    if pids:
+        rres = await db.execute(select(models.RevisionRequest).where(
+            models.RevisionRequest.project_id.in_(pids),
+            models.RevisionRequest.status == "open").order_by(models.RevisionRequest.id))
+        for rr in rres.scalars().all():
+            rev_by_pid[rr.project_id] = rr.reason  # id 升序，最后写入=最新一条
+
     rows = []
     for l in ledgers:
         p = l.project
@@ -172,6 +182,8 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
             ship_receivable=l.ship_receivable or 0, balance=l.balance or 0,
             balance_date=l.balance_date, ship_date=l.ship_date,
             order_type=l.order_type,
+            revision_open=l.project_id in rev_by_pid,
+            revision_reason=rev_by_pid.get(l.project_id),
         ))
     return rows
 
@@ -559,6 +571,15 @@ async def replace_tech_files(
         for oid in oids[1:]:
             await copy_attachment(db, first, biz_type="order_input", biz_id=oid,
                                   project_id=led.project_id, user_id=current.id)
+    # 🆕 #1 更换技术资料即视为处理了未结的修订意见：标记 resolved（提出人稍后回通知）
+    now = datetime.now(timezone.utc)
+    rres = await db.execute(select(models.RevisionRequest).where(
+        models.RevisionRequest.project_id == led.project_id,
+        models.RevisionRequest.status == "open"))
+    open_revs = list(rres.scalars().all())
+    raisers = {r.raised_by for r in open_revs if r.raised_by}
+    for r in open_revs:
+        r.status = "resolved"; r.resolved_by = current.id; r.resolved_at = now
     # 通知各相关部门负责人技术资料已更换
     code = led.project.code if led.project else ""
     for role in {DEPTS[o.dept]["lead_role"] for o in orders if o.dept in DEPTS}:
@@ -566,6 +587,11 @@ async def replace_tech_files(
                            text=f"【技术资料更换】{code} 销售已更换合同技术资料，请以最新下发资料为准。",
                            biz_type="project", biz_id=led.project_id)
     await db.commit()
+    # 🆕 #1 回通知提出修订意见的设计/电工
+    for uid in raisers:
+        await push_message(db, to_user_id=uid, kind="info",
+                           text=f"【技术资料已更新】{code} 销售已根据你的修订意见更换技术资料，请查收最新下发资料。",
+                           biz_type="project", biz_id=led.project_id)
     await write_audit(db, user=current, action="replace_tech_files", target_type="sales_ledger",
                       target_id=lid, detail=f"{len(files)}文件→{len(orders)}任务单")
     return schemas.Msg(message=f"已更换技术资料，并同步至 {len(orders)} 个部门任务单")

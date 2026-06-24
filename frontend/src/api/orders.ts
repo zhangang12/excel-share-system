@@ -97,6 +97,10 @@ export const ordersApi = {
   shipPrepDone: (id: number) =>
     http.post<{ message: string }>(`/orders/${id}/ship-prep-done`).then((r) => r.data),
 
+  // 🆕 #1 对销售下发的合同技术资料提修订意见 → 推送对应销售员
+  revisionRequest: (id: number, reason: string) =>
+    http.post<{ message: string }>(`/orders/${id}/revision-request`, { reason }).then((r) => r.data),
+
   complete: (id: number, notifyUserId: number) =>
     http.post(`/orders/${id}/complete`, { notify_user_id: notifyUserId }).then((r) => r.data),
 

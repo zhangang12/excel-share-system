@@ -707,7 +707,15 @@ async function openReport() {
         <el-table-column label="项目编号" :width="cw(120, 92)" fixed>
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
-        <el-table-column prop="name" label="设备名称" :min-width="cw(150, 100)" show-overflow-tooltip />
+        <el-table-column prop="name" label="设备名称" :min-width="cw(150, 100)" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span>{{ row.name }}</span>
+            <el-tooltip v-if="row.revision_open" :content="'技术资料待修订：' + (row.revision_reason || '')" placement="top">
+              <el-tag size="small" type="danger" effect="dark" round style="margin-left:6px; cursor:pointer"
+                      @click.stop="openEdit(row)">待修订</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column prop="customer" label="客户单位" :min-width="cw(130, 90)" show-overflow-tooltip>
           <template #default="{ row }">{{ row.customer || '—' }}</template>
         </el-table-column>
@@ -1068,6 +1076,9 @@ async function openReport() {
 
         <!-- 🆕 #2 更换技术资料（替换该项目所有部门下发资料） -->
         <div class="fsec">📎 合同技术资料</div>
+        <el-alert v-if="editRow?.revision_open" type="warning" :closable="false" style="margin-bottom: 8px"
+                  :title="'⚠️ 待修订意见：' + (editRow?.revision_reason || '')"
+                  description="更换技术资料后该意见自动标记已处理，并回通知提出人。" />
         <el-form-item>
           <el-button :icon="UploadFilled" :loading="replacingTech" @click="replaceTechFiles">更换技术资料</el-button>
           <span class="muted small" style="margin-left:8px">上传新文件后将替换该项目所有部门任务单的「合同技术资料/下发资料」</span>

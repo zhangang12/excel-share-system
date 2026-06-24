@@ -377,6 +377,25 @@ async function doShipPrepDone(o: DeptOrder | null) {
 }
 // 🆕 #5 打包下载：复用已有的 openPack(row) / packVisible / AttachmentPackDialog（含合同技术资料 + 上传资料）
 
+// 🆕 #1 对合同技术资料提修订意见 → 推送对应销售员
+const revVisible = ref(false)
+const revOrder = ref<DeptOrder | null>(null)
+const revReason = ref('')
+const revSubmitting = ref(false)
+function openRevision(o: DeptOrder) { revOrder.value = o; revReason.value = ''; revVisible.value = true }
+async function submitRevision() {
+  if (!revOrder.value) return
+  if (!revReason.value.trim()) { ElMessage.warning('请填写修订意见'); return }
+  revSubmitting.value = true
+  try {
+    const r: any = await ordersApi.revisionRequest(revOrder.value.id, revReason.value.trim())
+    ElMessage.success(r?.message || '修订意见已提交')
+    revVisible.value = false
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '提交失败')
+  } finally { revSubmitting.value = false }
+}
+
 // 🆕 钣金装配表可编辑预览（钣金组/装配组共用）
 const viewVisible = ref(false)
 const viewTitle = ref('')
@@ -712,6 +731,10 @@ const stockVisible = ref(false)
                         class="file-chip" @click="downloadAttachment(f)">
                   <el-icon><Document /></el-icon>{{ f.name }}<el-icon class="dl"><Download /></el-icon>
                 </el-tag>
+              </div>
+              <!-- 🆕 #1 对合同技术资料提修订意见（设计/电工，进行中）→ 推送对应销售 -->
+              <div v-if="(dept === 'design' || dept === 'electric') && o.status === 'in_progress' && o.input_files.length" style="margin:4px 0">
+                <el-button size="small" link type="warning" @click="openRevision(o)">✏️ 对技术资料提修订意见</el-button>
               </div>
 
               <!-- 🆕 #6 电工部：标准件清单只读引用（待接单/进行中卡片均显示） -->
@@ -1267,6 +1290,18 @@ const stockVisible = ref(false)
         <el-tag v-if="resMode === 'shipprep' && resOrder?.ship_prep_done" type="success" effect="plain" style="margin-right:auto">✅ 已标记发货准备完成</el-tag>
         <el-button @click="resVisible = false">关闭</el-button>
         <el-button v-if="resMode === 'shipprep'" type="success" :icon="Check" @click="doShipPrepDone(resOrder)">发货准备完成</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 🆕 #1 提技术资料修订意见 -->
+    <el-dialog v-model="revVisible" :title="`✏️ 技术资料修订意见 · ${revOrder?.project_code || ''}`" width="520px">
+      <el-alert type="warning" :closable="false" style="margin-bottom: 12px"
+                title="把合同技术资料里需要修改的地方写清楚，提交后会推送给该项目对应的销售员，由销售更换技术资料。" />
+      <el-input v-model="revReason" type="textarea" :rows="5" maxlength="1000" show-word-limit
+                placeholder="例如：A3 图纸尺寸与合同不符，应为 …；缺少 XX 部件的外购图……" />
+      <template #footer>
+        <el-button @click="revVisible = false">取消</el-button>
+        <el-button type="warning" :loading="revSubmitting" @click="submitRevision">提交并通知销售</el-button>
       </template>
     </el-dialog>
   </div>

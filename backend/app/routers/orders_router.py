@@ -684,6 +684,44 @@ async def ship_prep_done(
     return schemas.Msg(message="已标记发货准备完成，并通知物流")
 
 
+@router.post("/{oid}/revision-request", response_model=schemas.Msg)
+async def revision_request(
+    oid: int, data: schemas.RevisionRequestIn,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #1 设计/电工对销售下发的「合同技术资料」提修订意见 → 推送对应销售员 + 抄送销售主管。
+    销售用「更换技术资料」上传修正版后该意见自动标记 resolved 并回通知提出人。"""
+    o = await _order_or_404(db, oid)
+    if o.dept not in ("design", "electric"):
+        raise HTTPException(400, "仅设计/电工部可对技术资料提修订意见")
+    if not (_is_mgr(current) or o.worker_id == current.id):
+        raise HTTPException(403, "仅任务负责人可提修订意见")
+    reason = (data.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "请填写修订意见")
+    db.add(models.RevisionRequest(
+        project_id=o.project_id, order_id=o.id, dept=o.dept,
+        reason=reason, raised_by=current.id))
+    await db.commit()
+    p = o.project
+    res = await db.execute(select(models.SalesLedger).where(
+        models.SalesLedger.project_id == o.project_id))
+    led = res.scalar_one_or_none()
+    short = reason if len(reason) <= 40 else reason[:40] + "…"
+    dept_name = DEPTS[o.dept]["name"]
+    if led and led.sales_uid:
+        await push_message(db, to_user_id=led.sales_uid, kind="warn",
+                           text=f"【技术资料待修订】{p.code} {dept_name}提出修订意见：{short}，请到销售台账「更换技术资料」上传修正版。",
+                           biz_type="project", biz_id=o.project_id)
+    await push_message(db, to_role="sales_lead", kind="info",
+                       text=f"【技术资料修订】{p.code} {dept_name}提出修订意见：{short}",
+                       biz_type="project", biz_id=o.project_id)
+    await write_audit(db, user=current, action="revision_request", target_type="dept_order",
+                      target_id=o.id, detail=reason[:200])
+    return schemas.Msg(message="修订意见已提交，已通知销售更换技术资料")
+
+
 # ==================== 状态流转 ====================
 @router.post("/{oid}/assign", response_model=schemas.Msg)
 async def assign_order(

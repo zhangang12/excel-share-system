@@ -201,6 +201,12 @@ class SalesLedgerRow(BaseModel):
     balance_date: Optional[str] = None
     ship_date: Optional[str] = None
     order_type: Optional[str] = None       # 🆕 调货订单 / 工厂制作订单
+    revision_open: bool = False            # 🆕 #1 是否有未处理的技术资料修订意见
+    revision_reason: Optional[str] = None  # 🆕 #1 最新一条未处理修订意见内容（供 tooltip）
+
+
+class RevisionRequestIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)  # 🆕 #1 修订意见内容（必填）
 
 
 class SalesLedgerTotals(BaseModel):

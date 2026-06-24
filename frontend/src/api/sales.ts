@@ -40,6 +40,8 @@ export interface SalesLedgerRow {
   balance_date?: string | null
   ship_date?: string | null
   order_type?: string | null  // 调货订单 / 工厂制作订单
+  revision_open?: boolean      // 🆕 #1 有未处理的技术资料修订意见
+  revision_reason?: string | null  // 🆕 #1 最新一条修订意见（tooltip）
 }
 
 export interface SalesLedgerTotals {

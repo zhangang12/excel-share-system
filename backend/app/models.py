@@ -516,3 +516,22 @@ class SalesLead(Base):
     )
 
     owner: Mapped[Optional["User"]] = relationship(lazy="joined", foreign_keys=[owner_uid])
+
+
+class RevisionRequest(Base):
+    """🆕 #1 技术资料修订意见：设计/电工对销售下发的「合同技术资料」提出修订意见 →
+    推送对应销售员，销售用「更换技术资料」上传修正版后自动标记 resolved 并回通知提出人。"""
+    __tablename__ = "revision_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("dept_orders.id"))
+    dept: Mapped[Optional[str]] = mapped_column(String(16))     # 提出部门 design/electric
+    reason: Mapped[str] = mapped_column(Text)                   # 修订意见内容
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)  # open/resolved
+    raised_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    resolved_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    raiser: Mapped[Optional["User"]] = relationship(lazy="joined", foreign_keys=[raised_by])
