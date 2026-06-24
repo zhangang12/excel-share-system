@@ -16,6 +16,10 @@ import { fmtDate } from '@/utils/format'
 
 const auth = useAuthStore()
 const allView = computed(() => auth.hasRole('admin', 'manager', 'sales_lead'))
+// 🆕 编辑权限放开给所有销售员：主管/管理层可编辑全部；销售员可编辑本人负责的台账行
+function canEdit(row: SalesLedgerRow): boolean {
+  return allView.value || row.sales_uid === auth.user?.id
+}
 
 // 🆕 收款金额格式化：0 显示 ¥0（销售已填 0 也要显示），仅 null/undefined 显示 —
 // （区别于 fmtMoney 把 0 当空值显示 —）
@@ -830,7 +834,7 @@ async function openReport() {
                     <el-dropdown-item divided @click="discardOrder(row)">放弃下单</el-dropdown-item>
                   </template>
                   <template v-else>
-                    <el-dropdown-item v-if="allView" @click="openEdit(row)">编辑</el-dropdown-item>
+                    <el-dropdown-item v-if="canEdit(row)" @click="openEdit(row)">编辑</el-dropdown-item>
                     <el-dropdown-item @click="openWorkflow(row)">流程</el-dropdown-item>
                     <el-dropdown-item @click="openContract(row)">{{ row.contract_file_id ? '换合同' : '上传合同' }}</el-dropdown-item>
                     <el-dropdown-item v-if="!row.invoice_state && !isNoInvoice(row.tax_rate)" @click="applyInvoice(row)">开票申请</el-dropdown-item>
@@ -853,7 +857,7 @@ async function openReport() {
                 <el-button size="small" link class="op-del" @click="discardOrder(row)">放弃</el-button>
               </template>
               <template v-else>
-                <el-button v-if="allView" size="small" link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button v-if="canEdit(row)" size="small" link type="primary" @click="openEdit(row)">编辑</el-button>
                 <el-button size="small" link @click="openWorkflow(row)">流程</el-button>
                 <el-dropdown trigger="click" placement="bottom-end">
                   <el-button size="small" text :icon="MoreFilled" class="op-more" />
@@ -1029,7 +1033,7 @@ async function openReport() {
           </el-form-item>
         </div>
         <div class="frow">
-          <el-form-item label="销售员" style="flex: 1">
+          <el-form-item v-if="allView" label="销售员" style="flex: 1">
             <el-select v-model="editForm.sales_uid" filterable clearable placeholder="选择销售员" style="width: 100%">
               <el-option v-for="s in editSalesOptions" :key="s.id" :label="s.name" :value="s.id" />
             </el-select>

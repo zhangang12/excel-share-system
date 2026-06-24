@@ -407,11 +407,14 @@ async def create_sales_order(
 @router.put("/ledger/{lid}", response_model=schemas.Msg)
 async def update_ledger(
     lid: int, data: schemas.SalesLedgerUpdate,
-    current: models.User = Depends(require_roles("sales_lead")),
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """台账编辑（仅销售主管/管理层）；编号与发货日期不可改。"""
+    """台账编辑：销售员可编辑本人负责的台账行；销售主管/管理层可编辑全部并改派销售员。编号与发货日期不可改。"""
     led = await _ledger_or_404(db, lid)
+    # 🆕 行级隔离：编辑权限放开给所有销售员，但销售员仅可编辑本人负责的台账行（主管/管理层全量）
+    if not _all_view(current) and led.sales_uid != current.id:
+        raise HTTPException(403, "只能编辑本人负责的台账行")
     # 🆕 #105 已进入开票流程(待财务开票/已开票)后，禁改金额/税票——否则与已开发票及推送财务的快照金额脱节
     if led.invoice_state in ("pending_invoice", "invoiced"):
         amt_chg = data.amount is not None and data.amount != led.amount
@@ -437,8 +440,8 @@ async def update_ledger(
     # 🆕 尾款为0时尾款日期自动清空(显示横杠)；放在金额/日期赋值之后统一兜底
     if (led.balance or 0) == 0:
         led.balance_date = None
-    # 🆕 销售员改派（重新指定台账归属销售）
-    if data.sales_uid is not None:
+    # 🆕 销售员改派（重新指定台账归属销售）——仅主管/管理层可改派，销售员不能把订单转给他人
+    if data.sales_uid is not None and _all_view(current):
         led.sales_uid = data.sales_uid or None
     # 🆕 下单日期(=合同签订日期)/交货日期 维护：回写项目一览(__o__ + alias __h__下单日期)，
     #    与「上传合同」同源，免去只能靠上传合同才能改日期
