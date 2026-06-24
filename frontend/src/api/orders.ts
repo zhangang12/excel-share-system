@@ -33,6 +33,7 @@ export interface DeptOrder {
   created_at: string
   design_done_flag: boolean
   electric_done_flag: boolean
+  ship_prep_done: boolean
   input_files: OrderAttachment[]
   start_files: OrderAttachment[]
   output_files: OrderAttachment[]
@@ -91,6 +92,10 @@ export const ordersApi = {
 
   removeAttachment: (id: number, attId: number) =>
     http.delete(`/orders/${id}/attachments/${attId}`).then((r) => r.data),
+
+  // 🆕 #5 设计部「发货准备完成」（设计完成后标记说明书/铭牌备齐 → 通知物流）
+  shipPrepDone: (id: number) =>
+    http.post<{ message: string }>(`/orders/${id}/ship-prep-done`).then((r) => r.data),
 
   complete: (id: number, notifyUserId: number) =>
     http.post(`/orders/${id}/complete`, { notify_user_id: notifyUserId }).then((r) => r.data),

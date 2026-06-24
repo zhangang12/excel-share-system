@@ -148,6 +148,7 @@ class OrderOut(BaseModel):
     created_at: datetime
     design_done_flag:   bool = False  # 🆕 设计完成第一步标记
     electric_done_flag: bool = False  # 🆕 接线完成第一步标记
+    ship_prep_done:     bool = False  # 🆕 #5 设计部发货准备完成标记
     input_files: list[AttachmentOut] = []
     start_files: list[AttachmentOut] = []
     output_files: list[AttachmentOut] = []

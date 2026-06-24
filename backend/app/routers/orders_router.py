@@ -245,6 +245,7 @@ def _order_to_out(o: models.DeptOrder, files: dict[str, list],
         overdue=overdue, created_at=o.created_at,
         design_done_flag=bool(getattr(o, "design_done_flag", False)),
         electric_done_flag=bool(getattr(o, "electric_done_flag", False)),
+        ship_prep_done=bool(getattr(o, "ship_prep_done", False)),
         input_files=files.get("input", []),
         start_files=files.get("start", []),
         output_files=files.get("output", []),
@@ -598,7 +599,9 @@ async def output_upload(
     if not (_is_mgr(current) or o.worker_id == current.id):
         raise HTTPException(403, "仅任务负责人可上传")
     # 🆕 #50 状态守卫：已完成/已作废单不得再挂产物（避免改下游资料/破坏留痕），与 start_upload 对齐
-    if o.status not in ("in_progress", "assigned"):
+    # 🆕 #5 例外：设计部「发货准备」(说明书/铭牌)在设计完成(done)后仍可补传/替换
+    is_ship_prep = o.dept == "design" and kind in ("manual", "nameplate")
+    if o.status not in ("in_progress", "assigned") and not (is_ship_prep and o.status == "done"):
         raise HTTPException(400, "任务未在进行中，不能上传产物")
     outs = []
     for f in files:
@@ -631,9 +634,6 @@ async def remove_order_attachment(
     o = await _order_or_404(db, oid)
     if not (_is_mgr(current) or o.worker_id == current.id or o.created_by == current.id):
         raise HTTPException(403, "无权移除")
-    # 🆕 #53 已完成/已作废单的附件不可移除（防止完成后删空必传产物形成非法终态；如需改先改回进行中）
-    if o.status in ("done", "voided"):
-        raise HTTPException(400, "任务已完成/作废，附件不可移除（如需修改请先改回进行中）")
     res = await db.execute(select(models.Attachment).where(
         models.Attachment.id == aid, models.Attachment.biz_id == oid,
         models.Attachment.biz_type.in_(
@@ -642,12 +642,43 @@ async def remove_order_attachment(
     a = res.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "附件不存在")
+    # 🆕 #53 已完成/已作废单的附件不可移除（防止完成后删空必传产物形成非法终态）
+    # 🆕 #5 例外：设计部已完成单允许替换「产物」(order_output，如说明书/铭牌)，方便发货前更正
+    if o.status == "voided" or (o.status == "done" and not (
+            o.dept == "design" and a.biz_type == "order_output")):
+        raise HTTPException(400, "任务已完成/作废，附件不可移除（如需修改请先改回进行中）")
     name = a.name
     await delete_attachment_file(db, a)
     await db.commit()
     await write_audit(db, user=current, action="delete", target_type="dept_order",
                       target_id=oid, detail=f"附件:{name}")
     return schemas.Msg(message="已移除")
+
+
+@router.post("/{oid}/ship-prep-done", response_model=schemas.Msg)
+async def ship_prep_done(
+    oid: int,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #5 设计部「发货准备完成」：设计完成(done)后，确认说明书/铭牌等发货资料已备齐，
+    标记 ship_prep_done 并通知物流。仅设计部已完成单可点（说明书/铭牌仍为选填，按需）。"""
+    o = await _order_or_404(db, oid)
+    if o.dept != "design":
+        raise HTTPException(400, "仅设计部任务支持发货准备完成")
+    if not (_is_mgr(current) or o.worker_id == current.id):
+        raise HTTPException(403, "仅任务负责人可操作")
+    if o.status != "done":
+        raise HTTPException(400, "请先点「设计完成」，再做发货准备完成")
+    o.ship_prep_done = True
+    await db.commit()
+    p = o.project
+    await push_message(db, to_role="logistics", kind="info",
+                       text=f"【发货准备完成】{p.code} {p.name} 设计部说明书/铭牌等发货资料已备齐。",
+                       biz_type="order", biz_id=o.id)
+    await write_audit(db, user=current, action="ship_prep_done", target_type="dept_order",
+                      target_id=o.id)
+    return schemas.Msg(message="已标记发货准备完成，并通知物流")
 
 
 # ==================== 状态流转 ====================

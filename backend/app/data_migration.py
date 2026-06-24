@@ -28,6 +28,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "dept_orders": [
         ("design_done_flag",   "BOOLEAN DEFAULT FALSE"),  # 🆕 设计完成第一步标记
         ("electric_done_flag", "BOOLEAN DEFAULT FALSE"),  # 🆕 接线完成第一步标记
+        ("ship_prep_done",     "BOOLEAN DEFAULT FALSE"),  # 🆕 #5 设计部发货准备完成标记
     ],
     "aftersales": [("reject_reason", "TEXT")],     # 🆕 #98 售后驳回原因
     "user_feedback": [                             # 🆕 系统回信（处理意见回复）

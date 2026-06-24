@@ -331,6 +331,28 @@ async function pickCardOutputUpload(o: DeptOrder, kind: string) {
   }
   input.click()
 }
+// 🆕 #5 替换/删除已上传产物（删后可重新上传替换）；已完成的设计单产物也可替换
+async function removeCardOutput(o: DeptOrder, fileId: number) {
+  try { await ElMessageBox.confirm('删除该文件？删除后可重新上传替换。', '替换 / 删除', { type: 'warning' }) } catch { return }
+  try {
+    await ordersApi.removeAttachment(o.id, fileId)
+    ElMessage.success('已删除，可重新上传')
+    await load()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '删除失败') }
+}
+// 🆕 #5 设计部「发货准备」弹窗：设计完成后补传/替换 说明书·铭牌 + 标记发货准备完成
+const shipPrepVisible = ref(false)
+const shipPrepId = ref<number | null>(null)
+const shipPrepOrder = computed(() => orders.value.find(o => o.id === shipPrepId.value) || null)
+function openShipPrep(o: DeptOrder) { shipPrepId.value = o.id; shipPrepVisible.value = true }
+async function doShipPrepDone(o: DeptOrder | null) {
+  if (!o) return
+  try {
+    const r: any = await ordersApi.shipPrepDone(o.id)
+    ElMessage.success(r?.message || '已标记发货准备完成')
+    await load()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '操作失败') }
+}
 
 // 🆕 钣金装配表可编辑预览（钣金组/装配组共用）
 const viewVisible = ref(false)
@@ -736,7 +758,7 @@ const stockVisible = ref(false)
                     </div>
                     <div class="up-b">
                       <div v-if="cardOutputFiles(o,'manual').length" class="tc-files">
-                        <el-tag v-for="f in cardOutputFiles(o,'manual')" :key="f.id" size="small" effect="plain" class="file-chip">
+                        <el-tag v-for="f in cardOutputFiles(o,'manual')" :key="f.id" size="small" effect="plain" class="file-chip" closable @close="removeCardOutput(o, f.id)">
                           <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
                         </el-tag>
                       </div>
@@ -752,7 +774,7 @@ const stockVisible = ref(false)
                     </div>
                     <div class="up-b">
                       <div v-if="cardOutputFiles(o,'nameplate').length" class="tc-files">
-                        <el-tag v-for="f in cardOutputFiles(o,'nameplate')" :key="f.id" size="small" effect="plain" class="file-chip">
+                        <el-tag v-for="f in cardOutputFiles(o,'nameplate')" :key="f.id" size="small" effect="plain" class="file-chip" closable @close="removeCardOutput(o, f.id)">
                           <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
                         </el-tag>
                       </div>
@@ -850,8 +872,11 @@ const stockVisible = ref(false)
             <el-table-column label="通知" min-width="110">
               <template #default="{ row }">{{ row.notify_user_name ? '📲 ' + row.notify_user_name : '—' }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="130" fixed="right">
+            <el-table-column label="操作" :width="dept === 'design' ? 210 : 130" fixed="right">
               <template #default="{ row }">
+                <el-button v-if="dept === 'design'" size="small" type="success" plain @click="openShipPrep(row)">
+                  发货准备{{ row.ship_prep_done ? ' ✓' : '' }}
+                </el-button>
                 <el-button size="small" :icon="RefreshLeft" @click="doReopen(row)">改回进行中</el-button>
               </template>
             </el-table-column>
@@ -1220,6 +1245,33 @@ const stockVisible = ref(false)
         :projectCode="stdRow.project_code"
         :canEdit="false"
       />
+    </el-dialog>
+
+    <!-- 🆕 #5 设计部「发货准备」：设计完成后补传/替换 说明书·铭牌 + 标记发货准备完成 -->
+    <el-dialog v-model="shipPrepVisible" :title="`📦 发货准备 · ${shipPrepOrder?.project_code || ''}`" width="560px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 14px"
+                title="设计完成后在这里补传 / 替换 产品说明书、铭牌（发货资料，选填、不计考核）。文件上点 × 可删除后重新上传替换。备齐后点「发货准备完成」通知物流。" />
+      <template v-if="shipPrepOrder">
+        <div class="up-sec" v-for="g in [{k:'manual',label:'产品说明书 (Word)',btn:'上传说明书'},{k:'nameplate',label:'铭牌 (CAD)',btn:'上传铭牌'}]" :key="g.k">
+          <div class="up-h"><el-icon><UploadFilled /></el-icon> {{ g.label }}</div>
+          <div class="up-b">
+            <div v-if="cardOutputFiles(shipPrepOrder, g.k).length" class="tc-files">
+              <el-tag v-for="f in cardOutputFiles(shipPrepOrder, g.k)" :key="f.id" size="small" effect="plain"
+                      class="file-chip" closable @close="removeCardOutput(shipPrepOrder!, f.id)">
+                <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
+              </el-tag>
+            </div>
+            <el-button size="small" plain :icon="UploadFilled" @click="pickCardOutputUpload(shipPrepOrder!, g.k)">
+              {{ cardOutputFiles(shipPrepOrder, g.k).length ? '继续添加' : g.btn }}
+            </el-button>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <el-tag v-if="shipPrepOrder?.ship_prep_done" type="success" effect="plain" style="margin-right:auto">✅ 已标记发货准备完成</el-tag>
+        <el-button @click="shipPrepVisible = false">关闭</el-button>
+        <el-button type="success" :icon="Check" @click="doShipPrepDone(shipPrepOrder)">发货准备完成</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>

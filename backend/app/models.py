@@ -229,6 +229,7 @@ class DeptOrder(Base):
     notify_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     design_done_flag:   Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 设计完成第一步
     electric_done_flag: Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 接线完成第一步
+    ship_prep_done:     Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 #5 设计部发货准备(说明书/铭牌)完成
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
