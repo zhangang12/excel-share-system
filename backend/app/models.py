@@ -485,3 +485,33 @@ class UserFeedback(Base):
     user: Mapped[Optional["User"]] = relationship(lazy="joined", foreign_keys=[user_id])
     replier: Mapped[Optional["User"]] = relationship(lazy="joined", foreign_keys=[replied_by])
     shot: Mapped[Optional["Attachment"]] = relationship(lazy="joined")
+
+
+class SalesLead(Base):
+    """🆕 销售线索池：主管/管理层集中录入网络询盘 → 分配给销售员 → 跟进/补全/改状态 → 成交率报表。
+    行级隔离：销售员仅见分配给自己(owner_uid)的线索；主管/管理层全量。
+    状态：潜在需求(默认)/报价/成交/丢单；成交率 = 成交数 ÷ 线索总数。"""
+    __tablename__ = "sales_leads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(32))                  # 询盘来源(固定下拉, 报表维度)
+    customer: Mapped[Optional[str]] = mapped_column(String(128))     # 客户名称(可后补)
+    contact: Mapped[Optional[str]] = mapped_column(String(64))       # 联系人(可后补)
+    phone: Mapped[Optional[str]] = mapped_column(String(64))         # 联系电话(可后补)
+    wechat: Mapped[Optional[str]] = mapped_column(String(64))        # 微信号(可后补)
+    requirement: Mapped[Optional[str]] = mapped_column(Text)         # 设备需求
+    owner_uid: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)  # 跟进销售(分配)
+    status: Mapped[str] = mapped_column(String(16), default="潜在需求", index=True)  # 潜在需求/报价/成交/丢单
+    follow_log: Mapped[Optional[str]] = mapped_column(Text)          # 跟进记录(可插入时间戳, 自由编辑)
+    lost_reason: Mapped[Optional[str]] = mapped_column(String(255))  # 丢单原因(选填)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))  # 录入人
+    assigned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))  # 分配时间
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))    # 成交/丢单时间(报表用)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    owner: Mapped[Optional["User"]] = relationship(lazy="joined", foreign_keys=[owner_uid])

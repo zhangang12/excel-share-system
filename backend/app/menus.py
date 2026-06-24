@@ -17,6 +17,7 @@ MENU_DEFS: list[dict] = [
     {"key": "catalog",    "label": "项目目录"},
     {"key": "list",       "label": "项目详单"},
     {"key": "sales",      "label": "销售部"},
+    {"key": "leads",      "label": "销售线索"},   # 🆕 线索池/分配/跟进/成交率报表
     {"key": "design",     "label": "设计部"},
     {"key": "electric",   "label": "电工部"},
     {"key": "produce",    "label": "生产部"},
@@ -54,8 +55,8 @@ ROLE_MENUS: dict[str, list[str]] = {
     "buyer_outsource":  ["catalog", "list", "purchase"],
     "hr":               ["catalog", "list"],
     # ---- 🆕 v3 角色 ----
-    "sales":            ["catalog", "sales"],                 # 无详单，编号不可点
-    "sales_lead":       ["catalog", "sales"],
+    "sales":            ["catalog", "sales", "leads"],        # 无详单，编号不可点；🆕 销售线索
+    "sales_lead":       ["catalog", "sales", "leads"],
     "design_lead":      ["catalog", "list", "design"],
     "electrician":      ["catalog", "electric"],              # 无详单
     "electric_lead":    ["catalog", "electric"],              # 无详单（与 design_lead 不对称是有意口径）

@@ -770,3 +770,72 @@ class UserFeedbackRow(BaseModel):
     replied_at: Optional[datetime] = None
     replier_name: Optional[str] = None
     reply_read: bool = False
+
+
+# ==================== 🆕 销售线索跟踪 ====================
+class SalesLeadCreate(BaseModel):
+    source: str = Field(min_length=1, max_length=32)        # 询盘来源(必填)
+    customer: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    wechat: Optional[str] = None
+    requirement: Optional[str] = None
+    owner_uid: Optional[int] = None                         # 分配给的销售(可留空=进线索池)
+    status: Optional[str] = None                            # 默认 潜在需求
+    follow_log: Optional[str] = None
+
+
+class SalesLeadUpdate(BaseModel):
+    source: Optional[str] = None                            # 仅主管/管理层可改
+    customer: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    wechat: Optional[str] = None
+    requirement: Optional[str] = None
+    owner_uid: Optional[int] = None                         # 改派,仅主管/管理层
+    status: Optional[str] = None
+    follow_log: Optional[str] = None
+    lost_reason: Optional[str] = None
+
+
+class SalesLeadRow(BaseModel):
+    id: int
+    source: str
+    customer: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    wechat: Optional[str] = None
+    requirement: Optional[str] = None
+    owner_uid: Optional[int] = None
+    owner_name: Optional[str] = None
+    status: str
+    follow_log: Optional[str] = None
+    lost_reason: Optional[str] = None
+    created_by: Optional[int] = None
+    created_by_name: Optional[str] = None
+    assigned_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class SalesLeadListOut(BaseModel):
+    rows: list[SalesLeadRow]
+    total: int = 0
+
+
+class LeadReportItem(BaseModel):
+    key: str                  # 来源名 / 销售名
+    leads: int = 0            # 线索数
+    deal: int = 0             # 成交数
+    quote: int = 0            # 报价中
+    potential: int = 0        # 潜在需求
+    lost: int = 0             # 丢单
+    rate: float = 0           # 成交率 = deal / leads
+
+
+class SalesLeadReport(BaseModel):
+    by_source: list[LeadReportItem]
+    by_owner: list[LeadReportItem]
+    total_leads: int = 0
+    total_deal: int = 0
+    total_rate: float = 0

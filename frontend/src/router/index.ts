@@ -75,6 +75,12 @@ const router = createRouter({
           meta: { menuKey: 'sales' },
         },
         {
+          path: 'sales-leads',
+          name: 'leads',
+          component: () => import('@/views/SalesLeadsView.vue'),
+          meta: { menuKey: 'leads' },
+        },
+        {
           path: 'logistics',
           name: 'logistics',
           component: () => import('@/views/LogisticsView.vue'),
