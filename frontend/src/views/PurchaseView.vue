@@ -30,7 +30,7 @@ const isFangbusen = computed(() => auth.user?.username === 'fangbusen')   // 外
 const isWangqin   = computed(() => auth.user?.username === 'wangqin')     // 🆕 不锈钢原料下料单 + CAD激光图纸 + 设计师
 const isLixinxin  = computed(() => auth.user?.username === 'lixinxin')    // 电工采购单 + 标准件清单 + 外购附图
 const seeAll = computed(() => !isFangbusen.value && !isWangqin.value && !isLixinxin.value)
-const showDesigner      = computed(() => seeAll.value || isWangqin.value)
+const showDesigner      = computed(() => seeAll.value || isWangqin.value || isFangbusen.value)  // 方步森也看设计师
 const showOutsource     = computed(() => seeAll.value || isFangbusen.value)  // 外协加工表
 const showSheetmetal    = computed(() => seeAll.value || isFangbusen.value)  // 🆕 钣金装配表
 const showMaterial      = computed(() => seeAll.value || isWangqin.value)    // 不锈钢原料下料单
