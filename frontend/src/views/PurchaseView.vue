@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 采购部项目列表：列只做「表格预览 + 附件上传状态」，右侧「打包下载」面板勾选表格/附件打 zip。
-//   外协采购员(fangbusen)：外协加工表/不锈钢原料下料单/CAD激光图纸
-//   标准件采购员(lixinxin)：电工采购单/标准件清单/外购附图
+//   方步森(fangbusen)：外协加工表 / 钣金装配表
+//   王芹(wangqin)：设计师 / 不锈钢原料下料单 / CAD激光图纸
+//   李欣欣(lixinxin)：电工采购单 / 标准件清单 / 外购附图
 //   未细分 buyer / 管理层：全列显示
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -14,7 +15,8 @@ import EmptyHint from '@/components/EmptyHint.vue'
 interface Att { id: number; name: string }
 interface Row {
   project_id: number; code: string; name: string; designer?: string | null
-  outsource_sheet_id?: number | null; material_sheet_id?: number | null
+  outsource_sheet_id?: number | null; sheetmetal_sheet_id?: number | null
+  material_sheet_id?: number | null
   elec_po_sheet_id?: number | null; standard_sheet_id?: number | null
   cad_laser_files: Att[]; outsource_img_files: Att[]
 }
@@ -23,12 +25,19 @@ const auth = useAuthStore()
 const loading = ref(false)
 const rows = ref<Row[]>([])
 
-// 列可见性：统一采购部角色，按账号名区分分工
-const isFangbusen = computed(() => auth.user?.username === 'fangbusen')
-const isLixinxin  = computed(() => auth.user?.username === 'lixinxin')
-const seeAll = computed(() => !isFangbusen.value && !isLixinxin.value)
-const showOutsource = computed(() => seeAll.value || isFangbusen.value)
-const showStandard  = computed(() => seeAll.value || isLixinxin.value)
+// 列可见性：统一采购部角色，按账号名区分分工（逐列控制）
+const isFangbusen = computed(() => auth.user?.username === 'fangbusen')   // 外协加工表 + 钣金装配表
+const isWangqin   = computed(() => auth.user?.username === 'wangqin')     // 🆕 不锈钢原料下料单 + CAD激光图纸 + 设计师
+const isLixinxin  = computed(() => auth.user?.username === 'lixinxin')    // 电工采购单 + 标准件清单 + 外购附图
+const seeAll = computed(() => !isFangbusen.value && !isWangqin.value && !isLixinxin.value)
+const showDesigner      = computed(() => seeAll.value || isWangqin.value)
+const showOutsource     = computed(() => seeAll.value || isFangbusen.value)  // 外协加工表
+const showSheetmetal    = computed(() => seeAll.value || isFangbusen.value)  // 🆕 钣金装配表
+const showMaterial      = computed(() => seeAll.value || isWangqin.value)    // 不锈钢原料下料单
+const showCadLaser      = computed(() => seeAll.value || isWangqin.value)    // CAD激光图纸
+const showElecPo        = computed(() => seeAll.value || isLixinxin.value)   // 电工采购单
+const showStandardSheet = computed(() => seeAll.value || isLixinxin.value)   // 标准件清单
+const showOutImg        = computed(() => seeAll.value || isLixinxin.value)   // 外购附图
 
 const curYear = String(new Date().getFullYear())
 const yearFilter = ref(curYear)
@@ -78,12 +87,13 @@ function cellVal(rec: any, fid: number) {
 }
 
 // ===== 右侧「打包下载」面板 =====
-type SheetKey = 'outsource_sheet_id' | 'material_sheet_id' | 'elec_po_sheet_id' | 'standard_sheet_id'
-const SHEET_DEFS: { key: SheetKey; label: string; group: 'outsource' | 'standard' }[] = [
-  { key: 'outsource_sheet_id', label: '外协加工表', group: 'outsource' },
-  { key: 'material_sheet_id', label: '不锈钢原料下料单', group: 'outsource' },
-  { key: 'elec_po_sheet_id', label: '电工采购单', group: 'standard' },
-  { key: 'standard_sheet_id', label: '标准件清单', group: 'standard' },
+type SheetKey = 'outsource_sheet_id' | 'sheetmetal_sheet_id' | 'material_sheet_id' | 'elec_po_sheet_id' | 'standard_sheet_id'
+const SHEET_DEFS: { key: SheetKey; label: string; vis: () => boolean }[] = [
+  { key: 'outsource_sheet_id', label: '外协加工表', vis: () => showOutsource.value },
+  { key: 'sheetmetal_sheet_id', label: '钣金装配表', vis: () => showSheetmetal.value },
+  { key: 'material_sheet_id', label: '不锈钢原料下料单', vis: () => showMaterial.value },
+  { key: 'elec_po_sheet_id', label: '电工采购单', vis: () => showElecPo.value },
+  { key: 'standard_sheet_id', label: '标准件清单', vis: () => showStandardSheet.value },
 ]
 
 const dlVisible = ref(false)
@@ -96,7 +106,7 @@ const dlSheets = computed(() => {
   const r = dlRow.value
   if (!r) return [] as { id: number; label: string }[]
   return SHEET_DEFS
-    .filter(d => (d.group === 'outsource' ? showOutsource.value : showStandard.value))
+    .filter(d => d.vis())
     .map(d => ({ id: r[d.key] as number | null | undefined, label: d.label }))
     .filter((s): s is { id: number; label: string } => s.id != null)
 })
@@ -104,8 +114,8 @@ const dlAtts = computed(() => {
   const r = dlRow.value
   if (!r) return [] as { id: number; name: string; kind: string }[]
   const out: { id: number; name: string; kind: string }[] = []
-  if (showOutsource.value) r.cad_laser_files.forEach(f => out.push({ id: f.id, name: f.name, kind: 'CAD激光图纸' }))
-  if (showStandard.value) r.outsource_img_files.forEach(f => out.push({ id: f.id, name: f.name, kind: '外购附图' }))
+  if (showCadLaser.value) r.cad_laser_files.forEach(f => out.push({ id: f.id, name: f.name, kind: 'CAD激光图纸' }))
+  if (showOutImg.value) r.outsource_img_files.forEach(f => out.push({ id: f.id, name: f.name, kind: '外购附图' }))
   return out
 })
 const dlTotal = computed(() => dlSheets.value.length + dlAtts.value.length)
@@ -167,7 +177,7 @@ async function packDownload() {
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
         <el-table-column prop="name" label="项目名称" min-width="170" show-overflow-tooltip />
-        <el-table-column v-if="showOutsource" label="设计师" min-width="90" align="center">
+        <el-table-column v-if="showDesigner" label="设计师" min-width="90" align="center">
           <template #default="{ row }">{{ row.designer || '—' }}</template>
         </el-table-column>
 
@@ -181,7 +191,16 @@ async function packDownload() {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="showOutsource" label="不锈钢原料下料单" min-width="120" align="center">
+        <el-table-column v-if="showSheetmetal" label="钣金装配表" min-width="100" align="center">
+          <template #default="{ row }">
+            <el-button v-if="row.sheetmetal_sheet_id" size="small" link type="primary"
+                       @click="openPreview(row.sheetmetal_sheet_id, `${row.code} · 钣金装配表`)">
+              <el-icon><View /></el-icon>预览
+            </el-button>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="showMaterial" label="不锈钢原料下料单" min-width="120" align="center">
           <template #default="{ row }">
             <el-button v-if="row.material_sheet_id" size="small" link type="primary"
                        @click="openPreview(row.material_sheet_id, `${row.code} · 不锈钢原料下料单`)">
@@ -191,7 +210,7 @@ async function packDownload() {
           </template>
         </el-table-column>
         <!-- 附件列：只显示上传状态，悬停看附件名 -->
-        <el-table-column v-if="showOutsource" label="CAD激光图纸" min-width="120" align="center">
+        <el-table-column v-if="showCadLaser" label="CAD激光图纸" min-width="120" align="center">
           <template #default="{ row }">
             <el-tooltip v-if="row.cad_laser_files.length" placement="top">
               <template #content>
@@ -204,7 +223,7 @@ async function packDownload() {
         </el-table-column>
 
         <!-- 标准件采购：数据表只做预览 -->
-        <el-table-column v-if="showStandard" label="电工采购单" min-width="100" align="center">
+        <el-table-column v-if="showElecPo" label="电工采购单" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.elec_po_sheet_id" size="small" link type="primary"
                        @click="openPreview(row.elec_po_sheet_id, `${row.code} · 电工采购单`)">
@@ -213,7 +232,7 @@ async function packDownload() {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="showStandard" label="标准件清单" min-width="100" align="center">
+        <el-table-column v-if="showStandardSheet" label="标准件清单" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.standard_sheet_id" size="small" link type="primary"
                        @click="openPreview(row.standard_sheet_id, `${row.code} · 标准件清单`)">
@@ -222,7 +241,7 @@ async function packDownload() {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="showStandard" label="外购附图" min-width="116" align="center">
+        <el-table-column v-if="showOutImg" label="外购附图" min-width="116" align="center">
           <template #default="{ row }">
             <el-tooltip v-if="row.outsource_img_files.length" placement="top">
               <template #content>

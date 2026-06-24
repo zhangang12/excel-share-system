@@ -109,6 +109,7 @@ class PurchaseProjectRow(BaseModel):
     designer: Optional[str] = None
     # 数据表引用（前端按 datasheet_id 走导出下载）
     outsource_sheet_id: Optional[int] = None        # 外协加工
+    sheetmetal_sheet_id: Optional[int] = None        # 🆕 钣金装配表（方步森可见）
     material_sheet_id: Optional[int] = None          # 不锈钢原料下料单
     elec_po_sheet_id: Optional[int] = None           # 电工采购单
     standard_sheet_id: Optional[int] = None          # 标准件清单
@@ -143,7 +144,8 @@ async def purchase_projects(
     if not pids:
         return []
 
-    _NAME2KEY = {"外协加工": "outsource", "不锈钢原料下料单": "material",
+    _NAME2KEY = {"外协加工": "outsource", "钣金装配": "sheetmetal",
+                 "不锈钢原料下料单": "material",
                  "电工采购单": "elec_po", "标准件清单": "standard"}
     res = await db.execute(select(models.Datasheet).where(
         models.Datasheet.project_id.in_(pids),
@@ -180,7 +182,8 @@ async def purchase_projects(
         rows.append(PurchaseProjectRow(
             project_id=p.id, code=p.code, name=p.name,
             designer=(p.extra or {}).get("__o__设计师") or designer_by_pid.get(p.id),
-            outsource_sheet_id=sm.get("outsource"), material_sheet_id=sm.get("material"),
+            outsource_sheet_id=sm.get("outsource"), sheetmetal_sheet_id=sm.get("sheetmetal"),
+            material_sheet_id=sm.get("material"),
             elec_po_sheet_id=sm.get("elec_po"), standard_sheet_id=sm.get("standard"),
             cad_laser_files=cad_by_pid.get(p.id, []),
             outsource_img_files=img_by_pid.get(p.id, []),
@@ -189,7 +192,7 @@ async def purchase_projects(
 
 
 # ---------- 采购资料打包下载（勾选表格/附件 → zip） ----------
-_PURCHASE_SHEET_NAMES = ("外协加工", "不锈钢原料下料单", "电工采购单", "标准件清单")
+_PURCHASE_SHEET_NAMES = ("外协加工", "钣金装配", "不锈钢原料下料单", "电工采购单", "标准件清单")
 
 
 def _safe_fname(s: str) -> str:
