@@ -38,8 +38,8 @@ check() {
 
 [[ "$QUIET" == "0" && "$JSON" == "0" ]] && echo "===== 系统健康检查 $(date '+%F %T') ====="
 
-# 1. 5 个容器都在跑
-for svc in pms2_postgres pms2_redis pms2_backend pms2_frontend pms2_nginx; do
+# 1. 4 个容器都在跑
+for svc in pms2_postgres pms2_backend pms2_frontend pms2_nginx; do
     state=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null)
     if [[ "$state" == "running" ]]; then
         check "container/$svc" ok "running"
@@ -53,13 +53,6 @@ if docker exec pms2_postgres pg_isready -U pms_prod >/dev/null 2>&1; then
     check "postgres" ok "accepting connections"
 else
     check "postgres" fail "pg_isready 失败"
-fi
-
-# 3. redis 可连
-if docker exec pms2_redis redis-cli ping 2>/dev/null | grep -q PONG; then
-    check "redis" ok "PONG"
-else
-    check "redis" fail "ping 失败"
 fi
 
 # 4. backend /api/health

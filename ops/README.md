@@ -15,7 +15,8 @@ sudo bash ops/setup-cron.sh        # 装好每日备份 + 5 分钟健康检查
 |---|---|---|
 | `backup.sh` | 备份 DB + uploads 到 `/backup/`，按天滚动 | `bash ops/backup.sh` |
 | `restore.sh` | 从备份恢复（先快照当前 → 重建 db → 写入） | `bash ops/restore.sh /backup/pms-db-20260514.sql.gz` |
-| `health-check.sh` | 检查 9 项：5 个容器、pg/redis、API、磁盘、内存、错误日志 | `bash ops/health-check.sh` |
+| `health-check.sh` | 检查：4 个容器、pg、API、磁盘、内存、错误日志 | `bash ops/health-check.sh` |
+| `enable-https.sh` | 一键申请 Let's Encrypt 证书并启用 HTTPS（443） | `bash ops/enable-https.sh pms.你的域名.com you@mail.com` |
 | `upgrade.sh` | 安全升级：备份 → git pull → rebuild → 健康检查 → 失败自动回滚 | `bash ops/upgrade.sh` |
 | `rollback.sh` | 回滚到指定 commit 或上一版 | `bash ops/rollback.sh --list` |
 | `reset-admin-password.sh` | 应急重置任意账号密码 | `bash ops/reset-admin-password.sh admin` |

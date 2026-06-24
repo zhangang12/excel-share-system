@@ -47,3 +47,12 @@ Thumbs.db
 *.tar.gz
 *.7z
 *.rar
+
+# ===== HTTPS 证书 / ACME（私钥绝不入库；目录保留 .gitkeep）=====
+nginx/certs/*
+!nginx/certs/.gitkeep
+nginx/letsencrypt/
+nginx/certbot-www/*
+!nginx/certbot-www/.gitkeep
+nginx/conf.d/*.bak
+nginx/conf.d/default.conf.pre-https.bak.*

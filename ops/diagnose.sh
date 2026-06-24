@@ -46,7 +46,7 @@ echo "收集诊断信息到 $TMP"
 } > "$TMP/docker.txt" 2>&1
 
 # 3. 各容器日志（最近 500 行）
-for c in pms2_postgres pms2_redis pms2_backend pms2_frontend pms2_nginx; do
+for c in pms2_postgres pms2_backend pms2_frontend pms2_nginx; do
     docker logs --tail 500 "$c" > "$TMP/${c}.log" 2>&1 || true
 done
 

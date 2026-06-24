@@ -21,7 +21,6 @@ case "$SVC" in
     frontend|web) C=pms2_frontend;;
     nginx) C=pms2_nginx;;
     db|postgres|pg) C=pms2_postgres;;
-    redis) C=pms2_redis;;
     *) C="$SVC";;
 esac
 

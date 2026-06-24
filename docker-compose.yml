@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pms_dev_pwd}
       POSTGRES_DB: ${POSTGRES_DB:-pms}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"   # 🆕 只绑本地，防止把数据库暴露到公网
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -16,19 +16,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    container_name: pms2_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
       context: ./backend
@@ -36,7 +23,6 @@ services:
     container_name: pms2_backend
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-pms}:${POSTGRES_PASSWORD:-pms_dev_pwd}@postgres:5432/${POSTGRES_DB:-pms}
-      REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-please-change}
     ports:
       - "8000:8000"
@@ -44,8 +30,6 @@ services:
       - ./backend:/app
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   frontend:
@@ -63,5 +47,4 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
   frontend_node_modules:
