@@ -538,7 +538,9 @@ async def start_upload(
         raise HTTPException(400, f"{cfg['name']}没有 {kind} 类型的接单上传")
     if not (_is_mgr(current) or o.worker_id == current.id):
         raise HTTPException(403, "仅任务负责人可上传")
-    if o.status not in ("in_progress", "assigned"):
+    # 🆕 #5 例外：设计部「设计资料」(CAD激光图纸/外购附图)在设计完成(done)后仍可更换
+    is_design_resource = o.dept == "design" and kind in ("sheetpkg", "outsource_img")
+    if o.status not in ("in_progress", "assigned") and not (is_design_resource and o.status == "done"):
         raise HTTPException(400, "任务未在进行中")
 
     outs = []
@@ -643,9 +645,10 @@ async def remove_order_attachment(
     if not a:
         raise HTTPException(404, "附件不存在")
     # 🆕 #53 已完成/已作废单的附件不可移除（防止完成后删空必传产物形成非法终态）
-    # 🆕 #5 例外：设计部已完成单允许替换「产物」(order_output，如说明书/铭牌)，方便发货前更正
+    # 🆕 #5 例外：设计部已完成单允许替换「设计资料/产物」(CAD激光图纸/外购附图=order_start_output、
+    #         说明书/铭牌=order_output)，方便发货前更正
     if o.status == "voided" or (o.status == "done" and not (
-            o.dept == "design" and a.biz_type == "order_output")):
+            o.dept == "design" and a.biz_type in ("order_output", "order_start_output"))):
         raise HTTPException(400, "任务已完成/作废，附件不可移除（如需修改请先改回进行中）")
     name = a.name
     await delete_attachment_file(db, a)

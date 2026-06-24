@@ -340,11 +340,33 @@ async function removeCardOutput(o: DeptOrder, fileId: number) {
     await load()
   } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '删除失败') }
 }
-// 🆕 #5 设计部「发货准备」弹窗：设计完成后补传/替换 说明书·铭牌 + 标记发货准备完成
-const shipPrepVisible = ref(false)
-const shipPrepId = ref<number | null>(null)
-const shipPrepOrder = computed(() => orders.value.find(o => o.id === shipPrepId.value) || null)
-function openShipPrep(o: DeptOrder) { shipPrepId.value = o.id; shipPrepVisible.value = true }
+// 🆕 #5 资料/产物管理弹窗（已完成单）：
+//   shipprep=发货准备(说明书/铭牌, 产物 order_output) / design=设计资料更换(CAD激光图纸/外购附图, 接单产物 order_start_output)
+type ResMode = 'shipprep' | 'design'
+const resVisible = ref(false)
+const resId = ref<number | null>(null)
+const resMode = ref<ResMode>('shipprep')
+const resOrder = computed(() => orders.value.find(o => o.id === resId.value) || null)
+const resTitle = computed(() => resMode.value === 'shipprep' ? '📦 发货准备' : '🔧 设计资料更换')
+const resSections = computed(() => resMode.value === 'shipprep'
+  ? [{ k: 'manual', label: '产品说明书 (Word)', btn: '上传说明书' }, { k: 'nameplate', label: '铭牌 (CAD)', btn: '上传铭牌' }]
+  : [{ k: 'sheetpkg', label: 'CAD激光图纸', btn: '上传CAD激光图纸' }, { k: 'outsource_img', label: '外购附图', btn: '上传外购附图' }])
+function openRes(o: DeptOrder, mode: ResMode) { resId.value = o.id; resMode.value = mode; resVisible.value = true }
+function resFiles(o: DeptOrder, kind: string) {
+  return (resMode.value === 'design' ? o.start_files : o.output_files).filter(f => f.kind === kind)
+}
+async function resPick(o: DeptOrder, kind: string) {
+  const input = document.createElement('input'); input.type = 'file'
+  input.onchange = async () => {
+    const files = Array.from(input.files || []); if (!files.length) return
+    try {
+      if (resMode.value === 'design') await ordersApi.startUpload(o.id, kind, files)
+      else await ordersApi.outputUpload(o.id, kind, files)
+      ElMessage.success('已上传'); await load()
+    } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '上传失败') }
+  }
+  input.click()
+}
 async function doShipPrepDone(o: DeptOrder | null) {
   if (!o) return
   try {
@@ -353,6 +375,7 @@ async function doShipPrepDone(o: DeptOrder | null) {
     await load()
   } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '操作失败') }
 }
+// 🆕 #5 打包下载：复用已有的 openPack(row) / packVisible / AttachmentPackDialog（含合同技术资料 + 上传资料）
 
 // 🆕 钣金装配表可编辑预览（钣金组/装配组共用）
 const viewVisible = ref(false)
@@ -751,42 +774,11 @@ const stockVisible = ref(false)
 
                 <!-- 设计部：点「设计完成」即完成并计考核；说明书/铭牌为发货准备，选填、不影响考核 -->
                 <template v-if="dept === 'design'">
-                  <div class="up-sec">
-                    <div class="up-h">
-                      <el-icon><UploadFilled /></el-icon> 产品说明书 (Word)
-                      <span style="margin-left:auto"><span class="muted" style="font-size:11px">发货准备 · 不计考核</span></span>
-                    </div>
-                    <div class="up-b">
-                      <div v-if="cardOutputFiles(o,'manual').length" class="tc-files">
-                        <el-tag v-for="f in cardOutputFiles(o,'manual')" :key="f.id" size="small" effect="plain" class="file-chip" closable @close="removeCardOutput(o, f.id)">
-                          <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
-                        </el-tag>
-                      </div>
-                      <el-button size="small" plain :icon="UploadFilled" @click="pickCardOutputUpload(o,'manual')">
-                        {{ cardOutputFiles(o,'manual').length ? '继续添加' : '上传说明书' }}
-                      </el-button>
-                    </div>
-                  </div>
-                  <div class="up-sec">
-                    <div class="up-h">
-                      <el-icon><UploadFilled /></el-icon> 铭牌 (CAD)
-                      <span style="margin-left:auto"><span class="muted" style="font-size:11px">发货准备 · 不计考核</span></span>
-                    </div>
-                    <div class="up-b">
-                      <div v-if="cardOutputFiles(o,'nameplate').length" class="tc-files">
-                        <el-tag v-for="f in cardOutputFiles(o,'nameplate')" :key="f.id" size="small" effect="plain" class="file-chip" closable @close="removeCardOutput(o, f.id)">
-                          <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
-                        </el-tag>
-                      </div>
-                      <el-button size="small" plain :icon="UploadFilled" @click="pickCardOutputUpload(o,'nameplate')">
-                        {{ cardOutputFiles(o,'nameplate').length ? '继续添加' : '上传铭牌' }}
-                      </el-button>
-                    </div>
-                  </div>
+                  <!-- 🆕 #5 说明书/铭牌不再在进行中上传，移到「已完成」tab 的发货准备里 -->
                   <el-button type="primary" size="small" :icon="Check"
                              :disabled="!canDesignDone(o)" :loading="markingDesignDone === o.id"
                              @click="doDesignDone(o)">设计完成</el-button>
-                  <div v-if="!canDesignDone(o)" class="tc-hint">需上传 CAD激光图纸、外购附图并完成四表导入即可完成（说明书/铭牌选填）</div>
+                  <div class="tc-hint">{{ canDesignDone(o) ? '设计完成后到「已完成」tab 做发货准备（传说明书/铭牌）与资料更换' : '需上传 CAD激光图纸、外购附图并完成四表导入即可完成' }}</div>
                 </template>
                 <!-- 电工部两步完成流 -->
                 <template v-else-if="dept === 'electric'">
@@ -854,13 +846,12 @@ const stockVisible = ref(false)
                 <span v-else>—</span>
               </template>
             </el-table-column>
-            <el-table-column label="上传资料/产物" min-width="200">
+            <el-table-column label="上传资料/产物" min-width="150" align="center">
               <template #default="{ row }">
-                <el-tag v-for="f in [...row.start_files, ...row.output_files]" :key="f.id"
-                        size="small" effect="plain" class="file-chip" @click="downloadAttachment(f)">
-                  {{ f.name }}
-                </el-tag>
-                <span v-if="!row.start_files.length && !row.output_files.length">—</span>
+                <span class="muted">共 {{ row.start_files.length + row.output_files.length }} 个</span>
+                <el-button size="small" link type="primary" :icon="Download" style="margin-left:8px"
+                           :disabled="!(row.start_files.length + row.output_files.length)"
+                           @click="openPack(row)">打包下载</el-button>
               </template>
             </el-table-column>
             <el-table-column v-if="dept === 'electric'" label="标准件清单" min-width="116" align="center">
@@ -872,11 +863,14 @@ const stockVisible = ref(false)
             <el-table-column label="通知" min-width="110">
               <template #default="{ row }">{{ row.notify_user_name ? '📲 ' + row.notify_user_name : '—' }}</template>
             </el-table-column>
-            <el-table-column label="操作" :width="dept === 'design' ? 210 : 130" fixed="right">
+            <el-table-column label="操作" :width="dept === 'design' ? 300 : 130" fixed="right">
               <template #default="{ row }">
-                <el-button v-if="dept === 'design'" size="small" type="success" plain @click="openShipPrep(row)">
-                  发货准备{{ row.ship_prep_done ? ' ✓' : '' }}
-                </el-button>
+                <template v-if="dept === 'design'">
+                  <el-button size="small" type="success" plain @click="openRes(row, 'shipprep')">
+                    发货准备{{ row.ship_prep_done ? ' ✓' : '' }}
+                  </el-button>
+                  <el-button size="small" type="warning" plain @click="openRes(row, 'design')">设计资料更换</el-button>
+                </template>
                 <el-button size="small" :icon="RefreshLeft" @click="doReopen(row)">改回进行中</el-button>
               </template>
             </el-table-column>
@@ -1247,30 +1241,32 @@ const stockVisible = ref(false)
       />
     </el-dialog>
 
-    <!-- 🆕 #5 设计部「发货准备」：设计完成后补传/替换 说明书·铭牌 + 标记发货准备完成 -->
-    <el-dialog v-model="shipPrepVisible" :title="`📦 发货准备 · ${shipPrepOrder?.project_code || ''}`" width="560px">
+    <!-- 🆕 #5 资料/产物管理：发货准备(说明书/铭牌) 或 设计资料更换(CAD激光图纸/外购附图) -->
+    <el-dialog v-model="resVisible" :title="`${resTitle} · ${resOrder?.project_code || ''}`" width="560px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
-                title="设计完成后在这里补传 / 替换 产品说明书、铭牌（发货资料，选填、不计考核）。文件上点 × 可删除后重新上传替换。备齐后点「发货准备完成」通知物流。" />
-      <template v-if="shipPrepOrder">
-        <div class="up-sec" v-for="g in [{k:'manual',label:'产品说明书 (Word)',btn:'上传说明书'},{k:'nameplate',label:'铭牌 (CAD)',btn:'上传铭牌'}]" :key="g.k">
+                :title="resMode === 'shipprep'
+                  ? '补传 / 替换 产品说明书、铭牌（发货资料，选填、不计考核）。文件上点 × 删除后可重新上传替换。备齐后点「发货准备完成」通知物流。'
+                  : '更换 CAD激光图纸 / 外购附图：上传新文件，旧文件点 × 删除即替换，更新后自动同步采购部。'" />
+      <template v-if="resOrder">
+        <div class="up-sec" v-for="g in resSections" :key="g.k">
           <div class="up-h"><el-icon><UploadFilled /></el-icon> {{ g.label }}</div>
           <div class="up-b">
-            <div v-if="cardOutputFiles(shipPrepOrder, g.k).length" class="tc-files">
-              <el-tag v-for="f in cardOutputFiles(shipPrepOrder, g.k)" :key="f.id" size="small" effect="plain"
-                      class="file-chip" closable @close="removeCardOutput(shipPrepOrder!, f.id)">
+            <div v-if="resFiles(resOrder, g.k).length" class="tc-files">
+              <el-tag v-for="f in resFiles(resOrder, g.k)" :key="f.id" size="small" effect="plain"
+                      class="file-chip" closable @close="removeCardOutput(resOrder!, f.id)">
                 <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
               </el-tag>
             </div>
-            <el-button size="small" plain :icon="UploadFilled" @click="pickCardOutputUpload(shipPrepOrder!, g.k)">
-              {{ cardOutputFiles(shipPrepOrder, g.k).length ? '继续添加' : g.btn }}
+            <el-button size="small" plain :icon="UploadFilled" @click="resPick(resOrder!, g.k)">
+              {{ resFiles(resOrder, g.k).length ? '继续添加' : g.btn }}
             </el-button>
           </div>
         </div>
       </template>
       <template #footer>
-        <el-tag v-if="shipPrepOrder?.ship_prep_done" type="success" effect="plain" style="margin-right:auto">✅ 已标记发货准备完成</el-tag>
-        <el-button @click="shipPrepVisible = false">关闭</el-button>
-        <el-button type="success" :icon="Check" @click="doShipPrepDone(shipPrepOrder)">发货准备完成</el-button>
+        <el-tag v-if="resMode === 'shipprep' && resOrder?.ship_prep_done" type="success" effect="plain" style="margin-right:auto">✅ 已标记发货准备完成</el-tag>
+        <el-button @click="resVisible = false">关闭</el-button>
+        <el-button v-if="resMode === 'shipprep'" type="success" :icon="Check" @click="doShipPrepDone(resOrder)">发货准备完成</el-button>
       </template>
     </el-dialog>
   </div>
