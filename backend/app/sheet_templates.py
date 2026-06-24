@@ -16,14 +16,14 @@ key（"下单日期/电器"），让两套 UI 共享同一份数据。
 import re
 
 SHEET_TEMPLATES: dict[str, list[str]] = {
+    # 🆕 2026-06-24 模板更新（仅对新建项目生效）：钣金装配瘦身为纯工艺跟踪——
+    # 去掉 采购负责人/供应商/发出日期/到料日期（采购信息拆到「激光件清单」），
+    # 编号 提到图纸名称之后，仓库负责人签字→负责人签字。
+    # 存量项目保持旧 16 列形态，见 LEGACY_SHEET_TEMPLATES（启动校验放行，不清空）。
     '钣金装配': [
         '名称',
         '图纸名称',
-        '采购负责人',
-        '供应商',
         '编号',
-        '发出日期',
-        '到料日期',
         '工艺1',
         '工艺1发出日期',
         '工艺1完成日期',
@@ -31,7 +31,7 @@ SHEET_TEMPLATES: dict[str, list[str]] = {
         '工艺2发出日期',
         '工艺2完成日期',
         '进度',
-        '仓库负责人签字',
+        '负责人签字',
         '备注',
     ],
     '标准件清单': [
@@ -76,7 +76,52 @@ SHEET_TEMPLATES: dict[str, list[str]] = {
         '仓库',
         '备注',
     ],
+    # 🆕 2026-06-24 新增「激光件清单」（仅对新建项目生效）：激光切割件的采购/到料跟踪
+    # （即原钣金装配里拆出来的采购信息）。
+    '激光件清单': [
+        '名称',
+        '图纸名称',
+        '编号',
+        '采购负责人',
+        '供应商',
+        '发出日期',
+        '到料日期',
+        '进度',
+        '仓库',
+        '备注',
+    ],
 }
+
+
+# 🆕 2026-06-24 历史模板（模板更新前的形态）。
+# 口径：模板更新只对「新建项目」生效；存量项目对应表保持原形态——
+# align_known_sheet_fields_to_template / cleanup_misaligned_known_sheets 同时认可
+# 「当前模板」与这里的「历史模板」，避免启动校验把老项目清空或重排。
+LEGACY_SHEET_TEMPLATES: dict[str, list[list[str]]] = {
+    '钣金装配': [
+        # 2026-06 模板更新前的 16 列版本
+        ['名称', '图纸名称', '采购负责人', '供应商', '编号', '发出日期', '到料日期',
+         '工艺1', '工艺1发出日期', '工艺1完成日期', '工艺2', '工艺2发出日期', '工艺2完成日期',
+         '进度', '仓库负责人签字', '备注'],
+    ],
+}
+
+
+def resolve_sheet_template(sheet_name: str, field_names: set[str]) -> list[str] | None:
+    """给定一张已知 sheet 及其当前字段名集合，返回它应对齐到的模板字段列表：
+    - 字段集合与当前模板一致 → 当前模板
+    - 否则与某历史模板一致 → 该历史模板（存量项目保形，不强转新版）
+    - 否则 → 当前模板（兜底；由 cleanup 决定是否按当前模板清空重建）
+    非已知 sheet 返回 None。"""
+    cur = SHEET_TEMPLATES.get(sheet_name)
+    if cur is None:
+        return None
+    if field_names == set(cur):
+        return cur
+    for variant in LEGACY_SHEET_TEMPLATES.get(sheet_name, []):
+        if field_names == set(variant):
+            return variant
+    return cur
 
 
 # 🆕 v3 M12：电工采购单 = 项目详单第 5 张表（§十六）。

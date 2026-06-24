@@ -491,7 +491,7 @@ async def align_known_sheet_fields_to_template(db: AsyncSession) -> dict:
     - 字段名不在模板里的（如"列N"、旧数据"完成日期"），保留原状，
       留给 cleanup_misaligned_known_sheets 处理
     """
-    from .sheet_templates import SHEET_TEMPLATES
+    from .sheet_templates import SHEET_TEMPLATES, resolve_sheet_template
 
     res = await db.execute(select(models.Datasheet))
     datasheets = res.scalars().all()
@@ -501,16 +501,18 @@ async def align_known_sheet_fields_to_template(db: AsyncSession) -> dict:
 
     reordered = 0
     for d in targets:
-        template = SHEET_TEMPLATES[d.name]
-        tpl_idx = {name: i for i, name in enumerate(template)}
         res = await db.execute(
             select(models.Field).where(models.Field.datasheet_id == d.id)
         )
         fields = list(res.scalars().all())
+        # 🆕 按字段集合选模板：存量(历史形态)按历史模板排、新建按当前模板排，避免把老表打乱
+        field_set = {(f.name or '').strip() for f in fields}
+        template = resolve_sheet_template(d.name, field_set) or SHEET_TEMPLATES[d.name]
+        tpl_idx = {name: i for i, name in enumerate(template)}
         # 按模板顺序重设 sort_order：字段名在模板里的，按模板下标排序；
         # 不在模板里的，放到最后（保留但不参与模板）
         for f in fields:
-            target_order = tpl_idx.get(f.name)
+            target_order = tpl_idx.get((f.name or '').strip())
             if target_order is not None and f.sort_order != target_order:
                 f.sort_order = target_order
                 reordered += 1
@@ -558,7 +560,7 @@ async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
     Excel 文件里，重新导入即可恢复。
     """
     from sqlalchemy import delete as sql_delete
-    from .sheet_templates import SHEET_TEMPLATES
+    from .sheet_templates import SHEET_TEMPLATES, LEGACY_SHEET_TEMPLATES
 
     res = await db.execute(select(models.Datasheet))
     datasheets = res.scalars().all()
@@ -577,13 +579,13 @@ async def cleanup_misaligned_known_sheets(db: AsyncSession) -> dict:
         field_names_list = [(f.name or '').strip() for f in fields]
         field_names_set = set(field_names_list)
 
-        # 严格条件：集合等于 + 字段数等于 + 无重复
-        is_aligned = (
-            field_names_set == tpl_set
-            and len(fields) == len(template)
-            and len(field_names_list) == len(field_names_set)  # 无重复
-        )
-        if is_aligned:
+        # 严格条件：集合等于 + 字段数等于 + 无重复；当前模板或任一历史模板命中即视为对齐。
+        # 🆕 2026-06-24：模板更新只对新建项目生效，存量旧形态按历史模板放行（不清空）。
+        def _matches(tpl: list[str]) -> bool:
+            return (field_names_set == set(tpl)
+                    and len(fields) == len(tpl)
+                    and len(field_names_list) == len(field_names_set))
+        if any(_matches(v) for v in [template, *LEGACY_SHEET_TEMPLATES.get(d.name, [])]):
             continue
 
         # 收集差异信息用于日志
