@@ -265,7 +265,7 @@ async function openReport() {
     </el-card>
 
     <!-- ===== 录入线索 ===== -->
-    <el-dialog v-model="createVisible" title="📥 录入线索" width="600px" :close-on-click-modal="false">
+    <el-dialog v-model="createVisible" title="📥 录入线索" width="760px" :close-on-click-modal="false">
       <el-form label-position="top">
         <div class="frow">
           <el-form-item label="询盘来源" required style="flex: 1">
@@ -273,7 +273,7 @@ async function openReport() {
               <el-option v-for="s in LEAD_SOURCES" :key="s" :label="s" :value="s" />
             </el-select>
           </el-form-item>
-          <el-form-item label="分配给（可留空进线索池）" style="flex: 1">
+          <el-form-item label="分配给（可留空）" style="flex: 1">
             <el-select v-model="createForm.owner_uid" placeholder="待分配" clearable filterable style="width: 100%">
               <el-option v-for="u in salesStaff" :key="u.id" :label="u.name" :value="u.id" />
             </el-select>
@@ -302,7 +302,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 跟进 / 编辑 ===== -->
-    <el-dialog v-model="editVisible" :title="(allView ? '✏️ 编辑线索 · ' : '📞 跟进线索 · ') + (editRow ? leadTitle(editRow) : '')" width="600px" :close-on-click-modal="false">
+    <el-dialog v-model="editVisible" :title="(allView ? '✏️ 编辑线索 · ' : '📞 跟进线索 · ') + (editRow ? leadTitle(editRow) : '')" width="760px" :close-on-click-modal="false">
       <el-form label-position="top">
         <div class="frow">
           <el-form-item v-if="allView" label="询盘来源" style="flex: 1">
@@ -351,7 +351,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 线索报表 ===== -->
-    <el-dialog v-model="reportVisible" title="📊 线索报表" width="720px">
+    <el-dialog v-model="reportVisible" title="📊 线索报表" width="900px">
       <div class="filter-bar" style="margin-bottom: 12px">
         <el-date-picker v-model="reportMonth" type="month" value-format="YYYY-MM" placeholder="按月份（空=全部）" clearable style="width: 180px" @change="loadReport" />
         <span class="muted" v-if="report">共 {{ report.total_leads }} 条线索 · 成交 {{ report.total_deal }} · 总成交率 <b>{{ pct(report.total_rate) }}</b></span>

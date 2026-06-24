@@ -48,8 +48,8 @@ function openPack(row: BoardRow) {
   packTitle.value = `${row.code} 发货资料`
   packZipname.value = `${row.code}_发货资料`
   packGroups.value = [
-    { label: '设计资料', items: (row.design_files || []).map(f => ({ id: f.id, name: f.name })) },
-    { label: '电工资料', items: (row.electric_files || []).map(f => ({ id: f.id, name: f.name })) },
+    { label: '说明书/铭牌', items: (row.design_files || []).map(f => ({ id: f.id, name: f.name })) },
+    { label: '电路图', items: (row.electric_files || []).map(f => ({ id: f.id, name: f.name })) },
     { label: '仓库发货清单', items: (row.ship_list_files || []).map(f => ({ id: f.id, name: f.name })) },
   ]
   packVisible.value = true
@@ -159,13 +159,13 @@ async function confirmShip(force = false) {
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
         <el-table-column prop="name" label="名称" min-width="130" show-overflow-tooltip />
-        <el-table-column label="设计资料" min-width="104" align="center">
+        <el-table-column label="说明书/铭牌" min-width="120" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.design_files.length" size="small" type="success" effect="light" round>已收到 {{ row.design_files.length }}</el-tag>
             <span v-else class="muted">暂无</span>
           </template>
         </el-table-column>
-        <el-table-column label="电工资料" min-width="104" align="center">
+        <el-table-column label="电路图" min-width="96" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.electric_files.length" size="small" type="success" effect="light" round>已收到 {{ row.electric_files.length }}</el-tag>
             <span v-else class="muted">暂无</span>
