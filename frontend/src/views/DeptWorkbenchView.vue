@@ -907,7 +907,7 @@ const stockVisible = ref(false)
             <el-card v-for="o in pendingAssign" :key="o.id" shadow="hover" class="todo-card assign">
               <div class="tc-head work-card-head">
                 <span class="tc-code">{{ o.project_code }}</span>
-                <StatusPill text="待分派" variant="warn" />
+                <StatusPill text="待分派" variant="info" />
               </div>
               <div class="tc-name">{{ o.project_name }}</div>
               <div v-if="o.req_text" class="tc-req">📌 {{ o.req_text }}</div>
@@ -1117,7 +1117,7 @@ const stockVisible = ref(false)
     <StockQueryDialog v-if="dept === 'design'" v-model="stockVisible" />
 
     <!-- 🆕 M14 部门报表弹窗 -->
-    <el-dialog v-model="reportVisible" :title="`📊 ${report?.dept_name || ''}报表（仅本部门数据）`" width="720px" class="v3-scroll-dialog">
+    <el-dialog v-model="reportVisible" :title="`📊 ${report?.dept_name || ''}报表（仅本部门数据）`" width="1080px" top="6vh" class="v3-scroll-dialog">
       <!-- 筛选栏 -->
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
         <span style="font-size:13px;color:var(--el-text-color-secondary)">筛选：</span>

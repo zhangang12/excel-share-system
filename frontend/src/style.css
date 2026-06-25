@@ -143,6 +143,8 @@ a:hover { text-decoration: none; opacity: .85; }
   border-radius: var(--radius-lg) !important;
   overflow: hidden;
   box-shadow: var(--shadow-lg) !important;
+  /* 🆕 14寸/小屏笔记本：任何固定宽度的弹窗都不超出视口，避免横向看不全 */
+  max-width: 94vw !important;
 }
 .el-dialog__header {
   padding: 20px 24px 12px !important;
@@ -285,6 +287,9 @@ a:hover { text-decoration: none; opacity: .85; }
   .el-card__body { padding: 12px !important; }
   .el-card__header { padding: 12px 16px !important; }
   .el-tabs__header { margin-bottom: 8px !important; }
+  /* 🆕 矮屏弹窗：压缩头/体留白，给内容腾高度 */
+  .el-dialog__header { padding: 14px 20px 8px !important; font-size: 15.5px !important; }
+  .el-dialog__body { padding: 10px 20px 6px !important; }
 }
 /* 窄屏（平板竖屏 / 横屏）：压缩水平边距、页头允许换行 */
 @media (max-width: 1024px) {

@@ -197,9 +197,10 @@ export const ORDER_STATUS_TEXT: Record<string, string> = {
   voided: '已作废',
 }
 
+// 🆕 颜色区分加大：待分派=蓝 / 待接单=橙 / 进行中=靛 / 已完成=绿 / 作废=红（避免待接单与进行中撞色）
 export const ORDER_STATUS_TAG: Record<string, 'warning' | 'info' | 'primary' | 'success' | 'danger'> = {
-  pending_assign: 'warning',
-  assigned: 'info',
+  pending_assign: 'info',
+  assigned: 'warning',
   in_progress: 'primary',
   done: 'success',
   voided: 'danger',
