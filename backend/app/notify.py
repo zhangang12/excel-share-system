@@ -9,8 +9,10 @@
 调用约定：在业务事务 commit **之后**调用（避免幻影通知）；本服务自行 commit。
 """
 import logging
+import time
 from typing import Optional
 
+import httpx
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +20,10 @@ from . import models
 from .config import settings
 
 log = logging.getLogger("notify")
+
+# 企业微信应用消息 API + access_token 缓存（worker 进程级，约 2h 有效）
+_WECOM_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
+_wecom_token_cache: dict = {"token": "", "expire": 0.0}
 
 
 async def push_message(
@@ -74,9 +80,27 @@ async def push_message(
     return len(rows)
 
 
+async def _wecom_token() -> str:
+    """取企微 access_token（带缓存，提前 60s 过期重取）。"""
+    now = time.time()
+    if _wecom_token_cache["token"] and _wecom_token_cache["expire"] > now + 60:
+        return _wecom_token_cache["token"]
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{_WECOM_BASE}/gettoken", params={
+            "corpid": settings.wecom_corp_id,
+            "corpsecret": settings.wecom_secret,
+        })
+        data = r.json()
+    if data.get("errcode", 0) != 0 or not data.get("access_token"):
+        raise RuntimeError(f"企微 gettoken 失败: {data}")
+    _wecom_token_cache["token"] = data["access_token"]
+    _wecom_token_cache["expire"] = now + int(data.get("expires_in", 7200))
+    return data["access_token"]
+
+
 async def _send_wecom(db: AsyncSession, user_ids: list[int], text: str) -> None:
-    """企微应用消息外发占位：取已绑 wxid 的用户调企微 API。
-    凭证/网络未就绪时由调用方捕获降级。"""
+    """企微应用消息外发：取已绑 wxid 的用户 → gettoken → message/send 文本消息。
+    凭证/网络/IP白名单等问题由调用方捕获降级（不阻塞站内消息）。"""
     res = await db.execute(
         select(models.User.wxid).where(
             models.User.id.in_(user_ids), models.User.wxid.isnot(None),
@@ -85,5 +109,26 @@ async def _send_wecom(db: AsyncSession, user_ids: list[int], text: str) -> None:
     wxids = [r[0] for r in res.all() if r[0]]
     if not wxids:
         return
-    # TODO(企微凭证就绪后): httpx 调 gettoken + message/send；当前仅记录
-    log.info("[企微占位] 将推送给 %s: %s", "|".join(wxids), text[:80])
+    if not settings.wecom_agent_id:
+        log.warning("企微 agent_id 未配置，跳过外发（仅站内）")
+        return
+    token = await _wecom_token()
+    payload = {
+        "touser": "|".join(wxids[:1000]),     # 企微单次最多 1000 人
+        "msgtype": "text",
+        "agentid": int(settings.wecom_agent_id),
+        "text": {"content": text[:2000]},
+        "safe": 0,
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(f"{_WECOM_BASE}/message/send",
+                              params={"access_token": token}, json=payload)
+        data = r.json()
+    errcode = data.get("errcode", 0)
+    if errcode in (40014, 42001):             # token 失效 → 清缓存下次重取
+        _wecom_token_cache["token"] = ""
+    if errcode != 0:
+        raise RuntimeError(f"企微 message/send 失败: {data}")
+    if data.get("invaliduser"):
+        log.warning("企微部分 userid 无效(未关注/不存在): %s", data["invaliduser"])
+    log.info("[企微] 已推送 %d 人", len(wxids))
