@@ -136,7 +136,7 @@ async function load() {
     ])
     orders.value = os
     options.value = opt
-    // 🆕 设计部：拉本人进行中任务的四表导入状态（卡片内「上传一个 Excel 导入四表」）
+    // 🆕 设计部：拉本人进行中任务的五表导入状态（卡片内「上传一个 Excel 导入五表」）
     if (dept.value === 'design') {
       for (const o of os) {
         if (o.status === 'in_progress') loadSheetStatus(o.project_id)
@@ -179,23 +179,24 @@ async function doDispatch() {
   } finally { dispatching.value = false }
 }
 
-// 🆕 设计部卡片内「上传一个 Excel 导入四表」+ 四表导入状态（与项目详情同一导入接口）
-const FOUR_SHEETS = ['钣金装配', '标准件清单', '外协加工', '不锈钢原料下料单']
+// 🆕 设计部卡片内「上传一个 Excel 导入五表」+ 五表导入状态（与项目详情同一导入接口）
+// 2026-06-24 起新增「激光件清单」（钣金装配拆出的采购信息），故为五张
+const TEMPLATE_SHEETS = ['钣金装配', '标准件清单', '外协加工', '不锈钢原料下料单', '激光件清单']
 const sheetStatus = ref<Record<number, { name: string; imported: boolean }[]>>({})
 async function loadSheetStatus(pid: number) {
   try {
     const ds: any[] = await datasheetsApi.list(pid)
-    sheetStatus.value[pid] = FOUR_SHEETS.map((n) => ({
+    sheetStatus.value[pid] = TEMPLATE_SHEETS.map((n) => ({
       name: n, imported: !!ds.find((d) => d.name === n)?.imported,
     }))
   } catch { /* 无权限/异常忽略，不阻塞卡片 */ }
 }
-function fourReady(pid: number) {
+function sheetsReady(pid: number) {
   const s = sheetStatus.value[pid]
-  return !!s && s.length === FOUR_SHEETS.length && s.every((x) => x.imported)
+  return !!s && s.length === TEMPLATE_SHEETS.length && s.every((x) => x.imported)
 }
 const importingPid = ref<number | null>(null)
-function importFourTables(o: DeptOrder) {
+function importTemplateTables(o: DeptOrder) {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = '.xls,.xlsx'
@@ -204,8 +205,8 @@ function importFourTables(o: DeptOrder) {
     if (!f) return
     try {
       await ElMessageBox.confirm(
-        `导入「${f.name}」？将按四个 sheet 一次性导入/重建本项目数据表（与项目详情「导入 Excel」一致）。`,
-        '导入四表', { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消' })
+        `导入「${f.name}」？将按各 sheet 一次性导入/重建本项目数据表（与项目详情「导入 Excel」一致）。`,
+        '导入数据表', { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消' })
     } catch { return }
     const fd = new FormData(); fd.append('file', f)
     importingPid.value = o.project_id
@@ -280,7 +281,7 @@ function openStdSheet(o: DeptOrder) {
 // 🆕 设计完成第一步（设计完成按钮）
 const markingDesignDone = ref<number | null>(null)
 function canDesignDone(o: DeptOrder) {
-  // 🆕 #4 放开文件必传：图纸/外购图/四表均改为可选，进行中即可点设计完成
+  // 🆕 #4 放开文件必传：图纸/外购图/五表均改为可选，进行中即可点设计完成
   return o.status === 'in_progress'
 }
 async function doDesignDone(o: DeptOrder) {
@@ -611,7 +612,7 @@ const stockVisible = ref(false)
       <div>
         <h1>{{ deptName }}工作台</h1>
         <div class="desc">
-          销售/管理层下单 → 负责人分派 → {{ isWorker ? '接单填时间 → 完成（' + (options?.sheet_check ? '四表校验/' : '') + '通知/产物）→ 推送下游' : '跟踪进度与完成效率' }}
+          销售/管理层下单 → 负责人分派 → {{ isWorker ? '接单填时间 → 完成（' + (options?.sheet_check ? '五表校验/' : '') + '通知/产物）→ 推送下游' : '跟踪进度与完成效率' }}
         </div>
       </div>
       <div class="spacer"></div>
@@ -771,13 +772,13 @@ const stockVisible = ref(false)
                   </div>
                 </div>
 
-                <!-- 🆕 设计部：四个数据表导入（卡片内上传一个 Excel 一次性导入四表，与项目详情同口径） -->
+                <!-- 🆕 设计部：五个数据表导入（卡片内上传一个 Excel 一次性导入五表，与项目详情同口径） -->
                 <div v-if="options?.sheet_check" class="up-sec">
                   <div class="up-h">
-                    📋 四个数据表导入
+                    📋 五个数据表导入
                     <span style="margin-left:auto">
-                      <StatusPill :text="fourReady(o.project_id) ? '已齐全' : '未齐全'"
-                                  :variant="fourReady(o.project_id) ? 'success' : 'warn'" />
+                      <StatusPill :text="sheetsReady(o.project_id) ? '已齐全' : '未齐全'"
+                                  :variant="sheetsReady(o.project_id) ? 'success' : 'warn'" />
                     </span>
                   </div>
                   <div class="up-b">
@@ -788,10 +789,10 @@ const stockVisible = ref(false)
                       </el-tag>
                     </div>
                     <el-button size="small" plain type="primary" :icon="UploadFilled"
-                               :loading="importingPid === o.project_id" @click="importFourTables(o)">
-                      上传一个 Excel 导入四表
+                               :loading="importingPid === o.project_id" @click="importTemplateTables(o)">
+                      上传一个 Excel 导入五表
                     </el-button>
-                    <div class="tc-hint">上传含「钣金装配/标准件清单/外协加工/不锈钢原料下料单」四个 sheet 的 Excel，一次性导入；完成前四表须齐全。</div>
+                    <div class="tc-hint">上传含「钣金装配/标准件清单/外协加工/不锈钢原料下料单/激光件清单」五个 sheet 的 Excel，一次性导入；完成前五表须齐全。</div>
                   </div>
                 </div>
 
@@ -801,7 +802,7 @@ const stockVisible = ref(false)
                   <el-button type="primary" size="small" :icon="Check"
                              :disabled="!canDesignDone(o)" :loading="markingDesignDone === o.id"
                              @click="doDesignDone(o)">设计完成</el-button>
-                  <div class="tc-hint">{{ canDesignDone(o) ? '设计完成后到「已完成」tab 做发货准备（传说明书/铭牌）与资料更换' : '需上传 CAD激光图纸、外购附图并完成四表导入即可完成' }}</div>
+                  <div class="tc-hint">{{ canDesignDone(o) ? '设计完成后到「已完成」tab 做发货准备（传说明书/铭牌）与资料更换' : '需上传 CAD激光图纸、外购附图并完成五表导入即可完成' }}</div>
                 </template>
                 <!-- 电工部两步完成流 -->
                 <template v-else-if="dept === 'electric'">
@@ -1169,7 +1170,7 @@ const stockVisible = ref(false)
                width="560px">
       <el-alert v-if="options?.sheet_check && !(dept === 'design' && completeOrder?.design_done_flag)"
                 type="info" :closable="false" style="margin-bottom: 14px"
-                title="完成前将校验四个数据表均已通过 Excel 导入（项目详情页头「导入 Excel」）" />
+                title="完成前将校验五个数据表均已通过 Excel 导入（项目详情页头「导入 Excel」）" />
       <el-form label-position="top">
         <el-form-item :label="`${options?.notify_label}（必选，企业微信/站内通知）`" required>
           <el-select v-model="notifyUserId" placeholder="选择通知人" size="large" style="width: 100%">

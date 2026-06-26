@@ -40,14 +40,15 @@ async def _create_sheet_with_fields(
 
 
 async def create_default_template_sheets(db: AsyncSession, project_id: int) -> int:
-    """为新建项目预置 4 个固定数据表 + 🆕第 5 张「电工采购单」（§十六）。
+    """为新建项目预置 5 个固定数据表（钣金装配/标准件清单/外协加工/不锈钢原料下料单/激光件清单）
+    + 🆕第 6 张「电工采购单」（§十六）。
     每张表按模板建好字段表头，但不插入数据行（空表）。返回创建数量。调用方负责 commit。"""
     from ..sheet_templates import ELEC_PO_SHEET_NAME, ELEC_PO_COLUMNS
     created = 0
     for s_idx, (sheet_name, field_names) in enumerate(SHEET_TEMPLATES.items()):
         await _create_sheet_with_fields(db, project_id, sheet_name, list(field_names), s_idx)
         created += 1
-    # 第 5 张：电工采购单（不在 SHEET_TEMPLATES，单独建）
+    # 第 6 张：电工采购单（不在 SHEET_TEMPLATES，单独建）
     await _create_sheet_with_fields(
         db, project_id, ELEC_PO_SHEET_NAME, ELEC_PO_COLUMNS, len(SHEET_TEMPLATES))
     created += 1

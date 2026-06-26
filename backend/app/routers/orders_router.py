@@ -7,7 +7,7 @@
 - B2 仅「进行中」项目可下单
 - B5 开始/预计时间一旦填写本人不可改（仅管理层）
 - C1-C3 效率口径见 dept_config.compute_efficiency（报表共用）
-- D1 设计完成前置校验=四表有 Excel 导入记录（datasheets.imported_at）
+- D1 设计完成前置校验=五表有 Excel 导入记录（datasheets.imported_at）；#4 起已放开为可选
 - P-13 作废留痕（不删单），管理层收通知后可重新下单
 - 接单/换人回传一览「设计师/电工」列，设计开始/完成回传「制图开始/制图结束」
 """
@@ -805,7 +805,7 @@ async def mark_design_done(
     if o.status != "in_progress":
         raise HTTPException(400, "仅进行中任务可操作")
 
-    # 🆕 #4 已放开：不再校验 CAD激光图纸/外购附图已上传、四表是否导入齐（图纸表格按需可选）
+    # 🆕 #4 已放开：不再校验 CAD激光图纸/外购附图已上传、五表是否导入齐（图纸表格按需可选）
 
     # 🆕 点「设计完成」即完成：置 done + 写完成日期 + 计考核（发货准备的说明书/铭牌不在此校验/考核）
     cfg = DEPTS["design"]

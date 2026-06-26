@@ -391,7 +391,7 @@ async def import_excel(
     if not sheets_meta:
         raise HTTPException(400, "Excel 中没有可识别的数据")
 
-    # ===== 模板对齐：已知 sheet 类型按模板重排字段（钣金装配 / 标准件清单 / 外协外购 / 原料下料单）=====
+    # ===== 模板对齐：已知 sheet 类型按模板重排字段（钣金装配 / 标准件清单 / 外协加工 / 不锈钢原料下料单 / 激光件清单）=====
     aligned_meta = []
     for sname, headers, rows, preamble in sheets_meta:
         if is_known_sheet(sname):
@@ -407,8 +407,8 @@ async def import_excel(
     sheets_meta = aligned_meta
 
     # ===== 全量替换：先删本项目现有数据表（含字段、记录、字段权限） =====
-    # 🆕 v3：白名单保护「电工采购单」第 5 表——它由电工部上传生成、非用户导入文件的一部分，
-    # 重导四表 Excel 不应误删它（最小侵入：删除范围排除该表）。
+    # 🆕 v3：白名单保护「电工采购单」（第 6 表）——它由电工部上传生成、非用户导入文件的一部分，
+    # 重导模板表 Excel 不应误删它（最小侵入：删除范围排除该表）。
     from sqlalchemy import delete as _del
     from ..sheet_templates import ELEC_PO_SHEET_NAME
     PROTECT = (ELEC_PO_SHEET_NAME,)
@@ -441,7 +441,7 @@ async def import_excel(
     if ds_ids_to_del:
         await db.execute(_del(models.Record).where(models.Record.datasheet_id.in_(ds_ids_to_del)))
         await db.execute(_del(models.Datasheet).where(models.Datasheet.id.in_(ds_ids_to_del)))
-    # 受保护的电工采购单排到末尾（重导的四表占 0..N，它保持最后一个 tab）
+    # 受保护的电工采购单排到末尾（重导的模板表占 0..N，它保持最后一个 tab）
     from sqlalchemy import update as _upd
     await db.execute(
         _upd(models.Datasheet).where(
@@ -454,7 +454,7 @@ async def import_excel(
 
     # 入库：每个 sheet 一个 datasheet
     total_records = 0
-    # 导入的表从 0 开始排（全量替换四表）；受保护的电工采购单已被置 sort_order=100 留在末尾
+    # 导入的表从 0 开始排（全量替换模板表）；受保护的电工采购单已被置 sort_order=100 留在末尾
     base_order = 0
     from datetime import datetime as _dt, timezone as _tz
     for idx, (sname, headers, rows, preamble) in enumerate(sheets_meta):

@@ -691,16 +691,17 @@ async def sync_overview_to_header(db: AsyncSession) -> dict:
 
 
 async def backfill_template_sheets_for_empty_projects(db: AsyncSession) -> dict:
-    """对"一张数据表都没有"的活跃项目，预置 4 个固定数据表（空表头）。
+    """对"一张数据表都没有"的活跃项目，预置全套固定数据表 + 电工采购单（空表头）。
 
     背景：早期"新建项目"按钮只建项目不建数据表，导致进入项目详情看到
-    "还没有数据表"。新逻辑下每个项目都应自带 4 张固定表（钣金装配/
-    标准件清单/外协外购/原料下料单）。
+    "还没有数据表"。新逻辑下每个项目都应自带固定模板表（钣金装配/标准件清单/
+    外协加工/不锈钢原料下料单/激光件清单）+ 电工采购单，由
+    create_default_template_sheets 统一建立。
 
     策略（保守）：
     - 只处理 datasheet 数量为 0 的活跃项目（已有任意表的项目一律不动，
       避免干扰已导入 Excel 的项目）
-    - 幂等：建完就有 4 张表，下次启动不再命中
+    - 幂等：建完就有全套表，下次启动不再命中
     """
     from .routers.projects_router import create_default_template_sheets
 
