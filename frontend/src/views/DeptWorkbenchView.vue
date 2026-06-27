@@ -7,7 +7,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Document, Download, Close, UploadFilled, Check, RefreshLeft, Switch as SwitchIcon, Lock,
-  Promotion, CircleCheck, Delete,
+  Promotion, CircleCheck, Delete, View,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -19,6 +19,7 @@ import { http } from '@/api'
 import SheetmetalGrid from '@/components/SheetmetalGrid.vue'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
 import AttachmentPackDialog from '@/components/AttachmentPackDialog.vue'
+import AttachmentPreview from '@/components/AttachmentPreview.vue'
 import StockQueryDialog from '@/components/StockQueryDialog.vue'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -52,11 +53,18 @@ const canSpare = computed(() => dept.value === 'design' && (isLead.value || auth
 const spareVisible = ref(false)
 const spareSubmitting = ref(false)
 const spareForm = ref({ code: '', name: '', qty: 1, unit: '台', depts: ['produce', 'electric'], req_text: '' })
+const spareFiles = ref<File[]>([])   // 🆕 #5 备机下单的合同技术资料
 async function openSpare() {
   let suggested = ''
   try { suggested = await salesApi.nextCode() } catch { /* 留空人工填 */ }
   spareForm.value = { code: suggested, name: '', qty: 1, unit: '台', depts: ['produce', 'electric'], req_text: '' }
+  spareFiles.value = []
   spareVisible.value = true
+}
+function onPickSpareFiles(e: Event) {
+  const fs = Array.from((e.target as HTMLInputElement).files || [])
+  if (fs.length) spareFiles.value.push(...fs)
+  ;(e.target as HTMLInputElement).value = ''
 }
 async function submitSpare() {
   const f = spareForm.value
@@ -66,6 +74,12 @@ async function submitSpare() {
   spareSubmitting.value = true
   try {
     const r = await ordersApi.spareOrder({ ...f })
+    // 🆕 #5 把合同技术资料随附给生成的各部门任务单（下发资料 order_input）
+    if (spareFiles.value.length && r.order_ids?.length) {
+      const files = spareFiles.value.slice()
+      try { await Promise.all(r.order_ids.map(oid => ordersApi.inputUpload(oid, files))) }
+      catch { ElMessage.warning('备机已下单，但部分技术资料上传失败，可到部门任务单补传') }
+    }
     ElMessage.success(`备机下单成功（${r.code}），已派 ${r.order_ids.length} 个部门`)
     spareVisible.value = false
   } catch (e: any) {
@@ -378,6 +392,10 @@ async function doShipPrepDone(o: DeptOrder | null) {
 }
 // 🆕 #5 打包下载：复用已有的 openPack(row) / packVisible / AttachmentPackDialog（含合同技术资料 + 上传资料）
 
+// 🆕 #4 合同技术资料在线预览（图片/PDF/Excel/Word；doc/dwg 自动下载兜底）
+const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
+function preview(f: OrderAttachment) { previewRef.value?.open(f) }
+
 // 🆕 #1 对合同技术资料提修订意见 → 推送对应销售员
 const revVisible = ref(false)
 const revOrder = ref<DeptOrder | null>(null)
@@ -668,6 +686,14 @@ const stockVisible = ref(false)
         <el-form-item label="下单要求">
           <el-input v-model="spareForm.req_text" type="textarea" :rows="2" placeholder="技术要求/交底说明（选填）" />
         </el-form-item>
+        <!-- 🆕 #5 合同技术资料：随附给各部门任务单（下发资料） -->
+        <el-form-item label="合同技术资料（选填，随附各部门任务）">
+          <input type="file" multiple @change="onPickSpareFiles" style="display:block" />
+          <div v-if="spareFiles.length" class="tc-files" style="margin-top:6px">
+            <el-tag v-for="(f, i) in spareFiles" :key="i" size="small" effect="plain" closable
+                    @close="spareFiles.splice(i, 1)">{{ f.name }}</el-tag>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="spareVisible = false">取消</el-button>
@@ -693,8 +719,8 @@ const stockVisible = ref(false)
               <div v-if="o.req_text" class="tc-req">📌 {{ o.req_text }}</div>
               <div v-if="o.input_files.length" class="tc-files">
                 <el-tag v-for="f in o.input_files" :key="f.id" size="small" effect="plain"
-                        class="file-chip" @click="downloadAttachment(f)">
-                  <el-icon><Document /></el-icon>{{ f.name }}<el-icon class="dl"><Download /></el-icon>
+                        class="file-chip" style="cursor:pointer" @click="preview(f)">
+                  <el-icon><View /></el-icon>{{ f.name }}<el-icon class="dl" @click.stop="downloadAttachment(f)"><Download /></el-icon>
                 </el-tag>
               </div>
               <div class="tc-dates">
@@ -729,8 +755,8 @@ const stockVisible = ref(false)
 
               <div v-if="o.input_files.length" class="tc-files">
                 <el-tag v-for="f in o.input_files" :key="f.id" size="small" effect="plain"
-                        class="file-chip" @click="downloadAttachment(f)">
-                  <el-icon><Document /></el-icon>{{ f.name }}<el-icon class="dl"><Download /></el-icon>
+                        class="file-chip" style="cursor:pointer" @click="preview(f)">
+                  <el-icon><View /></el-icon>{{ f.name }}<el-icon class="dl" @click.stop="downloadAttachment(f)"><Download /></el-icon>
                 </el-tag>
               </div>
               <!-- 🆕 #1 对合同技术资料提修订意见（设计/电工，进行中）→ 推送对应销售 -->
@@ -914,7 +940,7 @@ const stockVisible = ref(false)
               <div v-if="o.req_text" class="tc-req">📌 {{ o.req_text }}</div>
               <div v-if="o.input_files.length" class="tc-files">
                 <el-tag v-for="f in o.input_files" :key="f.id" size="small" effect="plain"
-                        class="file-chip" @click="downloadAttachment(f)">{{ f.name }}</el-tag>
+                        class="file-chip" style="cursor:pointer" @click="preview(f)">{{ f.name }}</el-tag>
               </div>
               <!-- 🆕 生产部：派发到钣金组+装配组（取代单人分派） -->
               <div v-if="isProduce" class="assign-bar">
@@ -946,9 +972,12 @@ const stockVisible = ref(false)
                 <template v-else>{{ row.worker_name || '待分派' }}</template>
               </template>
             </el-table-column>
-            <el-table-column label="合同技术资料" min-width="118" align="center">
+            <el-table-column label="合同技术资料" min-width="130" align="center">
               <template #default="{ row }">
-                <el-tag v-if="row.input_files.length" size="small" type="success" effect="light" round>已收到 {{ row.input_files.length }}</el-tag>
+                <el-button v-if="row.input_files.length" size="small" link type="primary" :icon="View"
+                           @click="row.input_files.length === 1 ? preview(row.input_files[0]) : openPack(row)">
+                  预览{{ row.input_files.length > 1 ? '(' + row.input_files.length + ')' : '' }}
+                </el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
@@ -1254,6 +1283,8 @@ const stockVisible = ref(false)
 
     <!-- 🆕 #9 任务跟踪：资料预览 + 打包下载 -->
     <AttachmentPackDialog v-model="packVisible" :title="packTitle" :zipname="packZipname" :groups="packGroups" />
+    <!-- 🆕 #4 合同技术资料在线预览 -->
+    <AttachmentPreview ref="previewRef" />
 
     <!-- 🆕 #6 电工部：标准件清单只读引用 -->
     <el-dialog v-model="stdVisible" :title="stdTitle" width="90vw" destroy-on-close>

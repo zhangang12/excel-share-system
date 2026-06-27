@@ -1068,6 +1068,8 @@ async def backfill_sales_ledger(db: AsyncSession) -> dict:
             continue
         extra = p.extra or {}
         sales_name = str(extra.get("__o__销售") or "").strip()
+        if sales_name.startswith("备机"):   # 🆕 备机下单项目不进销售台账
+            continue
         uid = None
         if sales_name and len(by_name.get(sales_name, [])) == 1:
             uid = by_name[sales_name][0]

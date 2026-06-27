@@ -16,7 +16,7 @@ interface Att { id: number; name: string }
 interface Row {
   project_id: number; code: string; name: string; designer?: string | null
   outsource_sheet_id?: number | null; sheetmetal_sheet_id?: number | null
-  material_sheet_id?: number | null
+  material_sheet_id?: number | null; laser_sheet_id?: number | null
   elec_po_sheet_id?: number | null; standard_sheet_id?: number | null
   cad_laser_files: Att[]; outsource_img_files: Att[]
 }
@@ -34,6 +34,7 @@ const showDesigner      = computed(() => seeAll.value || isWangqin.value || isFa
 const showOutsource     = computed(() => seeAll.value || isFangbusen.value)  // 外协加工表
 const showSheetmetal    = computed(() => seeAll.value || isFangbusen.value)  // 🆕 钣金装配表
 const showMaterial      = computed(() => seeAll.value || isWangqin.value)    // 不锈钢原料下料单
+const showLaser         = computed(() => seeAll.value || isWangqin.value)    // 🆕 激光件清单（王芹可见）
 const showCadLaser      = computed(() => seeAll.value || isWangqin.value)    // CAD激光图纸
 const showElecPo        = computed(() => seeAll.value || isLixinxin.value)   // 电工采购单
 const showStandardSheet = computed(() => seeAll.value || isLixinxin.value)   // 标准件清单
@@ -87,13 +88,15 @@ function cellVal(rec: any, fid: number) {
 }
 
 // ===== 右侧「打包下载」面板 =====
-type SheetKey = 'outsource_sheet_id' | 'sheetmetal_sheet_id' | 'material_sheet_id' | 'elec_po_sheet_id' | 'standard_sheet_id'
+type SheetKey = 'sheetmetal_sheet_id' | 'standard_sheet_id' | 'outsource_sheet_id' | 'material_sheet_id' | 'laser_sheet_id' | 'elec_po_sheet_id'
+// 顺序：钣金装配 → 标准件清单 → 外协加工 → 不锈钢原料下料单 → 激光件清单 →(电工采购单)
 const SHEET_DEFS: { key: SheetKey; label: string; vis: () => boolean }[] = [
-  { key: 'outsource_sheet_id', label: '外协加工表', vis: () => showOutsource.value },
   { key: 'sheetmetal_sheet_id', label: '钣金装配表', vis: () => showSheetmetal.value },
-  { key: 'material_sheet_id', label: '不锈钢原料下料单', vis: () => showMaterial.value },
-  { key: 'elec_po_sheet_id', label: '电工采购单', vis: () => showElecPo.value },
   { key: 'standard_sheet_id', label: '标准件清单', vis: () => showStandardSheet.value },
+  { key: 'outsource_sheet_id', label: '外协加工表', vis: () => showOutsource.value },
+  { key: 'material_sheet_id', label: '不锈钢原料下料单', vis: () => showMaterial.value },
+  { key: 'laser_sheet_id', label: '激光件清单', vis: () => showLaser.value },
+  { key: 'elec_po_sheet_id', label: '电工采购单', vis: () => showElecPo.value },
 ]
 
 const dlVisible = ref(false)
@@ -181,16 +184,7 @@ async function packDownload() {
           <template #default="{ row }">{{ row.designer || '—' }}</template>
         </el-table-column>
 
-        <!-- 外协采购：数据表只做预览 -->
-        <el-table-column v-if="showOutsource" label="外协加工表" min-width="100" align="center">
-          <template #default="{ row }">
-            <el-button v-if="row.outsource_sheet_id" size="small" link type="primary"
-                       @click="openPreview(row.outsource_sheet_id, `${row.code} · 外协加工表`)">
-              <el-icon><View /></el-icon>预览
-            </el-button>
-            <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
+        <!-- 数据表预览列（顺序：钣金装配 → 标准件清单 → 外协加工 → 不锈钢原料下料单 → 激光件清单 → 电工采购单） -->
         <el-table-column v-if="showSheetmetal" label="钣金装配表" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.sheetmetal_sheet_id" size="small" link type="primary"
@@ -200,10 +194,46 @@ async function packDownload() {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
+        <el-table-column v-if="showStandardSheet" label="标准件清单" min-width="100" align="center">
+          <template #default="{ row }">
+            <el-button v-if="row.standard_sheet_id" size="small" link type="primary"
+                       @click="openPreview(row.standard_sheet_id, `${row.code} · 标准件清单`)">
+              <el-icon><View /></el-icon>预览
+            </el-button>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="showOutsource" label="外协加工表" min-width="100" align="center">
+          <template #default="{ row }">
+            <el-button v-if="row.outsource_sheet_id" size="small" link type="primary"
+                       @click="openPreview(row.outsource_sheet_id, `${row.code} · 外协加工表`)">
+              <el-icon><View /></el-icon>预览
+            </el-button>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column v-if="showMaterial" label="不锈钢原料下料单" min-width="120" align="center">
           <template #default="{ row }">
             <el-button v-if="row.material_sheet_id" size="small" link type="primary"
                        @click="openPreview(row.material_sheet_id, `${row.code} · 不锈钢原料下料单`)">
+              <el-icon><View /></el-icon>预览
+            </el-button>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="showLaser" label="激光件清单" min-width="100" align="center">
+          <template #default="{ row }">
+            <el-button v-if="row.laser_sheet_id" size="small" link type="primary"
+                       @click="openPreview(row.laser_sheet_id, `${row.code} · 激光件清单`)">
+              <el-icon><View /></el-icon>预览
+            </el-button>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="showElecPo" label="电工采购单" min-width="100" align="center">
+          <template #default="{ row }">
+            <el-button v-if="row.elec_po_sheet_id" size="small" link type="primary"
+                       @click="openPreview(row.elec_po_sheet_id, `${row.code} · 电工采购单`)">
               <el-icon><View /></el-icon>预览
             </el-button>
             <span v-else class="muted">—</span>
@@ -219,26 +249,6 @@ async function packDownload() {
               <el-tag size="small" type="success" effect="light" round>已推送 {{ row.cad_laser_files.length }}</el-tag>
             </el-tooltip>
             <span v-else class="muted">待推送</span>
-          </template>
-        </el-table-column>
-
-        <!-- 标准件采购：数据表只做预览 -->
-        <el-table-column v-if="showElecPo" label="电工采购单" min-width="100" align="center">
-          <template #default="{ row }">
-            <el-button v-if="row.elec_po_sheet_id" size="small" link type="primary"
-                       @click="openPreview(row.elec_po_sheet_id, `${row.code} · 电工采购单`)">
-              <el-icon><View /></el-icon>预览
-            </el-button>
-            <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="showStandardSheet" label="标准件清单" min-width="100" align="center">
-          <template #default="{ row }">
-            <el-button v-if="row.standard_sheet_id" size="small" link type="primary"
-                       @click="openPreview(row.standard_sheet_id, `${row.code} · 标准件清单`)">
-              <el-icon><View /></el-icon>预览
-            </el-button>
-            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
         <el-table-column v-if="showOutImg" label="外购附图" min-width="116" align="center">
