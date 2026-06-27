@@ -940,7 +940,9 @@ const stockVisible = ref(false)
               <div v-if="o.req_text" class="tc-req">📌 {{ o.req_text }}</div>
               <div v-if="o.input_files.length" class="tc-files">
                 <el-tag v-for="f in o.input_files" :key="f.id" size="small" effect="plain"
-                        class="file-chip" style="cursor:pointer" @click="preview(f)">{{ f.name }}</el-tag>
+                        class="file-chip" style="cursor:pointer" @click="preview(f)">
+                  <el-icon><View /></el-icon>{{ f.name }}<el-icon class="dl" @click.stop="downloadAttachment(f)"><Download /></el-icon>
+                </el-tag>
               </div>
               <!-- 🆕 生产部：派发到钣金组+装配组（取代单人分派） -->
               <div v-if="isProduce" class="assign-bar">

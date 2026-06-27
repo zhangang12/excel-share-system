@@ -3,6 +3,7 @@
 //    doc(旧版二进制)·dwg(CAD) 无法网页渲染 → 下载。库按需动态导入，不拖累首屏。
 import { ref, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Download } from '@element-plus/icons-vue'
 import { attExt, isImageAtt, isPdfAtt, attachmentBlob, attachmentBlobUrl } from '@/api/attachments'
 import { downloadAttachment } from '@/api/orders'
 
@@ -20,6 +21,7 @@ const xlsxActive = ref('')
 let xlsxWb: any = null
 const docxHost = ref<HTMLElement | null>(null)
 let curBlobUrl = ''
+const curAtt = ref<Att | null>(null)   // 🆕 当前预览的附件，供弹窗「下载」按钮使用
 
 function cleanup() {
   if (curBlobUrl) { URL.revokeObjectURL(curBlobUrl); curBlobUrl = '' }
@@ -30,6 +32,7 @@ function cleanup() {
 
 async function open(att: Att) {
   title.value = att.name
+  curAtt.value = att
   cleanup()
   mode.value = ''
   const ext = attExt(att.name)
@@ -116,6 +119,7 @@ async function selectSheet(name: string) {
 }
 
 function onClose() { cleanup(); mode.value = '' }
+function doDownload() { if (curAtt.value) downloadAttachment(curAtt.value) }
 defineExpose({ open })
 </script>
 
@@ -136,6 +140,10 @@ defineExpose({ open })
       </div>
       <div v-else-if="mode === 'docx'" ref="docxHost" class="docx-host"></div>
     </div>
+    <template #footer>
+      <el-button @click="visible = false">关闭</el-button>
+      <el-button type="primary" :icon="Download" @click="doDownload">下载</el-button>
+    </template>
   </el-dialog>
 </template>
 
