@@ -676,12 +676,14 @@ async def ship_prep_done(
     o.ship_prep_done = True
     await db.commit()
     p = o.project
-    await push_message(db, to_role="logistics", kind="info",
-                       text=f"【发货准备完成】{p.code} {p.name} 设计部说明书/铭牌等发货资料已备齐。",
-                       biz_type="order", biz_id=o.id)
+    is_spare = str((p.extra or {}).get("__o__销售") or "").startswith("备机")
+    if not is_spare:
+        await push_message(db, to_role="logistics", kind="info",
+                           text=f"【发货准备完成】{p.code} {p.name} 设计部说明书/铭牌等发货资料已备齐。",
+                           biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="ship_prep_done", target_type="dept_order",
                       target_id=o.id)
-    return schemas.Msg(message="已标记发货准备完成，并通知物流")
+    return schemas.Msg(message="已标记发货准备完成" + ("，并通知物流" if not is_spare else ""))
 
 
 @router.post("/{oid}/revision-request", response_model=schemas.Msg)

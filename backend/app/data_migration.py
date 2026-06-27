@@ -1104,6 +1104,8 @@ async def backfill_shipments(db: AsyncSession) -> dict:
     for p in projects:
         if p.id in have:
             continue
+        if str((p.extra or {}).get("__o__销售") or "").startswith("备机"):
+            continue  # 备机下单不进物流发货看板
         db.add(models.Shipment(project_id=p.id))
         created += 1
     if created:

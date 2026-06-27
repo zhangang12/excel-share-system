@@ -223,8 +223,9 @@ async def list_ledger(
     # 重数据(_ledger_rows 的附件名查询)只对当前页构建，避免整表 500 行的开销（性能优化）。
     res = await db.execute(q)
     ledgers = list(res.scalars().all())
-    # 🆕 备机下单不再建台账(且 backfill 跳过「备机·」)，故新备机本就不会进来；
-    #    历史已被回填出的备机台账按需保留展示，不再过滤隐藏。
+    # 备机下单不进销售台账：新备机不建台账；历史回填的备机台账也从展示中过滤
+    ledgers = [l for l in ledgers
+               if not str(((l.project.extra if l.project else None) or {}).get("__o__销售") or "").startswith("备机")]
     if kw:
         k = kw.strip()
         ledgers = [l for l in ledgers if l.project and (

@@ -104,7 +104,8 @@ async def board(
             )
         )
         res = await db.execute(proj_q.order_by(models.Project.code.desc()).limit(300))
-        projects = list(res.scalars().all())
+        projects = [p for p in res.scalars().all()
+                    if not str((p.extra or {}).get("__o__销售") or "").startswith("备机")]
         pids = [p.id for p in projects]
         if not pids:
             return []
@@ -123,7 +124,8 @@ async def board(
                 models.Project.status != "已完成",
             )
         res = await db.execute(ship_q.order_by(models.Project.code.desc()).limit(300))
-        ships = list(res.scalars().all())
+        ships = [s for s in res.scalars().all()
+                 if not str((s.project.extra or {}).get("__o__销售") or "").startswith("备机")]
         pids = [s.project_id for s in ships]
         if not pids:
             return []
