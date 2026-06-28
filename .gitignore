@@ -54,5 +54,7 @@ nginx/certs/*
 nginx/letsencrypt/
 nginx/certbot-www/*
 !nginx/certbot-www/.gitkeep
+nginx/wecom-verify/*
+!nginx/wecom-verify/.gitkeep
 nginx/conf.d/*.bak
 nginx/conf.d/default.conf.pre-https.bak.*

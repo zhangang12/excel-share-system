@@ -82,6 +82,7 @@ server {
     server_name __DOMAIN__;
     server_tokens off;
     location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location ~ ^/WW_verify_.*\.txt$ { root /var/www/wecom; default_type text/plain; access_log off; }
     location / { return 301 https://$host$request_uri; }
 }
 
