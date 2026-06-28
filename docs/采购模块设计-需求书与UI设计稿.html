@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>采购模块 · 需求书 + UI 设计稿（v1 待修订）</title>
+<style>
+  :root{--line:#e5e7eb;--head:#0f172a;--muted:#64748b;--blue:#2563eb;--bluebg:#eff6ff;
+    --green:#16a34a;--greenbg:#f0fdf4;--amber:#b45309;--amberbg:#fffbeb;--confirm:#fff7ed;
+    --red:#dc2626;--purple:#7c3aed;--slate:#334155;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,Roboto,sans-serif;color:#1f2937;background:#f1f5f9;line-height:1.65}
+  .toolbar{position:sticky;top:0;z-index:50;background:#0f172a;color:#fff;padding:10px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;box-shadow:0 1px 6px rgba(0,0,0,.25)}
+  .toolbar b{font-size:14px;margin-right:auto}
+  .toolbar button{font:inherit;font-size:13px;padding:6px 12px;border-radius:7px;border:1px solid #334155;background:#1e293b;color:#fff;cursor:pointer}
+  .toolbar button:hover{background:#334155}
+  .toolbar .tip{font-size:12px;color:#94a3b8}
+  main{max-width:1200px;margin:0 auto;padding:24px 20px 90px}
+  h1{font-size:26px;margin:6px 0 2px}
+  h2{font-size:19px;margin:0 0 6px;color:var(--head);border-left:4px solid var(--blue);padding-left:10px}
+  h3{font-size:15px;margin:16px 0 6px;color:var(--slate)}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:18px}
+  .note{background:var(--amberbg);border:1px solid #fde68a;border-radius:10px;padding:12px 16px;font-size:13px;margin-bottom:16px}
+  .note b{color:var(--amber)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0}
+  th,td{border:1px solid var(--line);padding:7px 10px;vertical-align:top;text-align:left}
+  th{background:#f1f5f9;color:var(--head);font-weight:600;white-space:nowrap}
+  td.c{text-align:center}.no{text-align:center;color:var(--muted);width:44px}
+  .pri{font-size:11.5px;padding:1px 8px;border-radius:999px;white-space:nowrap;display:inline-block}
+  .p1{background:#fee2e2;color:#b91c1c}.p2{background:#fef3c7;color:#b45309}.p3{background:#e0e7ff;color:#3730a3}
+  td.confirm{background:var(--confirm);min-width:130px;width:150px}
+  td.confirm:empty::before{content:"（保留/改/删+意见）";color:#cbd5e1;font-size:11.5px}
+  [contenteditable="true"]{outline:none}
+  #doc[contenteditable="true"]{box-shadow:0 0 0 2px #fbbf24 inset}
+  /* 流程图 */
+  .flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}
+  .flow .step{background:var(--bluebg);border:1px solid #bfdbfe;color:#1e40af;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:500;white-space:nowrap}
+  .flow .arr{color:#94a3b8;font-weight:700}
+  .flow .fin{background:var(--greenbg);border-color:#bbf7d0;color:#15803d}
+  /* UI mockup */
+  .screen{border:1px solid #cbd5e1;border-radius:12px;overflow:hidden;margin:12px 0 22px;box-shadow:0 4px 14px rgba(15,23,42,.08)}
+  .screen .bar{background:#0f172a;color:#fff;padding:7px 14px;font-size:12.5px;display:flex;gap:8px;align-items:center}
+  .screen .bar .dot{width:10px;height:10px;border-radius:50%}
+  .screen .body{background:#f8fafc;padding:16px}
+  .m-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .m-input,.m-sel{height:30px;border:1px solid #cbd5e1;border-radius:6px;padding:0 10px;font-size:12.5px;background:#fff;color:#475569;display:inline-flex;align-items:center}
+  .m-btn{height:30px;border-radius:6px;padding:0 12px;font-size:12.5px;border:1px solid var(--blue);background:var(--blue);color:#fff;display:inline-flex;align-items:center;gap:4px}
+  .m-btn.ghost{background:#fff;color:var(--blue)}
+  .m-tag{font-size:11px;padding:1px 8px;border-radius:999px}
+  .g-blue{background:#dbeafe;color:#1e40af}.g-green{background:#dcfce7;color:#15803d}.g-amber{background:#fef3c7;color:#b45309}.g-red{background:#fee2e2;color:#b91c1c}.g-gray{background:#f1f5f9;color:#64748b}
+  .mt{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff;border-radius:8px;overflow:hidden}
+  .mt th{background:#f1f5f9;padding:8px 10px;text-align:left;color:#334155;font-weight:600;border-bottom:1px solid #e2e8f0;white-space:nowrap}
+  .mt td{padding:8px 10px;border-bottom:1px solid #f1f5f9}
+  .mt td b{color:var(--blue)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+  .kpi{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px}
+  .kpi .l{font-size:12px;color:var(--muted)}
+  .kpi .v{font-size:22px;font-weight:600;color:var(--head);margin-top:2px}
+  .kpi .d{font-size:11.5px;color:var(--green)}
+  .bars{display:flex;align-items:flex-end;gap:10px;height:140px;padding:8px 4px;background:#fff;border:1px solid #e2e8f0;border-radius:10px}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;justify-content:flex-end;height:100%}
+  .bars .b i{display:block;width:60%;background:linear-gradient(180deg,#60a5fa,#2563eb);border-radius:4px 4px 0 0}
+  .bars .b span{font-size:11px;color:#64748b}
+  .form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 16px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px}
+  .fld label{display:block;font-size:12px;color:#475569;margin-bottom:3px}
+  .fld .box{height:30px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc}
+  .fld.req label::after{content:" *";color:var(--red)}
+  .twocol{display:grid;grid-template-columns:1.3fr 1fr;gap:16px}
+  .foot{color:var(--muted);font-size:12px;margin-top:24px;text-align:center}
+  @media print{.toolbar{display:none}body{background:#fff}.card,.screen{break-inside:avoid}}
+  @media(max-width:900px){.kpis,.form-grid{grid-template-columns:repeat(2,1fr)}.twocol{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <b>🛒 采购模块 · 需求书 + UI 设计稿</b>
+  <span class="tip">「业务确认」列可直接打字；改正文点「编辑全文」</span>
+  <button onclick="toggleEdit(this)">✏️ 编辑全文</button>
+  <button onclick="saveHtml()">💾 保存为HTML（导出修订版）</button>
+  <button onclick="window.print()">🖨️ 打印 / PDF</button>
+</div>
+
+<main id="doc">
+  <h1>采购模块 · 全流程设计（需求书 + UI 设计稿）</h1>
+  <div class="sub">版本：v1（待业务修订）｜日期：2026-06-28｜适用：同辉智能项目管理系统</div>
+
+  <div class="note">
+    <b>说明（请先看）：</b>本稿基于你提出的 4 点（① 每个供应商独立报表 ② 联动财务 ③ 供应商新增 ④ 月/季/年采购额汇总报表）+ ERP 行业通用采购流程设计。<b>语音录音我这边无法转写</b>，其中的细节请在本文档里直接补充/修改（点上方「编辑全文」，改完「保存为HTML」导出修订版发回）。需求清单每行最右列可标「保留 / 修改 / 删除 + 意见」。
+  </div>
+
+  <!-- 一、目标范围 -->
+  <div class="card">
+    <h2>一、模块目标与范围</h2>
+    <p style="font-size:13.5px">把现有「采购部」从"看图纸/数据表"升级为<b>完整的采购管理子系统</b>：管供应商、走采购全流程（请购→下单→到货→对账→付款）、出每家供应商的对账报表、并与<b>财务部应付/付款联动</b>，最终沉淀<b>月/季/年采购额汇总报表</b>。</p>
+    <h3>范围内</h3>
+    <p style="font-size:13px;margin:0">供应商档案、采购申请/订单、到货登记、供应商对账单、应付与付款（财务联动）、采购汇总报表。</p>
+    <h3>暂不含（可二期）</h3>
+    <p style="font-size:13px;margin:0">在线询价比价竞标、供应商门户自助、复杂质检/退换货、与外部税务系统对接。</p>
+  </div>
+
+  <!-- 二、角色 -->
+  <div class="card">
+    <h2>二、角色与权限</h2>
+    <table>
+      <tr><th class="no">#</th><th>角色</th><th>主要权限</th><th>业务确认</th></tr>
+      <tr><td class="no">1</td><td>采购员（外协/标准件/原料/激光等分工）</td><td>维护供应商、建采购申请/订单、登记到货、生成对账单；只看本人/本类数据（沿用现有按账号分工）</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">2</td><td>采购主管</td><td>审批采购订单、审核对账单、看全量采购报表</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">3</td><td>财务</td><td>应付账款、发票校验、付款审批/登记；接收对账推送</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">4</td><td>管理层</td><td>全量可见、汇总报表、审批兜底</td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 三、流程 -->
+  <div class="card">
+    <h2>三、采购全流程</h2>
+    <div class="flow">
+      <span class="step">① 请购<br><small>项目/部门提需求</small></span><span class="arr">→</span>
+      <span class="step">② 选供应商<br><small>报价/比价(可选)</small></span><span class="arr">→</span>
+      <span class="step">③ 采购订单<br><small>主管审批</small></span><span class="arr">→</span>
+      <span class="step">④ 下单给供应商</span><span class="arr">→</span>
+      <span class="step">⑤ 到货登记<br><small>数量/质检</small></span><span class="arr">→</span>
+      <span class="step">⑥ 月度对账<br><small>供应商对账单</small></span><span class="arr">→</span>
+      <span class="step">⑦ 财务核账/发票</span><span class="arr">→</span>
+      <span class="step fin">⑧ 付款 完成</span>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted)">说明：小额/紧急采购可走简化流（采购员直接建单→主管事后审）。请购可由现有项目流程自动带出（如设计推过来的外协/原料需求）。</p>
+  </div>
+
+  <!-- 四、功能模块 + 需求清单 -->
+  <div class="card">
+    <h2>四、功能模块 & 需求清单</h2>
+
+    <h3>4.1 供应商管理（对应需求③）</h3>
+    <table>
+      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tr><td class="no">1</td><td>新增/编辑供应商</td><td>编号、名称、分类（外协/标准件/不锈钢原料/激光件/电气件…）、联系人、电话、地址、税号、开户行+银行账号、付款账期、状态（启用/停用）</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">2</td><td>供应商资质附件</td><td>营业执照、合同、资质证书上传留存</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">3</td><td>供应商分类/标签</td><td>按品类筛选；采购员按分工只看相关供应商</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">4</td><td>供应商评级/绩效</td><td>到货及时率、质量、价格，给星级（供选型参考）</td><td class="c"><span class="pri p3">低</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">5</td><td>停用而非删除</td><td>有历史采购的供应商不可物理删除，只能停用（保数据可追溯）</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+
+    <h3>4.2 采购申请 / 采购订单</h3>
+    <table>
+      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tr><td class="no">6</td><td>新建采购订单</td><td>选供应商+关联项目；明细行：物料名称/规格/数量/单位/单价/金额；自动算总额、税额</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">7</td><td>从项目需求带出请购</td><td>设计/电工推过来的外协/原料/激光件需求 → 一键转采购单（少录一遍）</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">8</td><td>采购订单审批</td><td>超额/按规则需采购主管审批；小额可免审（可配置阈值）</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">9</td><td>订单状态流转</td><td>待审批 → 已下单 → 部分到货 → 已到货 → 已对账 → 已付款</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">10</td><td>打印/导出采购单（PDF）</td><td>带公司抬头，发给供应商</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">11</td><td>比价（可选）</td><td>同一需求录多家报价，择优下单（二期）</td><td class="c"><span class="pri p3">低</span></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+
+    <h3>4.3 到货 / 收货</h3>
+    <table>
+      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tr><td class="no">12</td><td>到货登记</td><td>按采购单登记到货数量、到货日期；支持分批到货</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">13</td><td>与仓库联动</td><td>到货→仓库入库（沿用现有仓库模块），避免重复登记</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">14</td><td>到货异常/质检</td><td>登记不合格/退货，影响供应商评级（二期）</td><td class="c"><span class="pri p3">低</span></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+
+    <h3>4.4 供应商对账 & 报表（对应需求①，重点）</h3>
+    <table>
+      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tr><td class="no">15</td><td>每家供应商独立对账单</td><td>按期间（月/自定义）汇总该供应商所有采购明细：采购笔数、采购总额、已付、应付余额</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">16</td><td>对账单明细可下钻</td><td>点开看每张采购单/每次到货明细，可导出 Excel/PDF 发供应商核对</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">17</td><td>对账确认</td><td>采购/供应商双方核对无误后"确认对账"，锁定本期，生成应付</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">18</td><td>供应商往来余额</td><td>累计应付/已付/余额一目了然</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+
+    <h3>4.5 财务联动（对应需求②）</h3>
+    <table>
+      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tr><td class="no">19</td><td>对账确认 → 推送财务应付</td><td>本期对账确认后自动生成"应付账款"并推送/通知财务（站内+企微）</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">20</td><td>发票校验</td><td>供应商开来的发票录入/上传，与对账金额勾稽（金额、税率）</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">21</td><td>付款申请 → 财务审批 → 付款登记</td><td>采购发起付款申请，财务审批并登记付款（部分付款/全额）；回写采购单与对账余额</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">22</td><td>应付账款汇总进财务</td><td>各供应商应付汇总纳入财务报表口径（与销售开票同一财务视图）</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+
+    <h3>4.6 采购汇总报表（对应需求④，重点）</h3>
+    <table>
+      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tr><td class="no">23</td><td>采购额汇总（月/季/年）</td><td>按时间维度统计采购总额、到货额、已付额、应付额；趋势图</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">24</td><td>按供应商排名</td><td>Top 供应商采购额、占比，识别核心供应商</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">25</td><td>按品类/项目分布</td><td>外协/标准件/原料/激光件各占多少；按项目看采购成本</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">26</td><td>应付账龄</td><td>应付按账龄分段（30/60/90天+），提示逾期付款风险</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">27</td><td>报表导出</td><td>所有报表可导出 Excel/PDF</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 五、数据模型 -->
+  <div class="card">
+    <h2>五、数据模型概要</h2>
+    <table>
+      <tr><th>实体</th><th>关键字段</th><th>业务确认</th></tr>
+      <tr><td><b>供应商 Supplier</b></td><td>编号、名称、分类、联系人、电话、地址、税号、开户行、银行账号、账期、评级、状态、资质附件</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td><b>采购订单 PO</b></td><td>单号、供应商、关联项目、采购员、下单日期、交期、税率、总额、状态</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td><b>采购明细 PO_Line</b></td><td>物料名称、规格、数量、单位、单价、金额、已到货数量</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td><b>到货 Receipt</b></td><td>关联PO、到货日期、到货数量、质检结果、入库单号</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td><b>对账单 Statement</b></td><td>供应商、期间、采购总额、已付、应付余额、状态（草稿/已确认）</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td><b>应付/付款 Payable/Payment</b></td><td>供应商、关联对账、应付额、已付额、付款日期、方式、发票号、财务审批人</td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 六、衔接 + 分期 -->
+  <div class="card">
+    <h2>六、与现有系统衔接 & 分期建议</h2>
+    <h3>衔接点</h3>
+    <ul style="font-size:13px;margin:4px 0">
+      <li>现有「采购部」按账号分工（外协/标准件/激光等）→ 直接复用为采购员分工 + 供应商分类。</li>
+      <li>设计/电工推来的外协加工/不锈钢原料/激光件需求 → 转为请购/采购单来源。</li>
+      <li>到货 → 复用现有「仓库」入库；财务联动 → 复用现有财务/开票的同一套财务口径。</li>
+      <li>所有通知走现有「站内消息 + 企业微信」推送通道。</li>
+    </ul>
+    <h3>分期</h3>
+    <table>
+      <tr><th>期</th><th>内容</th><th>业务确认</th></tr>
+      <tr><td><b>一期(核心)</b></td><td>供应商管理 + 采购订单 + 到货登记 + 供应商对账单 + 月/季/年采购汇总 + 财务应付推送</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td><b>二期</b></td><td>付款审批闭环 + 发票校验 + 账龄报表 + 供应商评级</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td><b>三期</b></td><td>比价竞标 + 质检退换 + 供应商门户</td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- ======= UI 设计稿 ======= -->
+  <div class="card">
+    <h2>七、UI 设计稿（示意，最终以实现为准）</h2>
+
+    <h3>① 供应商管理列表</h3>
+    <div class="screen">
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 采购部 · 供应商管理</div>
+      <div class="body">
+        <div class="m-toolbar">
+          <span class="m-sel">分类：全部 ▾</span><span class="m-sel">状态：启用 ▾</span>
+          <span class="m-input" style="min-width:200px;color:#94a3b8">搜索 名称/联系人/电话</span>
+          <span style="flex:1"></span><span class="m-btn ghost">导出</span><span class="m-btn">＋ 新增供应商</span>
+        </div>
+        <table class="mt">
+          <tr><th>编号</th><th>供应商名称</th><th>分类</th><th>联系人</th><th>电话</th><th>账期</th><th>累计采购额</th><th>应付余额</th><th>评级</th><th>状态</th><th>操作</th></tr>
+          <tr><td><b>S0012</b></td><td>无锡精钣金属制品厂</td><td><span class="m-tag g-blue">外协加工</span></td><td>王经理</td><td>138••••6677</td><td>月结30天</td><td>¥1,286,400</td><td style="color:#b91c1c">¥86,000</td><td>★★★★☆</td><td><span class="m-tag g-green">启用</span></td><td><b>对账报表</b> · 编辑</td></tr>
+          <tr><td><b>S0007</b></td><td>江苏不锈钢材料有限公司</td><td><span class="m-tag g-amber">不锈钢原料</span></td><td>李工</td><td>139••••2210</td><td>月结60天</td><td>¥2,043,900</td><td style="color:#b91c1c">¥210,500</td><td>★★★★★</td><td><span class="m-tag g-green">启用</span></td><td><b>对账报表</b> · 编辑</td></tr>
+          <tr><td><b>S0021</b></td><td>苏州激光切割服务商</td><td><span class="m-tag g-red">激光件</span></td><td>赵采购</td><td>137••••0098</td><td>预付</td><td>¥468,200</td><td>¥0</td><td>★★★☆☆</td><td><span class="m-tag g-green">启用</span></td><td><b>对账报表</b> · 编辑</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <h3>② 新增 / 编辑供应商</h3>
+    <div class="screen">
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; ＋ 新增供应商</div>
+      <div class="body">
+        <div class="form-grid">
+          <div class="fld req"><label>供应商名称</label><div class="box"></div></div>
+          <div class="fld req"><label>分类</label><div class="box"></div></div>
+          <div class="fld"><label>供应商编号(自动)</label><div class="box"></div></div>
+          <div class="fld"><label>联系人</label><div class="box"></div></div>
+          <div class="fld"><label>联系电话</label><div class="box"></div></div>
+          <div class="fld"><label>付款账期</label><div class="box"></div></div>
+          <div class="fld"><label>税号</label><div class="box"></div></div>
+          <div class="fld"><label>开户行</label><div class="box"></div></div>
+          <div class="fld"><label>银行账号</label><div class="box"></div></div>
+          <div class="fld" style="grid-column:1/4"><label>地址</label><div class="box"></div></div>
+          <div class="fld" style="grid-column:1/4"><label>资质附件（营业执照/合同，可多传）</label><div class="box" style="height:48px;border-style:dashed;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12px">点击或拖拽上传</div></div>
+        </div>
+        <div style="text-align:right;margin-top:12px"><span class="m-btn ghost">取消</span> <span class="m-btn">保存</span></div>
+      </div>
+    </div>
+
+    <h3>③ 供应商对账单 / 报表（每家独立）</h3>
+    <div class="screen">
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 供应商对账单 · 无锡精钣金属制品厂(S0012)</div>
+      <div class="body">
+        <div class="m-toolbar"><span class="m-sel">期间：2026-06 ▾</span><span style="flex:1"></span><span class="m-btn ghost">导出Excel</span><span class="m-btn ghost">导出PDF发供应商</span><span class="m-btn">确认对账 → 生成应付</span></div>
+        <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+          <div class="kpi"><div class="l">本期采购额</div><div class="v">¥186,400</div></div>
+          <div class="kpi"><div class="l">本期已付</div><div class="v">¥100,400</div></div>
+          <div class="kpi"><div class="l">本期应付余额</div><div class="v" style="color:#b91c1c">¥86,000</div></div>
+          <div class="kpi"><div class="l">累计往来余额</div><div class="v" style="color:#b91c1c">¥86,000</div></div>
+        </div>
+        <table class="mt">
+          <tr><th>采购单号</th><th>关联项目</th><th>物料</th><th>数量</th><th>单价</th><th>金额</th><th>到货日期</th><th>状态</th></tr>
+          <tr><td>PO-2606-018</td><td>2026-055</td><td>钣金外协件A</td><td>20</td><td>¥1,200</td><td><b>¥24,000</b></td><td>06-12</td><td><span class="m-tag g-green">已到货</span></td></tr>
+          <tr><td>PO-2606-022</td><td>2026-049</td><td>机架焊接件</td><td>8</td><td>¥9,800</td><td><b>¥78,400</b></td><td>06-18</td><td><span class="m-tag g-green">已到货</span></td></tr>
+          <tr><td>PO-2606-031</td><td>2026-052M</td><td>不锈钢罩壳</td><td>12</td><td>¥7,000</td><td><b>¥84,000</b></td><td>06-24</td><td><span class="m-tag g-amber">部分到货</span></td></tr>
+        </table>
+      </div>
+    </div>
+
+    <h3>④ 采购汇总报表（月/季/年）</h3>
+    <div class="screen">
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 采购汇总报表</div>
+      <div class="body">
+        <div class="m-toolbar"><span class="m-sel">维度：按月 ▾</span><span class="m-sel">年度：2026 ▾</span><span style="flex:1"></span><span class="m-btn ghost">导出</span></div>
+        <div class="kpis">
+          <div class="kpi"><div class="l">本月采购额</div><div class="v">¥438,800</div><div class="d">环比 +12%</div></div>
+          <div class="kpi"><div class="l">本季采购额</div><div class="v">¥1.32M</div><div class="d">同比 +8%</div></div>
+          <div class="kpi"><div class="l">本年累计</div><div class="v">¥4.86M</div></div>
+          <div class="kpi"><div class="l">应付总额</div><div class="v" style="color:#b91c1c">¥386,500</div></div>
+        </div>
+        <div class="twocol">
+          <div>
+            <div style="font-size:12.5px;color:#475569;margin-bottom:6px">月度采购额趋势（万元）</div>
+            <div class="bars">
+              <div class="b"><i style="height:45%"></i><span>1月</span></div><div class="b"><i style="height:60%"></i><span>2月</span></div>
+              <div class="b"><i style="height:38%"></i><span>3月</span></div><div class="b"><i style="height:72%"></i><span>4月</span></div>
+              <div class="b"><i style="height:55%"></i><span>5月</span></div><div class="b"><i style="height:88%"></i><span>6月</span></div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:12.5px;color:#475569;margin-bottom:6px">Top 供应商 采购额占比</div>
+            <table class="mt">
+              <tr><th>供应商</th><th>采购额</th><th>占比</th></tr>
+              <tr><td>江苏不锈钢材料</td><td>¥2.04M</td><td>42%</td></tr>
+              <tr><td>无锡精钣金属</td><td>¥1.29M</td><td>26%</td></tr>
+              <tr><td>苏州激光切割</td><td>¥0.47M</td><td>10%</td></tr>
+              <tr><td>其他(12家)</td><td>¥1.06M</td><td>22%</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3>⑤ 财务联动 · 应付 / 付款审批</h3>
+    <div class="screen">
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 财务部 · 应付账款 / 付款审批</div>
+      <div class="body">
+        <div class="m-toolbar"><span class="m-sel">状态：待付款 ▾</span><span class="m-sel">账龄：全部 ▾</span><span style="flex:1"></span></div>
+        <table class="mt">
+          <tr><th>供应商</th><th>对账期间</th><th>应付金额</th><th>已付</th><th>余额</th><th>账龄</th><th>发票</th><th>操作</th></tr>
+          <tr><td>江苏不锈钢材料</td><td>2026-05</td><td>¥210,500</td><td>¥0</td><td style="color:#b91c1c">¥210,500</td><td><span class="m-tag g-amber">45天</span></td><td><span class="m-tag g-green">已收</span></td><td><b>付款审批</b></td></tr>
+          <tr><td>无锡精钣金属</td><td>2026-06</td><td>¥86,000</td><td>¥0</td><td style="color:#b91c1c">¥86,000</td><td><span class="m-tag g-gray">12天</span></td><td><span class="m-tag g-gray">待收</span></td><td><b>付款审批</b></td></tr>
+        </table>
+        <p style="font-size:12px;color:var(--muted);margin-top:8px">采购对账确认后这里自动出现应付；财务点「付款审批」登记付款，回写采购对账余额。应付总额汇入财务报表。</p>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="foot">— 全文完（v1 待修订）。需求清单共 27 项 + 6 实体 + 5 个 UI 界面示意。请业务在「业务确认」列标注意见，或点「编辑全文」直接改，再「保存为HTML」导出修订版。 —</div>
+</main>
+
+<script>
+  function toggleEdit(btn){
+    var d=document.getElementById('doc');var on=d.getAttribute('contenteditable')==='true';
+    d.setAttribute('contenteditable',on?'false':'true');
+    btn.textContent=on?'✏️ 编辑全文':'✅ 编辑中（再点结束）';
+  }
+  function saveHtml(){
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    var blob=new Blob([html],{type:'text/html;charset=utf-8'});
+    var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download='采购模块设计_修订_'+new Date().toISOString().slice(0,10)+'.html';
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(a.href)},1000);
+  }
+</script>
+</body>
+</html>
