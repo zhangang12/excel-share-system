@@ -99,6 +99,12 @@ const router = createRouter({
           meta: { menuKey: 'purchase' },
         },
         {
+          path: 'procure',
+          name: 'procure',
+          component: () => import('@/views/ProcurementView.vue'),
+          meta: { menuKey: 'procure' },
+        },
+        {
           path: 'finance',
           name: 'finance',
           component: () => import('@/views/FinanceView.vue'),
