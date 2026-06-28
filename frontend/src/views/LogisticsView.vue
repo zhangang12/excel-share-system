@@ -87,6 +87,23 @@ function openReceiver(r: BoardRow) {
   rcvForm.addr = r.receiver_addr || ''
   rcvVisible.value = true
 }
+// 同数字编号兄弟项目（去末尾字母后缀，如 2026-060B/2026-060A → 2026-060）
+function codeBase(code?: string | null) { return (code || '').replace(/[A-Za-z]+$/, '') }
+// 找同编号、已填收货信息的兄弟，供「完善信息」时一键复用
+const siblingRcv = computed(() => {
+  const r = rcvRow.value
+  if (!r) return null
+  const base = codeBase(r.code)
+  return rows.value.find(x => x.id !== r.id && x.receiver_name && codeBase(x.code) === base) || null
+})
+function applySibling() {
+  const s = siblingRcv.value
+  if (!s) return
+  rcvForm.name = s.receiver_name || ''
+  rcvForm.phone = s.receiver_phone || ''
+  rcvForm.addr = s.receiver_addr || ''
+  ElMessage.success(`已复用 ${s.code} 的收货信息`)
+}
 const savingRcv = ref(false)
 async function saveReceiver() {
   if (!rcvRow.value) return
@@ -243,6 +260,12 @@ async function confirmShip(force = false) {
 
     <!-- 收货信息 -->
     <el-dialog v-model="rcvVisible" :title="`📍 收货信息 · ${rcvRow?.code || ''}`" width="460px">
+      <el-alert v-if="siblingRcv" type="info" :closable="false" show-icon style="margin-bottom:12px">
+        <template #title>
+          同编号项目「{{ siblingRcv.code }}」已有收货信息（{{ siblingRcv.receiver_name }}），
+          <el-button link type="primary" style="padding:0" @click="applySibling">点此复用</el-button>
+        </template>
+      </el-alert>
       <el-form label-position="top">
         <el-form-item label="收货人 / 单位" required><el-input v-model="rcvForm.name" /></el-form-item>
         <el-form-item label="联系电话" required><el-input v-model="rcvForm.phone" /></el-form-item>
