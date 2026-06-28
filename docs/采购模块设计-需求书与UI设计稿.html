@@ -86,7 +86,20 @@
   <div class="sub">版本：v1（待业务修订）｜日期：2026-06-28｜适用：同辉智能项目管理系统</div>
 
   <div class="note">
-    <b>说明（请先看）：</b>本稿基于你提出的 4 点（① 每个供应商独立报表 ② 联动财务 ③ 供应商新增 ④ 月/季/年采购额汇总报表）+ ERP 行业通用采购流程设计。<b>语音录音我这边无法转写</b>，其中的细节请在本文档里直接补充/修改（点上方「编辑全文」，改完「保存为HTML」导出修订版发回）。需求清单每行最右列可标「保留 / 修改 / 删除 + 意见」。
+    <b>说明（请先看）：</b>本稿基于你提出的 4 点（① 每个供应商独立报表 ② 联动财务 ③ 供应商新增 ④ 月/季/年采购额汇总报表）+ <b>2026-06-28 电话录音要点</b>（已转写并并入，见下方）+ ERP 行业通用采购流程设计。其中待定细节请在本文档里直接补充/修改（点上方「编辑全文」，改完「保存为HTML」导出修订版发回）。需求清单每行最右列可标「保留 / 修改 / 删除 + 意见」。
+  </div>
+
+  <div class="card" style="border:2px solid var(--blue);background:#f8fbff">
+    <h2 style="border-color:var(--green)">★ 录音补充要点（2026-06-28 电话，已转写）</h2>
+    <table>
+      <tr><th class="no">#</th><th>要点</th><th>对应到本设计</th><th>业务确认</th></tr>
+      <tr><td class="no">A</td><td><b>供应商按「账期」分类</b>：有账期（如月结3个月）/ 无账期 / 现金。账期要体现在系统里——未付的显示为「应付/欠款」，到期才算应付。</td><td>供应商档案加「结算方式 + 账期天数」；对账/报表按账期算应付与到期。见 4.1#1、4.4、4.6。</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">B</td><td><b>报表口径</b>：数据录完→老板看总报表；① 按采购员（约3个采购各一张）② 按项目一搜就知道该项目花了多少钱 ③ 每项目含 <b>合计 / 已开票 / 待开票 / 已付款 / 欠款</b>。</td><td>汇总报表加「按采购员」「按项目搜索」两个视角；列含上述5项金额。见 4.6。</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">C</td><td><b>对账闭环</b>：一张对账表体现「已送货 + 已付款」；采购→送货到→付款 = 一个闭环完成。</td><td>对账单/采购单状态体现 已送货、已付款；闭环 = 已收货且已结清。见 4.3#9、4.4。</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">D</td><td><b>要比金蝶简单</b>：金蝶字段太细、面向大公司（含出租库等用不到的），要贴合本公司规模的轻量版。</td><td>本设计刻意只保留核心流程，二/三期再扩；不做复杂质检/竞标/门户。</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">E</td><td><b>先建总表、逐步迭代</b>：先把总表建起来，字段让采购员后面一个个提、往上加（同现工作流）。</td><td>一期先上"供应商+采购单+对账+汇总总表"，字段做成可扩展，按需增列。</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">F</td><td>会提供现有采购/对账 Excel 截图作参考（表格可能不全，需重新设计）。</td><td>收到截图后据此细化字段与对账表样式。</td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
   </div>
 
   <!-- 一、目标范围 -->
@@ -134,7 +147,7 @@
     <h3>4.1 供应商管理（对应需求③）</h3>
     <table>
       <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
-      <tr><td class="no">1</td><td>新增/编辑供应商</td><td>编号、名称、分类（外协/标准件/不锈钢原料/激光件/电气件…）、联系人、电话、地址、税号、开户行+银行账号、付款账期、状态（启用/停用）</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">1</td><td>新增/编辑供应商</td><td>编号、名称、分类（外协/标准件/不锈钢原料/激光件/电气件…）、联系人、电话、地址、税号、开户行+银行账号、<b>结算方式（现金 / 月结N月 / 无账期）+ 账期天数</b>、状态（启用/停用）<br><span style="color:var(--amber);font-size:12px">★录音A：账期是关键分类，决定到期应付与欠款显示</span></td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">2</td><td>供应商资质附件</td><td>营业执照、合同、资质证书上传留存</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">3</td><td>供应商分类/标签</td><td>按品类筛选；采购员按分工只看相关供应商</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">4</td><td>供应商评级/绩效</td><td>到货及时率、质量、价格，给星级（供选型参考）</td><td class="c"><span class="pri p3">低</span></td><td class="confirm" contenteditable="true"></td></tr>
@@ -181,11 +194,13 @@
     <h3>4.6 采购汇总报表（对应需求④，重点）</h3>
     <table>
       <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
-      <tr><td class="no">23</td><td>采购额汇总（月/季/年）</td><td>按时间维度统计采购总额、到货额、已付额、应付额；趋势图</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
-      <tr><td class="no">24</td><td>按供应商排名</td><td>Top 供应商采购额、占比，识别核心供应商</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
-      <tr><td class="no">25</td><td>按品类/项目分布</td><td>外协/标准件/原料/激光件各占多少；按项目看采购成本</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
-      <tr><td class="no">26</td><td>应付账龄</td><td>应付按账龄分段（30/60/90天+），提示逾期付款风险</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
-      <tr><td class="no">27</td><td>报表导出</td><td>所有报表可导出 Excel/PDF</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">23</td><td>总报表（月/季/年）</td><td>每项目/期间含 <b>合计 / 已开票 / 待开票 / 已付款 / 欠款</b> 五项金额；趋势图<br><span style="color:var(--amber);font-size:12px">★录音B：老板要看的核心总报表口径</span></td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">24</td><td><b>按采购员出报表</b></td><td>约3个采购员各一张报表（采购额、已付、欠款等）<span style="color:var(--amber);font-size:12px">★录音B</span></td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">25</td><td><b>按项目搜索</b></td><td>输入项目编号→一搜就出该项目花了多少钱（合计/已付/欠款）<span style="color:var(--amber);font-size:12px">★录音B</span></td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">26</td><td>按供应商排名</td><td>Top 供应商采购额、占比，识别核心供应商</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">27</td><td>按品类/项目分布</td><td>外协/标准件/原料/激光件各占多少；按项目看采购成本</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">28</td><td>应付账龄（按账期）</td><td>应付按账龄/账期分段（如月结3月到期未付提示），提示逾期付款风险</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">29</td><td>报表导出</td><td>所有报表可导出 Excel/PDF</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
     </table>
   </div>
 
@@ -335,7 +350,7 @@
 
   </div>
 
-  <div class="foot">— 全文完（v1 待修订）。需求清单共 27 项 + 6 实体 + 5 个 UI 界面示意。请业务在「业务确认」列标注意见，或点「编辑全文」直接改，再「保存为HTML」导出修订版。 —</div>
+  <div class="foot">— 全文完（v1.1，已并入 2026-06-28 录音要点）。需求清单 29 项 + 录音补充 6 点 + 6 实体 + 5 个 UI 界面示意。请业务在「业务确认」列标注意见，或点「编辑全文」直接改，再「保存为HTML」导出修订版。 —</div>
 </main>
 
 <script>
