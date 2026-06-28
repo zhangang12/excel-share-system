@@ -9,7 +9,7 @@ import {
   Key, SwitchButton, Grid, Lock,
   Suitcase, EditPen, Lightning, SetUp, Scissor, ShoppingCart,
   Box, Van, Money, Service, TrendCharts, Bell, Stamp, ChatDotRound, ChatLineRound,
-  Aim, Tickets,
+  Aim,
 } from '@element-plus/icons-vue'
 import { messagesApi } from '@/api/messages'
 import { userFeedbackApi } from '@/api/userFeedback'
@@ -22,7 +22,7 @@ const auth = useAuthStore()
 // 🆕 v3：新增部门菜单的图标映射（菜单本体由后端 /api/auth/menus 下发）
 const MENU_ICONS: Record<string, any> = {
   sales: Suitcase, leads: Aim, design: EditPen, electric: Lightning, produce: SetUp,
-  sheet: Scissor, purchase: ShoppingCart, procure: Tickets, warehouse: Box, logistics: Van,
+  sheet: Scissor, purchase: ShoppingCart, warehouse: Box, logistics: Van,
   finance: Money, aftersales: Service, report: TrendCharts, messages: Bell,
   approve: Stamp, wxbind: ChatDotRound, 'user-feedback': ChatLineRound,
 }

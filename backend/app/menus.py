@@ -23,7 +23,6 @@ MENU_DEFS: list[dict] = [
     {"key": "produce",    "label": "生产部"},
     # 🆕 2026-06-19 「钣金组」菜单并入「生产部」(以 tab 呈现)，不再单列菜单 key=sheet
     {"key": "purchase",   "label": "采购部"},
-    {"key": "procure",    "label": "采购管理"},   # 🆕 供应商/采购明细/账目一览/汇总报表
     {"key": "warehouse",  "label": "仓库"},
     {"key": "logistics",  "label": "物流发货部"},
     {"key": "finance",    "label": "财务部"},
@@ -52,8 +51,8 @@ ROLE_MENUS: dict[str, list[str]] = {
     "designer":         ["catalog", "list", "design"],
     "production_clerk": ["catalog", "list", "produce"],
     "warehouse":        ["catalog", "list", "warehouse"],
-    "buyer_standard":   ["catalog", "list", "purchase", "procure"],
-    "buyer_outsource":  ["catalog", "list", "purchase", "procure"],
+    "buyer_standard":   ["catalog", "list", "purchase"],
+    "buyer_outsource":  ["catalog", "list", "purchase"],
     "hr":               ["catalog", "list"],
     # ---- 🆕 v3 角色 ----
     "sales":            ["catalog", "sales", "leads"],        # 无详单，编号不可点；🆕 销售线索
@@ -64,7 +63,7 @@ ROLE_MENUS: dict[str, list[str]] = {
     "assembler":        ["catalog", "produce"],               # 无详单；装配组 tab 在生产部菜单内
     "pm_lead":          ["catalog", "list", "produce"],
     "sheetmetal":       ["catalog", "produce"],                 # 🆕 钣金组并入生产部菜单(tab)；无详单（同 assembler 口径）
-    "buyer":            ["catalog", "list", "purchase", "procure"],
+    "buyer":            ["catalog", "list", "purchase"],
     "warehouse_lead":   ["catalog", "list", "warehouse"],
     "logistics":        ["catalog", "list", "logistics"],
     "finance":          ["catalog", "list", "finance"],
