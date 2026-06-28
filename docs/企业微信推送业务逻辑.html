@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>企业微信推送 · 业务逻辑确认表</title>
+<style>
+  :root{
+    --line:#e5e7eb; --line2:#cbd5e1; --head:#1e293b; --muted:#64748b;
+    --blue:#2563eb; --bluebg:#eff6ff; --green:#16a34a; --greenbg:#f0fdf4;
+    --amber:#b45309; --amberbg:#fffbeb; --confirm:#fff7ed;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,Roboto,sans-serif;color:#1f2937;background:#f8fafc;line-height:1.6}
+  .toolbar{position:sticky;top:0;z-index:50;background:#0f172a;color:#fff;padding:10px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+  .toolbar b{font-size:14px;margin-right:auto}
+  .toolbar button{font:inherit;font-size:13px;padding:6px 12px;border-radius:7px;border:1px solid #334155;background:#1e293b;color:#fff;cursor:pointer}
+  .toolbar button:hover{background:#334155}
+  .toolbar .tip{font-size:12px;color:#94a3b8}
+  main{max-width:1180px;margin:0 auto;padding:24px 20px 80px}
+  h1{font-size:24px;margin:8px 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:18px}
+  .card h2{font-size:17px;margin:0 0 4px;color:var(--head)}
+  .card .desc{font-size:12.5px;color:var(--muted);margin-bottom:12px}
+  .how{background:var(--bluebg);border:1px solid #bfdbfe;border-radius:10px;padding:12px 16px;font-size:13.5px;margin-bottom:16px}
+  .how b{color:var(--blue)}
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+  .legend span{font-size:12px;background:#f1f5f9;border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{border:1px solid var(--line);padding:8px 10px;vertical-align:top;text-align:left}
+  th{background:#f1f5f9;color:var(--head);font-weight:600;white-space:nowrap}
+  td.no{text-align:center;color:var(--muted);width:38px}
+  td.who{white-space:nowrap}
+  .tag{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+  .t-person{background:var(--greenbg);color:var(--green);border-color:#bbf7d0}
+  .t-role{background:var(--bluebg);color:var(--blue);border-color:#bfdbfe}
+  .msg{font-family:"PingFang SC",monospace;background:#f8fafc;border-radius:6px;padding:6px 8px;font-size:12.5px;color:#334155}
+  .msg em{color:var(--amber);font-style:normal}
+  td.confirm{background:var(--confirm);min-width:150px;width:170px}
+  td.confirm:empty::before{content:"（在此填：保留 / 修改 / 删除 + 意见）";color:#cbd5e1;font-size:12px}
+  [contenteditable="true"]{outline:none}
+  #doc[contenteditable="true"]{box-shadow:0 0 0 2px #fbbf24 inset}
+  .foot{color:var(--muted);font-size:12px;margin-top:24px;text-align:center}
+  @media print{.toolbar{display:none}body{background:#fff}main{padding:0}.card{break-inside:avoid;border:none;padding:0}}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <b>📣 企业微信推送 · 业务逻辑确认表</b>
+  <span class="tip">「业务确认」列可直接点进去打字；要改正文点「编辑全文」</span>
+  <button onclick="toggleEdit(this)">✏️ 编辑全文</button>
+  <button onclick="saveHtml()">💾 保存为HTML（导出修订版）</button>
+  <button onclick="window.print()">🖨️ 打印 / 导出PDF</button>
+</div>
+
+<main id="doc">
+  <h1>企业微信推送 · 业务逻辑确认表</h1>
+  <div class="sub">用途：请业务确认每条推送「触发时机 / 接收人 / 内容」是否合理；需要调整的在最右列写「保留 / 修改 / 删除 + 意见」。版本日期：2026-06-28</div>
+
+  <div class="how">
+    <b>推送机制（先看这段）：</b>系统里所有「站内消息」会<b>同步推送到企业微信</b>——前提是该接收人已在「企微绑定」页绑定了企微账号（userid）。没绑定的人只收站内消息，不影响业务。<br>
+    下表「推送内容」里 <em>{编号} {名称} {金额}</em> 等是占位符，实际会替换成真实数据。「接收人」分两种：<span class="tag t-person">具体某人</span>（如该项目销售员/负责人本人）、<span class="tag t-role">某角色全体</span>（该角色的所有在职人员都会收到）。
+    <div class="legend">
+      <span>销售员 / 销售主管</span><span>管理层(admin·总经理)</span><span>设计师 / 设计主管</span><span>电工 / 电工主管</span>
+      <span>生产组 / 生产主管</span><span>采购员</span><span>物流发货部</span><span>财务</span><span>售后 / 售后主管</span><span>仓库</span>
+    </div>
+  </div>
+
+  <!-- 1. 销售下单 -->
+  <div class="card">
+    <h2>一、销售下单 & 下单审批</h2>
+    <div class="desc">销售下单后派单各部门；若开启「下单审批」开关，销售员下单需销售主管审批。</div>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">1</td><td>销售主管/管理层下单（免审批，直接生效）</td><td class="who"><span class="tag t-role">所派部门负责人</span></td><td><div class="msg">【销售下单】<em>{编号} {名称}</em> 新<em>{部门}</em>任务待分派（销售：<em>{姓名}</em>）。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">2</td><td>销售下单（任何方式）</td><td class="who"><span class="tag t-role">物流发货部</span></td><td><div class="msg">【新项目】<em>{编号} {名称}</em> 已创建发货待办。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">3</td><td>销售员下单（开启审批开关时）</td><td class="who"><span class="tag t-role">销售主管</span></td><td><div class="msg">【下单待审批】<em>{编号} {名称}</em> 待销售主管审批（销售：<em>{姓名}</em>）。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">4</td><td>主管审批通过</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【下单已通过】<em>{编号} {名称}</em> 已通过审批，各部门任务已派发。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">5</td><td>主管退回下单</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【下单退回】<em>{编号}</em> 下单被主管退回：<em>{原因}</em>，可修改后重新提交。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">6</td><td>设计部「备机下单」</td><td class="who"><span class="tag t-role">所派部门负责人</span></td><td><div class="msg">【备机下单】<em>{编号} {名称}</em> 新<em>{部门}</em>任务待分派（下单：<em>{姓名}</em>）。</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 2. 部门任务流转 -->
+  <div class="card">
+    <h2>二、部门任务流转（设计 / 电工 / 生产）</h2>
+    <div class="desc">部门负责人分派 → 工人接单 → 完成；含转交、换人、作废、逾期提醒。</div>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">7</td><td>有新任务待分派</td><td class="who"><span class="tag t-role">对应部门负责人</span></td><td><div class="msg">【待分派】<em>{编号} {名称}</em> 新<em>{部门}</em>任务待分派。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">8</td><td>负责人分派给某工人</td><td class="who"><span class="tag t-person">被分派工人</span></td><td><div class="msg">【分派】<em>{编号} {名称}</em> 已分派给你，请到<em>{部门}</em>工作台接单填写时间。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">9</td><td>任务完成（设计完成/接线完成等）</td><td class="who"><span class="tag t-person">指定通知人</span></td><td><div class="msg">【<em>{部门}·{编号}</em>】<em>{姓名}</em> 已完成<em>{完成动作}</em>。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">10</td><td>任务转交给他人</td><td class="who"><span class="tag t-person">新负责人</span></td><td><div class="msg">【任务转交】<em>{编号} {名称}</em> 由 <em>{原负责人}</em> 转交给你，请接续。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">11</td><td>负责人换人</td><td class="who"><span class="tag t-role">对应部门负责人</span></td><td><div class="msg">【已换人】<em>{编号} {部门}</em> 负责人由 <em>{旧}</em> → <em>{新}</em>。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">12</td><td>任务单作废</td><td class="who"><span class="tag t-role">管理层</span></td><td><div class="msg">【作废】<em>{部门} {编号}</em> 单号已作废，请管理层确认是否重新下单。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">13</td><td>任务逾期 / 超预计（系统每日扫描）</td><td class="who"><span class="tag t-role">部门负责人</span> + <span class="tag t-role">管理层</span></td><td><div class="msg">【逾期提醒】<em>{部门} {编号}</em> 已超预计完成时间…（具体文案按逾期情况生成）</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">14</td><td>生产派发到钣金组/装配组</td><td class="who"><span class="tag t-person">组内成员</span></td><td><div class="msg">【生产派发】<em>{编号} {名称}</em> …（钣金组/装配组任务）</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">15</td><td>生产完成</td><td class="who"><span class="tag t-role">物流发货部</span></td><td><div class="msg">【生产完成】<em>{编号} {名称}</em> …</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 3. 合同技术资料 / 修订意见 -->
+  <div class="card">
+    <h2>三、合同技术资料 & 修订意见</h2>
+    <div class="desc">设计/电工对销售下发的技术资料提修订意见 → 销售更换 → 回通知提出人。</div>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">16</td><td>设计/电工提出技术资料修订意见</td><td class="who"><span class="tag t-person">该项目销售员</span></td><td><div class="msg">【技术资料待修订】<em>{编号} {部门}</em>提出修订意见：<em>{意见}</em>，请到销售台账「更换技术资料」上传修正版。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">17</td><td>同上（抄送）</td><td class="who"><span class="tag t-role">销售主管</span></td><td><div class="msg">【技术资料修订】<em>{编号} {部门}</em>提出修订意见：<em>{意见}</em></div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">18</td><td>销售更换技术资料</td><td class="who"><span class="tag t-role">各相关部门负责人</span></td><td><div class="msg">【技术资料更换】<em>{编号}</em> 销售已更换合同技术资料，请以最新下发资料为准。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">19</td><td>销售更换技术资料（回执）</td><td class="who"><span class="tag t-person">提意见的设计/电工</span></td><td><div class="msg">【技术资料已更新】<em>{编号}</em> 销售已根据你的修订意见更换技术资料，请查收最新下发资料。</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 4. 采购 / 产物推送 -->
+  <div class="card">
+    <h2>四、产物 / 采购资料推送</h2>
+    <div class="desc">设计/电工上传图纸、采购清单、产物时，自动推送给下游（采购/物流等）。</div>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">20</td><td>设计上传 CAD激光图纸 / 外购附图</td><td class="who"><span class="tag t-role">采购</span></td><td><div class="msg">【<em>{资料名}</em>】<em>{部门}</em>已上传 <em>{编号} {资料名}</em> <em>{N}</em> 个文件，请查收。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">21</td><td>电工上传采购清单</td><td class="who"><span class="tag t-person">标准件采购员</span></td><td><div class="msg">【采购清单】<em>{编号} {部门}</em>已上传采购清单 <em>{N}</em> 个文件，请查收。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">22</td><td>电工采购单未能自动解析入表</td><td class="who"><span class="tag t-person">上传人本人</span></td><td><div class="msg">【电工采购单】<em>{编号}</em> 采购清单已上传，但未能自动解析入表，请检查表头或手动录入。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">23</td><td>完成时上传产物（说明书/铭牌/电路图等）</td><td class="who"><span class="tag t-role">下游部门</span></td><td><div class="msg">【<em>{产物名}</em>】<em>{部门}</em>已上传 <em>{编号} {产物名}</em> <em>{N}</em> 个文件，请查收。</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 5. 物流发货 -->
+  <div class="card">
+    <h2>五、物流发货</h2>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">24</td><td>物流确认发货</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【已发货】<em>{编号}</em> 已发货，发货日期 <em>{日期}</em> 已回传你的销售台账。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">25</td><td>物流确认发货</td><td class="who"><span class="tag t-role">销售主管</span></td><td><div class="msg">【已发货】<em>{编号}</em> 已发货（<em>{日期}</em>）。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">26</td><td>设计「发货准备完成」</td><td class="who"><span class="tag t-role">物流发货部</span></td><td><div class="msg">【发货准备完成】<em>{编号} {名称}</em> 设计部说明书/铭牌等发货资料已备齐。</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 6. 开票 / 财务 -->
+  <div class="card">
+    <h2>六、开票 & 财务</h2>
+    <div class="desc">开票申请 → 主管审批 → 财务开票回传；含合并开票、驳回、作废。</div>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">27</td><td>主管/管理层直接提开票</td><td class="who"><span class="tag t-role">财务</span></td><td><div class="msg">【待开票】<em>{编号} {名称}</em> 金额 ¥<em>{金额}</em> 税票 <em>{税率}</em>，请财务开票。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">28</td><td>销售员提开票申请</td><td class="who"><span class="tag t-role">销售主管</span></td><td><div class="msg">【开票申请】<em>{编号} {名称}</em> 待销售主管审批：<em>{附件}</em></div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">29</td><td>主管审批通过开票</td><td class="who"><span class="tag t-role">财务</span></td><td><div class="msg">【待开票】<em>{编号} {名称}</em> 金额 ¥<em>{金额}</em> 税票 <em>{税率}</em>，请财务开票。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">30</td><td>主管驳回开票</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【开票驳回】<em>{编号}</em> 开票申请被销售主管驳回，可修改后重新申请。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">31</td><td>管理员作废待开票</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【开票作废】<em>{编号}</em> 开票申请已被管理员作废，如需开票请重新提交。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">32</td><td>财务上传发票</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【发票已开】<em>{编号}</em> 财务已开票并回传你的销售订单：<em>{附件}</em></div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">33</td><td>财务作废发票重开</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【发票作废】<em>{编号}</em> 财务作废了原发票并将重新开票，请留意。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">34</td><td>提交合并开票申请</td><td class="who"><span class="tag t-role">销售主管</span></td><td><div class="msg">【合并开票申请】<em>{客户}</em> 项目 <em>{编号列表}</em> 共 <em>{N}</em> 个… 待销售主管审批。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">35</td><td>合并开票审批通过</td><td class="who"><span class="tag t-role">财务</span></td><td><div class="msg">【待开票·合并】<em>{客户}</em> 项目 <em>{编号列表}</em> 共 <em>{N}</em> 个…请合并开票。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">36</td><td>合并开票驳回</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【合并开票驳回】项目 <em>{编号列表}</em> 的合并开票申请被驳回，可修改后重申请。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">37</td><td>财务上传合并发票</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【合并发票已开】项目 <em>{编号列表}</em> 财务已开具合并发票并回传：<em>{附件}</em></div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 7. 订单作废 -->
+  <div class="card">
+    <h2>七、订单作废</h2>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">38</td><td>销售员申请作废订单</td><td class="who"><span class="tag t-role">销售负责人</span></td><td><div class="msg">【作废申请】<em>{编号} {名称}</em> …待审批。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">39</td><td>作废通过</td><td class="who"><span class="tag t-role">管理层</span></td><td><div class="msg">【订单已作废】<em>{编号} {名称}</em> 已作废（原因：<em>{原因}</em>），相关流程已移除。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">40</td><td>作废驳回</td><td class="who"><span class="tag t-person">该单销售员</span></td><td><div class="msg">【作废驳回】<em>{编号}</em> 作废申请被销售负责人驳回，订单仍有效。</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 8. 销售线索 -->
+  <div class="card">
+    <h2>八、销售线索</h2>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">41</td><td>录入线索并分配给销售员</td><td class="who"><span class="tag t-person">被分配销售员</span></td><td><div class="msg">【新线索待跟进】<em>{客户}</em>（来源：<em>{来源}</em>），请尽快跟进。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">42</td><td>线索改派给别人</td><td class="who"><span class="tag t-person">新销售员</span></td><td><div class="msg">【线索分配】<em>{客户}</em>（来源：<em>{来源}</em>）已分配给你，请跟进。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">43</td><td>线索标记为成交</td><td class="who"><span class="tag t-role">销售主管</span></td><td><div class="msg">【线索成交】<em>{客户}</em>（<em>{销售}</em>）已成交 🎉</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 9. 售后 -->
+  <div class="card">
+    <h2>九、售后</h2>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">44</td><td>售后提交费用申请</td><td class="who"><span class="tag t-role">售后主管</span></td><td><div class="msg">【售后待审批】<em>{编号} {名称}</em>：<em>{问题}</em>… 费用 ¥<em>{金额}</em></div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">45</td><td>售后费用审批通过</td><td class="who"><span class="tag t-role">财务</span></td><td><div class="msg">【售后费用同步】<em>{编号} {名称}</em> 售后费用 ¥<em>{金额}</em> 已审批，问题：<em>{问题}</em>…</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">46</td><td>售后申请被驳回</td><td class="who"><span class="tag t-person">申请人</span></td><td><div class="msg">【售后驳回】<em>{编号} {名称}</em>：<em>{问题}</em>… 已被驳回。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">47</td><td>财务退回售后费用</td><td class="who"><span class="tag t-person">申请人</span> + <span class="tag t-role">售后主管</span></td><td><div class="msg">【售后费用退回】<em>{编号}</em> 财务已退回，请售后主管重新审核。</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 10. 问题反馈 -->
+  <div class="card">
+    <h2>十、问题反馈（生产 ↔ 设计）</h2>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">48</td><td>提交问题反馈</td><td class="who"><span class="tag t-role">生产主管</span></td><td><div class="msg">【问题反馈待审批】<em>{编号} {名称}</em>：<em>{内容}</em>…</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">49</td><td>反馈审批通过 → 派给设计师</td><td class="who"><span class="tag t-person">设计师</span></td><td><div class="msg">【问题反馈待接收】<em>{编号} {名称}</em>：<em>{内容}</em>…，请接收或驳回。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">50</td><td>无在岗设计师</td><td class="who"><span class="tag t-role">设计主管</span></td><td><div class="msg">【问题反馈】<em>{编号}</em> 无在岗设计师，请设计负责人指派处理：<em>{内容}</em>…</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">51</td><td>反馈被生产主管驳回</td><td class="who"><span class="tag t-person">提交人</span></td><td><div class="msg">【反馈被驳回】<em>{编号}</em> 你的问题反馈被生产主管驳回。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">52</td><td>设计师驳回反馈</td><td class="who"><span class="tag t-role">生产主管</span></td><td><div class="msg">【设计驳回反馈】<em>{编号}</em> 设计师驳回了问题反馈：<em>{内容}</em>…</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <!-- 11. 导出审批 -->
+  <div class="card">
+    <h2>十一、导出审批</h2>
+    <table>
+      <tr><th class="no">#</th><th>触发时机</th><th>接收人</th><th>推送内容</th><th>业务确认 / 修订意见</th></tr>
+      <tr><td class="no">53</td><td>用户申请导出权限</td><td class="who"><span class="tag t-role">管理层</span></td><td><div class="msg">【导出申请】<em>{姓名}</em> 申请导出权限：<em>{范围}</em></div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">54</td><td>导出申请批准</td><td class="who"><span class="tag t-person">申请人</span></td><td><div class="msg">【导出已批准】你的导出权限已获批，现在可以导出数据。</div></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">55</td><td>导出申请驳回</td><td class="who"><span class="tag t-person">申请人</span></td><td><div class="msg">【导出被驳回】你的导出申请被管理层驳回。</div></td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
+  <div class="foot">— 全文完。共 55 类推送场景，源自系统 71 处推送触发点（部分场景合并）。如需新增/调整推送，请在对应行右列写明。 —</div>
+</main>
+
+<script>
+  function toggleEdit(btn){
+    var doc = document.getElementById('doc');
+    var on = doc.getAttribute('contenteditable') === 'true';
+    doc.setAttribute('contenteditable', on ? 'false' : 'true');
+    btn.textContent = on ? '✏️ 编辑全文' : '✅ 编辑中（再点结束）';
+  }
+  function saveHtml(){
+    // 把当前（含批注/修改）的整页序列化下载，便于保存修订版
+    var html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+    var blob = new Blob([html], {type:'text/html;charset=utf-8'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '企业微信推送业务逻辑_修订_' + new Date().toISOString().slice(0,10) + '.html';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+  }
+</script>
+</body>
+</html>
