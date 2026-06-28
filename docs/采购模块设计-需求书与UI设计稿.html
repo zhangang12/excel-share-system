@@ -102,6 +102,38 @@
     </table>
   </div>
 
+  <div class="card" style="border:2px solid var(--green);background:#f7fdf9">
+    <h2 style="border-color:var(--green)">★★ 对齐你发的真实表格（合并设计 · 2026-06-28 资料）</h2>
+    <p style="font-size:13.5px">你发了 4 类资料：① 供应商名单 ② 年度采购明细表 ③ 供应商账目信息一览表 ④ 每家供应商的明细 Excel。它们其实是<b>同一份数据的 3 个层次</b>，现在靠人工在多张 Excel 间重复维护。系统的核心价值 =</p>
+    <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:12px 16px;font-size:14px;margin:8px 0"><b style="color:#15803d">录一次「采购明细」→ 供应商账目一览 / 每家供应商报表 / 月季年汇总 / 按项目搜索，全部自动派生，不用再手工统计。</b></div>
+    <div class="flow" style="margin:10px 0">
+      <span class="step fin" style="background:#dcfce7;border-color:#86efac;color:#166534">采购明细表<br><small>每笔送货录一行（唯一数据源）</small></span>
+      <span class="arr">⤍ 自动 ⤏</span>
+      <span class="step">供应商账目一览<br><small>每家汇总：开票/付款/欠款</small></span>
+      <span class="step">每家供应商报表<br><small>替代单家 Excel</small></span>
+      <span class="step">月/季/年 + 按采购员 + 按项目搜索</span>
+    </div>
+
+    <h3>① 采购明细表（=你的「年度采购明细表」，唯一录入入口）</h3>
+    <p style="font-size:12.5px;color:var(--muted);margin:2px 0">字段直接照搬你的表：</p>
+    <table><tr><th>字段</th></tr><tr><td style="font-size:12.5px">开票状态(待对账/已对账…) · 送货时间 · 供应商 · 合同编号 · 项目编号 · 送货单号 · 名称 · 规格型号 · 数量 · 单价 · 收货金额 · 开票日期 · 税率 · 开票金额 · 付款日期 · 付款金额 · 备注</td></tr></table>
+
+    <h3>② 供应商账目一览（=你的「供应商账目信息一览表」，自动汇总）</h3>
+    <table><tr><th>字段</th></tr><tr><td style="font-size:12.5px">序号 · 公司名称 · 对账无误/有误 · <b>送货单金额(=采购合计)</b> · <b>已开票</b> · <b>待开票</b> · <b>已付款</b> · <b>欠款</b> · 备注（点开=该供应商明细报表）</td></tr></table>
+    <p style="font-size:12.5px;color:var(--amber);margin:2px 0">★这张就是录音里老板要看的"总报表"，五项金额口径完全一致；点公司名→下钻到该供应商的明细（替代你现在每家一个 .xls）。</p>
+
+    <h3>③ 每家供应商明细报表（=你发的单家 xlsx，自动筛选生成）</h3>
+    <table><tr><th>字段</th></tr><tr><td style="font-size:12.5px">项目 · 型号规格 · 数量 · 单价 · 金额 · 下单日期 · 到货日期 · 采购负责人 · 对应项目单号 · <b>已付 · 未付</b> · 发票 · 送货单 · 采购合同</td></tr></table>
+
+    <table style="margin-top:10px">
+      <tr><th class="no">#</th><th>合并后的关键设计点</th><th>业务确认</th></tr>
+      <tr><td class="no">甲</td><td>三张表合一：只在「采购明细」录入，账目一览/单家报表/汇总全自动，杜绝重复录入与对不上账</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">乙</td><td>欠款 = 收货金额 − 已付款；待开票 = 收货金额 − 已开票；账期决定欠款到期提醒（录音A）</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">丙</td><td>「对账无误/有误」沿用你现在的勾选；闭环=已送货+已开票+已付款（录音C）</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">丁</td><td>供应商先从你这份「名单」批量导入，账期/分类等字段后续逐步补（录音E：先建总表迭代）</td><td class="confirm" contenteditable="true"></td></tr>
+    </table>
+  </div>
+
   <!-- 一、目标范围 -->
   <div class="card">
     <h2>一、模块目标与范围</h2>
@@ -211,9 +243,8 @@
       <tr><th>实体</th><th>关键字段</th><th>业务确认</th></tr>
       <tr><td><b>供应商 Supplier</b></td><td>编号、名称、分类、联系人、电话、地址、税号、开户行、银行账号、账期、评级、状态、资质附件</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td><b>采购订单 PO</b></td><td>单号、供应商、关联项目、采购员、下单日期、交期、税率、总额、状态</td><td class="confirm" contenteditable="true"></td></tr>
-      <tr><td><b>采购明细 PO_Line</b></td><td>物料名称、规格、数量、单位、单价、金额、已到货数量</td><td class="confirm" contenteditable="true"></td></tr>
-      <tr><td><b>到货 Receipt</b></td><td>关联PO、到货日期、到货数量、质检结果、入库单号</td><td class="confirm" contenteditable="true"></td></tr>
-      <tr><td><b>对账单 Statement</b></td><td>供应商、期间、采购总额、已付、应付余额、状态（草稿/已确认）</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td><b>采购明细 PurchaseItem</b><br><span style="font-size:11.5px;color:var(--green)">=年度采购明细表(唯一录入)</span></td><td>开票状态、送货时间、供应商、合同编号、项目编号、送货单号、名称、规格型号、数量、单价、收货金额、开票日期、税率、开票金额、付款日期、付款金额、采购负责人、备注</td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td><b>对账单 Statement</b><br><span style="font-size:11.5px;color:var(--green)">=供应商账目一览(自动)</span></td><td>供应商、期间、送货单金额、已开票、待开票、已付款、欠款、对账无误/有误、状态</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td><b>应付/付款 Payable/Payment</b></td><td>供应商、关联对账、应付额、已付额、付款日期、方式、发票号、财务审批人</td><td class="confirm" contenteditable="true"></td></tr>
     </table>
   </div>
