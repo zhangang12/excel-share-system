@@ -270,77 +270,63 @@
 
   <!-- ======= UI 设计稿 ======= -->
   <div class="card">
-    <h2>七、UI 设计稿（示意，最终以实现为准）</h2>
+    <h2>七、UI 设计稿（一期 · 已对齐你们真实表格）</h2>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 10px">「采购管理」菜单下 <b>3 个 Tab</b>：① 采购明细（录入）② 供应商账目一览（自动汇总）③ 汇总报表。采购员只看自己录的、管理层看全量。下列字段/数据均取自你们真实表格。</p>
 
-    <h3>① 供应商管理列表</h3>
+    <h3>① 采购明细 —— 唯一录入入口（= 年度采购明细表）</h3>
     <div class="screen">
-      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 采购部 · 供应商管理</div>
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 采购管理 · 采购明细</div>
       <div class="body">
         <div class="m-toolbar">
-          <span class="m-sel">分类：全部 ▾</span><span class="m-sel">状态：启用 ▾</span>
-          <span class="m-input" style="min-width:200px;color:#94a3b8">搜索 名称/联系人/电话</span>
-          <span style="flex:1"></span><span class="m-btn ghost">导出</span><span class="m-btn">＋ 新增供应商</span>
+          <span class="m-input" style="width:110px;color:#94a3b8">项目编号</span>
+          <span class="m-sel">供应商 ▾</span><span class="m-sel">送货月份 ▾</span><span class="m-sel">对账：全部 ▾</span>
+          <span class="m-input" style="width:150px;color:#94a3b8">名称/规格/送货单号</span>
+          <span style="flex:1"></span>
+          <span class="m-btn ghost">批量对账</span><span class="m-btn ghost">批量开票</span>
+          <span class="m-btn" style="background:#d97706;border-color:#d97706">批量付款</span>
+          <span class="m-btn">＋ 新增明细</span>
         </div>
         <table class="mt">
-          <tr><th>编号</th><th>供应商名称</th><th>分类</th><th>联系人</th><th>电话</th><th>账期</th><th>累计采购额</th><th>应付余额</th><th>评级</th><th>状态</th><th>操作</th></tr>
-          <tr><td><b>S0012</b></td><td>无锡精钣金属制品厂</td><td><span class="m-tag g-blue">外协加工</span></td><td>王经理</td><td>138••••6677</td><td>月结30天</td><td>¥1,286,400</td><td style="color:#b91c1c">¥86,000</td><td>★★★★☆</td><td><span class="m-tag g-green">启用</span></td><td><b>对账报表</b> · 编辑</td></tr>
-          <tr><td><b>S0007</b></td><td>江苏不锈钢材料有限公司</td><td><span class="m-tag g-amber">不锈钢原料</span></td><td>李工</td><td>139••••2210</td><td>月结60天</td><td>¥2,043,900</td><td style="color:#b91c1c">¥210,500</td><td>★★★★★</td><td><span class="m-tag g-green">启用</span></td><td><b>对账报表</b> · 编辑</td></tr>
-          <tr><td><b>S0021</b></td><td>苏州激光切割服务商</td><td><span class="m-tag g-red">激光件</span></td><td>赵采购</td><td>137••••0098</td><td>预付</td><td>¥468,200</td><td>¥0</td><td>★★★☆☆</td><td><span class="m-tag g-green">启用</span></td><td><b>对账报表</b> · 编辑</td></tr>
+          <tr><th>☑</th><th>送货时间</th><th>供应商</th><th>项目编号</th><th>名称</th><th>规格型号</th><th>数量</th><th>单价</th><th>收货金额</th><th>已开票</th><th>待开票</th><th>已付款</th><th>欠款</th><th>对账</th></tr>
+          <tr><td>☑</td><td>2026-06-10</td><td>无锡元普自动化设备</td><td>—</td><td>气缸</td><td>SC100-1500</td><td>1</td><td>450</td><td><b>450</b></td><td>0</td><td style="color:#d97706">450</td><td>0</td><td style="color:#b91c1c">450</td><td><span class="m-tag g-gray">待对账</span></td></tr>
+          <tr><td>☐</td><td>2026-06-10</td><td>阀盟不锈钢</td><td>2026-041M</td><td>1.5D工业弯头</td><td>76*3</td><td>2</td><td>28</td><td><b>56</b></td><td>56</td><td>0</td><td>56</td><td>0</td><td><span class="m-tag g-green">已对账</span></td></tr>
+          <tr><td>☐</td><td>2026-06-10</td><td>阀盟不锈钢</td><td>2026-041M</td><td>运费</td><td>—</td><td>1</td><td>7</td><td><b>7</b></td><td>7</td><td>0</td><td>7</td><td>0</td><td><span class="m-tag g-green">已对账</span></td></tr>
         </table>
+        <div style="display:flex;gap:16px;font-size:12px;color:#475569;background:#f1f5f9;padding:7px 12px;border-radius:0 0 8px 8px;margin-top:-1px">
+          <span>共 <b>1286</b> 条</span><span style="flex:1"></span>
+          <span>收货合计 <b>¥4,862,300</b></span><span>待开票 <b style="color:#d97706">¥1,203,400</b></span>
+          <span>已付款 ¥3,210,800</span><span>欠款 <b style="color:#b91c1c">¥1,651,500</b></span>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-top:8px">字段完全照搬你们「年度采购明细表」。<b>待开票/欠款自动算</b>（=收货−开票/付款）。勾选若干行 →「批量开票/付款」一次全额登记、回填日期；也能逐行编辑。</p>
       </div>
     </div>
 
-    <h3>② 新增 / 编辑供应商</h3>
+    <h3>② 供应商账目一览 —— 自动汇总（= 供应商账目信息一览表）</h3>
     <div class="screen">
-      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; ＋ 新增供应商</div>
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 采购管理 · 供应商账目一览</div>
       <div class="body">
-        <div class="form-grid">
-          <div class="fld req"><label>供应商名称</label><div class="box"></div></div>
-          <div class="fld req"><label>分类</label><div class="box"></div></div>
-          <div class="fld"><label>供应商编号(自动)</label><div class="box"></div></div>
-          <div class="fld"><label>联系人</label><div class="box"></div></div>
-          <div class="fld"><label>联系电话</label><div class="box"></div></div>
-          <div class="fld"><label>付款账期</label><div class="box"></div></div>
-          <div class="fld"><label>税号</label><div class="box"></div></div>
-          <div class="fld"><label>开户行</label><div class="box"></div></div>
-          <div class="fld"><label>银行账号</label><div class="box"></div></div>
-          <div class="fld" style="grid-column:1/4"><label>地址</label><div class="box"></div></div>
-          <div class="fld" style="grid-column:1/4"><label>资质附件（营业执照/合同，可多传）</label><div class="box" style="height:48px;border-style:dashed;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12px">点击或拖拽上传</div></div>
-        </div>
-        <div style="text-align:right;margin-top:12px"><span class="m-btn ghost">取消</span> <span class="m-btn">保存</span></div>
-      </div>
-    </div>
-
-    <h3>③ 供应商对账单 / 报表（每家独立）</h3>
-    <div class="screen">
-      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 供应商对账单 · 无锡精钣金属制品厂(S0012)</div>
-      <div class="body">
-        <div class="m-toolbar"><span class="m-sel">期间：2026-06 ▾</span><span style="flex:1"></span><span class="m-btn ghost">导出Excel</span><span class="m-btn ghost">导出PDF发供应商</span><span class="m-btn">确认对账 → 生成应付</span></div>
-        <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
-          <div class="kpi"><div class="l">本期采购额</div><div class="v">¥186,400</div></div>
-          <div class="kpi"><div class="l">本期已付</div><div class="v">¥100,400</div></div>
-          <div class="kpi"><div class="l">本期应付余额</div><div class="v" style="color:#b91c1c">¥86,000</div></div>
-          <div class="kpi"><div class="l">累计往来余额</div><div class="v" style="color:#b91c1c">¥86,000</div></div>
-        </div>
+        <div class="m-toolbar"><span class="m-sel">分类 ▾</span><span class="m-sel">状态：启用 ▾</span><span class="m-input" style="width:140px;color:#94a3b8">名称/联系人</span><span style="flex:1"></span><span class="m-btn ghost">批量导入名单</span><span class="m-btn">＋ 新增供应商</span></div>
         <table class="mt">
-          <tr><th>采购单号</th><th>关联项目</th><th>物料</th><th>数量</th><th>单价</th><th>金额</th><th>到货日期</th><th>状态</th></tr>
-          <tr><td>PO-2606-018</td><td>2026-055</td><td>钣金外协件A</td><td>20</td><td>¥1,200</td><td><b>¥24,000</b></td><td>06-12</td><td><span class="m-tag g-green">已到货</span></td></tr>
-          <tr><td>PO-2606-022</td><td>2026-049</td><td>机架焊接件</td><td>8</td><td>¥9,800</td><td><b>¥78,400</b></td><td>06-18</td><td><span class="m-tag g-green">已到货</span></td></tr>
-          <tr><td>PO-2606-031</td><td>2026-052M</td><td>不锈钢罩壳</td><td>12</td><td>¥7,000</td><td><b>¥84,000</b></td><td>06-24</td><td><span class="m-tag g-amber">部分到货</span></td></tr>
+          <tr><th>#</th><th>公司名称</th><th>分类</th><th>结算/账期</th><th>送货单金额</th><th>已开票</th><th>待开票</th><th>已付款</th><th>欠款</th><th>状态</th><th>操作</th></tr>
+          <tr><td>40</td><td>无锡吉明金属制品有限公司</td><td><span class="m-tag g-blue">外协加工</span></td><td>月结·60天</td><td><b>522,422.14</b></td><td>263,350.08</td><td style="color:#d97706">259,072.06</td><td>0.00</td><td style="color:#b91c1c"><b>522,422.14</b></td><td><span class="m-tag g-green">启用</span></td><td><b>明细</b>·编辑</td></tr>
+          <tr><td>41</td><td>无锡锡珑工控设备有限公司</td><td><span class="m-tag g-amber">电气件</span></td><td>月结·30天</td><td><b>94,670.00</b></td><td>94,670.00</td><td>0.00</td><td>0.00</td><td style="color:#b91c1c"><b>94,670.00</b></td><td><span class="m-tag g-green">启用</span></td><td><b>明细</b>·编辑</td></tr>
+          <tr><td>42</td><td>无锡优正运输有限公司</td><td><span class="m-tag g-gray">运输</span></td><td>月结·30天</td><td><b>43,730.00</b></td><td>43,730.00</td><td>0.00</td><td>43,730.00</td><td>0.00</td><td><span class="m-tag g-green">启用</span></td><td><b>明细</b>·编辑</td></tr>
+          <tr><td>39</td><td>常州市洪庄电镀有限公司</td><td><span class="m-tag g-blue">外协加工</span></td><td>现金</td><td><b>1,522.00</b></td><td>1,522.00</td><td>0.00</td><td>1,522.00</td><td>0.00</td><td><span class="m-tag g-green">启用</span></td><td><b>明细</b>·编辑</td></tr>
         </table>
+        <p style="font-size:12px;color:var(--muted);margin-top:6px">五列金额由「采购明细」<b>自动汇总</b>，不再手工统计。点「明细」下钻看该供应商全部采购（替代你现在每家一个 .xls）。「批量导入名单」可把你那份供应商名单一次粘入。</p>
       </div>
     </div>
 
-    <h3>④ 采购汇总报表（月/季/年）</h3>
+    <h3>③ 汇总报表（本月/季/年 + 月度趋势 + Top供应商 + 按采购员）</h3>
     <div class="screen">
-      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 采购汇总报表</div>
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 采购管理 · 汇总报表</div>
       <div class="body">
-        <div class="m-toolbar"><span class="m-sel">维度：按月 ▾</span><span class="m-sel">年度：2026 ▾</span><span style="flex:1"></span><span class="m-btn ghost">导出</span></div>
+        <div class="m-toolbar"><span class="m-sel">年度：2026 ▾</span><span style="flex:1"></span></div>
         <div class="kpis">
-          <div class="kpi"><div class="l">本月采购额</div><div class="v">¥438,800</div><div class="d">环比 +12%</div></div>
-          <div class="kpi"><div class="l">本季采购额</div><div class="v">¥1.32M</div><div class="d">同比 +8%</div></div>
-          <div class="kpi"><div class="l">本年累计</div><div class="v">¥4.86M</div></div>
-          <div class="kpi"><div class="l">应付总额</div><div class="v" style="color:#b91c1c">¥386,500</div></div>
+          <div class="kpi"><div class="l">本月采购额</div><div class="v">¥438,800</div></div>
+          <div class="kpi"><div class="l">本季采购额</div><div class="v">¥1,320,000</div></div>
+          <div class="kpi"><div class="l">本年采购额</div><div class="v">¥4,862,300</div></div>
+          <div class="kpi"><div class="l">应付总额（欠款）</div><div class="v" style="color:#b91c1c">¥1,651,500</div></div>
         </div>
         <div class="twocol">
           <div>
@@ -352,36 +338,72 @@
             </div>
           </div>
           <div>
-            <div style="font-size:12.5px;color:#475569;margin-bottom:6px">Top 供应商 采购额占比</div>
+            <div style="font-size:12.5px;color:#475569;margin-bottom:6px">Top 供应商（采购额）</div>
             <table class="mt">
-              <tr><th>供应商</th><th>采购额</th><th>占比</th></tr>
-              <tr><td>江苏不锈钢材料</td><td>¥2.04M</td><td>42%</td></tr>
-              <tr><td>无锡精钣金属</td><td>¥1.29M</td><td>26%</td></tr>
-              <tr><td>苏州激光切割</td><td>¥0.47M</td><td>10%</td></tr>
-              <tr><td>其他(12家)</td><td>¥1.06M</td><td>22%</td></tr>
+              <tr><th>供应商</th><th>采购额</th><th>欠款</th></tr>
+              <tr><td>无锡吉明金属</td><td>¥522,422</td><td style="color:#b91c1c">¥522,422</td></tr>
+              <tr><td>无锡锡珑工控</td><td>¥94,670</td><td style="color:#b91c1c">¥94,670</td></tr>
+              <tr><td>无锡优正运输</td><td>¥43,730</td><td>¥0</td></tr>
             </table>
           </div>
         </div>
-      </div>
-    </div>
-
-    <h3>⑤ 财务联动 · 应付 / 付款审批</h3>
-    <div class="screen">
-      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; 财务部 · 应付账款 / 付款审批</div>
-      <div class="body">
-        <div class="m-toolbar"><span class="m-sel">状态：待付款 ▾</span><span class="m-sel">账龄：全部 ▾</span><span style="flex:1"></span></div>
+        <div style="font-size:12.5px;color:#475569;margin:12px 0 6px">按采购员</div>
         <table class="mt">
-          <tr><th>供应商</th><th>对账期间</th><th>应付金额</th><th>已付</th><th>余额</th><th>账龄</th><th>发票</th><th>操作</th></tr>
-          <tr><td>江苏不锈钢材料</td><td>2026-05</td><td>¥210,500</td><td>¥0</td><td style="color:#b91c1c">¥210,500</td><td><span class="m-tag g-amber">45天</span></td><td><span class="m-tag g-green">已收</span></td><td><b>付款审批</b></td></tr>
-          <tr><td>无锡精钣金属</td><td>2026-06</td><td>¥86,000</td><td>¥0</td><td style="color:#b91c1c">¥86,000</td><td><span class="m-tag g-gray">12天</span></td><td><span class="m-tag g-gray">待收</span></td><td><b>付款审批</b></td></tr>
+          <tr><th>采购员</th><th>明细数</th><th>采购额</th><th>已付款</th><th>欠款</th></tr>
+          <tr><td>李新新</td><td>312</td><td><b>¥1,860,400</b></td><td>¥1,200,000</td><td style="color:#b91c1c">¥660,400</td></tr>
+          <tr><td>方步森</td><td>286</td><td><b>¥1,540,900</b></td><td>¥980,000</td><td style="color:#b91c1c">¥560,900</td></tr>
+          <tr><td>王芹</td><td>198</td><td><b>¥1,461,000</b></td><td>¥1,030,800</td><td style="color:#b91c1c">¥430,200</td></tr>
         </table>
-        <p style="font-size:12px;color:var(--muted);margin-top:8px">采购对账确认后这里自动出现应付；财务点「付款审批」登记付款，回写采购对账余额。应付总额汇入财务报表。</p>
       </div>
     </div>
 
+    <h3>④ 新增采购明细（弹窗 · 字段对齐你们明细表）</h3>
+    <div class="screen">
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; ＋ 新增采购明细</div>
+      <div class="body">
+        <div class="form-grid">
+          <div class="fld req"><label>供应商</label><div class="box"></div></div>
+          <div class="fld"><label>送货时间</label><div class="box"></div></div>
+          <div class="fld"><label>项目编号</label><div class="box"></div></div>
+          <div class="fld"><label>名称</label><div class="box"></div></div>
+          <div class="fld"><label>规格型号</label><div class="box"></div></div>
+          <div class="fld"><label>送货单号</label><div class="box"></div></div>
+          <div class="fld"><label>数量</label><div class="box"></div></div>
+          <div class="fld"><label>单价</label><div class="box"></div></div>
+          <div class="fld"><label>收货金额（自动=数量×单价，可改）</label><div class="box"></div></div>
+          <div class="fld"><label>合同编号</label><div class="box"></div></div>
+          <div class="fld"><label>税率</label><div class="box"></div></div>
+          <div class="fld"><label>备注</label><div class="box"></div></div>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin:8px 0 0">开票/付款一般在列表里勾选「批量登记」；此处也可逐行直接填开票日期/金额、付款日期/金额。采购员录入默认归属本人。</p>
+      </div>
+    </div>
+
+    <h3>⑤ 新增 / 编辑供应商（弹窗 · 账期是重点）</h3>
+    <div class="screen">
+      <div class="bar"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span>&nbsp; ＋ 新增供应商</div>
+      <div class="body">
+        <div class="form-grid">
+          <div class="fld req"><label>公司名称</label><div class="box"></div></div>
+          <div class="fld"><label>分类</label><div class="box"></div></div>
+          <div class="fld"><label>联系人</label><div class="box"></div></div>
+          <div class="fld"><label>联系电话</label><div class="box"></div></div>
+          <div class="fld"><label style="color:#b45309">结算方式（现金/月结/无账期）★</label><div class="box" style="border-color:#fbbf24"></div></div>
+          <div class="fld"><label style="color:#b45309">账期天数（月结时）★</label><div class="box" style="border-color:#fbbf24"></div></div>
+          <div class="fld"><label>税号</label><div class="box"></div></div>
+          <div class="fld"><label>开户行</label><div class="box"></div></div>
+          <div class="fld"><label>银行账号</label><div class="box"></div></div>
+          <div class="fld" style="grid-column:1/3"><label>地址</label><div class="box"></div></div>
+          <div class="fld"><label>状态（启用/停用）</label><div class="box"></div></div>
+        </div>
+        <p style="font-size:12px;color:var(--amber);margin:8px 0 0">★ 录音重点：账期（现金/月结N月/无）决定欠款到期口径。供应商可由「批量导入名单」先建好、字段后补。</p>
+      </div>
+    </div>
+
+    <p style="font-size:12.5px;color:var(--muted);margin-top:14px;border-top:1px dashed var(--line);padding-top:10px">说明：<b>财务付款审批闭环、发票校验、应付账龄、供应商评级</b>等放二期（详见上文「分期」）。一期先把"录一次明细→账目一览/单家报表/汇总自动出"跑顺。</p>
   </div>
 
-  <div class="foot">— 全文完（v1.1，已并入 2026-06-28 录音要点）。需求清单 29 项 + 录音补充 6 点 + 6 实体 + 5 个 UI 界面示意。请业务在「业务确认」列标注意见，或点「编辑全文」直接改，再「保存为HTML」导出修订版。 —</div>
+  <div class="foot">— 全文完（v1.2，UI 设计稿已按你们真实表格重画为一期 3-Tab 界面）。需求清单 29 项 + 录音补充 6 点 + 真实表格映射 + 6 实体 + 5 个 UI 界面。请业务在「业务确认」列标注意见，或点「编辑全文」直接改，再「保存为HTML」导出修订版。 —</div>
 </main>
 
 <script>
