@@ -199,6 +199,26 @@ async def bind_wxid(
     return schemas.Msg(message="已绑定" if u.wxid else "已解绑")
 
 
+@router.post("/wecom-test", response_model=schemas.Msg)
+async def wecom_test(
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 企微推送自检：给当前登录人(需已绑 userid)发一条测试消息，失败原因直接抛出。"""
+    from ..config import settings
+    from ..notify import _send_wecom
+    from datetime import datetime
+    if not (settings.wecom_corp_id and settings.wecom_secret and settings.wecom_agent_id):
+        raise HTTPException(400, "企微凭证未配置：请在 .env.prod 填 WECOM_CORP_ID/WECOM_AGENT_ID/WECOM_SECRET 后重启")
+    if not current.wxid:
+        raise HTTPException(400, "请先在本页给你自己绑定企业微信 userid，再测试")
+    try:
+        await _send_wecom(db, [current.id], f"【测试推送】企业微信推送已打通 ✅ {datetime.now():%Y-%m-%d %H:%M:%S}")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"发送失败：{e}")
+    return schemas.Msg(message="测试消息已发送，请查收你的企业微信")
+
+
 @router.delete("/users/{uid}", response_model=schemas.Msg)
 async def delete_user(
     uid: int,

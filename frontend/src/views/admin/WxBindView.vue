@@ -30,6 +30,20 @@ async function bind(u: BindUser) {
   ElMessage.success(wxid ? `已绑定 ${u.full_name || u.username}` : '已解绑')
 }
 
+// 🆕 企微推送自检：给自己发一条测试消息（凭证/可信IP/userid 有问题会直接报具体原因）
+const testing = ref(false)
+async function testPush() {
+  testing.value = true
+  try {
+    const r = await http.post<{ message: string }>('/admin/wecom-test')
+    ElMessage.success(r.data.message || '测试消息已发送，请查收企业微信')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '测试失败')
+  } finally {
+    testing.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -40,6 +54,8 @@ onMounted(load)
         <h1>企微绑定</h1>
         <div class="desc">绑定企业微信 userid 后，站内消息将同步推送企业微信（凭证未配置时仅站内）</div>
       </div>
+      <div class="spacer" style="flex:1"></div>
+      <el-button type="primary" plain :loading="testing" @click="testPush">🔔 测试推送（给自己）</el-button>
     </div>
 
     <el-card v-loading="loading" shadow="never">
