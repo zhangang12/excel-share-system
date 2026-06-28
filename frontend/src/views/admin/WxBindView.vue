@@ -44,6 +44,20 @@ async function testPush() {
   }
 }
 
+// 🆕 给某一行的用户单独发测试（验证 admin/各管理层等是否都能收到）
+const testingId = ref<number | null>(null)
+async function testRow(u: BindUser) {
+  testingId.value = u.id
+  try {
+    const r = await http.post<{ message: string }>(`/admin/wecom-test?uid=${u.id}`)
+    ElMessage.success(r.data.message)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '测试失败')
+  } finally {
+    testingId.value = null
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -77,6 +91,7 @@ onMounted(load)
               <el-button size="small" type="primary" plain @click="bind(row)">
                 {{ row.wxid ? '更新' : '绑定' }}
               </el-button>
+              <el-button v-if="row.wxid" size="small" :loading="testingId === row.id" @click="testRow(row)">测试</el-button>
             </div>
           </template>
         </el-table-column>
