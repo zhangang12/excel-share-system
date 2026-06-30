@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Setting, Edit, Search } from '@element-plus/icons-vue'
+import { Plus, Setting, Edit, Search, VideoPlay } from '@element-plus/icons-vue'
 import { datasheetsApi } from '@/api/datasheets'
 import { permApi } from '@/api/permissions'
 import { useAuthStore } from '@/stores/auth'
@@ -515,6 +515,33 @@ async function onFillCommit(colId: string, startIdx: number, endIdx: number) {
 }
 const { beginFill, isInRange } = useDragFill(onFillCommit)
 
+// 🆕 #93 一键标记进行中：把进度列里「空白」单元格批量填「进行中」，
+// 已填「完成/进行中」的不动（避免把已完成的覆盖回退）。
+const hasProgressField = computed(() => visibleFields.value.some(isProgressField))
+async function fillAllDoing() {
+  const pfs = visibleFields.value.filter(isProgressField)
+  if (!pfs.length) { ElMessage.info('本表没有「进度」列'); return }
+  const tasks: { r: DataRecord; f: DataField }[] = []
+  for (const r of records.value) {
+    for (const f of pfs) {
+      const v = getCellValue(r, f)
+      if (v == null || v === '') tasks.push({ r, f })
+    }
+  }
+  if (!tasks.length) { ElMessage.info('进度列都已填写，无需一键标记'); return }
+  try {
+    await ElMessageBox.confirm(
+      `将把 ${tasks.length} 个空白「进度」单元格标记为「进行中」，已填写的不变。是否继续？`,
+      '一键标记进行中', { type: 'warning', confirmButtonText: '标记', cancelButtonText: '取消' })
+  } catch { return }
+  try {
+    await Promise.all(tasks.map(t => applyCellValue(t.r, t.f, '进行中')))
+    ElMessage.success(`已标记 ${tasks.length} 个单元格为「进行中」`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '批量标记失败')
+  }
+}
+
 // 字段管理
 const fieldDialogVisible = ref(false)
 const editingField = ref<DataField | null>(null)
@@ -567,7 +594,8 @@ async function addRow() {
   <div class="grid-wrap">
     <div class="grid-toolbar">
 <el-button v-if="canEdit" type="primary" :icon="Plus" @click="addRow">添加行</el-button>
-      
+      <el-button v-if="canEdit && hasProgressField" :icon="VideoPlay" @click="fillAllDoing">一键标记进行中</el-button>
+
       <span style="flex: 1"></span>
       <el-tooltip :content="connected ? '实时同步已连接 · ' + onlineCount + ' 人在线' : '实时同步已断开（5 秒后自动重连）'">
         <span class="rt-status" :class="connected ? 'on' : 'off'">
