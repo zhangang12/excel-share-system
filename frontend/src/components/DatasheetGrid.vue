@@ -378,6 +378,17 @@ function isProgressField(f: DataField): boolean {
 }
 const PROGRESS_OPTIONS = ['完成', '进行中']
 
+// 🆕 #94 日期列：按字段名含「日期」识别（订购日期/到货日期/交货日期 等），
+// 单元格改用日期选择器选填，统一为 YYYY-MM-DD，避免手输格式不一
+function isDateField(f: DataField): boolean {
+  return (f.name || '').includes('日期')
+}
+function onDatePickerMount(el: any) {
+  if (!el) return
+  // 渲染后聚焦，单击单元格即可直接展开日历选日期
+  setTimeout(() => { try { el.focus?.() } catch { /* */ } }, 0)
+}
+
 // 整列着色：进度列的 td 按值染色（与项目一览状态列一致）
 // 用 columnIndex 精确定位字段：columnIndex 0 是 # 自动行号列，从 1 起对应 visibleFields[0..]
 // 严格匹配已知状态词，其他值（日期、人名、数字）一律不染色 —— 避免误伤
@@ -667,6 +678,15 @@ async function addRow() {
                          :label="editingValue + ' （旧值，请重新选择）'"
                          :value="editingValue" disabled />
             </el-select>
+            <!-- 🆕 #94 日期列：日期选择器选填（YYYY-MM-DD），免手输格式不一 -->
+            <el-date-picker v-else-if="isDateField(f)"
+                            v-model="editingValue" size="small" type="date"
+                            value-format="YYYY-MM-DD" format="YYYY-MM-DD"
+                            placeholder="选择日期" class="cell-edit-date"
+                            :ref="(el: any) => onDatePickerMount(el)"
+                            @change="saveEdit(row, f)"
+                            @blur="saveEdit(row, f)"
+                            @keyup.escape="cancelEdit" />
             <el-input v-else v-model="editingValue" autofocus class="cell-edit-input"
                       @blur="saveEdit(row, f)" @keyup.enter="saveEdit(row, f)" @keyup.escape="cancelEdit" />
           </template>
@@ -895,6 +915,7 @@ async function addRow() {
 }
 /* 进度列下拉编辑：紧凑、与单元格宽度匹配 */
 .cell-edit-select { width: 100%; }
+.cell-edit-date { width: 100%; }
 .cell-edit-select :deep(.el-select__wrapper) {
   min-height: 24px;
   padding: 0 6px;
