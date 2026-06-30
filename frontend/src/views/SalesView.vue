@@ -2,10 +2,11 @@
 // 🆕 v3 销售部：销售项目统计台账（§十三 19 列）+ 销售下单 + 上传合同 + 开票申请/审批
 import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation, UploadFilled, DocumentCopy, CircleClose, Select } from '@element-plus/icons-vue'
+import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation, UploadFilled, DocumentCopy, CircleClose, Select, EditPen } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment, ordersApi } from '@/api/orders'
+import { projectsApi } from '@/api/projects'
 import { reportsApi, type SalesReport } from '@/api/reports'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -111,6 +112,27 @@ async function load() {
 }
 // 改筛选 → 回到第 1 页再查；翻页 → 直接查
 function reload() { page.value = 1; load() }
+
+// 🆕 #95 修改项目编号（下错更正）：销售主管/管理层可改，后端校验唯一并留痕。
+// 改 Project.code 即全局生效（台账/各部门任务/项目一览均 JOIN 自 project）。
+async function openEditCode(row: SalesLedgerRow) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '修改后将同步更新项目目录、各部门任务单与台账显示。请输入新的项目编号：',
+      `修改项目编号 · ${row.code}`,
+      { inputValue: row.code, inputPattern: /\S/, inputErrorMessage: '项目编号不能为空',
+        confirmButtonText: '保存', cancelButtonText: '取消' },
+    )
+    const newCode = value.trim()
+    if (!newCode || newCode === row.code) return
+    await projectsApi.update(row.project_id, { code: newCode })
+    ElMessage.success(`项目编号已改为 ${newCode}`)
+    await load()
+  } catch (e: any) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e?.response?.data?.detail || '修改失败')
+  }
+}
 function onPage(p: number) { page.value = p; load() }
 function onSize(s: number) { pageSize.value = s; page.value = 1; load() }   // 改每页条数 → 回第 1 页
 onMounted(() => { load(); loadSalesStaff() })
@@ -705,7 +727,11 @@ async function openReport() {
                 max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
         <el-table-column type="index" label="#" :width="cw(48, 36)" fixed />
         <el-table-column label="项目编号" :width="cw(120, 92)" fixed>
-          <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
+          <template #default="{ row }">
+            <b class="code">{{ row.code }}</b>
+            <el-icon v-if="allView && row.order_state !== 'pending' && row.order_state !== 'draft'"
+                     class="edit-code-btn" title="修改项目编号（下错可更正）" @click="openEditCode(row)"><EditPen /></el-icon>
+          </template>
         </el-table-column>
         <el-table-column prop="name" label="设备名称" :min-width="cw(150, 100)" show-overflow-tooltip>
           <template #default="{ row }">
@@ -1350,6 +1376,8 @@ async function openReport() {
 .filter-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .code { color: var(--primary, #2563eb); white-space: nowrap; }
+.edit-code-btn { cursor: pointer; color: var(--el-text-color-secondary); margin-left: 4px; vertical-align: -2px; font-size: 13px; }
+.edit-code-btn:hover { color: var(--primary, #2563eb); }
 .dl-icon { cursor: pointer; color: var(--primary, #2563eb); margin-left: 4px; vertical-align: -2px; }
 /* 🆕 v4 操作列: 主操作蓝色, 次操作灰色 hover 才蓝, 中点 · 分隔 */
 .op-cell { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
