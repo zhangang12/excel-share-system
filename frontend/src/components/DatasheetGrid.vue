@@ -448,11 +448,23 @@ const editingValue = ref<any>(null)
 function startEdit(r: DataRecord, f: DataField) {
   if (!fieldEditable(f)) return
   editingCell.value = { rowId: r.id, fieldId: f.id }
-  // 统一用文本编辑：array 转字符串以便用户编辑
   const v = getCellValue(r, f)
-  if (v == null) editingValue.value = ''
-  else if (Array.isArray(v)) editingValue.value = (v as unknown[]).join('、')
-  else editingValue.value = String(v)
+  if (v == null) {
+    editingValue.value = ''
+  } else if (Array.isArray(v)) {
+    editingValue.value = (v as unknown[]).join('、')
+  } else {
+    const raw = String(v)
+    // Normalize to YYYY-MM-DD for date fields so the date picker can parse the value
+    if (isDateField(f)) {
+      const d = parseLooseDate(raw)
+      editingValue.value = d
+        ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        : ''
+    } else {
+      editingValue.value = raw
+    }
+  }
 }
 
 function isEditing(r: DataRecord, f: DataField) {

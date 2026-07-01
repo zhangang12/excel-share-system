@@ -94,9 +94,7 @@ const router = createRouter({
         },
         {
           path: 'purchase',
-          name: 'purchase',
-          component: () => import('@/views/PurchaseView.vue'),
-          meta: { menuKey: 'purchase' },
+          redirect: '/purchase-mgmt',
         },
         {
           path: 'purchase-mgmt',

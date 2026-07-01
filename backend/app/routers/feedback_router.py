@@ -98,20 +98,12 @@ async def my_projects(
     current: models.User = Depends(require_roles("assembler")),
     db: AsyncSession = Depends(get_db),
 ):
-    """在手项目列表：管理层/主管返回所有有生产任务的项目；装配工人只返回分派给自己的。"""
-    from .sales_router import _all_view
-    q = select(models.DeptOrder.project_id).where(
-        models.DeptOrder.dept == "produce",
-        models.DeptOrder.status != "voided",
+    """在手项目列表：返回所有进行中的项目供提交问题反馈时选择。"""
+    r = await db.execute(
+        select(models.Project.id, models.Project.code, models.Project.name)
+        .where(models.Project.status == "进行中", models.Project.is_deleted == False)
+        .order_by(models.Project.code)
     )
-    if not _all_view(current):
-        q = q.where(models.DeptOrder.worker_id == current.id)
-    r = await db.execute(q.distinct())
-    pids = [x[0] for x in r.all()]
-    if not pids:
-        return []
-    r = await db.execute(select(models.Project.id, models.Project.code, models.Project.name)
-                         .where(models.Project.id.in_(pids)).order_by(models.Project.code))
     return [schemas.FeedbackProjOption(id=i, code=c, name=n) for i, c, n in r.all()]
 
 

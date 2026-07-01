@@ -52,8 +52,8 @@ ROLE_MENUS: dict[str, list[str]] = {
     "designer":         ["catalog", "list", "design"],
     "production_clerk": ["catalog", "list", "produce"],
     "warehouse":        ["catalog", "list", "warehouse"],
-    "buyer_standard":   ["catalog", "list", "purchase"],
-    "buyer_outsource":  ["catalog", "list", "purchase"],
+    "buyer_standard":   ["catalog", "list", "purchase_mgmt"],
+    "buyer_outsource":  ["catalog", "list", "purchase_mgmt"],
     "hr":               ["catalog", "list"],
     # ---- 🆕 v3 角色 ----
     "sales":            ["catalog", "sales", "leads"],        # 无详单，编号不可点；🆕 销售线索
@@ -64,8 +64,8 @@ ROLE_MENUS: dict[str, list[str]] = {
     "assembler":        ["catalog", "produce"],               # 无详单；装配组 tab 在生产部菜单内
     "pm_lead":          ["catalog", "list", "produce"],
     "sheetmetal":       ["catalog", "produce"],                 # 🆕 钣金组并入生产部菜单(tab)；无详单（同 assembler 口径）
-    "buyer":            ["catalog", "list", "purchase", "purchase_mgmt"],
-    "buyer_lead":       ["catalog", "list", "purchase", "purchase_mgmt"],  # 🆕 采购主管
+    "buyer":            ["catalog", "list", "purchase_mgmt"],
+    "buyer_lead":       ["catalog", "list", "purchase_mgmt"],  # 🆕 采购主管
     "warehouse_lead":   ["catalog", "list", "warehouse"],
     "logistics":        ["catalog", "list", "logistics"],
     "finance":          ["catalog", "list", "finance", "purchase_mgmt"],
