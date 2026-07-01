@@ -22,8 +22,8 @@ MENU_DEFS: list[dict] = [
     {"key": "electric",   "label": "电工部"},
     {"key": "produce",    "label": "生产部"},
     # 🆕 2026-06-19 「钣金组」菜单并入「生产部」(以 tab 呈现)，不再单列菜单 key=sheet
-    {"key": "purchase",      "label": "采购部"},
-    {"key": "purchase_mgmt", "label": "采购管理"},   # 🆕 采购管理模块（明细/账目/请款/报表）
+    # 🆕 采购部 tab 已合并入采购管理视图，不再单列 key=purchase
+    {"key": "purchase_mgmt", "label": "采购管理"},   # 含采购部/明细/账目/请款/报表
     {"key": "warehouse",  "label": "仓库"},
     {"key": "logistics",  "label": "物流发货部"},
     {"key": "finance",    "label": "财务部"},
