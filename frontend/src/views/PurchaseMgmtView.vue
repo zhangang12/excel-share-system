@@ -1293,6 +1293,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 </template>
 
 <style scoped>
+/* 弹窗表单：标签与控件之间留出间距，行间距不过于紧凑 */
+:deep(.el-dialog .el-form-item__label) { padding-right: 10px; box-sizing: border-box; }
+:deep(.el-dialog .el-form-item) { margin-bottom: 20px; }
+:deep(.el-dialog .el-form-item:last-child) { margin-bottom: 0; }
+
 .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
 .summary-bar { display: flex; gap: 24px; padding: 12px 16px; background: var(--el-fill-color-light); border-radius: 6px; margin-top: 12px; font-size: 14px; }
 .kpi-row { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
