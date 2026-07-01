@@ -815,7 +815,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             max-height="calc(100vh - 280px)"
             :scrollbar-always-on="true"
           >
-            <el-table-column prop="supplier_name" label="供应商" width="160" show-overflow-tooltip />
+            <el-table-column prop="supplier_name" label="供应商" min-width="160" show-overflow-tooltip />
             <el-table-column prop="category" label="分类" width="76">
               <template #default="{ row }">{{ row.category || '—' }}</template>
             </el-table-column>
