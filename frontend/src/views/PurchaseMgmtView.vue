@@ -956,9 +956,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-card>
 
     <!-- ==================== 采购明细弹窗 ==================== -->
-    <el-dialog v-model="itemDialogVisible" :title="editingItem ? '编辑采购明细' : '新增采购明细'" width="680px">
-      <el-form :model="itemForm" label-width="90px">
-        <el-row :gutter="12">
+    <el-dialog v-model="itemDialogVisible" :title="editingItem ? '编辑采购明细' : '新增采购明细'" width="860px">
+      <el-form :model="itemForm" label-width="100px">
+        <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="供应商" required>
               <el-select v-model="itemForm.supplier_id" placeholder="选择供应商" style="width:100%">
@@ -1054,9 +1054,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 批量开票弹窗 ==================== -->
-    <el-dialog v-model="batchInvoiceVisible" title="批量标记开票" width="400px">
+    <el-dialog v-model="batchInvoiceVisible" title="批量标记开票" width="480px">
       <el-alert :title="`已选 ${selectedItems.length} 条明细`" type="info" :closable="false" style="margin-bottom:16px" />
-      <el-form :model="batchInvoiceForm" label-width="90px">
+      <el-form :model="batchInvoiceForm" label-width="100px">
         <el-form-item label="开票日期">
           <el-date-picker v-model="batchInvoiceForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
         </el-form-item>
@@ -1071,8 +1071,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 请款弹窗 ==================== -->
-    <el-dialog v-model="payReqVisible" title="发起请款" width="500px">
-      <el-form :model="payReqForm" label-width="90px">
+    <el-dialog v-model="payReqVisible" title="发起请款" width="620px">
+      <el-form :model="payReqForm" label-width="100px">
         <el-form-item label="供应商">
           <span>{{ suppliers.find(s => s.id === payReqForm.supplier_id)?.name }}</span>
         </el-form-item>
@@ -1096,9 +1096,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 供应商弹窗 ==================== -->
-    <el-dialog v-model="supplierDialogVisible" :title="editingSupplier ? '编辑供应商' : '新增供应商'" width="600px">
-      <el-form :model="supplierForm" label-width="90px">
-        <el-row :gutter="12">
+    <el-dialog v-model="supplierDialogVisible" :title="editingSupplier ? '编辑供应商' : '新增供应商'" width="760px">
+      <el-form :model="supplierForm" label-width="100px">
+        <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="供应商名称" required>
               <el-input v-model="supplierForm.name" />
@@ -1179,8 +1179,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 期初余额弹窗 ==================== -->
-    <el-dialog v-model="openingBalanceVisible" :title="`录入期初余额 — ${openingBalanceSupplierName}`" width="400px">
-      <el-form :model="openingBalanceForm" label-width="90px">
+    <el-dialog v-model="openingBalanceVisible" :title="`录入期初余额 — ${openingBalanceSupplierName}`" width="500px">
+      <el-form :model="openingBalanceForm" label-width="100px">
         <el-form-item label="截止日期" required>
           <el-date-picker v-model="openingBalanceForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
         </el-form-item>
