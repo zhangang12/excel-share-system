@@ -815,39 +815,39 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             max-height="calc(100vh - 280px)"
             :scrollbar-always-on="true"
           >
-            <el-table-column prop="supplier_name" label="供应商" width="170" show-overflow-tooltip />
-            <el-table-column prop="category" label="分类" width="80">
+            <el-table-column prop="supplier_name" label="供应商" width="160" show-overflow-tooltip />
+            <el-table-column prop="category" label="分类" width="76">
               <template #default="{ row }">{{ row.category || '—' }}</template>
             </el-table-column>
-            <el-table-column label="状态" width="68">
+            <el-table-column label="状态" width="66">
               <template #default="{ row }">
                 <el-tag :type="suppliers.find(s=>s.id===row.supplier_id)?.status==='active'?'success':'info'" size="small">
                   {{ suppliers.find(s=>s.id===row.supplier_id)?.status==='active' ? '启用' : '停用' }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="期初欠款" width="100" align="right">
+            <el-table-column label="期初欠款" width="96" align="right">
               <template #default="{ row }">{{ fmtMoney(row.opening_balance) }}</template>
             </el-table-column>
-            <el-table-column label="收货合计" width="100" align="right">
+            <el-table-column label="收货合计" width="96" align="right">
               <template #default="{ row }"><b>{{ fmtMoney(row.received_total) }}</b></template>
             </el-table-column>
-            <el-table-column label="开票合计" width="100" align="right">
+            <el-table-column label="开票合计" width="96" align="right">
               <template #default="{ row }">{{ fmtMoney(row.invoice_total) }}</template>
             </el-table-column>
-            <el-table-column label="待开票" width="100" align="right">
+            <el-table-column label="待开票" width="96" align="right">
               <template #default="{ row }"><span class="warn">{{ fmtMoney(row.uninvoiced) }}</span></template>
             </el-table-column>
-            <el-table-column label="已付款" width="100" align="right">
+            <el-table-column label="已付款" width="96" align="right">
               <template #default="{ row }">{{ fmtMoney(row.paid_total) }}</template>
             </el-table-column>
-            <el-table-column label="欠款余额" width="100" align="right">
+            <el-table-column label="欠款余额" width="96" align="right">
               <template #default="{ row }"><b class="danger">{{ fmtMoney(row.outstanding) }}</b></template>
             </el-table-column>
-            <el-table-column label="明细数" width="62" align="center">
+            <el-table-column label="明细数" width="70" align="center">
               <template #default="{ row }">{{ row.item_count }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="240" fixed="right">
+            <el-table-column label="操作" width="272" fixed="right">
               <template #default="{ row }">
                 <el-button size="small" link type="primary" @click="openDrawer(row)">查看明细</el-button>
                 <template v-if="canWrite">
