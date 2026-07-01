@@ -1391,6 +1391,138 @@ async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
     return {"order_type_set": type_set, "orders_created": orders_created}
 
 
+async def backfill_v2_template_for_058_plus(db: AsyncSession) -> dict:
+    """🆕 2026-07-01：对编号 >= 2026-058 的项目强制对齐到"最新6表模板"。
+
+    背景：2026-06-24 模板更新（钣金装配 16列→12列，新增激光件清单）仅对新建项目生效；
+    2026-058 及之后的项目为新版业务口径，均应采用 6 表模板（客户确认）。
+
+    操作（幂等）：
+    1. 缺少「激光件清单」→ 补建空表（按当前模板字段）
+    2. 「钣金装配」仍为旧 16 列格式（LEGACY_SHEET_TEMPLATES）且无任何记录 → 清空字段后
+       按当前 12 列模板重建；若已有数据则跳过（不丢数据）
+
+    不处理：
+    - 编号 < 2026-058 的项目（保留旧模板，客户旧项目不动）
+    - 已删除项目
+    - 标准件清单/外协加工/不锈钢原料下料单（与旧模板字段相同，无需变更）
+    - 电工采购单（已由 backfill_elec_po_sheet 统一处理，本函数不重复）
+    """
+    from sqlalchemy import delete as sql_delete
+    from .sheet_templates import SHEET_TEMPLATES, LEGACY_SHEET_TEMPLATES
+    from .routers.projects_router import _create_sheet_with_fields
+
+    # 找出 code >= "2026-058" 的活跃项目
+    res = await db.execute(
+        select(models.Project).where(
+            models.Project.is_deleted == False,   # noqa: E712
+            models.Project.code >= "2026-058",
+        )
+    )
+    target_projects = list(res.scalars().all())
+    if not target_projects:
+        return {"laser_added": 0, "bangin_rebuilt": 0, "skipped_data": 0}
+
+    target_pids = [p.id for p in target_projects]
+    pid_to_code = {p.id: p.code for p in target_projects}
+
+    # 取所有相关 datasheet
+    res = await db.execute(
+        select(models.Datasheet).where(models.Datasheet.project_id.in_(target_pids))
+    )
+    all_ds = list(res.scalars().all())
+    ds_by_pid: dict[int, dict[str, models.Datasheet]] = {}
+    for d in all_ds:
+        ds_by_pid.setdefault(d.project_id, {})[d.name] = d
+
+    laser_tpl = SHEET_TEMPLATES["激光件清单"]
+    bangin_new_tpl = SHEET_TEMPLATES["钣金装配"]
+    bangin_legacy_sets = [set(v) for v in LEGACY_SHEET_TEMPLATES.get("钣金装配", [])]
+
+    laser_added = 0
+    bangin_rebuilt = 0
+    skipped_data = 0
+
+    for pid in target_pids:
+        sheets = ds_by_pid.get(pid, {})
+
+        # —— 1. 补建激光件清单 ——
+        if "激光件清单" not in sheets:
+            # sort_order: 放在现有最后一张之后（或默认 4）
+            max_order = max((d.sort_order for d in sheets.values()), default=3)
+            await _create_sheet_with_fields(
+                db, pid, "激光件清单", list(laser_tpl), max_order + 1
+            )
+            laser_added += 1
+            log.info("[backfill_v2_template_058+] %s 补建激光件清单", pid_to_code[pid])
+
+        # —— 2. 钣金装配旧格式（16列）→ 升级到新 12 列（无数据时） ——
+        bangin = sheets.get("钣金装配")
+        if bangin is None:
+            continue
+        # 取字段
+        res = await db.execute(
+            select(models.Field).where(models.Field.datasheet_id == bangin.id)
+        )
+        fields = list(res.scalars().all())
+        field_set = {(f.name or "").strip() for f in fields}
+
+        # 已经是新模板 → 跳过
+        if field_set == set(bangin_new_tpl):
+            continue
+        # 不是历史格式 → 跳过（可能已是非标结构，不动）
+        if not any(field_set == legacy_set for legacy_set in bangin_legacy_sets):
+            continue
+
+        # 检查是否有数据记录
+        res = await db.execute(
+            select(models.Record.id).where(
+                models.Record.datasheet_id == bangin.id
+            ).limit(1)
+        )
+        has_records = res.scalar_one_or_none() is not None
+        if has_records:
+            skipped_data += 1
+            log.info(
+                "[backfill_v2_template_058+] %s 钣金装配有存量数据，跳过格式升级",
+                pid_to_code[pid],
+            )
+            continue
+
+        # 无数据 → 清空字段 + 按新模板重建
+        field_ids = [f.id for f in fields]
+        if field_ids:
+            await db.execute(sql_delete(models.FieldPermission).where(
+                models.FieldPermission.field_id.in_(field_ids)
+            ))
+            await db.execute(sql_delete(models.Field).where(
+                models.Field.id.in_(field_ids)
+            ))
+        for sort_i, tpl_name in enumerate(bangin_new_tpl):
+            db.add(models.Field(
+                datasheet_id=bangin.id,
+                name=tpl_name,
+                type=_tpl_field_type(tpl_name),
+                sort_order=sort_i,
+                config=_tpl_field_config(tpl_name),
+            ))
+        bangin_rebuilt += 1
+        log.info(
+            "[backfill_v2_template_058+] %s 钣金装配 16列旧格式→12列新格式",
+            pid_to_code[pid],
+        )
+
+    if laser_added or bangin_rebuilt:
+        await db.commit()
+    log.info(
+        "[backfill_v2_template_058+] 激光件清单补建 %d 个，钣金装配格式升级 %d 个，"
+        "有数据跳过 %d 个",
+        laser_added, bangin_rebuilt, skipped_data,
+    )
+    return {"laser_added": laser_added, "bangin_rebuilt": bangin_rebuilt,
+            "skipped_data": skipped_data}
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -1501,3 +1633,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_order_type_and_dept_orders(db)
     except Exception as e:
         log.warning("backfill_order_type_and_dept_orders failed: %s", e)
+    try:
+        await backfill_v2_template_for_058_plus(db)
+    except Exception as e:
+        log.warning("backfill_v2_template_for_058_plus failed: %s", e)
