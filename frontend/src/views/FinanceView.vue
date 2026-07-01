@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 🆕 v3 M09 财务部：待开票 / 已开票 / 售后费用 三 tab
+// 🆕 v3 M09 财务部：待开票 / 已开票 / 售后费用 / 请款审批 四 tab
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
@@ -11,6 +11,16 @@ import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const isManager = computed(() => auth.hasRole('admin', 'manager'))
+
+interface PaymentRequestOut {
+  id: number; supplier_id: number; supplier_name: string
+  requested_amount: number; requester_id: number; requester_name: string
+  status: string; notes?: string | null
+  finance_approver_id?: number | null; approver_name?: string | null; approved_at?: string | null
+  paid_amount?: number | null; paid_date?: string | null; payment_method?: string | null
+  reject_reason?: string | null; created_at: string
+  items: { item_id: number; allocated_amount: number; item_name?: string }[]
+}
 
 interface InvoiceRow {
   ledger_id: number; code: string; name: string; customer?: string | null
@@ -33,6 +43,70 @@ const invoiced = ref<InvoiceRow[]>([])
 const aftersales = ref<AsRow[]>([])
 const asTotal = ref(0)
 
+// 请款审批
+const prStatus = ref('pending')
+const payReqs = ref<PaymentRequestOut[]>([])
+const prLoading = ref(false)
+const rejectDialogVisible = ref(false)
+const rejectReason = ref('')
+const rejectTargetId = ref<number | null>(null)
+const payDialogVisible = ref(false)
+const payForm = ref({ paid_amount: 0, paid_date: '', payment_method: '银行转账' })
+const payTargetId = ref<number | null>(null)
+
+const prStatusLabel: Record<string, string> = {
+  pending: '待审批', approved: '已审批', paid: '已付款', rejected: '已拒绝',
+}
+
+async function loadPayReqs() {
+  prLoading.value = true
+  try {
+    const r = await http.get<PaymentRequestOut[]>('/finance/payment-requests', { params: { status: prStatus.value } })
+    payReqs.value = r.data
+  } finally { prLoading.value = false }
+}
+
+async function approvePayReq(id: number) {
+  try {
+    await ElMessageBox.confirm('确认审批通过此请款申请？', '审批确认', { type: 'info' })
+  } catch { return }
+  await http.put(`/purchase-mgmt/payment-requests/${id}/approve`)
+  ElMessage.success('已审批通过')
+  await loadPayReqs()
+}
+
+function openReject(id: number) {
+  rejectTargetId.value = id
+  rejectReason.value = ''
+  rejectDialogVisible.value = true
+}
+
+async function submitReject() {
+  if (!rejectTargetId.value) return
+  await http.put(`/purchase-mgmt/payment-requests/${rejectTargetId.value}/reject`, { reason: rejectReason.value })
+  ElMessage.success('已拒绝请款申请')
+  rejectDialogVisible.value = false
+  await loadPayReqs()
+}
+
+function openPay(pr: PaymentRequestOut) {
+  payTargetId.value = pr.id
+  payForm.value = { paid_amount: pr.requested_amount, paid_date: new Date().toISOString().slice(0, 10), payment_method: '银行转账' }
+  payDialogVisible.value = true
+}
+
+async function submitPay() {
+  if (!payTargetId.value) return
+  await http.put(`/purchase-mgmt/payment-requests/${payTargetId.value}/pay`, payForm.value)
+  ElMessage.success('付款已记录')
+  payDialogVisible.value = false
+  await loadPayReqs()
+}
+
+function prTagType(status: string) {
+  return status === 'paid' ? 'success' : status === 'approved' ? 'primary' : status === 'rejected' ? 'danger' : 'warning'
+}
+
 async function load() {
   loading.value = true
   try {
@@ -45,7 +119,7 @@ async function load() {
     aftersales.value = a.rows; asTotal.value = a.stats.approved_cost
   } finally { loading.value = false }
 }
-onMounted(load)
+onMounted(async () => { await load(); await loadPayReqs() })
 
 // 🆕 把同 invoice_batch_id 的多行归为一行展示（合并组），单项目保持原样
 function groupRows(list: InvoiceRow[]): ViewRow[] {
@@ -243,8 +317,99 @@ async function revokeInvoice(row: ViewRow) {
           </el-table>
           <EmptyHint v-if="!aftersales.length" text="暂无已审批售后费用（售后部审批后自动同步）" />
         </el-tab-pane>
+
+        <el-tab-pane label="💰 请款审批" name="pay_requests">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
+            <el-select v-model="prStatus" style="width:130px" @change="loadPayReqs">
+              <el-option value="pending" label="待审批" />
+              <el-option value="approved" label="已审批" />
+              <el-option value="paid" label="已付款" />
+              <el-option value="rejected" label="已拒绝" />
+              <el-option value="all" label="全部" />
+            </el-select>
+            <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
+          </div>
+          <el-table :data="payReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
+            <el-table-column prop="id" label="申请编号" width="80" />
+            <el-table-column prop="supplier_name" label="供应商" min-width="130" />
+            <el-table-column prop="requester_name" label="申请人" width="90" />
+            <el-table-column label="申请金额" width="120" align="right">
+              <template #default="{ row }">{{ fmtMoney(row.requested_amount) }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="prTagType(row.status)" size="small">{{ prStatusLabel[row.status] || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="notes" label="备注" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.notes || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="付款信息" min-width="150">
+              <template #default="{ row }">
+                <span v-if="row.status === 'paid'">
+                  {{ fmtMoney(row.paid_amount) }} · {{ row.paid_date }} · {{ row.payment_method }}
+                </span>
+                <span v-else-if="row.reject_reason" class="muted">拒绝：{{ row.reject_reason }}</span>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="申请时间" width="110">
+              <template #default="{ row }">{{ row.created_at?.slice(0, 10) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="180">
+              <template #default="{ row }">
+                <template v-if="row.status === 'pending'">
+                  <el-button size="small" type="primary" @click="approvePayReq(row.id)">审批通过</el-button>
+                  <el-button size="small" type="danger" link @click="openReject(row.id)">拒绝</el-button>
+                </template>
+                <template v-else-if="row.status === 'approved'">
+                  <el-button size="small" type="success" @click="openPay(row)">记录付款</el-button>
+                </template>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <EmptyHint v-if="!payReqs.length" text="暂无请款申请" />
+        </el-tab-pane>
       </el-tabs>
     </el-card>
+
+    <!-- 拒绝原因弹窗 -->
+    <el-dialog v-model="rejectDialogVisible" title="拒绝请款申请" width="420px">
+      <el-form label-width="80px">
+        <el-form-item label="拒绝原因">
+          <el-input v-model="rejectReason" type="textarea" :rows="3" placeholder="请填写拒绝原因（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rejectDialogVisible = false">取消</el-button>
+        <el-button type="danger" @click="submitReject">确认拒绝</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 记录付款弹窗 -->
+    <el-dialog v-model="payDialogVisible" title="记录付款" width="480px">
+      <el-form :model="payForm" label-width="90px">
+        <el-form-item label="付款金额">
+          <el-input-number v-model="payForm.paid_amount" :min="0" :precision="2" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="付款日期">
+          <el-date-picker v-model="payForm.paid_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="付款方式">
+          <el-select v-model="payForm.payment_method" style="width:100%">
+            <el-option value="银行转账" label="银行转账" />
+            <el-option value="现金" label="现金" />
+            <el-option value="支票" label="支票" />
+            <el-option value="其他" label="其他" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="payDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitPay">确认付款</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

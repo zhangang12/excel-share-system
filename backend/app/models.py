@@ -535,3 +535,103 @@ class RevisionRequest(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     raiser: Mapped[Optional["User"]] = relationship(lazy="joined", foreign_keys=[raised_by])
+
+
+# ==================== 🆕 采购管理模块 ====================
+
+class Supplier(Base):
+    """供应商档案"""
+    __tablename__ = "suppliers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), index=True)
+    code: Mapped[Optional[str]] = mapped_column(String(32), unique=True, index=True)
+    category: Mapped[Optional[str]] = mapped_column(String(32))       # 外协/标准件/不锈钢/激光/电气/运输
+    contact: Mapped[Optional[str]] = mapped_column(String(64))
+    phone: Mapped[Optional[str]] = mapped_column(String(64))
+    address: Mapped[Optional[str]] = mapped_column(String(255))
+    tax_no: Mapped[Optional[str]] = mapped_column(String(64))
+    bank_name: Mapped[Optional[str]] = mapped_column(String(128))
+    bank_account: Mapped[Optional[str]] = mapped_column(String(64))
+    settlement_type: Mapped[Optional[str]] = mapped_column(String(16))  # 现金/月结/无账期
+    credit_days: Mapped[Optional[int]] = mapped_column()
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PurchaseItem(Base):
+    """采购明细（唯一录入入口）"""
+    __tablename__ = "purchase_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
+    delivery_date: Mapped[Optional[str]] = mapped_column(String(10))
+    contract_no: Mapped[Optional[str]] = mapped_column(String(64))
+    project_code: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    delivery_note_no: Mapped[Optional[str]] = mapped_column(String(64))
+    item_name: Mapped[str] = mapped_column(String(128))
+    spec: Mapped[Optional[str]] = mapped_column(String(255))
+    qty: Mapped[Optional[float]] = mapped_column()
+    unit_price: Mapped[Optional[float]] = mapped_column()
+    received_amount: Mapped[float] = mapped_column(default=0)
+    invoice_date: Mapped[Optional[str]] = mapped_column(String(10))
+    tax_rate: Mapped[Optional[str]] = mapped_column(String(16))
+    invoice_amount: Mapped[float] = mapped_column(default=0)
+    paid_amount: Mapped[float] = mapped_column(default=0)
+    paid_date: Mapped[Optional[str]] = mapped_column(String(10))
+    invoice_status: Mapped[str] = mapped_column(String(16), default="待对账", index=True)
+    buyer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    supplier: Mapped["Supplier"] = relationship(lazy="joined")
+    buyer: Mapped[Optional["User"]] = relationship(foreign_keys=[buyer_id], lazy="joined")
+
+
+class SupplierOpeningBalance(Base):
+    """供应商期初余额（每家一条）"""
+    __tablename__ = "supplier_opening_balances"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), unique=True, index=True)
+    balance_date: Mapped[str] = mapped_column(String(10))
+    outstanding_amount: Mapped[float] = mapped_column(default=0)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    supplier: Mapped["Supplier"] = relationship(lazy="joined")
+
+
+class PaymentRequest(Base):
+    """请款单"""
+    __tablename__ = "payment_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
+    requested_amount: Mapped[float] = mapped_column(default=0)
+    requester_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    finance_approver_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    paid_amount: Mapped[Optional[float]] = mapped_column()
+    paid_date: Mapped[Optional[str]] = mapped_column(String(10))
+    payment_method: Mapped[Optional[str]] = mapped_column(String(32))
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    supplier: Mapped["Supplier"] = relationship(lazy="joined")
+    requester: Mapped[Optional["User"]] = relationship(foreign_keys=[requester_id], lazy="joined")
+    finance_approver: Mapped[Optional["User"]] = relationship(foreign_keys=[finance_approver_id], lazy="joined")
+
+
+class PaymentRequestItem(Base):
+    """请款单↔采购明细 关联表"""
+    __tablename__ = "payment_request_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(
+        ForeignKey("payment_requests.id", ondelete="CASCADE"), index=True
+    )
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_items.id", ondelete="CASCADE"), index=True
+    )
+    allocated_amount: Mapped[float] = mapped_column(default=0)

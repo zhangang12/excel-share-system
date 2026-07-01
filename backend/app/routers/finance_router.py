@@ -66,6 +66,21 @@ async def invoiced(
     return await _invoice_rows(db, "invoiced")
 
 
+@router.get("/payment-requests", response_model=list[schemas.PaymentRequestOut])
+async def finance_payment_requests(
+    status: str = "pending",
+    _: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """财务待审请款列表（默认只看 pending，可传 approved/paid/rejected/all）"""
+    from ..routers.purchase_mgmt_router import _pr_out
+    stmt = select(models.PaymentRequest).order_by(models.PaymentRequest.created_at.desc())
+    if status != "all":
+        stmt = stmt.where(models.PaymentRequest.status == status)
+    r = await db.execute(stmt)
+    return [await _pr_out(db, pr.id) for pr in r.scalars().all()]
+
+
 @router.get("/aftersales", response_model=schemas.AfterSalesListOut)
 async def finance_aftersales(
     _: models.User = Depends(require_roles("finance")),

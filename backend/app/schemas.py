@@ -846,3 +846,245 @@ class SalesLeadReport(BaseModel):
     total_leads: int = 0
     total_deal: int = 0
     total_rate: float = 0
+
+
+# ==================== 🆕 采购管理模块 ====================
+
+# ---------- 供应商 ----------
+class SupplierCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    code: Optional[str] = None
+    category: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    tax_no: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account: Optional[str] = None
+    settlement_type: Optional[str] = None
+    credit_days: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class SupplierUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    category: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    tax_no: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account: Optional[str] = None
+    settlement_type: Optional[str] = None
+    credit_days: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class SupplierOut(BaseModel):
+    id: int
+    name: str
+    code: Optional[str] = None
+    category: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    tax_no: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account: Optional[str] = None
+    settlement_type: Optional[str] = None
+    credit_days: Optional[int] = None
+    status: str
+    notes: Optional[str] = None
+    created_at: datetime
+
+
+# ---------- 采购明细 ----------
+class PurchaseItemCreate(BaseModel):
+    supplier_id: int
+    delivery_date: Optional[str] = None
+    contract_no: Optional[str] = None
+    project_code: Optional[str] = None
+    delivery_note_no: Optional[str] = None
+    item_name: str = Field(min_length=1, max_length=128)
+    spec: Optional[str] = None
+    qty: Optional[float] = None
+    unit_price: Optional[float] = None
+    received_amount: float = 0
+    invoice_date: Optional[str] = None
+    tax_rate: Optional[str] = None
+    invoice_amount: float = 0
+    invoice_status: str = "待对账"
+    notes: Optional[str] = None
+
+
+class PurchaseItemUpdate(BaseModel):
+    supplier_id: Optional[int] = None
+    delivery_date: Optional[str] = None
+    contract_no: Optional[str] = None
+    project_code: Optional[str] = None
+    delivery_note_no: Optional[str] = None
+    item_name: Optional[str] = None
+    spec: Optional[str] = None
+    qty: Optional[float] = None
+    unit_price: Optional[float] = None
+    received_amount: Optional[float] = None
+    invoice_date: Optional[str] = None
+    tax_rate: Optional[str] = None
+    invoice_amount: Optional[float] = None
+    invoice_status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PurchaseItemOut(BaseModel):
+    id: int
+    supplier_id: int
+    supplier_name: str
+    delivery_date: Optional[str] = None
+    contract_no: Optional[str] = None
+    project_code: Optional[str] = None
+    delivery_note_no: Optional[str] = None
+    item_name: str
+    spec: Optional[str] = None
+    qty: Optional[float] = None
+    unit_price: Optional[float] = None
+    received_amount: float = 0
+    invoice_date: Optional[str] = None
+    tax_rate: Optional[str] = None
+    invoice_amount: float = 0
+    paid_amount: float = 0
+    paid_date: Optional[str] = None
+    invoice_status: str
+    buyer_id: Optional[int] = None
+    buyer_name: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+
+
+class PurchaseItemSummary(BaseModel):
+    received_total: float = 0
+    uninvoiced: float = 0
+    paid_total: float = 0
+    outstanding: float = 0
+    count: int = 0
+
+
+class BatchInvoiceIn(BaseModel):
+    item_ids: list[int]
+    invoice_date: Optional[str] = None
+    invoice_amount: Optional[float] = None  # 仅单条时有效
+
+
+# ---------- 期初余额 ----------
+class SupplierOpeningBalanceIn(BaseModel):
+    balance_date: str
+    outstanding_amount: float = 0
+    notes: Optional[str] = None
+
+
+class SupplierOpeningBalanceOut(BaseModel):
+    id: int
+    supplier_id: int
+    balance_date: str
+    outstanding_amount: float
+    notes: Optional[str] = None
+
+
+# ---------- 供应商账目一览 ----------
+class SupplierStatementRow(BaseModel):
+    supplier_id: int
+    supplier_name: str
+    category: Optional[str] = None
+    opening_balance: float = 0
+    received_total: float = 0
+    invoice_total: float = 0
+    paid_total: float = 0
+    outstanding: float = 0
+    uninvoiced: float = 0
+    item_count: int = 0
+
+
+class SupplierStatementList(BaseModel):
+    rows: list[SupplierStatementRow]
+    total_opening: float = 0
+    total_received: float = 0
+    total_paid: float = 0
+    total_outstanding: float = 0
+
+
+# ---------- 请款单 ----------
+class PaymentRequestItemIn(BaseModel):
+    item_id: int
+    allocated_amount: float = 0
+
+
+class PaymentRequestCreate(BaseModel):
+    supplier_id: int
+    requested_amount: float
+    notes: Optional[str] = None
+    items: list[PaymentRequestItemIn] = Field(default_factory=list)
+
+
+class PaymentRequestOut(BaseModel):
+    id: int
+    supplier_id: int
+    supplier_name: str
+    requested_amount: float
+    requester_id: Optional[int] = None
+    requester_name: Optional[str] = None
+    status: str
+    notes: Optional[str] = None
+    finance_approver_id: Optional[int] = None
+    approver_name: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    paid_amount: Optional[float] = None
+    paid_date: Optional[str] = None
+    payment_method: Optional[str] = None
+    reject_reason: Optional[str] = None
+    created_at: datetime
+    items: list[dict] = Field(default_factory=list)
+
+
+class PaymentRejectIn(BaseModel):
+    reason: str = ""
+
+
+class PaymentPayIn(BaseModel):
+    paid_amount: float
+    paid_date: str
+    payment_method: Optional[str] = None
+
+
+# ---------- 报表 ----------
+class PurchaseKPI(BaseModel):
+    month_amount: float = 0
+    quarter_amount: float = 0
+    year_amount: float = 0
+    total_outstanding: float = 0
+    pending_requests: int = 0
+
+
+class PurchaseMonthlyPoint(BaseModel):
+    month: str
+    amount: float = 0
+    paid: float = 0
+
+
+class PurchaseBuyerRow(BaseModel):
+    buyer_id: Optional[int] = None
+    buyer_name: str
+    amount: float = 0
+    count: int = 0
+
+
+class PurchaseProjectRow(BaseModel):
+    project_code: str
+    amount: float = 0
+    count: int = 0
+
+
+class PurchaseTopSupplier(BaseModel):
+    supplier_id: int
+    supplier_name: str
+    amount: float = 0
+    count: int = 0

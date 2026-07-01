@@ -22,7 +22,8 @@ MENU_DEFS: list[dict] = [
     {"key": "electric",   "label": "电工部"},
     {"key": "produce",    "label": "生产部"},
     # 🆕 2026-06-19 「钣金组」菜单并入「生产部」(以 tab 呈现)，不再单列菜单 key=sheet
-    {"key": "purchase",   "label": "采购部"},
+    {"key": "purchase",      "label": "采购部"},
+    {"key": "purchase_mgmt", "label": "采购管理"},   # 🆕 采购管理模块（明细/账目/请款/报表）
     {"key": "warehouse",  "label": "仓库"},
     {"key": "logistics",  "label": "物流发货部"},
     {"key": "finance",    "label": "财务部"},
@@ -63,10 +64,11 @@ ROLE_MENUS: dict[str, list[str]] = {
     "assembler":        ["catalog", "produce"],               # 无详单；装配组 tab 在生产部菜单内
     "pm_lead":          ["catalog", "list", "produce"],
     "sheetmetal":       ["catalog", "produce"],                 # 🆕 钣金组并入生产部菜单(tab)；无详单（同 assembler 口径）
-    "buyer":            ["catalog", "list", "purchase"],
+    "buyer":            ["catalog", "list", "purchase", "purchase_mgmt"],
+    "buyer_lead":       ["catalog", "list", "purchase", "purchase_mgmt"],  # 🆕 采购主管
     "warehouse_lead":   ["catalog", "list", "warehouse"],
     "logistics":        ["catalog", "list", "logistics"],
-    "finance":          ["catalog", "list", "finance"],
+    "finance":          ["catalog", "list", "finance", "purchase_mgmt"],
     "as_worker":        ["aftersales"],                       # 仅售后部（无项目目录）
     "as_lead":          ["aftersales"],
 }
