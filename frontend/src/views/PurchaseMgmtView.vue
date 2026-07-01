@@ -847,12 +847,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column label="明细数" width="70" align="center">
               <template #default="{ row }">{{ row.item_count }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="200" fixed="right">
+            <el-table-column label="操作" width="240" fixed="right">
               <template #default="{ row }">
                 <el-button size="small" link type="primary" @click="openDrawer(row)">查看明细</el-button>
                 <template v-if="canWrite">
                   <el-button size="small" link @click="openEditSupplier(suppliers.find(s=>s.id===row.supplier_id)!)">编辑</el-button>
-                  <el-button size="small" link @click="openOpeningBalance(row)">期初</el-button>
+                  <el-button size="small" link @click="openOpeningBalance(row)">期初余额</el-button>
                   <el-button size="small" link type="warning" @click="toggleSupplier(row)">
                     {{ suppliers.find(s=>s.id===row.supplier_id)?.status==='active' ? '停用' : '启用' }}
                   </el-button>
