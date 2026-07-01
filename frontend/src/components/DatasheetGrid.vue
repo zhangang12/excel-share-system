@@ -281,10 +281,17 @@ function startEditHeader(col: HeaderColumn) {
   if (!isHeaderCellEditable(col)) return
   editingHeaderLabel.value = col.label
   // meta 列预填「手填原值」（不含派生回退，避免把计算出的制图用时塞进输入框）
-  if (col.source === 'meta') {
-    editingHeaderValue.value = ovRaw(col.ovKey, col.fallbackHeaderKey)
+  const raw = col.source === 'meta'
+    ? ovRaw(col.ovKey, col.fallbackHeaderKey)
+    : projectHeaderValue(col)
+  // 日期列：规范化为 YYYY-MM-DD 供日期选择器识别
+  if (col.label.includes('日期') && raw) {
+    const d = parseLooseDate(raw)
+    editingHeaderValue.value = d
+      ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      : raw
   } else {
-    editingHeaderValue.value = projectHeaderValue(col)
+    editingHeaderValue.value = raw
   }
 }
 function onHeaderCellClick(col: HeaderColumn) {
@@ -655,13 +662,24 @@ async function addRow() {
               @click="onHeaderCellClick(col)"
               @dblclick="onHeaderCellClick(col)">
             <!-- 编辑态 -->
-            <el-input v-if="isEditingHeader(col)"
-                      v-model="editingHeaderValue" size="small" autofocus
-                      class="header-edit-input"
-                      @blur="saveHeader"
-                      @keyup.enter="saveHeader"
-                      @keyup.escape="cancelEditHeader"
-                      @click.stop />
+            <template v-if="isEditingHeader(col)">
+              <el-date-picker v-if="col.label.includes('日期')"
+                              v-model="editingHeaderValue" size="small" type="date"
+                              value-format="YYYY-MM-DD" format="YYYY-MM-DD"
+                              placeholder="选择日期" class="header-edit-date"
+                              :ref="(el: any) => onDatePickerMount(el)"
+                              @change="saveHeader"
+                              @blur="saveHeader"
+                              @keyup.escape="cancelEditHeader"
+                              @click.stop />
+              <el-input v-else
+                        v-model="editingHeaderValue" size="small" autofocus
+                        class="header-edit-input"
+                        @blur="saveHeader"
+                        @keyup.enter="saveHeader"
+                        @keyup.escape="cancelEditHeader"
+                        @click.stop />
+            </template>
             <!-- 显示态：派生列（带 fx 提示），不可编辑 -->
             <el-tooltip v-else-if="projectHeaderFormula(col)" placement="top">
               <template #content>
@@ -1094,6 +1112,17 @@ async function addRow() {
 .header-edit-input {
   width: 100%;
   /* el-input 默认 width 100% 撑满 td，但因 table-layout: fixed，td 宽度不变 */
+}
+.header-edit-date { width: 100%; }
+.header-edit-date :deep(.el-input__wrapper) {
+  padding: 0 4px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px var(--primary) inset;
+  background: #f5f9ff;
+  min-width: 0;
+}
+.header-edit-date :deep(.el-input__inner) {
+  height: 22px; font-size: 12.5px; font-weight: 600; text-align: center;
 }
 .header-edit-input :deep(.el-input__wrapper) {
   padding: 0 4px;
