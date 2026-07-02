@@ -1439,6 +1439,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-table-column prop="delivery_note_no" label="送货单号" width="100">
           <template #default="{ row }">{{ row.delivery_note_no || '—' }}</template>
         </el-table-column>
+        <el-table-column prop="arrival_date" label="到货日期" width="100">
+          <template #default="{ row }">{{ row.arrival_date || '—' }}</template>
+        </el-table-column>
         <el-table-column prop="item_name" label="名称" min-width="120" />
         <el-table-column prop="spec" label="规格" min-width="90">
           <template #default="{ row }">{{ row.spec || '—' }}</template>
