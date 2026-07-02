@@ -803,7 +803,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-button :icon="Refresh" :loading="purchaseLoading" @click="loadPurchaseRows">刷新</el-button>
           </div>
 
-          <el-table :data="purchaseRows" stripe v-loading="purchaseLoading" max-height="calc(100vh - 310px)" :scrollbar-always-on="true">
+          <el-table :data="purchaseRows" stripe v-loading="purchaseLoading" max-height="calc(100vh - 310px)" :scrollbar-always-on="true" class="wrap-cells">
             <el-table-column type="index" label="#" width="50" fixed />
             <el-table-column label="项目编号" width="116" fixed>
               <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
@@ -932,6 +932,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             @selection-change="(v: PurchaseItemOut[]) => selectedItems = v"
             max-height="calc(100vh - 340px)"
             :scrollbar-always-on="true"
+            class="wrap-cells"
           >
             <el-table-column v-if="canWrite" type="selection" width="40" />
             <el-table-column prop="po_no" label="采购单号" width="128">
@@ -1023,6 +1024,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             }"
             max-height="calc(100vh - 280px)"
             :scrollbar-always-on="true"
+            class="wrap-cells"
           >
             <el-table-column prop="supplier_name" label="供应商" min-width="200" />
             <el-table-column prop="category" label="分类" width="92">
@@ -1101,7 +1103,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-col :span="14">
               <div class="report-section">
                 <div class="section-title">月度趋势（近12个月）</div>
-                <el-table :data="monthlyTrend" stripe size="small" max-height="320">
+                <el-table :data="monthlyTrend" stripe size="small" max-height="320" class="wrap-cells">
                   <el-table-column prop="month" label="月份" width="90" />
                   <el-table-column label="收货金额" align="right">
                     <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
@@ -1118,7 +1120,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-col :span="10">
               <div class="report-section">
                 <div class="section-title">Top 供应商</div>
-                <el-table :data="topSuppliers" stripe size="small" max-height="320">
+                <el-table :data="topSuppliers" stripe size="small" max-height="320" class="wrap-cells">
                   <el-table-column type="index" width="40" />
                   <el-table-column prop="supplier_name" label="供应商" min-width="100" />
                   <el-table-column label="采购额" align="right">
@@ -1133,7 +1135,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-col :span="10">
               <div class="report-section">
                 <div class="section-title">按采购员</div>
-                <el-table :data="byBuyer" stripe size="small" max-height="260">
+                <el-table :data="byBuyer" stripe size="small" max-height="260" class="wrap-cells">
                   <el-table-column prop="buyer_name" label="采购员" min-width="90" />
                   <el-table-column label="采购额" align="right">
                     <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
@@ -1149,7 +1151,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                   <el-input v-model="projectSearch" placeholder="搜索项目编号" clearable style="width:180px" @change="loadProjectReport" />
                   <el-button @click="loadProjectReport">查询</el-button>
                 </div>
-                <el-table :data="byProject" stripe size="small" max-height="220">
+                <el-table :data="byProject" stripe size="small" max-height="220" class="wrap-cells">
                   <el-table-column label="项目编号" min-width="110">
                     <template #default="{ row }"><b class="code">{{ row.project_code }}</b></template>
                   </el-table-column>
@@ -1518,7 +1520,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <!-- 🆕 按月合计开票：按到货日期分月，未开票/已开票一目了然 -->
       <el-collapse v-if="drawerMonthly.length" class="monthly-collapse">
         <el-collapse-item :title="`按月合计开票汇总（${drawerMonthly.length} 个月）`" name="m">
-          <el-table :data="drawerMonthly" size="small" stripe>
+          <el-table :data="drawerMonthly" size="small" stripe class="wrap-cells">
             <el-table-column label="月份（按到货日期）" min-width="140">
               <template #default="{ row }"><b>{{ row.month }}</b></template>
             </el-table-column>
@@ -1538,7 +1540,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-collapse-item>
       </el-collapse>
       <el-table v-loading="drawerLoading" :data="drawerItems" stripe size="small"
-                max-height="calc(100vh - 180px)" :scrollbar-always-on="true">
+                max-height="calc(100vh - 180px)" :scrollbar-always-on="true" class="wrap-cells">
         <el-table-column prop="delivery_date" label="下单日期" width="100" />
         <el-table-column prop="project_code" label="项目编号" width="100">
           <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
@@ -1627,7 +1629,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     <!-- ==================== 数据表预览弹窗（采购部用）==================== -->
     <el-dialog v-model="previewVisible" :title="previewTitle" fullscreen destroy-on-close>
       <el-table :data="previewRecords" stripe v-loading="previewLoading"
-                max-height="calc(100vh - 130px)" :scrollbar-always-on="true" size="small">
+                max-height="calc(100vh - 130px)" :scrollbar-always-on="true" size="small" class="wrap-cells">
         <el-table-column
           v-for="f in previewFields" :key="f.id"
           :label="f.name" :min-width="previewColWidth">

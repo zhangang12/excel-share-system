@@ -123,6 +123,8 @@ a:hover { text-decoration: none; opacity: .85; }
 /* 🆕 紧凑布局：表格单元格默认不换行(日期/数字/标签等短内容保持一行;
    长文本列已用 show-overflow-tooltip 单行省略;需多行的元素在自身样式里覆盖) */
 .el-table .cell { white-space: nowrap; }
+/* 🆕 加了 wrap-cells 类的表格：单元格内容自动换行、完整显示、不截断（采购各表用） */
+.el-table.wrap-cells .cell { white-space: normal; word-break: break-word; line-height: 1.5; }
 .el-table--striped .el-table__row.el-table__row--striped {
   background: #fafbfc;
 }
