@@ -52,6 +52,17 @@ const salesOptions = computed(() => salesStaff.value)
 // 🆕 编辑弹窗「选择销售员」用真实用户名单（拥有 sales/sales_lead 角色的在职用户），
 // 修复新建销售员未挂台账前选不到；管理层/主管才需要，登录后拉一次
 const salesStaff = ref<{ id: number; name: string }[]>([])
+
+// 🆕 客户单位联想：历史客户名清单 + autocomplete 过滤（输入简称 → 补全全称）
+const customerOptions = ref<string[]>([])
+async function loadCustomers() {
+  try { customerOptions.value = await salesApi.customers() } catch { /* 联想非关键，失败忽略 */ }
+}
+function queryCustomers(q: string, cb: (arr: { value: string }[]) => void) {
+  const kw = (q || '').trim().toLowerCase()
+  const list = kw ? customerOptions.value.filter(n => n.toLowerCase().includes(kw)) : customerOptions.value
+  cb(list.slice(0, 30).map(v => ({ value: v })))
+}
 async function loadSalesStaff() {
   if (!allView.value) return
   try { salesStaff.value = await salesApi.salespeople() } catch { /* 静默 */ }
@@ -135,7 +146,7 @@ async function openEditCode(row: SalesLedgerRow) {
 }
 function onPage(p: number) { page.value = p; load() }
 function onSize(s: number) { pageSize.value = s; page.value = 1; load() }   // 改每页条数 → 回第 1 页
-onMounted(() => { load(); loadSalesStaff() })
+onMounted(() => { load(); loadSalesStaff(); loadCustomers() })
 
 // ===== 销售下单 =====
 const orderVisible = ref(false)
@@ -959,7 +970,10 @@ async function openReport() {
         </div>
         <div class="fsec">🤝 客户与合同</div>
         <div class="frow">
-          <el-form-item label="客户单位" style="flex: 1"><el-input v-model="orderForm.customer" /></el-form-item>
+          <el-form-item label="客户单位" style="flex: 1">
+            <el-autocomplete v-model="orderForm.customer" :fetch-suggestions="queryCustomers"
+                             placeholder="输入简称联想历史客户全称" clearable style="width:100%" />
+          </el-form-item>
           <el-form-item label="客户分类" style="flex: 1">
             <el-select v-model="orderForm.cust_type" style="width: 100%">
               <el-option label="经销商" value="经销商" /><el-option label="终端客户" value="终端客户" />
@@ -1046,7 +1060,10 @@ async function openReport() {
       <el-form label-position="top">
         <div class="frow">
           <el-form-item label="设备名称" style="flex: 1"><el-input v-model="editForm.name" /></el-form-item>
-          <el-form-item label="客户单位" style="flex: 1"><el-input v-model="editForm.customer" /></el-form-item>
+          <el-form-item label="客户单位" style="flex: 1">
+            <el-autocomplete v-model="editForm.customer" :fetch-suggestions="queryCustomers"
+                             placeholder="输入简称联想历史客户全称" clearable style="width:100%" />
+          </el-form-item>
         </div>
         <div class="frow">
           <el-form-item label="客户分类" style="flex: 1">

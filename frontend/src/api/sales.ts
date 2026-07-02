@@ -92,6 +92,9 @@ export const salesApi = {
   // 🆕 可分配销售员名单（拥有 sales/sales_lead 角色的在职用户），台账编辑下拉用
   salespeople: () => http.get<{ id: number; name: string }[]>('/sales/salespeople').then((r) => r.data),
 
+  // 🆕 客户单位联想：历史去重客户名（下单/编辑台账「客户单位」autocomplete 用）
+  customers: () => http.get<string[]>('/sales/customers').then((r) => r.data),
+
   createOrder: (data: SalesOrderForm) =>
     http.post<{ project_id: number; code: string; order_ids: number[]; ledger_id?: number }>('/sales/orders', data).then((r) => r.data),
 

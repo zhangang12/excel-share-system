@@ -128,6 +128,17 @@ async def list_salespeople(
     return [{"id": u.id, "name": _uname(u)} for u in res.scalars().all()]
 
 
+@router.get("/customers")
+async def list_customers(
+    _: models.User = Depends(require_roles("admin", "manager", "sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 下单/编辑台账「客户单位」联想：返回历史录入过的去重客户名，
+    输入简称即可从下拉补全公司全称（数据源=销售台账已录客户）。"""
+    res = await db.execute(select(models.SalesLedger.customer).distinct())
+    return sorted({(c or "").strip() for (c,) in res.all() if (c or "").strip()})
+
+
 async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> list[schemas.SalesLedgerRow]:
     # 附件名批量取（合同/开票申请/发票）
     att_ids = set()
