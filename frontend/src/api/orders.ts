@@ -98,9 +98,12 @@ export const ordersApi = {
   shipPrepDone: (id: number) =>
     http.post<{ message: string }>(`/orders/${id}/ship-prep-done`).then((r) => r.data),
 
-  // 🆕 发货清单：设计部推送仓库准备（仓库备货完成后通知物流）
-  shipListRequest: (id: number) =>
-    http.post<{ message: string }>(`/orders/${id}/ship-list-request`).then((r) => r.data),
+  // 🆕 发货清单：设计部上传发货清单文件 → 推送仓库备货（仓库备货完成后通知物流）
+  shipListUpload: (id: number, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return http.post<OrderAttachment>(`/orders/${id}/ship-list-upload`, fd).then((r) => r.data)
+  },
 
   // 🆕 #1 对销售下发的合同技术资料提修订意见 → 推送对应销售员
   revisionRequest: (id: number, reason: string) =>

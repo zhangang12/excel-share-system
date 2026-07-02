@@ -2,11 +2,11 @@
 // 🆕 v3 M07 仓库组：总览/出入库/收发存/流水/物料主数据/发货清单 六 tab
 import { ref, onMounted, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Lock, View, Download, Delete } from '@element-plus/icons-vue'
+import { Plus, Search, Lock, View, Download, Delete, Printer } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListItem, type ShipListPendingRow } from '@/api/warehouse'
-import { canInlinePreview } from '@/api/attachments'
+import { canInlinePreview, attachmentBlobUrl, isPdfAtt, isImageAtt } from '@/api/attachments'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -155,6 +155,28 @@ async function deleteShipList(item: ShipListItem) {
 // 预览：图片弹窗 / PDF 新标签 / 其它直接下载
 const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
 function previewShipList(item: ShipListItem) { previewRef.value?.open({ id: item.id, name: item.name }) }
+
+// 🆕 打印发货清单：PDF/图片经隐藏 iframe 直接调起打印；Excel 等格式提示下载后打印
+async function printShipList(item: ShipListItem) {
+  if (!isPdfAtt(item.name) && !isImageAtt(item.name)) {
+    ElMessage.info('该格式（如 Excel）请下载后打印')
+    downloadAttachment({ id: item.id, name: item.name })
+    return
+  }
+  let url = ''
+  try { url = await attachmentBlobUrl(item.id) } catch { ElMessage.error('打开文件失败'); return }
+  const iframe = document.createElement('iframe')
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
+  if (isImageAtt(item.name)) {
+    iframe.srcdoc = `<html><head><style>@page{margin:8mm}html,body{margin:0}img{max-width:100%}</style></head>`
+      + `<body><img src="${url}" onload="window.focus();window.print()"></body></html>`
+  } else {
+    iframe.src = url
+    iframe.onload = () => { try { iframe.contentWindow?.focus(); iframe.contentWindow?.print() } catch { /* 弹窗被拦时用户可手动打印 */ } }
+  }
+  document.body.appendChild(iframe)
+  setTimeout(() => { URL.revokeObjectURL(url); iframe.remove() }, 60000)
+}
 
 function onTab(name: string) {
   if (name === 'txn' && !txns.value.length) loadTxns()
@@ -319,10 +341,11 @@ function onTab(name: string) {
               <el-table-column label="上传时间" width="170">
                 <template #default="{ row }">{{ fmtDate(row.created_at) }}</template>
               </el-table-column>
-              <el-table-column label="操作" width="220" align="center">
+              <el-table-column label="操作" width="290" align="center">
                 <template #default="{ row }">
                   <el-button v-if="canInlinePreview(row.name)" size="small" link type="primary" :icon="View" @click="previewShipList(row)">预览</el-button>
                   <el-button size="small" link :icon="Download" @click="downloadAttachment({ id: row.id, name: row.name })">下载</el-button>
+                  <el-button size="small" link :icon="Printer" @click="printShipList(row)">打印</el-button>
                   <el-button v-if="canWrite" size="small" link type="danger" :icon="Delete" @click="deleteShipList(row)">删除</el-button>
                 </template>
               </el-table-column>

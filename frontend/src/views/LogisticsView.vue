@@ -202,9 +202,9 @@ async function confirmShip(force = false) {
         </el-table-column>
         <el-table-column label="发货清单备货" min-width="120" align="center">
           <template #default="{ row }">
-            <el-tag v-if="row.packlist_status === 'ready'" size="small" type="success" effect="light" round>✅ 已备货</el-tag>
-            <el-tag v-else-if="row.packlist_status === 'requested'" size="small" type="warning" effect="light" round>⏳ 待备货</el-tag>
-            <span v-else class="muted">未推送</span>
+            <el-tag v-if="row.packlist_status === 'ready'" size="small" type="success" effect="light" round>✅ 已备齐</el-tag>
+            <el-tag v-else-if="row.packlist_status === 'requested'" size="small" type="warning" effect="light" round>🔵 进行中</el-tag>
+            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
         <el-table-column label="收货信息" min-width="240">

@@ -390,14 +390,20 @@ async function doShipPrepDone(o: DeptOrder | null) {
     await load()
   } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '操作失败') }
 }
-// 🆕 发货清单：推送仓库准备，仓库备货完成后自动通知物流
-async function doShipListRequest(o: DeptOrder | null) {
+// 🆕 发货清单：设计部上传发货清单文件 → 推送仓库备货，仓库备货完成后自动通知物流
+async function pickShipList(o: DeptOrder | null) {
   if (!o) return
-  try {
-    const r: any = await ordersApi.shipListRequest(o.id)
-    ElMessage.success(r?.message || '已推送仓库')
-    await load()
-  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '操作失败') }
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.xlsx,.xls,.pdf,.doc,.docx,image/*'
+  input.onchange = async () => {
+    const f = input.files?.[0]; if (!f) return
+    try {
+      await ordersApi.shipListUpload(o.id, f)
+      ElMessage.success('发货清单已上传并推送仓库')
+      await load()
+    } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '上传失败') }
+  }
+  input.click()
 }
 // 🆕 #5 打包下载：复用已有的 openPack(row) / packVisible / AttachmentPackDialog（含合同技术资料 + 上传资料）
 
@@ -1328,16 +1334,14 @@ const stockVisible = ref(false)
             </el-button>
           </div>
         </div>
-        <!-- 🆕 发货清单：推送仓库准备 -> 仓库备货完成 -> 物流可见 -->
+        <!-- 🆕 发货清单：上传发货清单 -> 推送仓库备货 -> 仓库备货完成 -> 物流可见 -->
         <div v-if="resMode === 'shipprep'" class="up-sec">
-          <div class="up-h"><el-icon><Van /></el-icon> 发货清单（推送仓库备货）</div>
+          <div class="up-h"><el-icon><Van /></el-icon> 发货清单（上传后推送仓库备货）</div>
           <div class="up-b">
-            <template v-if="!resOrder!.packlist_status || resOrder!.packlist_status === 'none'">
-              <div class="tc-hint" style="margin:0">点击后通知仓库按本项目准备发货清单，仓库备货完成会自动通知物流。</div>
-              <el-button size="small" plain type="primary" :icon="Van" @click="doShipListRequest(resOrder)">推送仓库准备发货清单</el-button>
-            </template>
-            <el-tag v-else-if="resOrder!.packlist_status === 'requested'" type="warning" effect="light">⏳ 已推送仓库，等待备货</el-tag>
-            <el-tag v-else type="success" effect="light">✅ 仓库已备货完成，物流可见</el-tag>
+            <div class="tc-hint" style="margin:0 0 2px">上传发货清单文件，自动推送到仓库；仓库可下载/打印并备货，备货完成后物流即可见。可重复上传替换。</div>
+            <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickShipList(resOrder)">上传发货清单</el-button>
+            <el-tag v-if="resOrder!.packlist_status === 'requested'" type="warning" effect="light" style="margin-top:6px">⏳ 已上传，等待仓库备货</el-tag>
+            <el-tag v-else-if="resOrder!.packlist_status === 'ready'" type="success" effect="light" style="margin-top:6px">✅ 仓库已备货完成，物流可见</el-tag>
           </div>
         </div>
       </template>

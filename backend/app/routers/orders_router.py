@@ -697,38 +697,41 @@ async def ship_prep_done(
     return schemas.Msg(message="已标记发货准备完成" + ("，并通知物流" if not is_spare else ""))
 
 
-@router.post("/{oid}/ship-list-request", response_model=schemas.Msg)
-async def ship_list_request(
+@router.post("/{oid}/ship-list-upload", response_model=schemas.AttachmentOut)
+async def ship_list_upload(
     oid: int,
+    file: UploadFile = File(...),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 发货清单：设计部推送仓库准备发货清单；仓库备货完成后通知物流。"""
+    """🆕 发货清单：设计部上传发货清单文件 → 存为项目级 ship_list（仓库「发货清单」可下载/打印），
+    并把该项目发货单据标记为「待备货」、通知仓库；仓库备货完成后通知物流。可重复上传替换。"""
     o = await _order_or_404(db, oid)
     if o.dept != "design":
-        raise HTTPException(400, "仅设计部任务支持推送发货清单")
+        raise HTTPException(400, "仅设计部任务支持上传发货清单")
     if not (_is_mgr(current) or o.worker_id == current.id):
         raise HTTPException(403, "仅任务负责人可操作")
     if o.status != "done":
-        raise HTTPException(400, "请先点「设计完成」，再推送发货清单")
+        raise HTTPException(400, "请先点「设计完成」，再上传发货清单")
+    a = await save_upload(db, file, biz_type="ship_list", biz_id=o.project_id,
+                          project_id=o.project_id, user=current)
+    # 发货单据标记为待备货（若存在且尚未备货完成）
     r = await db.execute(select(models.Shipment).where(models.Shipment.project_id == o.project_id))
     sh = r.scalar_one_or_none()
-    if not sh:
-        raise HTTPException(400, "该项目暂无发货单据，无法推送")
-    if sh.packlist_status == "ready":
-        raise HTTPException(400, "发货清单已备货完成，无需重复推送")
-    sh.packlist_status = "requested"
-    sh.packlist_requested_at = datetime.now(timezone.utc)
-    sh.packlist_requested_by = current.id
+    if sh and sh.packlist_status != "ready":
+        sh.packlist_status = "requested"
+        sh.packlist_requested_at = datetime.now(timezone.utc)
+        sh.packlist_requested_by = current.id
     await db.commit()
+    await db.refresh(a)
     p = o.project
     for role in ("warehouse", "warehouse_lead"):
         await push_message(db, to_role=role, kind="info",
-                           text=f"【发货清单待备货】{p.code} {p.name} 设计部已推送，请仓库准备发货清单。",
+                           text=f"【发货清单待备货】{p.code} {p.name} 设计部已上传发货清单，请仓库备货。",
                            biz_type="project", biz_id=p.id)
-    await write_audit(db, user=current, action="ship_list_request", target_type="shipment",
-                      target_id=sh.id)
-    return schemas.Msg(message="已推送仓库，请仓库准备发货清单")
+    await write_audit(db, user=current, action="ship_list_upload", target_type="attachment",
+                      target_id=a.id)
+    return schemas.AttachmentOut.model_validate(a)
 
 
 @router.post("/{oid}/revision-request", response_model=schemas.Msg)
