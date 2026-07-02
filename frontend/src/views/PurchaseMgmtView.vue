@@ -808,7 +808,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column label="项目编号" width="116" fixed>
               <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
             </el-table-column>
-            <el-table-column prop="name" label="项目名称" min-width="170" show-overflow-tooltip />
+            <el-table-column prop="name" label="项目名称" min-width="190" />
             <el-table-column v-if="showDesigner" label="设计师" min-width="90" align="center">
               <template #default="{ row }">{{ row.designer || '—' }}</template>
             </el-table-column>
@@ -932,48 +932,47 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             @selection-change="(v: PurchaseItemOut[]) => selectedItems = v"
             max-height="calc(100vh - 340px)"
             :scrollbar-always-on="true"
-            show-overflow-tooltip
           >
             <el-table-column v-if="canWrite" type="selection" width="40" />
             <el-table-column prop="po_no" label="采购单号" width="128">
               <template #default="{ row }"><span class="po-no">{{ row.po_no || '—' }}</span></template>
             </el-table-column>
-            <el-table-column label="供应商" min-width="110">
+            <el-table-column label="供应商" min-width="170">
               <template #default="{ row }"><span class="sup-name">{{ row.supplier_name }}</span></template>
             </el-table-column>
-            <el-table-column prop="delivery_date" label="下单日期" width="95" />
-            <el-table-column prop="project_code" label="项目编号" width="100">
+            <el-table-column prop="delivery_date" label="下单日期" width="105" />
+            <el-table-column prop="project_code" label="项目编号" width="105">
               <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
             </el-table-column>
-            <el-table-column prop="delivery_note_no" label="送货单号" width="100">
+            <el-table-column prop="delivery_note_no" label="送货单号" width="120">
               <template #default="{ row }">{{ row.delivery_note_no || '—' }}</template>
             </el-table-column>
-            <el-table-column prop="arrival_date" label="到货日期" width="95">
+            <el-table-column prop="arrival_date" label="到货日期" width="100">
               <template #default="{ row }">
                 <span v-if="row.arrival_date">{{ row.arrival_date }}</span>
                 <el-tag v-else size="small" type="info" effect="plain">待收货</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="item_name" label="名称" min-width="120" />
-            <el-table-column prop="spec" label="规格" min-width="100">
+            <el-table-column prop="item_name" label="名称" min-width="150" />
+            <el-table-column prop="spec" label="规格" min-width="150">
               <template #default="{ row }">{{ row.spec || '—' }}</template>
             </el-table-column>
-            <el-table-column label="数量" width="70" align="right">
+            <el-table-column label="数量" width="80" align="right">
               <template #default="{ row }">{{ row.qty ?? '—' }}</template>
             </el-table-column>
-            <el-table-column label="单价" width="90" align="right">
+            <el-table-column label="单价" width="110" align="right">
               <template #default="{ row }">{{ row.unit_price != null ? fmtMoney(row.unit_price) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="收货金额" width="100" align="right">
+            <el-table-column label="收货金额" width="120" align="right">
               <template #default="{ row }"><b>{{ fmtMoney(row.received_amount) }}</b></template>
             </el-table-column>
-            <el-table-column prop="invoice_date" label="开票日期" width="95">
+            <el-table-column prop="invoice_date" label="开票日期" width="105">
               <template #default="{ row }">{{ row.invoice_date || '—' }}</template>
             </el-table-column>
-            <el-table-column label="开票金额" width="100" align="right">
+            <el-table-column label="开票金额" width="120" align="right">
               <template #default="{ row }">{{ row.invoice_amount ? fmtMoney(row.invoice_amount) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="已付款" width="100" align="right">
+            <el-table-column label="已付款" width="120" align="right">
               <template #default="{ row }">{{ row.paid_amount ? fmtMoney(row.paid_amount) : '—' }}</template>
             </el-table-column>
             <el-table-column label="状态" width="80">
@@ -1025,8 +1024,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             max-height="calc(100vh - 280px)"
             :scrollbar-always-on="true"
           >
-            <el-table-column prop="supplier_name" label="供应商" min-width="200" show-overflow-tooltip />
-            <el-table-column prop="category" label="分类" width="80" show-overflow-tooltip>
+            <el-table-column prop="supplier_name" label="供应商" min-width="200" />
+            <el-table-column prop="category" label="分类" width="92">
               <template #default="{ row }">{{ row.category || '—' }}</template>
             </el-table-column>
             <el-table-column label="状态" width="76">
@@ -1036,25 +1035,25 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="期初欠款" width="100" align="right" show-overflow-tooltip>
+            <el-table-column label="期初欠款" width="118" align="right">
               <template #default="{ row }">{{ fmtMoney(row.opening_balance) }}</template>
             </el-table-column>
-            <el-table-column label="收货合计" width="100" align="right" show-overflow-tooltip>
+            <el-table-column label="收货合计" width="118" align="right">
               <template #default="{ row }"><b>{{ fmtMoney(row.received_total) }}</b></template>
             </el-table-column>
-            <el-table-column label="开票合计" width="100" align="right" show-overflow-tooltip>
+            <el-table-column label="开票合计" width="118" align="right">
               <template #default="{ row }">{{ fmtMoney(row.invoice_total) }}</template>
             </el-table-column>
-            <el-table-column label="待开票" width="100" align="right" show-overflow-tooltip>
+            <el-table-column label="待开票" width="118" align="right">
               <template #default="{ row }"><span class="warn">{{ fmtMoney(row.uninvoiced) }}</span></template>
             </el-table-column>
-            <el-table-column label="已付款" width="100" align="right" show-overflow-tooltip>
+            <el-table-column label="已付款" width="118" align="right">
               <template #default="{ row }">{{ fmtMoney(row.paid_total) }}</template>
             </el-table-column>
-            <el-table-column label="欠款余额" width="100" align="right" show-overflow-tooltip>
+            <el-table-column label="欠款余额" width="118" align="right">
               <template #default="{ row }"><b class="danger">{{ fmtMoney(row.outstanding) }}</b></template>
             </el-table-column>
-            <el-table-column label="明细数" width="68" align="center">
+            <el-table-column label="明细数" width="72" align="center">
               <template #default="{ row }">{{ row.item_count }}</template>
             </el-table-column>
             <el-table-column label="操作" width="336" fixed="right">
@@ -1539,7 +1538,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-collapse-item>
       </el-collapse>
       <el-table v-loading="drawerLoading" :data="drawerItems" stripe size="small"
-                max-height="calc(100vh - 180px)" :scrollbar-always-on="true" show-overflow-tooltip>
+                max-height="calc(100vh - 180px)" :scrollbar-always-on="true">
         <el-table-column prop="delivery_date" label="下单日期" width="100" />
         <el-table-column prop="project_code" label="项目编号" width="100">
           <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>

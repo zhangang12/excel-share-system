@@ -391,7 +391,7 @@ function onTab(name: string) {
               <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。</span>
             </div>
             <el-table :data="recvItems" v-loading="recvLoading" stripe size="small"
-                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" show-overflow-tooltip>
+                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true">
               <el-table-column prop="po_no" label="采购单号" width="128">
                 <template #default="{ row }"><span class="code">{{ row.po_no || '—' }}</span></template>
               </el-table-column>
