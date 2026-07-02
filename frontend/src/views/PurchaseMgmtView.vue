@@ -744,7 +744,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column label="供应商" min-width="110">
               <template #default="{ row }"><span class="sup-name">{{ row.supplier_name }}</span></template>
             </el-table-column>
-            <el-table-column prop="delivery_date" label="送货日期" width="95" />
+            <el-table-column prop="delivery_date" label="下单日期" width="95" />
             <el-table-column prop="project_code" label="项目编号" width="100">
               <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
             </el-table-column>
@@ -959,40 +959,45 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
     <!-- ==================== 采购明细弹窗 ==================== -->
     <el-dialog v-model="itemDialogVisible" :title="editingItem ? '编辑采购明细' : '新增采购明细'" width="860px">
-      <el-form :model="itemForm" label-width="100px">
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="供应商" required>
+      <el-form :model="itemForm" label-position="top" class="item-form">
+        <div class="form-section-title">基本信息</div>
+        <el-row :gutter="24">
+          <el-col :span="8">
+            <el-form-item label="供应商 *">
               <el-select v-model="itemForm.supplier_id" placeholder="选择供应商" style="width:100%">
                 <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="12">
-            <el-form-item label="送货日期">
+          <el-col :span="8">
+            <el-form-item label="下单日期">
               <el-date-picker v-model="itemForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
-            <el-form-item label="名称" required>
-              <el-input v-model="itemForm.item_name" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="规格型号">
-              <el-input v-model="itemForm.spec" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="项目编号">
               <el-input v-model="itemForm.project_code" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
+            <el-form-item label="名称 *">
+              <el-input v-model="itemForm.item_name" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="规格型号">
+              <el-input v-model="itemForm.spec" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
             <el-form-item label="送货单号">
               <el-input v-model="itemForm.delivery_note_no" />
             </el-form-item>
           </el-col>
+        </el-row>
+
+        <div class="form-section-title">数量与金额</div>
+        <el-row :gutter="24">
           <el-col :span="8">
             <el-form-item label="数量">
               <el-input-number v-model="itemForm.qty" :precision="2" :min="0" style="width:100%" />
@@ -1013,6 +1018,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-input v-model="itemForm.contract_no" />
             </el-form-item>
           </el-col>
+        </el-row>
+
+        <div class="form-section-title">开票与对账</div>
+        <el-row :gutter="24">
           <el-col :span="8">
             <el-form-item label="开票日期">
               <el-date-picker v-model="itemForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
@@ -1020,7 +1029,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :span="8">
             <el-form-item label="税率">
-              <el-select v-model="itemForm.tax_rate" style="width:100%" clearable>
+              <el-select v-model="itemForm.tax_rate" style="width:100%" clearable placeholder="请选择">
                 <el-option label="13%" value="13%" />
                 <el-option label="9%" value="9%" />
                 <el-option label="6%" value="6%" />
@@ -1347,6 +1356,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
   padding: 4px 0 10px; margin-top: 6px; border-bottom: 1px solid var(--el-border-color-lighter);
   margin-bottom: 16px;
 }
-.supplier-form :deep(.el-form-item) { margin-bottom: 16px; }
-.supplier-form :deep(.el-form-item__label) { font-size: 13px; color: var(--el-text-color-secondary); padding-bottom: 4px; }
+.supplier-form :deep(.el-form-item),
+.item-form :deep(.el-form-item) { margin-bottom: 16px; }
+.supplier-form :deep(.el-form-item__label),
+.item-form :deep(.el-form-item__label) { font-size: 13px; color: var(--el-text-color-secondary); padding-bottom: 4px; }
+.form-section-title:first-child { margin-top: 0; }
 </style>
