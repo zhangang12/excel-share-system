@@ -984,9 +984,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column v-if="isLeadOrAbove" prop="buyer_name" label="采购员" width="80">
               <template #default="{ row }">{{ row.buyer_name || '—' }}</template>
             </el-table-column>
-            <el-table-column v-if="canWrite" label="操作" width="100" fixed="right">
+            <el-table-column v-if="canWrite" label="操作" width="120" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
-                <el-button size="small" link @click="openEditItem(row)">编辑</el-button>
+                <el-button size="small" link type="primary" @click="openEditItem(row)">编辑</el-button>
                 <el-button size="small" link type="danger" @click="deleteItem(row)">删除</el-button>
               </template>
             </el-table-column>
@@ -1025,7 +1025,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             max-height="calc(100vh - 280px)"
             :scrollbar-always-on="true"
           >
-            <el-table-column prop="supplier_name" label="供应商" width="200" show-overflow-tooltip />
+            <el-table-column prop="supplier_name" label="供应商" min-width="200" show-overflow-tooltip />
             <el-table-column prop="category" label="分类" width="80" show-overflow-tooltip>
               <template #default="{ row }">{{ row.category || '—' }}</template>
             </el-table-column>
