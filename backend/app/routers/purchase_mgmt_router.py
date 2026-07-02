@@ -266,7 +266,7 @@ async def list_items(
 
 def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
     return schemas.PurchaseItemOut(
-        id=i.id, supplier_id=i.supplier_id,
+        id=i.id, po_no=i.po_no, supplier_id=i.supplier_id,
         supplier_name=i.supplier.name if i.supplier else "",
         delivery_date=i.delivery_date, contract_no=i.contract_no,
         project_code=i.project_code, delivery_note_no=i.delivery_note_no,
@@ -297,6 +297,57 @@ async def create_item(
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == item.id))
     return _item_out(r.scalar_one())
+
+
+async def _next_po_no(db: AsyncSession) -> str:
+    """采购单号：CG{yyyymmdd}-{当日序号3位}。同一天多张单顺序递增。"""
+    from datetime import date as _date
+    prefix = f"CG{_date.today().strftime('%Y%m%d')}-"
+    r = await db.execute(
+        select(func.count(func.distinct(models.PurchaseItem.po_no)))
+        .where(models.PurchaseItem.po_no.like(f"{prefix}%"))
+    )
+    n = (r.scalar() or 0) + 1
+    return f"{prefix}{n:03d}"
+
+
+@router.post("/orders", response_model=List[schemas.PurchaseItemOut])
+async def create_purchase_order(
+    body: schemas.PurchaseOrderCreate,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 采购单：同一供应商一次录入多个零件行 → 生成一个采购单号(po_no)，批量建采购明细。
+
+    - 表头共享：供应商 / 下单日期 / 合同编号 / 默认项目编号（行可覆盖项目编号）
+    - 单价选填：后填价格流程留空即可（货到仓库再由仓库补送货单号/到货，采购/财务补价）
+    """
+    lines = [ln for ln in body.lines if (ln.item_name or "").strip()]
+    if not lines:
+        raise HTTPException(400, "请至少填写一行有效明细（名称必填）")
+    po_no = await _next_po_no(db)
+    for ln in lines:
+        recv = ln.received_amount
+        if not recv and ln.qty and ln.unit_price:
+            recv = round((ln.qty or 0) * (ln.unit_price or 0), 4)
+        db.add(models.PurchaseItem(
+            po_no=po_no,
+            supplier_id=body.supplier_id,
+            delivery_date=body.delivery_date,
+            contract_no=body.contract_no,
+            project_code=(ln.project_code or body.project_code),
+            item_name=ln.item_name.strip(),
+            spec=ln.spec, qty=ln.qty, unit_price=ln.unit_price,
+            received_amount=recv or 0,
+            tax_rate=ln.tax_rate, notes=ln.notes,
+            buyer_id=current.id,
+        ))
+    await db.commit()
+    r = await db.execute(
+        select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
+        .order_by(models.PurchaseItem.id)
+    )
+    return [_item_out(x) for x in r.scalars().all()]
 
 
 @router.put("/items/{iid}", response_model=schemas.PurchaseItemOut)

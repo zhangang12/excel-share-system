@@ -569,6 +569,7 @@ class PurchaseItem(Base):
     """采购明细（唯一录入入口）"""
     __tablename__ = "purchase_items"
     id: Mapped[int] = mapped_column(primary_key=True)
+    po_no: Mapped[Optional[str]] = mapped_column(String(32), index=True)  # 🆕 采购单号（同一供应商多零件行共享）
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     delivery_date: Mapped[Optional[str]] = mapped_column(String(10))
     contract_no: Mapped[Optional[str]] = mapped_column(String(64))

@@ -919,6 +919,26 @@ class PurchaseItemCreate(BaseModel):
     notes: Optional[str] = None
 
 
+# ---------- 🆕 采购单：同一供应商一次录入多个零件行 ----------
+class PurchaseOrderLine(BaseModel):
+    item_name: str = Field(min_length=1, max_length=128)
+    spec: Optional[str] = None
+    project_code: Optional[str] = None          # 行级项目编号（留空则用采购单默认项目）
+    qty: Optional[float] = None
+    unit_price: Optional[float] = None           # 选填：后填价格流程可留空，货到仓库再补
+    received_amount: Optional[float] = None
+    tax_rate: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PurchaseOrderCreate(BaseModel):
+    supplier_id: int
+    delivery_date: Optional[str] = None          # 下单日期（总的）
+    contract_no: Optional[str] = None
+    project_code: Optional[str] = None           # 默认项目编号（行可覆盖）
+    lines: list[PurchaseOrderLine] = Field(min_length=1)
+
+
 class PurchaseItemUpdate(BaseModel):
     supplier_id: Optional[int] = None
     delivery_date: Optional[str] = None
@@ -939,6 +959,7 @@ class PurchaseItemUpdate(BaseModel):
 
 class PurchaseItemOut(BaseModel):
     id: int
+    po_no: Optional[str] = None
     supplier_id: int
     supplier_name: str
     delivery_date: Optional[str] = None

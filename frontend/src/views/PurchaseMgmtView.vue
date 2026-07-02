@@ -2,7 +2,7 @@
 // 采购管理（含采购部）：采购部 / 采购明细 / 供应商账目 / 汇总报表
 import { ref, computed, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Refresh, View } from '@element-plus/icons-vue'
+import { Download, Refresh, View, Plus, Delete, Printer } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
@@ -35,7 +35,7 @@ interface SupplierOut {
   status: string; notes?: string | null; created_at: string
 }
 interface PurchaseItemOut {
-  id: number; supplier_id: number; supplier_name: string
+  id: number; po_no?: string | null; supplier_id: number; supplier_name: string
   delivery_date?: string | null; contract_no?: string | null
   project_code?: string | null; delivery_note_no?: string | null
   item_name: string; spec?: string | null; qty?: number | null; unit_price?: number | null
@@ -254,6 +254,114 @@ const itemForm = reactive({
   received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
   invoice_status: '待对账', notes: '',
 })
+
+// 🆕 采购单：同一供应商 + 多个零件行（表头共享，单价选填以支持「先填/后填价格」两种流程）
+interface OrderLine {
+  item_name: string; spec: string; project_code: string
+  qty: number | null; unit_price: number | null; received_amount: number | null
+  tax_rate: string; notes: string
+}
+function blankLine(): OrderLine {
+  return { item_name: '', spec: '', project_code: '', qty: null, unit_price: null, received_amount: null, tax_rate: '', notes: '' }
+}
+const orderDialogVisible = ref(false)
+const orderSaving = ref(false)
+const orderForm = reactive({
+  supplier_id: '' as number | '',
+  delivery_date: '', contract_no: '', project_code: '',
+  lines: [blankLine()] as OrderLine[],
+})
+// 采购商抬头（打印采购单用；如公司全称有出入，改这里即可）
+const PO_COMPANY = '同辉智能装备有限公司'
+const orderTotal = computed(() =>
+  orderForm.lines.reduce((s, l) => s + (l.received_amount ?? ((l.qty || 0) * (l.unit_price || 0))), 0))
+
+function openNewOrder() {
+  Object.assign(orderForm, {
+    supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10),
+    contract_no: '', project_code: '', lines: [blankLine()],
+  })
+  orderDialogVisible.value = true
+}
+function addOrderLine() { orderForm.lines.push(blankLine()) }
+function removeOrderLine(idx: number) {
+  orderForm.lines.splice(idx, 1)
+  if (!orderForm.lines.length) orderForm.lines.push(blankLine())
+}
+// 数量/单价变动 → 自动带出收货金额（仍可手改，后填价格流程只填金额也行）
+function onLineCalc(l: OrderLine) {
+  if (l.qty != null && l.unit_price != null) l.received_amount = Number((l.qty * l.unit_price).toFixed(2))
+}
+
+async function saveOrder() {
+  if (!orderForm.supplier_id) { ElMessage.error('请选择供应商'); return }
+  const lines = orderForm.lines.filter(l => l.item_name.trim())
+  if (!lines.length) { ElMessage.error('请至少填写一行零件（名称必填）'); return }
+  orderSaving.value = true
+  try {
+    await http.post('/purchase-mgmt/orders', {
+      supplier_id: orderForm.supplier_id,
+      delivery_date: orderForm.delivery_date || null,
+      contract_no: orderForm.contract_no || null,
+      project_code: orderForm.project_code || null,
+      lines: lines.map(l => ({
+        item_name: l.item_name.trim(),
+        spec: l.spec || null,
+        project_code: l.project_code || null,
+        qty: l.qty,
+        unit_price: l.unit_price,
+        received_amount: l.received_amount,
+        tax_rate: l.tax_rate || null,
+        notes: l.notes || null,
+      })),
+    })
+    ElMessage.success(`采购单已保存（${lines.length} 个零件行）`)
+    orderDialogVisible.value = false
+    await loadItems()
+  } catch { /* handled */ } finally { orderSaving.value = false }
+}
+
+// 打印采购单：把当前表单渲染成可打印的采购单（浏览器打印 → 可另存为 PDF 发供应商）
+function printPurchaseOrder() {
+  if (!orderForm.supplier_id) { ElMessage.warning('请先选择供应商'); return }
+  const sup = suppliers.value.find(s => s.id === orderForm.supplier_id)
+  const lines = orderForm.lines.filter(l => l.item_name.trim())
+  if (!lines.length) { ElMessage.warning('请至少填写一行零件'); return }
+  const esc = (v: unknown) => String(v ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))
+  const rows = lines.map((l, i) => `<tr>
+    <td class="c">${i + 1}</td><td>${esc(l.item_name)}</td><td>${esc(l.spec)}</td>
+    <td class="c">${esc(l.project_code || orderForm.project_code)}</td>
+    <td class="r">${l.qty ?? ''}</td><td class="r">${l.unit_price ?? ''}</td>
+    <td class="r">${l.received_amount ?? (l.qty != null && l.unit_price != null ? (l.qty * l.unit_price).toFixed(2) : '')}</td>
+    <td>${esc(l.notes)}</td></tr>`).join('')
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>采购单</title>
+    <style>@page{size:A4;margin:16mm}body{font-family:'Microsoft YaHei',SimSun,sans-serif;color:#111;font-size:13px}
+    h1{text-align:center;font-size:22px;margin:0 0 4px}.sub{text-align:center;color:#666;margin-bottom:14px}
+    .meta{width:100%;margin-bottom:10px;border-collapse:collapse}.meta td{padding:3px 6px}
+    table.items{width:100%;border-collapse:collapse;margin-top:6px}
+    table.items th,table.items td{border:1px solid #333;padding:6px 8px}
+    table.items th{background:#f0f0f0}.r{text-align:right}.c{text-align:center}
+    .foot{margin-top:16px;display:flex;justify-content:space-between}.sign{margin-top:40px}</style></head>
+    <body>
+    <h1>采购单</h1><div class="sub">Purchase Order · ${esc(sup?.name || '')}</div>
+    <table class="meta"><tr>
+      <td><b>采购商：</b>${esc(PO_COMPANY)}</td><td><b>供应商：</b>${esc(sup?.name || '')}</td></tr>
+      <tr><td><b>下单日期：</b>${esc(orderForm.delivery_date)}</td>
+      <td><b>合同/项目：</b>${esc(orderForm.contract_no || orderForm.project_code || '')}</td></tr>
+      <tr><td><b>联系人：</b>${esc(sup?.contact || '')} ${esc(sup?.phone || '')}</td>
+      <td><b>合计金额：</b>￥${orderTotal.value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>
+    </table>
+    <table class="items"><thead><tr>
+      <th style="width:36px">#</th><th>名称</th><th>规格型号</th><th style="width:90px">项目编号</th>
+      <th style="width:56px">数量</th><th style="width:80px">单价</th><th style="width:96px">金额</th><th>备注</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div class="foot"><div class="sign">采购（签字）：____________</div><div class="sign">供应商（盖章）：____________</div></div>
+    </body></html>`
+  const w = window.open('', '_blank', 'width=900,height=700')
+  if (!w) { ElMessage.warning('请允许弹窗以打印采购单'); return }
+  w.document.write(html); w.document.close()
+  w.onload = () => { w.focus(); w.print() }
+}
 
 const supplierDialogVisible = ref(false)
 const editingSupplier = ref<SupplierOut | null>(null)
@@ -743,7 +851,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-select>
             <el-button @click="loadItems">刷新</el-button>
             <template v-if="canWrite">
-              <el-button type="primary" @click="openNewItem">+ 新增明细</el-button>
+              <el-button type="primary" @click="openNewOrder">+ 新建采购单</el-button>
+              <el-button @click="openNewItem">+ 单条明细</el-button>
               <el-button :disabled="!selectedItems.length" type="warning" @click="openPaymentRequest">发起请款</el-button>
             </template>
           </div>
@@ -756,6 +865,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             show-overflow-tooltip
           >
             <el-table-column v-if="canWrite" type="selection" width="40" />
+            <el-table-column prop="po_no" label="采购单号" width="128">
+              <template #default="{ row }"><span class="po-no">{{ row.po_no || '—' }}</span></template>
+            </el-table-column>
             <el-table-column label="供应商" min-width="110">
               <template #default="{ row }"><span class="sup-name">{{ row.supplier_name }}</span></template>
             </el-table-column>
@@ -977,6 +1089,96 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
       </el-tabs>
     </el-card>
+
+    <!-- ==================== 采购单弹窗（同一供应商多个零件行）==================== -->
+    <el-dialog v-model="orderDialogVisible" title="新建采购单" width="1080px" top="6vh">
+      <el-alert type="info" :closable="false" style="margin-bottom:14px"
+        title="同一供应商一次录入多个零件：表头（供应商 / 下单日期 / 合同 / 默认项目）在上，零件逐行填。单价「选填」——已谈好价先填；激光板材等到货送货单才带价的，单价留空，货到仓库再补。保存后自动生成采购单号；可「打印采购单」发供应商。" />
+      <el-form :model="orderForm" label-position="top" class="order-form">
+        <el-row :gutter="20">
+          <el-col :span="7">
+            <el-form-item label="供应商 *">
+              <el-select v-model="orderForm.supplier_id" filterable placeholder="选择供应商" style="width:100%">
+                <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="5">
+            <el-form-item label="下单日期">
+              <el-date-picker v-model="orderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="6">
+            <el-form-item label="合同编号">
+              <el-input v-model="orderForm.contract_no" placeholder="选填" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="6">
+            <el-form-item label="默认项目编号">
+              <el-input v-model="orderForm.project_code" placeholder="行内可单独覆盖" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <div class="order-lines-head">
+          <span class="section-title" style="margin:0">零件明细（{{ orderForm.lines.length }} 行）</span>
+          <el-button size="small" :icon="Plus" @click="addOrderLine">添加一行</el-button>
+        </div>
+        <el-table :data="orderForm.lines" size="small" border class="order-lines">
+          <el-table-column type="index" label="#" width="44" align="center" />
+          <el-table-column label="名称 *" min-width="150">
+            <template #default="{ row }"><el-input v-model="row.item_name" placeholder="零件名称" /></template>
+          </el-table-column>
+          <el-table-column label="规格型号" min-width="150">
+            <template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template>
+          </el-table-column>
+          <el-table-column label="项目编号" width="120">
+            <template #default="{ row }"><el-input v-model="row.project_code" :placeholder="orderForm.project_code || '默认'" /></template>
+          </el-table-column>
+          <el-table-column label="数量" width="110">
+            <template #default="{ row }">
+              <el-input-number v-model="row.qty" :min="0" :precision="2" :controls="false" style="width:100%" @change="onLineCalc(row)" />
+            </template>
+          </el-table-column>
+          <el-table-column label="单价（选填）" width="120">
+            <template #default="{ row }">
+              <el-input-number v-model="row.unit_price" :min="0" :precision="4" :controls="false" style="width:100%"
+                               placeholder="后填留空" @change="onLineCalc(row)" />
+            </template>
+          </el-table-column>
+          <el-table-column label="金额" width="120">
+            <template #default="{ row }">
+              <el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" />
+            </template>
+          </el-table-column>
+          <el-table-column label="税率" width="92">
+            <template #default="{ row }">
+              <el-select v-model="row.tax_rate" clearable placeholder="—" style="width:100%">
+                <el-option label="13%" value="13%" /><el-option label="9%" value="9%" />
+                <el-option label="6%" value="6%" /><el-option label="/" value="/" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="备注" min-width="120">
+            <template #default="{ row }"><el-input v-model="row.notes" placeholder="选填" /></template>
+          </el-table-column>
+          <el-table-column label="" width="50" align="center">
+            <template #default="{ $index }">
+              <el-button size="small" link type="danger" :icon="Delete" @click="removeOrderLine($index)" />
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="order-total-bar">
+          <span>合计金额 <b class="amt">{{ fmtMoney(orderTotal) }}</b></span>
+          <span class="muted">送货单号 / 到货日期由仓库收货时填写</span>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="orderDialogVisible = false">取消</el-button>
+        <el-button :icon="Printer" @click="printPurchaseOrder">打印采购单</el-button>
+        <el-button type="primary" :loading="orderSaving" @click="saveOrder">保存采购单</el-button>
+      </template>
+    </el-dialog>
 
     <!-- ==================== 采购明细弹窗 ==================== -->
     <el-dialog v-model="itemDialogVisible" :title="editingItem ? '编辑采购明细' : '新增采购明细'" width="860px">
@@ -1366,8 +1568,16 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
   margin-bottom: 16px;
 }
 .supplier-form :deep(.el-form-item),
-.item-form :deep(.el-form-item) { margin-bottom: 16px; }
+.item-form :deep(.el-form-item),
+.order-form :deep(.el-form-item) { margin-bottom: 16px; }
 .supplier-form :deep(.el-form-item__label),
-.item-form :deep(.el-form-item__label) { font-size: 13px; color: var(--el-text-color-secondary); padding-bottom: 4px; }
+.item-form :deep(.el-form-item__label),
+.order-form :deep(.el-form-item__label) { font-size: 13px; color: var(--el-text-color-secondary); padding-bottom: 4px; }
 .form-section-title:first-child { margin-top: 0; }
+.po-no { font-family: monospace; font-size: 12.5px; color: #7c3aed; }
+.order-lines-head { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 8px; }
+.order-lines :deep(.el-input__wrapper),
+.order-lines :deep(.el-input-number) { width: 100%; }
+.order-lines :deep(.cell) { padding-left: 6px; padding-right: 6px; }
+.order-total-bar { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding: 10px 14px; background: var(--el-fill-color-light); border-radius: 6px; font-size: 14px; }
 </style>
