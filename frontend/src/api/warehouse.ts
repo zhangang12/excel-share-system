@@ -20,9 +20,18 @@ export interface WhSummaryRow {
 // 🆕 #9 发货清单项
 export interface ShipListItem { id: number; name: string; created_at: string; uploaded_by?: number | null }
 
+// 🆕 发货清单：待备货项目行（设计部推送后、仓库尚未标记完成）
+export interface ShipListPendingRow {
+  project_id: number; code: string; name: string
+  requested_at?: string | null; requested_by_name?: string | null
+}
+
 export const whApi = {
   shipLists: (pid: number) => http.get<ShipListItem[]>(`/wh/ship-list/${pid}`).then((r) => r.data),
   deleteShipList: (aid: number) => http.delete<{ message: string }>(`/wh/ship-list/item/${aid}`).then((r) => r.data),
+  shipListPending: () => http.get<ShipListPendingRow[]>('/wh/ship-list/pending').then((r) => r.data),
+  shipListReady: (projectId: number) =>
+    http.post<{ message: string }>(`/wh/ship-list/${projectId}/ready`).then((r) => r.data),
   materials: (kw?: string) =>
     http.get<{ materials: WhMaterial[]; total: number; low_count: number }>('/wh/materials', { params: { kw } }).then((r) => r.data),
   createMaterial: (data: Partial<WhMaterial>) => http.post('/wh/materials', data).then((r) => r.data),

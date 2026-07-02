@@ -298,6 +298,61 @@ def _minus1(d: str) -> str:
     return (_d(int(y), int(m), int(dd)) - _t(days=1)).isoformat()
 
 
+# ==================== 发货清单：设计推送 -> 仓库备货完成 -> 物流可见 ====================
+@router.get("/ship-list/pending", response_model=List[schemas.ShipListPendingRow])
+async def ship_list_pending(
+    _: models.User = Depends(require_roles(*WRITE_ROLES, "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 待备货发货清单：设计部已推送、仓库尚未标记完成的项目列表。"""
+    r = await db.execute(
+        select(models.Shipment).where(models.Shipment.packlist_status == "requested")
+        .order_by(models.Shipment.packlist_requested_at.desc())
+    )
+    rows = list(r.scalars().all())
+    if not rows:
+        return []
+    uids = {s.packlist_requested_by for s in rows if s.packlist_requested_by}
+    names: dict[int, str] = {}
+    if uids:
+        ur = await db.execute(select(models.User).where(models.User.id.in_(uids)))
+        names = {u.id: (u.full_name or u.username) for u in ur.scalars().all()}
+    return [
+        schemas.ShipListPendingRow(
+            project_id=s.project_id, code=s.project.code, name=s.project.name,
+            requested_at=s.packlist_requested_at,
+            requested_by_name=names.get(s.packlist_requested_by),
+        )
+        for s in rows
+    ]
+
+
+@router.post("/ship-list/{project_id}/ready", response_model=schemas.Msg)
+async def ship_list_ready(
+    project_id: int,
+    current: models.User = Depends(require_roles(*WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 发货清单备货完成：仓库确认已按清单备好货，通知物流可安排发货。"""
+    r = await db.execute(select(models.Shipment).where(models.Shipment.project_id == project_id))
+    sh = r.scalar_one_or_none()
+    if not sh:
+        raise HTTPException(404, "该项目暂无发货单据")
+    if sh.packlist_status == "ready":
+        return schemas.Msg(message="该项目发货清单已是备货完成状态")
+    sh.packlist_status = "ready"
+    sh.packlist_ready_at = datetime.now(timezone.utc)
+    sh.packlist_ready_by = current.id
+    await db.commit()
+    p = sh.project
+    await push_message(db, to_role="logistics", kind="info",
+                       text=f"【发货清单已备货】{p.code} {p.name} 仓库已备货完成，可安排发货。",
+                       biz_type="project", biz_id=project_id)
+    await write_audit(db, user=current, action="ship_list_ready", target_type="shipment",
+                      target_id=sh.id)
+    return schemas.Msg(message="已标记备货完成，已通知物流")
+
+
 # ==================== 发货清单上传（推物流，M08 看板消费） ====================
 @router.post("/ship-list/{project_id}", response_model=schemas.Msg)
 async def upload_ship_list(

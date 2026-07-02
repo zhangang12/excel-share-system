@@ -42,6 +42,7 @@ class BoardRow(BaseModel):
     design_state: DeptState
     electric_state: DeptState
     ship_list_files: list[schemas.AttachmentOut] = []
+    packlist_status: str = "none"    # 🆕 发货清单：none 未推送 / requested 待仓库备货 / ready 已备货完成
     receiver_name: Optional[str] = None
     receiver_phone: Optional[str] = None
     receiver_addr: Optional[str] = None
@@ -189,6 +190,7 @@ async def board(
                 electric_state=_dept_state(orders, "electric"),
                 produce_state=_dept_state(orders, "produce"),
                 ship_list_files=shiplist_by_pid.get(p.id, []),
+                packlist_status=s.packlist_status if s else "none",
                 receiver_name=s.receiver_name if s else None,
                 receiver_phone=s.receiver_phone if s else None,
                 receiver_addr=s.receiver_addr if s else None,
@@ -212,6 +214,7 @@ async def board(
                 electric_state=_dept_state(orders, "electric"),
                 produce_state=_dept_state(orders, "produce"),
                 ship_list_files=shiplist_by_pid.get(s.project_id, []),
+                packlist_status=s.packlist_status,
                 receiver_name=s.receiver_name, receiver_phone=s.receiver_phone,
                 receiver_addr=s.receiver_addr,
                 ship_doc_name=doc_names.get(s.ship_doc_file_id),

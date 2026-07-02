@@ -34,6 +34,7 @@ export interface DeptOrder {
   design_done_flag: boolean
   electric_done_flag: boolean
   ship_prep_done: boolean
+  packlist_status?: string | null   // 🆕 发货清单：none/requested/ready
   input_files: OrderAttachment[]
   start_files: OrderAttachment[]
   output_files: OrderAttachment[]
@@ -96,6 +97,10 @@ export const ordersApi = {
   // 🆕 #5 设计部「发货准备完成」（设计完成后标记说明书/铭牌备齐 → 通知物流）
   shipPrepDone: (id: number) =>
     http.post<{ message: string }>(`/orders/${id}/ship-prep-done`).then((r) => r.data),
+
+  // 🆕 发货清单：设计部推送仓库准备（仓库备货完成后通知物流）
+  shipListRequest: (id: number) =>
+    http.post<{ message: string }>(`/orders/${id}/ship-list-request`).then((r) => r.data),
 
   // 🆕 #1 对销售下发的合同技术资料提修订意见 → 推送对应销售员
   revisionRequest: (id: number, reason: string) =>

@@ -317,6 +317,12 @@ class Shipment(Base):
     ship_doc_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
     shipped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     shipped_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    # 🆕 发货清单：设计部推送仓库准备 -> 仓库备货完成 -> 物流可见（none/requested/ready）
+    packlist_status: Mapped[str] = mapped_column(String(16), default="none")
+    packlist_requested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    packlist_requested_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    packlist_ready_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    packlist_ready_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     project: Mapped["Project"] = relationship(lazy="joined")

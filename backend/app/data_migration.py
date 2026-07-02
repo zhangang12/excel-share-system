@@ -46,6 +46,13 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("order_state", "VARCHAR(20)"),            # 🆕 下单审批流: pending/draft
         ("order_type", "VARCHAR(16)"),             # 🆕 调货订单 / 工厂制作订单
     ],
+    "shipments": [                                 # 🆕 发货清单：设计推送仓库→仓库备货完成→物流可见
+        ("packlist_status", "VARCHAR(16) DEFAULT 'none'"),
+        ("packlist_requested_at", "TIMESTAMP"),
+        ("packlist_requested_by", "INTEGER"),
+        ("packlist_ready_at", "TIMESTAMP"),
+        ("packlist_ready_by", "INTEGER"),
+    ],
 }
 
 

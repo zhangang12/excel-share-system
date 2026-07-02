@@ -149,6 +149,7 @@ class OrderOut(BaseModel):
     design_done_flag:   bool = False  # 🆕 设计完成第一步标记
     electric_done_flag: bool = False  # 🆕 接线完成第一步标记
     ship_prep_done:     bool = False  # 🆕 #5 设计部发货准备完成标记
+    packlist_status: Optional[str] = None  # 🆕 发货清单：none/requested/ready（仅设计部任务所属项目有意义）
     input_files: list[AttachmentOut] = []
     start_files: list[AttachmentOut] = []
     output_files: list[AttachmentOut] = []
@@ -1088,3 +1089,12 @@ class PurchaseTopSupplier(BaseModel):
     supplier_name: str
     amount: float = 0
     count: int = 0
+
+
+# ---------- 🆕 发货清单（设计推送仓库 -> 仓库备货完成 -> 物流可见） ----------
+class ShipListPendingRow(BaseModel):
+    project_id: int
+    code: str
+    name: str
+    requested_at: Optional[datetime] = None
+    requested_by_name: Optional[str] = None

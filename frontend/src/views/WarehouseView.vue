@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Lock, View, Download, Delete } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListItem } from '@/api/warehouse'
+import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListItem, type ShipListPendingRow } from '@/api/warehouse'
 import { canInlinePreview } from '@/api/attachments'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -96,6 +96,23 @@ async function submitMat() {
   } catch { /* 查重等错误由拦截器提示 */ } finally { matSubmitting.value = false }
 }
 
+// ===== 🆕 发货清单：待备货（设计推送）=====
+const shipPending = ref<ShipListPendingRow[]>([])
+const shipPendingLoading = ref(false)
+async function loadShipPending() {
+  shipPendingLoading.value = true
+  try { shipPending.value = await whApi.shipListPending() }
+  finally { shipPendingLoading.value = false }
+}
+async function markShipReady(row: ShipListPendingRow) {
+  try {
+    await ElMessageBox.confirm(`确认「${row.code} ${row.name}」发货清单已备货完成？将通知物流可安排发货。`, '备货完成', { type: 'success' })
+  } catch { return }
+  const r: any = await whApi.shipListReady(row.project_id)
+  ElMessage.success(r?.message || '已标记备货完成')
+  await loadShipPending()
+}
+
 // ===== 发货清单上传 =====
 const projects = ref<{ id: number; code: string; name: string }[]>([])
 const shipProj = ref<number | undefined>()
@@ -142,7 +159,10 @@ function previewShipList(item: ShipListItem) { previewRef.value?.open({ id: item
 function onTab(name: string) {
   if (name === 'txn' && !txns.value.length) loadTxns()
   if (name === 'sum') loadSummary()
-  if (name === 'ship' && !projects.value.length) loadProjects()
+  if (name === 'ship') {
+    if (!projects.value.length) loadProjects()
+    loadShipPending()
+  }
 }
 </script>
 
@@ -266,7 +286,24 @@ function onTab(name: string) {
         <el-tab-pane label="发货清单" name="ship">
           <EmptyHint v-if="!canWrite" text="仅仓库角色可上传发货清单" :icon="Lock" />
           <template v-else>
-            <div style="display:flex;gap:10px;align-items:center">
+            <!-- 🆕 待备货：设计部已推送、尚未标记完成的项目 -->
+            <div class="ship-pending-sec">
+              <div class="ship-pending-title">📋 待备货清单（设计部已推送）</div>
+              <el-table :data="shipPending" v-loading="shipPendingLoading" stripe size="small" max-height="220">
+                <el-table-column label="项目编号" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+                <el-table-column prop="name" label="项目名称" min-width="160" show-overflow-tooltip />
+                <el-table-column label="推送时间" width="170"><template #default="{ row }">{{ fmtDate(row.requested_at) }}</template></el-table-column>
+                <el-table-column label="推送人" width="100"><template #default="{ row }">{{ row.requested_by_name || '—' }}</template></el-table-column>
+                <el-table-column label="操作" width="120" align="center">
+                  <template #default="{ row }">
+                    <el-button size="small" type="success" plain @click="markShipReady(row)">备货完成</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <EmptyHint v-if="!shipPendingLoading && !shipPending.length" text="暂无待备货项目" size="sm" />
+            </div>
+
+            <div style="display:flex;gap:10px;align-items:center;margin-top:18px">
               <el-select v-model="shipProj" filterable placeholder="选择项目" style="width:300px">
                 <el-option v-for="p in projects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
               </el-select>
@@ -356,4 +393,10 @@ function onTab(name: string) {
 .small { font-size: 12px; }
 .frow { display: flex; gap: 12px; flex-wrap: wrap; }
 .frow > * { flex: 1; min-width: 140px; }
+.ship-pending-sec {
+  border: 1px solid var(--el-border-color-lighter); border-radius: 8px;
+  padding: 12px; background: var(--el-fill-color-lighter);
+}
+.ship-pending-title { font-weight: 600; font-size: 13.5px; margin-bottom: 10px; color: var(--el-text-color-primary); }
+.code { color: var(--el-color-primary, #2563eb); }
 </style>

@@ -25,6 +25,7 @@ interface BoardRow {
   electric_state: DeptState
   produce_state: DeptState
   ship_list_files: AttOut[]
+  packlist_status: 'none' | 'requested' | 'ready'
   receiver_name?: string | null
   receiver_phone?: string | null
   receiver_addr?: string | null
@@ -197,6 +198,13 @@ async function confirmShip(force = false) {
           <template #default="{ row }">
             <el-tag v-if="row.ship_list_files.length" size="small" type="success" effect="light" round>已收到 {{ row.ship_list_files.length }}</el-tag>
             <span v-else class="muted">暂无</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="发货清单备货" min-width="120" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.packlist_status === 'ready'" size="small" type="success" effect="light" round>✅ 已备货</el-tag>
+            <el-tag v-else-if="row.packlist_status === 'requested'" size="small" type="warning" effect="light" round>⏳ 待备货</el-tag>
+            <span v-else class="muted">未推送</span>
           </template>
         </el-table-column>
         <el-table-column label="收货信息" min-width="240">

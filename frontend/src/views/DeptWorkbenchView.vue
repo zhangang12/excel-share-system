@@ -7,7 +7,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Document, Download, Close, UploadFilled, Check, RefreshLeft, Switch as SwitchIcon, Lock,
-  Promotion, CircleCheck, Delete, View,
+  Promotion, CircleCheck, Delete, View, Van,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -387,6 +387,15 @@ async function doShipPrepDone(o: DeptOrder | null) {
   try {
     const r: any = await ordersApi.shipPrepDone(o.id)
     ElMessage.success(r?.message || '已标记发货准备完成')
+    await load()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '操作失败') }
+}
+// 🆕 发货清单：推送仓库准备，仓库备货完成后自动通知物流
+async function doShipListRequest(o: DeptOrder | null) {
+  if (!o) return
+  try {
+    const r: any = await ordersApi.shipListRequest(o.id)
+    ElMessage.success(r?.message || '已推送仓库')
     await load()
   } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '操作失败') }
 }
@@ -1298,8 +1307,8 @@ const stockVisible = ref(false)
       />
     </el-dialog>
 
-    <!-- 🆕 #5 资料/产物管理：发货准备(说明书/铭牌) 或 设计资料更换(CAD激光图纸/外购附图) -->
-    <el-dialog v-model="resVisible" :title="`${resTitle} · ${resOrder?.project_code || ''}`" width="560px">
+    <!-- 🆕 #5 资料/产物管理：发货准备(说明书/铭牌/发货清单) 或 设计资料更换(CAD激光图纸/外购附图) -->
+    <el-dialog v-model="resVisible" :title="`${resTitle} · ${resOrder?.project_code || ''}`" width="600px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
                 :title="resMode === 'shipprep'
                   ? '补传 / 替换 产品说明书、铭牌（发货资料，选填、不计考核）。文件上点 × 删除后可重新上传替换。备齐后点「发货准备完成」通知物流。'
@@ -1317,6 +1326,18 @@ const stockVisible = ref(false)
             <el-button size="small" plain :icon="UploadFilled" @click="resPick(resOrder!, g.k)">
               {{ resFiles(resOrder, g.k).length ? '继续添加' : g.btn }}
             </el-button>
+          </div>
+        </div>
+        <!-- 🆕 发货清单：推送仓库准备 -> 仓库备货完成 -> 物流可见 -->
+        <div v-if="resMode === 'shipprep'" class="up-sec">
+          <div class="up-h"><el-icon><Van /></el-icon> 发货清单（推送仓库备货）</div>
+          <div class="up-b">
+            <template v-if="!resOrder!.packlist_status || resOrder!.packlist_status === 'none'">
+              <div class="tc-hint" style="margin:0">点击后通知仓库按本项目准备发货清单，仓库备货完成会自动通知物流。</div>
+              <el-button size="small" plain type="primary" :icon="Van" @click="doShipListRequest(resOrder)">推送仓库准备发货清单</el-button>
+            </template>
+            <el-tag v-else-if="resOrder!.packlist_status === 'requested'" type="warning" effect="light">⏳ 已推送仓库，等待备货</el-tag>
+            <el-tag v-else type="success" effect="light">✅ 仓库已备货完成，物流可见</el-tag>
           </div>
         </div>
       </template>
