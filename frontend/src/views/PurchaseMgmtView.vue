@@ -817,36 +817,36 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             max-height="calc(100vh - 280px)"
             :scrollbar-always-on="true"
           >
-            <el-table-column prop="supplier_name" label="供应商" min-width="140" />
-            <el-table-column prop="category" label="分类" width="72">
+            <el-table-column prop="supplier_name" label="供应商" width="200" show-overflow-tooltip />
+            <el-table-column prop="category" label="分类" width="80" show-overflow-tooltip>
               <template #default="{ row }">{{ row.category || '—' }}</template>
             </el-table-column>
-            <el-table-column label="状态" width="80">
+            <el-table-column label="状态" width="76">
               <template #default="{ row }">
                 <el-tag :type="suppliers.find(s=>s.id===row.supplier_id)?.status==='active'?'success':'info'" size="small">
                   {{ suppliers.find(s=>s.id===row.supplier_id)?.status==='active' ? '启用' : '停用' }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="期初欠款" width="90" align="right">
+            <el-table-column label="期初欠款" width="100" align="right" show-overflow-tooltip>
               <template #default="{ row }">{{ fmtMoney(row.opening_balance) }}</template>
             </el-table-column>
-            <el-table-column label="收货合计" width="90" align="right">
+            <el-table-column label="收货合计" width="100" align="right" show-overflow-tooltip>
               <template #default="{ row }"><b>{{ fmtMoney(row.received_total) }}</b></template>
             </el-table-column>
-            <el-table-column label="开票合计" width="90" align="right">
+            <el-table-column label="开票合计" width="100" align="right" show-overflow-tooltip>
               <template #default="{ row }">{{ fmtMoney(row.invoice_total) }}</template>
             </el-table-column>
-            <el-table-column label="待开票" width="90" align="right">
+            <el-table-column label="待开票" width="100" align="right" show-overflow-tooltip>
               <template #default="{ row }"><span class="warn">{{ fmtMoney(row.uninvoiced) }}</span></template>
             </el-table-column>
-            <el-table-column label="已付款" width="90" align="right">
+            <el-table-column label="已付款" width="100" align="right" show-overflow-tooltip>
               <template #default="{ row }">{{ fmtMoney(row.paid_total) }}</template>
             </el-table-column>
-            <el-table-column label="欠款余额" width="90" align="right">
+            <el-table-column label="欠款余额" width="100" align="right" show-overflow-tooltip>
               <template #default="{ row }"><b class="danger">{{ fmtMoney(row.outstanding) }}</b></template>
             </el-table-column>
-            <el-table-column label="明细数" width="70" align="center">
+            <el-table-column label="明细数" width="68" align="center">
               <template #default="{ row }">{{ row.item_count }}</template>
             </el-table-column>
             <el-table-column label="操作" width="300" fixed="right">
@@ -1103,23 +1103,24 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 供应商弹窗 ==================== -->
-    <el-dialog v-model="supplierDialogVisible" :title="editingSupplier ? '编辑供应商' : '新增供应商'" width="760px">
-      <el-form :model="supplierForm" label-width="100px">
-        <el-row :gutter="20">
+    <el-dialog v-model="supplierDialogVisible" :title="editingSupplier ? '编辑供应商' : '新增供应商'" width="780px">
+      <el-form :model="supplierForm" label-position="top" class="supplier-form">
+        <div class="form-section-title">基本信息</div>
+        <el-row :gutter="24">
           <el-col :span="12">
-            <el-form-item label="供应商名称" required>
-              <el-input v-model="supplierForm.name" />
+            <el-form-item label="供应商名称 *">
+              <el-input v-model="supplierForm.name" placeholder="请输入供应商名称" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="编码">
-              <el-input v-model="supplierForm.code" />
+              <el-input v-model="supplierForm.code" placeholder="内部编码（可选）" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="分类">
               <el-select v-model="supplierForm.category" style="width:100%" clearable allow-create filterable
-                         default-first-option placeholder="可选择，或直接输入新分类后回车">
+                         default-first-option placeholder="选择或输入新分类">
                 <el-option label="外协" value="外协" />
                 <el-option label="标准件" value="标准件" />
                 <el-option label="不锈钢" value="不锈钢" />
@@ -1129,26 +1130,30 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="结算方式">
-              <el-select v-model="supplierForm.settlement_type" style="width:100%" clearable>
+              <el-select v-model="supplierForm.settlement_type" style="width:100%" clearable placeholder="请选择">
                 <el-option label="现金" value="现金" />
                 <el-option label="月结" value="月结" />
                 <el-option label="无账期" value="无账期" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="12" v-if="supplierForm.settlement_type === '月结'">
-            <el-form-item label="账期天数">
+          <el-col :span="8">
+            <el-form-item label="账期天数" v-if="supplierForm.settlement_type === '月结'">
               <el-input-number v-model="supplierForm.credit_days" :min="0" :max="365" style="width:100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+        </el-row>
+
+        <div class="form-section-title">联系方式</div>
+        <el-row :gutter="24">
+          <el-col :span="8">
             <el-form-item label="联系人">
               <el-input v-model="supplierForm.contact" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="电话">
               <el-input v-model="supplierForm.phone" />
             </el-form-item>
@@ -1158,12 +1163,16 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-input v-model="supplierForm.address" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+        </el-row>
+
+        <div class="form-section-title">财务信息</div>
+        <el-row :gutter="24">
+          <el-col :span="8">
             <el-form-item label="税号">
               <el-input v-model="supplierForm.tax_no" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="开户行">
               <el-input v-model="supplierForm.bank_name" />
             </el-form-item>
@@ -1333,4 +1342,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .dl-item :deep(.el-checkbox__label) { white-space: normal; word-break: break-all; line-height: 1.5; }
 .dl-kind { display: inline-block; margin-right: 6px; padding: 0 6px; font-size: 11px; color: #1d4ed8; background: #dbeafe; border-radius: 8px; }
 .dl-empty { padding: 4px 0; }
+.form-section-title {
+  font-size: 13px; font-weight: 600; color: var(--el-color-primary);
+  padding: 4px 0 10px; margin-top: 6px; border-bottom: 1px solid var(--el-border-color-lighter);
+  margin-bottom: 16px;
+}
+.supplier-form :deep(.el-form-item) { margin-bottom: 16px; }
+.supplier-form :deep(.el-form-item__label) { font-size: 13px; color: var(--el-text-color-secondary); padding-bottom: 4px; }
 </style>
