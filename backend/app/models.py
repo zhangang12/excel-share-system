@@ -625,6 +625,7 @@ class PaymentRequest(Base):
     paid_amount: Mapped[Optional[float]] = mapped_column()
     paid_date: Mapped[Optional[str]] = mapped_column(String(10))
     payment_method: Mapped[Optional[str]] = mapped_column(String(32))
+    pay_voucher_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))  # 🆕 付款凭证
     reject_reason: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

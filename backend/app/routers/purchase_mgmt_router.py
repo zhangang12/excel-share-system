@@ -5,7 +5,7 @@ from typing import Optional, List
 from collections import defaultdict
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -248,6 +248,7 @@ async def list_items(
     project_code: Optional[str] = Query(None),
     month: Optional[str] = Query(None),
     invoice_status: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -266,6 +267,10 @@ async def list_items(
         stmt = stmt.where(models.PurchaseItem.delivery_date.startswith(month))
     if invoice_status:
         stmt = stmt.where(models.PurchaseItem.invoice_status == invoice_status)
+    if category:
+        # 🆕 按供应商分类筛选（明细本身无分类，取供应商分类）
+        stmt = stmt.where(models.PurchaseItem.supplier_id.in_(
+            select(models.Supplier.id).where(models.Supplier.category == category)))
     r = await db.execute(stmt)
     return [_item_out(i) for i in r.scalars().all()]
 
@@ -742,6 +747,11 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         }
         for pri, pi in ri.all()
     ]
+    voucher_name = None
+    if pr.pay_voucher_file_id:
+        ar = await db.execute(select(models.Attachment.name).where(
+            models.Attachment.id == pr.pay_voucher_file_id))
+        voucher_name = ar.scalar_one_or_none()
     return schemas.PaymentRequestOut(
         id=pr.id, supplier_id=pr.supplier_id,
         supplier_name=pr.supplier.name if pr.supplier else "",
@@ -754,6 +764,8 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         approved_at=pr.approved_at,
         paid_amount=pr.paid_amount, paid_date=pr.paid_date,
         payment_method=pr.payment_method,
+        pay_voucher_file_id=pr.pay_voucher_file_id,
+        pay_voucher_name=voucher_name,
         reject_reason=pr.reject_reason,
         created_at=pr.created_at,
         items=item_rows,
@@ -860,10 +872,14 @@ async def reject_payment_request(
 @router.put("/payment-requests/{prid}/pay")
 async def pay_payment_request(
     prid: int,
-    body: schemas.PaymentPayIn,
+    paid_amount: float = Form(...),
+    paid_date: str = Form(...),
+    payment_method: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
     current: models.User = Depends(require_roles("finance")),
     db: AsyncSession = Depends(get_db),
 ):
+    """财务付款：记录金额/日期/方式，并可上传付款凭证（付款单据）。"""
     r = await db.execute(select(models.PaymentRequest).where(models.PaymentRequest.id == prid))
     pr = r.scalar_one_or_none()
     if not pr:
@@ -871,9 +887,14 @@ async def pay_payment_request(
     if pr.status != "approved":
         raise HTTPException(400, "只有已审批的请款单可付款")
     pr.status = "paid"
-    pr.paid_amount = body.paid_amount
-    pr.paid_date = body.paid_date
-    pr.payment_method = body.payment_method
+    pr.paid_amount = paid_amount
+    pr.paid_date = paid_date
+    pr.payment_method = payment_method
+    if file is not None and file.filename:
+        from .attachments_router import save_upload
+        att = await save_upload(db, file, biz_type="payment_voucher", biz_id=pr.id, user=current)
+        await db.flush()
+        pr.pay_voucher_file_id = att.id
 
     # 回写明细 paid_amount
     ri = await db.execute(

@@ -962,6 +962,8 @@ class PurchaseItemUpdate(BaseModel):
     invoice_date: Optional[str] = None
     tax_rate: Optional[str] = None
     invoice_amount: Optional[float] = None
+    payment_method: Optional[str] = None
+    arrival_date: Optional[str] = None
     invoice_status: Optional[str] = None
     notes: Optional[str] = None
 
@@ -1081,6 +1083,8 @@ class PaymentRequestOut(BaseModel):
     paid_amount: Optional[float] = None
     paid_date: Optional[str] = None
     payment_method: Optional[str] = None
+    pay_voucher_file_id: Optional[int] = None
+    pay_voucher_name: Optional[str] = None
     reject_reason: Optional[str] = None
     created_at: datetime
     items: list[dict] = Field(default_factory=list)

@@ -58,6 +58,9 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("arrival_date", "VARCHAR(10)"),           # 🆕 到货日期（仓库收货填）
         ("payment_method", "VARCHAR(16)"),         # 🆕 付款方式
     ],
+    "payment_requests": [
+        ("pay_voucher_file_id", "INTEGER"),        # 🆕 付款凭证附件
+    ],
 }
 
 

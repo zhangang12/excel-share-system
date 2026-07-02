@@ -211,6 +211,7 @@ const filterSupplierId = ref<number | ''>('')
 const filterProjectCode = ref('')
 const filterMonth = ref('')
 const filterInvoiceStatus = ref('')
+const filterCategory = ref('')   // 🆕 按供应商分类筛选
 
 // suppliers & statements
 const suppliers = ref<SupplierOut[]>([])
@@ -219,6 +220,21 @@ const drawerVisible = ref(false)
 const drawerSupplier = ref<SupplierStatementRow | null>(null)
 const drawerItems = ref<PurchaseItemOut[]>([])
 const drawerLoading = ref(false)
+
+// 🆕 按月「合计开票」汇总：按到货日期分月，看某月 收货合计 / 已开票 / 未开票
+const drawerMonthly = computed(() => {
+  const map = new Map<string, { month: string; received: number; invoiced: number; uninvoiced: number; count: number }>()
+  for (const it of drawerItems.value) {
+    const m = (it.arrival_date || '').slice(0, 7) || '未收货'
+    let g = map.get(m)
+    if (!g) { g = { month: m, received: 0, invoiced: 0, uninvoiced: 0, count: 0 }; map.set(m, g) }
+    g.received += it.received_amount || 0
+    if (it.invoice_status === '已开票') g.invoiced += (it.invoice_amount || it.received_amount || 0)
+    else g.uninvoiced += it.received_amount || 0
+    g.count++
+  }
+  return Array.from(map.values()).sort((a, b) => (a.month < b.month ? 1 : -1))
+})
 
 // 🆕 供应商分类：默认分类 ∪ 已有供应商里出现过的分类（自定义分类下次下拉仍在）
 const DEFAULT_SUP_CATEGORIES = ['外协', '标准件', '不锈钢', '激光', '电气', '运输']
@@ -256,7 +272,7 @@ const itemForm = reactive({
   delivery_date: '', contract_no: '', project_code: '', delivery_note_no: '',
   item_name: '', spec: '', qty: null as number | null, unit_price: null as number | null,
   received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
-  invoice_status: '待对账', notes: '',
+  payment_method: '', invoice_status: '待对账', notes: '',
 })
 
 // 🆕 采购单：同一供应商 + 多个零件行（表头共享，单价选填以支持「先填/后填价格」两种流程）
@@ -444,6 +460,7 @@ async function loadItems() {
     if (filterProjectCode.value) params.project_code = filterProjectCode.value
     if (filterMonth.value) params.month = filterMonth.value
     if (filterInvoiceStatus.value) params.invoice_status = filterInvoiceStatus.value
+    if (filterCategory.value) params.category = filterCategory.value
     const [ir, sr] = await Promise.all([
       http.get<PurchaseItemOut[]>('/purchase-mgmt/items', { params }),
       http.get<ItemSummary>('/purchase-mgmt/items/summary', { params }),
@@ -508,7 +525,7 @@ function openNewItem() {
     supplier_id: '', delivery_date: '', contract_no: '', project_code: '',
     delivery_note_no: '', item_name: '', spec: '', qty: null, unit_price: null,
     received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
-    invoice_status: '待对账', notes: '',
+    payment_method: '', invoice_status: '待对账', notes: '',
   })
   itemDialogVisible.value = true
 }
@@ -522,6 +539,7 @@ function openEditItem(row: PurchaseItemOut) {
     spec: row.spec || '', qty: row.qty, unit_price: row.unit_price,
     received_amount: row.received_amount, invoice_date: row.invoice_date || '',
     tax_rate: row.tax_rate || '', invoice_amount: row.invoice_amount,
+    payment_method: row.payment_method || '',
     invoice_status: row.invoice_status, notes: row.notes || '',
   })
   itemDialogVisible.value = true
@@ -547,6 +565,7 @@ async function saveItem() {
       invoice_date: itemForm.invoice_date || null,
       tax_rate: itemForm.tax_rate || null,
       invoice_amount: itemForm.invoice_amount,
+      payment_method: itemForm.payment_method || null,
       invoice_status: itemForm.invoice_status,
       notes: itemForm.notes || null,
     }
@@ -894,6 +913,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-option label="待对账" value="待对账" />
               <el-option label="已对账" value="已对账" />
               <el-option label="已开票" value="已开票" />
+            </el-select>
+            <el-select v-model="filterCategory" placeholder="供应商分类" clearable style="width:130px" @change="loadItems">
+              <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
             </el-select>
             <el-button @click="loadItems">刷新</el-button>
             <template v-if="canWrite">
@@ -1267,8 +1289,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="送货单号">
-              <el-input v-model="itemForm.delivery_note_no" />
+            <el-form-item label="付款方式">
+              <el-select v-model="itemForm.payment_method" clearable allow-create filterable default-first-option
+                         placeholder="选择/输入" style="width:100%">
+                <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
+              </el-select>
             </el-form-item>
           </el-col>
         </el-row>
@@ -1286,46 +1311,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="收货金额">
+            <el-form-item label="合计金额">
               <el-input-number v-model="itemForm.received_amount" :precision="2" :min="0" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="合同编号">
-              <el-input v-model="itemForm.contract_no" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-
-        <div class="form-section-title">开票与对账</div>
-        <el-row :gutter="24">
-          <el-col :span="8">
-            <el-form-item label="开票日期">
-              <el-date-picker v-model="itemForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="税率">
-              <el-select v-model="itemForm.tax_rate" style="width:100%" clearable placeholder="请选择">
-                <el-option label="13%" value="13%" />
-                <el-option label="9%" value="9%" />
-                <el-option label="6%" value="6%" />
-                <el-option label="/" value="/" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="开票金额">
-              <el-input-number v-model="itemForm.invoice_amount" :precision="2" :min="0" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="对账状态">
-              <el-select v-model="itemForm.invoice_status" style="width:100%">
-                <el-option label="待对账" value="待对账" />
-                <el-option label="已对账" value="已对账" />
-                <el-option label="已开票" value="已开票" />
-              </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -1334,6 +1321,52 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-form-item>
           </el-col>
         </el-row>
+
+        <!-- 开票 / 对账 / 送货单号：仅编辑时显示（新增时精简，货到仓库或需要开票时再补） -->
+        <template v-if="editingItem">
+          <div class="form-section-title">送货 · 开票与对账</div>
+          <el-row :gutter="24">
+            <el-col :span="8">
+              <el-form-item label="送货单号">
+                <el-input v-model="itemForm.delivery_note_no" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="合同编号">
+                <el-input v-model="itemForm.contract_no" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="开票日期">
+                <el-date-picker v-model="itemForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="税率">
+                <el-select v-model="itemForm.tax_rate" style="width:100%" clearable placeholder="请选择">
+                  <el-option label="13%" value="13%" />
+                  <el-option label="9%" value="9%" />
+                  <el-option label="6%" value="6%" />
+                  <el-option label="/" value="/" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="开票金额">
+                <el-input-number v-model="itemForm.invoice_amount" :precision="2" :min="0" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="对账状态">
+                <el-select v-model="itemForm.invoice_status" style="width:100%">
+                  <el-option label="待对账" value="待对账" />
+                  <el-option label="已对账" value="已对账" />
+                  <el-option label="已开票" value="已开票" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="itemDialogVisible = false">取消</el-button>
@@ -1482,6 +1515,29 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <span>已付款 <b class="amt">{{ fmtMoney(drawerSupplier.paid_total) }}</b></span>
         <span>欠款 <b class="danger">{{ fmtMoney(drawerSupplier.outstanding) }}</b></span>
       </div>
+
+      <!-- 🆕 按月合计开票：按到货日期分月，未开票/已开票一目了然 -->
+      <el-collapse v-if="drawerMonthly.length" class="monthly-collapse">
+        <el-collapse-item :title="`按月合计开票汇总（${drawerMonthly.length} 个月）`" name="m">
+          <el-table :data="drawerMonthly" size="small" stripe>
+            <el-table-column label="月份（按到货日期）" min-width="140">
+              <template #default="{ row }"><b>{{ row.month }}</b></template>
+            </el-table-column>
+            <el-table-column label="收货合计" width="130" align="right">
+              <template #default="{ row }">{{ fmtMoney(row.received) }}</template>
+            </el-table-column>
+            <el-table-column label="已开票" width="130" align="right">
+              <template #default="{ row }"><span class="amt">{{ fmtMoney(row.invoiced) }}</span></template>
+            </el-table-column>
+            <el-table-column label="未开票" width="130" align="right">
+              <template #default="{ row }"><span class="warn">{{ fmtMoney(row.uninvoiced) }}</span></template>
+            </el-table-column>
+            <el-table-column label="明细数" width="80" align="center">
+              <template #default="{ row }">{{ row.count }}</template>
+            </el-table-column>
+          </el-table>
+        </el-collapse-item>
+      </el-collapse>
       <el-table v-loading="drawerLoading" :data="drawerItems" stripe size="small"
                 max-height="calc(100vh - 180px)" :scrollbar-always-on="true" show-overflow-tooltip>
         <el-table-column prop="delivery_date" label="下单日期" width="100" />
@@ -1608,6 +1664,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .danger { color: var(--el-color-danger); }
 .pr-item-row { display: flex; align-items: center; margin-bottom: 4px; font-size: 13px; }
 .drawer-summary { display: flex; gap: 20px; padding: 12px 0 16px; font-size: 14px; border-bottom: 1px solid var(--el-border-color-lighter); margin-bottom: 12px; }
+.monthly-collapse { margin-bottom: 14px; }
 .muted { color: var(--el-text-color-secondary); font-size: 12.5px; }
 .tip-line { line-height: 1.7; }
 .dl-tip { font-size: 12.5px; color: var(--el-text-color-secondary); margin-bottom: 14px; line-height: 1.6; }

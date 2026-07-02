@@ -18,6 +18,7 @@ interface PaymentRequestOut {
   status: string; notes?: string | null
   finance_approver_id?: number | null; approver_name?: string | null; approved_at?: string | null
   paid_amount?: number | null; paid_date?: string | null; payment_method?: string | null
+  pay_voucher_file_id?: number | null; pay_voucher_name?: string | null
   reject_reason?: string | null; created_at: string
   items: { item_id: number; allocated_amount: number; item_name?: string }[]
 }
@@ -89,15 +90,28 @@ async function submitReject() {
   await loadPayReqs()
 }
 
+const payVoucherFile = ref<File | null>(null)
 function openPay(pr: PaymentRequestOut) {
   payTargetId.value = pr.id
   payForm.value = { paid_amount: pr.requested_amount, paid_date: new Date().toISOString().slice(0, 10), payment_method: '银行转账' }
+  payVoucherFile.value = null
   payDialogVisible.value = true
+}
+function pickVoucher() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.pdf,.jpg,.jpeg,.png,.xlsx,.xls'
+  input.onchange = () => { payVoucherFile.value = input.files?.[0] || null }
+  input.click()
 }
 
 async function submitPay() {
   if (!payTargetId.value) return
-  await http.put(`/purchase-mgmt/payment-requests/${payTargetId.value}/pay`, payForm.value)
+  const fd = new FormData()
+  fd.append('paid_amount', String(payForm.value.paid_amount))
+  fd.append('paid_date', payForm.value.paid_date)
+  fd.append('payment_method', payForm.value.payment_method || '')
+  if (payVoucherFile.value) fd.append('file', payVoucherFile.value)
+  await http.put(`/purchase-mgmt/payment-requests/${payTargetId.value}/pay`, fd)
   ElMessage.success('付款已记录')
   payDialogVisible.value = false
   await loadPayReqs()
@@ -344,11 +358,15 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column prop="notes" label="备注" min-width="150" show-overflow-tooltip>
               <template #default="{ row }">{{ row.notes || '—' }}</template>
             </el-table-column>
-            <el-table-column label="付款信息" min-width="150">
+            <el-table-column label="付款信息" min-width="170">
               <template #default="{ row }">
-                <span v-if="row.status === 'paid'">
-                  {{ fmtMoney(row.paid_amount) }} · {{ row.paid_date }} · {{ row.payment_method }}
-                </span>
+                <template v-if="row.status === 'paid'">
+                  <div>{{ fmtMoney(row.paid_amount) }} · {{ row.paid_date }} · {{ row.payment_method }}</div>
+                  <el-button v-if="row.pay_voucher_file_id" size="small" link type="primary"
+                             @click="downloadAttachment({ id: row.pay_voucher_file_id!, name: row.pay_voucher_name || '付款凭证' })">
+                    📎 付款凭证
+                  </el-button>
+                </template>
                 <span v-else-if="row.reject_reason" class="muted">拒绝：{{ row.reject_reason }}</span>
                 <span v-else class="muted">—</span>
               </template>
@@ -404,6 +422,11 @@ async function revokeInvoice(row: ViewRow) {
             <el-option value="其他" label="其他" />
           </el-select>
         </el-form-item>
+        <el-form-item label="付款单据">
+          <el-button :icon="UploadFilled" @click="pickVoucher">上传付款凭证</el-button>
+          <span v-if="payVoucherFile" style="margin-left:10px;font-size:13px">{{ payVoucherFile.name }}</span>
+          <div class="muted small" style="margin-top:4px">选填：付款水单 / 回单（PDF / 图片 / Excel）</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="payDialogVisible = false">取消</el-button>
@@ -416,4 +439,5 @@ async function revokeInvoice(row: ViewRow) {
 <style scoped>
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); font-size: 13px; }
+.small { font-size: 12px; }
 </style>
