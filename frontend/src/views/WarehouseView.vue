@@ -113,6 +113,75 @@ async function markShipReady(row: ShipListPendingRow) {
   await loadShipPending()
 }
 
+// ===== 🆕 采购收货：仓库对采购下单的物料确认收货、补送货单号/到货日期/后填价格 =====
+interface RecvItem {
+  id: number; po_no?: string | null; supplier_id: number; supplier_name: string
+  project_code?: string | null; item_name: string; spec?: string | null
+  qty?: number | null; unit_price?: number | null; received_amount: number
+  delivery_note_no?: string | null; arrival_date?: string | null
+}
+const recvItems = ref<RecvItem[]>([])
+const recvLoading = ref(false)
+const recvReceived = ref(false)        // false=待收货 / true=已收货
+const recvSupplier = ref<number | ''>('')
+const recvPo = ref('')
+const recvSupplierOptions = computed(() => {
+  const m = new Map<number, string>()
+  for (const i of recvItems.value) m.set(i.supplier_id, i.supplier_name)
+  return Array.from(m, ([id, name]) => ({ id, name }))
+})
+async function loadReceiving() {
+  recvLoading.value = true
+  try {
+    const r = await http.get<RecvItem[]>('/purchase-mgmt/receiving', {
+      params: {
+        received: recvReceived.value,
+        supplier_id: recvSupplier.value || undefined,
+        po_no: recvPo.value || undefined,
+      },
+    })
+    recvItems.value = r.data
+  } finally { recvLoading.value = false }
+}
+const recvVisible = ref(false)
+const recvSaving = ref(false)
+const recvForm = reactive({
+  id: 0, po_no: '', supplier_name: '', item_name: '', spec: '', qty: null as number | null,
+  delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10),
+  unit_price: null as number | null, received_amount: null as number | null,
+})
+function openReceive(it: RecvItem) {
+  Object.assign(recvForm, {
+    id: it.id, po_no: it.po_no || '', supplier_name: it.supplier_name,
+    item_name: it.item_name, spec: it.spec || '', qty: it.qty ?? null,
+    delivery_note_no: it.delivery_note_no || '',
+    arrival_date: it.arrival_date || new Date().toISOString().slice(0, 10),
+    unit_price: it.unit_price ?? null,
+    received_amount: it.received_amount || null,
+  })
+  recvVisible.value = true
+}
+function onRecvCalc() {
+  if (recvForm.qty != null && recvForm.unit_price != null) {
+    recvForm.received_amount = Number((recvForm.qty * recvForm.unit_price).toFixed(2))
+  }
+}
+async function submitReceive() {
+  if (!recvForm.arrival_date) { ElMessage.warning('请填写到货日期'); return }
+  recvSaving.value = true
+  try {
+    await http.put(`/purchase-mgmt/items/${recvForm.id}/receive`, {
+      delivery_note_no: recvForm.delivery_note_no || null,
+      arrival_date: recvForm.arrival_date,
+      unit_price: recvForm.unit_price,
+      received_amount: recvForm.received_amount,
+    })
+    ElMessage.success('已确认收货')
+    recvVisible.value = false
+    await loadReceiving()
+  } catch { /* handled */ } finally { recvSaving.value = false }
+}
+
 // ===== 发货清单上传 =====
 const projects = ref<{ id: number; code: string; name: string }[]>([])
 const shipProj = ref<number | undefined>()
@@ -181,6 +250,7 @@ async function printShipList(item: ShipListItem) {
 function onTab(name: string) {
   if (name === 'txn' && !txns.value.length) loadTxns()
   if (name === 'sum') loadSummary()
+  if (name === 'recv') loadReceiving()
   if (name === 'ship') {
     if (!projects.value.length) loadProjects()
     loadShipPending()
@@ -304,6 +374,62 @@ function onTab(name: string) {
           <EmptyHint v-if="!materials.length" text="暂无物料主数据，点「新增物料」开始" size="sm" />
         </el-tab-pane>
 
+        <!-- 🆕 采购收货 -->
+        <el-tab-pane label="采购收货" name="recv">
+          <EmptyHint v-if="!canWrite" text="仅仓库角色可确认收货" :icon="Lock" />
+          <template v-else>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+              <el-radio-group v-model="recvReceived" @change="loadReceiving" size="small">
+                <el-radio-button :value="false">待收货</el-radio-button>
+                <el-radio-button :value="true">已收货</el-radio-button>
+              </el-radio-group>
+              <el-select v-model="recvSupplier" placeholder="全部供应商" clearable style="width:180px" @change="loadReceiving">
+                <el-option v-for="s in recvSupplierOptions" :key="s.id" :label="s.name" :value="s.id" />
+              </el-select>
+              <el-input v-model="recvPo" placeholder="采购单号" clearable style="width:150px" @change="loadReceiving" />
+              <el-button :icon="Search" @click="loadReceiving">查询</el-button>
+              <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。</span>
+            </div>
+            <el-table :data="recvItems" v-loading="recvLoading" stripe size="small"
+                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" show-overflow-tooltip>
+              <el-table-column prop="po_no" label="采购单号" width="128">
+                <template #default="{ row }"><span class="code">{{ row.po_no || '—' }}</span></template>
+              </el-table-column>
+              <el-table-column prop="supplier_name" label="供应商" min-width="130" />
+              <el-table-column prop="project_code" label="订单编号" width="110">
+                <template #default="{ row }">{{ row.project_code || '—' }}</template>
+              </el-table-column>
+              <el-table-column prop="item_name" label="名称" min-width="120" />
+              <el-table-column prop="spec" label="规格型号" min-width="120">
+                <template #default="{ row }">{{ row.spec || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="数量" width="72" align="right">
+                <template #default="{ row }">{{ row.qty ?? '—' }}</template>
+              </el-table-column>
+              <el-table-column label="单价" width="92" align="right">
+                <template #default="{ row }">
+                  <span v-if="row.unit_price != null">{{ row.unit_price }}</span>
+                  <el-tag v-else size="small" type="warning" effect="plain">后填</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="送货单号" width="110">
+                <template #default="{ row }">{{ row.delivery_note_no || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="到货日期" width="110">
+                <template #default="{ row }">{{ row.arrival_date || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="96" align="center" fixed="right">
+                <template #default="{ row }">
+                  <el-button size="small" :type="recvReceived ? 'default' : 'primary'" plain @click="openReceive(row)">
+                    {{ recvReceived ? '修改' : '收货' }}
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <EmptyHint v-if="!recvLoading && !recvItems.length" :text="recvReceived ? '暂无已收货记录' : '暂无待收货物料'" size="sm" />
+          </template>
+        </el-tab-pane>
+
         <!-- 发货清单 -->
         <el-tab-pane label="发货清单" name="ship">
           <EmptyHint v-if="!canWrite" text="仅仓库角色可上传发货清单" :icon="Lock" />
@@ -405,6 +531,38 @@ function onTab(name: string) {
       </template>
     </el-dialog>
 
+    <!-- 🆕 采购收货弹窗 -->
+    <el-dialog v-model="recvVisible" title="采购收货" width="560px">
+      <div class="recv-info">
+        <div><span class="k">采购单号</span><span class="code">{{ recvForm.po_no || '—' }}</span></div>
+        <div><span class="k">供应商</span>{{ recvForm.supplier_name }}</div>
+        <div><span class="k">物料</span>{{ recvForm.item_name }}<span v-if="recvForm.spec"> · {{ recvForm.spec }}</span></div>
+        <div><span class="k">数量</span>{{ recvForm.qty ?? '—' }}</div>
+      </div>
+      <el-form label-position="top" style="margin-top:6px">
+        <div class="frow">
+          <el-form-item label="送货单号">
+            <el-input v-model="recvForm.delivery_note_no" placeholder="送货单上的编号" />
+          </el-form-item>
+          <el-form-item label="到货日期" required>
+            <el-date-picker v-model="recvForm.arrival_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+          </el-form-item>
+        </div>
+        <div class="frow">
+          <el-form-item label="单价（后填价格在此补）">
+            <el-input-number v-model="recvForm.unit_price" :min="0" :precision="4" :controls="false" style="width:100%" @change="onRecvCalc" />
+          </el-form-item>
+          <el-form-item label="收货金额">
+            <el-input-number v-model="recvForm.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" />
+          </el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="recvVisible = false">取消</el-button>
+        <el-button type="primary" :loading="recvSaving" @click="submitReceive">确认收货</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 🆕 #9 发货清单统一预览（图片/PDF/Excel/Word） -->
     <AttachmentPreview ref="previewRef" />
   </div>
@@ -422,4 +580,7 @@ function onTab(name: string) {
 }
 .ship-pending-title { font-weight: 600; font-size: 13.5px; margin-bottom: 10px; color: var(--el-text-color-primary); }
 .code { color: var(--el-color-primary, #2563eb); }
+.recv-info { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; padding: 12px 14px;
+  background: var(--el-fill-color-light); border-radius: 8px; font-size: 13px; }
+.recv-info .k { display: inline-block; min-width: 60px; color: var(--el-text-color-secondary); margin-right: 6px; }
 </style>

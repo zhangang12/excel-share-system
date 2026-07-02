@@ -55,6 +55,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "purchase_items": [                            # 🆕 采购单号（同一供应商多零件行共享一个采购单）
         ("po_no", "VARCHAR(32)"),
+        ("arrival_date", "VARCHAR(10)"),           # 🆕 到货日期（仓库收货填）
     ],
 }
 

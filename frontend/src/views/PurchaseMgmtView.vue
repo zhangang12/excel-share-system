@@ -9,7 +9,7 @@ import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
 
 const auth = useAuthStore()
-const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'admin', 'manager'))
+const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
 const isLeadOrAbove = computed(() => auth.hasRole('buyer_lead', 'finance', 'admin', 'manager'))
 const showPurchaseTab = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
 
@@ -36,7 +36,7 @@ interface SupplierOut {
 }
 interface PurchaseItemOut {
   id: number; po_no?: string | null; supplier_id: number; supplier_name: string
-  delivery_date?: string | null; contract_no?: string | null
+  delivery_date?: string | null; contract_no?: string | null; arrival_date?: string | null
   project_code?: string | null; delivery_note_no?: string | null
   item_name: string; spec?: string | null; qty?: number | null; unit_price?: number | null
   received_amount: number; invoice_date?: string | null; tax_rate?: string | null
@@ -329,33 +329,37 @@ function printPurchaseOrder() {
   if (!lines.length) { ElMessage.warning('请至少填写一行零件'); return }
   const esc = (v: unknown) => String(v ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))
   const rows = lines.map((l, i) => `<tr>
-    <td class="c">${i + 1}</td><td>${esc(l.item_name)}</td><td>${esc(l.spec)}</td>
+    <td class="c">${i + 1}</td>
     <td class="c">${esc(l.project_code || orderForm.project_code)}</td>
+    <td>${esc(l.item_name)}</td><td>${esc(l.spec)}</td>
     <td class="r">${l.qty ?? ''}</td><td class="r">${l.unit_price ?? ''}</td>
     <td class="r">${l.received_amount ?? (l.qty != null && l.unit_price != null ? (l.qty * l.unit_price).toFixed(2) : '')}</td>
     <td>${esc(l.notes)}</td></tr>`).join('')
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>采购单</title>
     <style>@page{size:A4;margin:16mm}body{font-family:'Microsoft YaHei',SimSun,sans-serif;color:#111;font-size:13px}
-    h1{text-align:center;font-size:22px;margin:0 0 4px}.sub{text-align:center;color:#666;margin-bottom:14px}
-    .meta{width:100%;margin-bottom:10px;border-collapse:collapse}.meta td{padding:3px 6px}
-    table.items{width:100%;border-collapse:collapse;margin-top:6px}
+    h1{text-align:center;font-size:22px;margin:0 0 12px;letter-spacing:2px}
+    table{width:100%;border-collapse:collapse}
+    table.meta td{border:1px solid #333;padding:7px 10px}
+    table.items{margin-top:-1px}
     table.items th,table.items td{border:1px solid #333;padding:6px 8px}
-    table.items th{background:#f0f0f0}.r{text-align:right}.c{text-align:center}
-    .foot{margin-top:16px;display:flex;justify-content:space-between}.sign{margin-top:40px}</style></head>
+    table.items th{background:#e8f5ee}.r{text-align:right}.c{text-align:center}
+    .foot{margin-top:22px;display:flex;justify-content:space-between}.sign{margin-top:36px}</style></head>
     <body>
-    <h1>采购单</h1><div class="sub">Purchase Order · ${esc(sup?.name || '')}</div>
-    <table class="meta"><tr>
-      <td><b>采购商：</b>${esc(PO_COMPANY)}</td><td><b>供应商：</b>${esc(sup?.name || '')}</td></tr>
-      <tr><td><b>下单日期：</b>${esc(orderForm.delivery_date)}</td>
-      <td><b>合同/项目：</b>${esc(orderForm.contract_no || orderForm.project_code || '')}</td></tr>
-      <tr><td><b>联系人：</b>${esc(sup?.contact || '')} ${esc(sup?.phone || '')}</td>
-      <td><b>合计金额：</b>￥${orderTotal.value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>
+    <h1>采购单</h1>
+    <table class="meta">
+      <tr><td style="width:14%"><b>需方</b></td><td style="width:40%">${esc(PO_COMPANY)}</td>
+          <td style="width:14%"><b>下单日期</b></td><td>${esc(orderForm.delivery_date)}</td></tr>
+      <tr><td><b>供方</b></td><td>${esc(sup?.name || '')}</td>
+          <td><b>联系方式</b></td><td>${esc(sup?.contact || '')} ${esc(sup?.phone || '')}</td></tr>
     </table>
     <table class="items"><thead><tr>
-      <th style="width:36px">#</th><th>名称</th><th>规格型号</th><th style="width:90px">项目编号</th>
-      <th style="width:56px">数量</th><th style="width:80px">单价</th><th style="width:96px">金额</th><th>备注</th>
-    </tr></thead><tbody>${rows}</tbody></table>
-    <div class="foot"><div class="sign">采购（签字）：____________</div><div class="sign">供应商（盖章）：____________</div></div>
+      <th style="width:40px">序号</th><th style="width:100px">订单编号</th><th>名称</th><th>规格型号</th>
+      <th style="width:60px">数量</th><th style="width:82px">单价</th><th style="width:104px">合计金额</th><th style="width:120px">备注</th>
+    </tr></thead><tbody>${rows}
+      <tr><td class="c" colspan="6"><b>合计</b></td>
+      <td class="r"><b>￥${orderTotal.value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></td><td></td></tr>
+    </tbody></table>
+    <div class="foot"><div class="sign">采购（签字）：____________</div><div class="sign">供方（盖章）：____________</div></div>
     </body></html>`
   const w = window.open('', '_blank', 'width=900,height=700')
   if (!w) { ElMessage.warning('请允许弹窗以打印采购单'); return }
@@ -878,6 +882,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column prop="delivery_note_no" label="送货单号" width="100">
               <template #default="{ row }">{{ row.delivery_note_no || '—' }}</template>
             </el-table-column>
+            <el-table-column prop="arrival_date" label="到货日期" width="95">
+              <template #default="{ row }">
+                <span v-if="row.arrival_date">{{ row.arrival_date }}</span>
+                <el-tag v-else size="small" type="info" effect="plain">待收货</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="item_name" label="名称" min-width="120" />
             <el-table-column prop="spec" label="规格" min-width="100">
               <template #default="{ row }">{{ row.spec || '—' }}</template>
@@ -1114,7 +1124,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-form-item>
           </el-col>
           <el-col :span="6">
-            <el-form-item label="默认项目编号">
+            <el-form-item label="默认订单编号">
               <el-input v-model="orderForm.project_code" placeholder="行内可单独覆盖" />
             </el-form-item>
           </el-col>
@@ -1132,7 +1142,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-table-column label="规格型号" min-width="150">
             <template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template>
           </el-table-column>
-          <el-table-column label="项目编号" width="120">
+          <el-table-column label="订单编号" width="128">
             <template #default="{ row }"><el-input v-model="row.project_code" :placeholder="orderForm.project_code || '默认'" /></template>
           </el-table-column>
           <el-table-column label="数量" width="110">
@@ -1146,20 +1156,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                                placeholder="后填留空" @change="onLineCalc(row)" />
             </template>
           </el-table-column>
-          <el-table-column label="金额" width="120">
+          <el-table-column label="合计金额" width="128">
             <template #default="{ row }">
               <el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" />
             </template>
           </el-table-column>
-          <el-table-column label="税率" width="92">
-            <template #default="{ row }">
-              <el-select v-model="row.tax_rate" clearable placeholder="—" style="width:100%">
-                <el-option label="13%" value="13%" /><el-option label="9%" value="9%" />
-                <el-option label="6%" value="6%" /><el-option label="/" value="/" />
-              </el-select>
-            </template>
-          </el-table-column>
-          <el-table-column label="备注" min-width="120">
+          <el-table-column label="备注" min-width="130">
             <template #default="{ row }"><el-input v-model="row.notes" placeholder="选填" /></template>
           </el-table-column>
           <el-table-column label="" width="50" align="center">

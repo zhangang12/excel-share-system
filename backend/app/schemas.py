@@ -957,6 +957,14 @@ class PurchaseItemUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+class PurchaseReceiveIn(BaseModel):
+    """仓库收货：填送货单号 / 到货日期；后填价格流程可一并补单价与收货金额。"""
+    delivery_note_no: Optional[str] = None
+    arrival_date: Optional[str] = None
+    unit_price: Optional[float] = None
+    received_amount: Optional[float] = None
+
+
 class PurchaseItemOut(BaseModel):
     id: int
     po_no: Optional[str] = None
@@ -966,6 +974,7 @@ class PurchaseItemOut(BaseModel):
     contract_no: Optional[str] = None
     project_code: Optional[str] = None
     delivery_note_no: Optional[str] = None
+    arrival_date: Optional[str] = None
     item_name: str
     spec: Optional[str] = None
     qty: Optional[float] = None

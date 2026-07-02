@@ -571,10 +571,11 @@ class PurchaseItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     po_no: Mapped[Optional[str]] = mapped_column(String(32), index=True)  # 🆕 采购单号（同一供应商多零件行共享）
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
-    delivery_date: Mapped[Optional[str]] = mapped_column(String(10))
+    delivery_date: Mapped[Optional[str]] = mapped_column(String(10))       # 下单日期（采购填）
     contract_no: Mapped[Optional[str]] = mapped_column(String(64))
     project_code: Mapped[Optional[str]] = mapped_column(String(64), index=True)
-    delivery_note_no: Mapped[Optional[str]] = mapped_column(String(64))
+    delivery_note_no: Mapped[Optional[str]] = mapped_column(String(64))    # 送货单号（仓库收货填）
+    arrival_date: Mapped[Optional[str]] = mapped_column(String(10))        # 🆕 到货日期（仓库收货填）
     item_name: Mapped[str] = mapped_column(String(128))
     spec: Mapped[Optional[str]] = mapped_column(String(255))
     qty: Mapped[Optional[float]] = mapped_column()

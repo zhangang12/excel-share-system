@@ -13,8 +13,11 @@ from ..deps import require_roles, get_current_user
 
 router = APIRouter(prefix="/api/purchase-mgmt", tags=["采购管理"])
 
-_PURCHASE_ROLES = ("buyer", "buyer_lead", "finance")
-_WRITE_ROLES = ("buyer", "buyer_lead")
+_PURCHASE_ROLES = ("buyer", "buyer_lead", "finance", "buyer_standard", "buyer_outsource")
+# 🆕 采购员（标准件/外协）也可新增/编辑/删除采购明细与供应商
+_WRITE_ROLES = ("buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
+# 🆕 采购收货：仓库填送货单号/到货日期/后填价格；采购与管理层亦可
+_RECEIVE_ROLES = ("warehouse", "warehouse_lead", "buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
 
 
 def _uname(u: Optional[models.User]) -> Optional[str]:
@@ -270,6 +273,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         supplier_name=i.supplier.name if i.supplier else "",
         delivery_date=i.delivery_date, contract_no=i.contract_no,
         project_code=i.project_code, delivery_note_no=i.delivery_note_no,
+        arrival_date=i.arrival_date,
         item_name=i.item_name, spec=i.spec, qty=i.qty, unit_price=i.unit_price,
         received_amount=i.received_amount or 0,
         invoice_date=i.invoice_date, tax_rate=i.tax_rate,
@@ -391,6 +395,60 @@ async def delete_item(
     await db.delete(item)
     await db.commit()
     return {"ok": True}
+
+
+# ==================== 采购收货（仓库）====================
+@router.get("/receiving", response_model=List[schemas.PurchaseItemOut])
+async def list_receiving(
+    supplier_id: Optional[int] = Query(None),
+    po_no: Optional[str] = Query(None),
+    received: bool = Query(False, description="False=待收货(默认) / True=已收货"),
+    current: models.User = Depends(require_roles(*_RECEIVE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """采购收货清单：默认列出「待收货」明细（到货日期为空）供仓库确认收货、补送货单号/后填价格。"""
+    stmt = select(models.PurchaseItem).order_by(
+        models.PurchaseItem.po_no.desc().nullslast(),
+        models.PurchaseItem.id.desc(),
+    )
+    if received:
+        stmt = stmt.where(models.PurchaseItem.arrival_date.isnot(None))
+    else:
+        stmt = stmt.where(models.PurchaseItem.arrival_date.is_(None))
+    if supplier_id:
+        stmt = stmt.where(models.PurchaseItem.supplier_id == supplier_id)
+    if po_no:
+        stmt = stmt.where(models.PurchaseItem.po_no.ilike(f"%{po_no}%"))
+    r = await db.execute(stmt.limit(300))
+    return [_item_out(i) for i in r.scalars().all()]
+
+
+@router.put("/items/{iid}/receive", response_model=schemas.PurchaseItemOut)
+async def receive_item(
+    iid: int,
+    body: schemas.PurchaseReceiveIn,
+    current: models.User = Depends(require_roles(*_RECEIVE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """仓库收货：填送货单号 + 到货日期（后填价格流程一并补单价/收货金额）。
+    到货日期一填即视为已收货。"""
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == iid))
+    item = r.scalar_one_or_none()
+    if not item:
+        raise HTTPException(404, "明细不存在")
+    if not body.arrival_date:
+        raise HTTPException(400, "请填写到货日期")
+    item.delivery_note_no = body.delivery_note_no
+    item.arrival_date = body.arrival_date
+    if body.unit_price is not None:
+        item.unit_price = body.unit_price
+    if body.received_amount is not None:
+        item.received_amount = body.received_amount
+    elif item.qty and item.unit_price:
+        item.received_amount = round(item.qty * item.unit_price, 4)
+    await db.commit()
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == iid))
+    return _item_out(r.scalar_one())
 
 
 @router.post("/items/batch-invoice")
