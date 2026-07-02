@@ -21,6 +21,7 @@ from ..dept_config import DEPTS
 from ..notify import push_message
 from ..utils import write_audit
 from .attachments_router import save_upload
+from .projects_router import OVERVIEW_KEY_PREFIX
 
 router = APIRouter(prefix="/api/logistics", tags=["物流发货部"])
 
@@ -294,6 +295,18 @@ async def confirm_ship(
     s.shipped_at = datetime.now(timezone.utc)
     s.shipped_by = current.id
 
+    # 🆕 已发货 → 项目自动置为「已完成」（冻结完成日期），项目目录同步显示已完成
+    proj_auto_done = False
+    prj = s.project
+    if prj and prj.status != "已完成":
+        prj.status = "已完成"
+        cd_key = f"{OVERVIEW_KEY_PREFIX}完成日期"
+        extra = dict(prj.extra or {})
+        if not extra.get(cd_key):
+            extra[cd_key] = today_s
+            prj.extra = extra
+        proj_auto_done = True
+
     # 回写销售台账发货日期（只读列）
     res = await db.execute(select(models.SalesLedger).where(
         models.SalesLedger.project_id == s.project_id))
@@ -314,4 +327,5 @@ async def confirm_ship(
                        biz_type="shipment", biz_id=s.id)
     await write_audit(db, user=current, action="ship", target_type="shipment",
                       target_id=sid, detail=f"{code} {today_s}{' FORCE' if force and not can else ''}")
-    return schemas.Msg(message=f"{code} 已发货，发货日期已回传销售台账")
+    tail = "，项目已自动标记为已完成" if proj_auto_done else ""
+    return schemas.Msg(message=f"{code} 已发货，发货日期已回传销售台账{tail}")

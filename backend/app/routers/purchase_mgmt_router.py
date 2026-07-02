@@ -4,7 +4,7 @@ from typing import Optional, List
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -110,6 +110,36 @@ async def toggle_supplier(
     s.status = "inactive" if s.status == "active" else "active"
     await db.commit()
     return {"status": s.status}
+
+
+@router.delete("/suppliers/{sid}")
+async def delete_supplier(
+    sid: int,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除供应商：仅当该供应商没有任何采购明细/请款记录时可硬删除（保护账务历史）。
+    有交易记录的供应商请改用「停用」。"""
+    r = await db.execute(select(models.Supplier).where(models.Supplier.id == sid))
+    s = r.scalar_one_or_none()
+    if not s:
+        raise HTTPException(404, "供应商不存在")
+    cnt_items = await db.scalar(
+        select(func.count()).select_from(models.PurchaseItem).where(
+            models.PurchaseItem.supplier_id == sid))
+    if cnt_items:
+        raise HTTPException(400, f"该供应商已有 {cnt_items} 条采购明细，不能删除；如不再使用请「停用」。")
+    cnt_pr = await db.scalar(
+        select(func.count()).select_from(models.PaymentRequest).where(
+            models.PaymentRequest.supplier_id == sid))
+    if cnt_pr:
+        raise HTTPException(400, f"该供应商已有 {cnt_pr} 条请款记录，不能删除；如不再使用请「停用」。")
+    # 无交易记录：连带清理期初余额后硬删除
+    await db.execute(delete(models.SupplierOpeningBalance).where(
+        models.SupplierOpeningBalance.supplier_id == sid))
+    await db.delete(s)
+    await db.commit()
+    return {"message": "供应商已删除"}
 
 
 @router.post("/suppliers/{sid}/opening-balance", response_model=schemas.SupplierOpeningBalanceOut)
