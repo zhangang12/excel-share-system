@@ -2,7 +2,7 @@
 // 采购管理（含采购部）：采购部 / 采购明细 / 供应商账目 / 汇总报表
 import { ref, computed, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Refresh, View, Plus, Delete, Printer } from '@element-plus/icons-vue'
+import { Download, Refresh, View, Plus, Delete, Printer, Upload } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
@@ -17,6 +17,9 @@ function fmtMoney(v: number | undefined | null) {
   if (v == null) return '¥0'
   return '¥' + Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+
+// 🆕 付款方式下拉选项（可自定义追加）
+const PAY_METHODS = ['现金', '转账', '月结', '承兑', '预付']
 
 // ===== types =====
 interface Att { id: number; name: string }
@@ -41,6 +44,7 @@ interface PurchaseItemOut {
   item_name: string; spec?: string | null; qty?: number | null; unit_price?: number | null
   received_amount: number; invoice_date?: string | null; tax_rate?: string | null
   invoice_amount: number; paid_amount: number; paid_date?: string | null
+  payment_method?: string | null
   invoice_status: string; buyer_id?: number | null; buyer_name?: string | null
   notes?: string | null; created_at: string
 }
@@ -268,7 +272,7 @@ const orderDialogVisible = ref(false)
 const orderSaving = ref(false)
 const orderForm = reactive({
   supplier_id: '' as number | '',
-  delivery_date: '', contract_no: '', project_code: '',
+  delivery_date: '', contract_no: '', project_code: '', payment_method: '',
   lines: [blankLine()] as OrderLine[],
 })
 // 采购商抬头（打印采购单用；如公司全称有出入，改这里即可）
@@ -279,7 +283,7 @@ const orderTotal = computed(() =>
 function openNewOrder() {
   Object.assign(orderForm, {
     supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10),
-    contract_no: '', project_code: '', lines: [blankLine()],
+    contract_no: '', project_code: '', payment_method: '', lines: [blankLine()],
   })
   orderDialogVisible.value = true
 }
@@ -304,6 +308,7 @@ async function saveOrder() {
       delivery_date: orderForm.delivery_date || null,
       contract_no: orderForm.contract_no || null,
       project_code: orderForm.project_code || null,
+      payment_method: orderForm.payment_method || null,
       lines: lines.map(l => ({
         item_name: l.item_name.trim(),
         spec: l.spec || null,
@@ -350,7 +355,7 @@ function printPurchaseOrder() {
       <tr><td style="width:14%"><b>需方</b></td><td style="width:40%">${esc(PO_COMPANY)}</td>
           <td style="width:14%"><b>下单日期</b></td><td>${esc(orderForm.delivery_date)}</td></tr>
       <tr><td><b>供方</b></td><td>${esc(sup?.name || '')}</td>
-          <td><b>联系方式</b></td><td>${esc(sup?.contact || '')} ${esc(sup?.phone || '')}</td></tr>
+          <td><b>付款方式</b></td><td>${esc(orderForm.payment_method || '')}</td></tr>
     </table>
     <table class="items"><thead><tr>
       <th style="width:40px">序号</th><th style="width:100px">订单编号</th><th>名称</th><th>规格型号</th>
@@ -365,6 +370,43 @@ function printPurchaseOrder() {
   if (!w) { ElMessage.warning('请允许弹窗以打印采购单'); return }
   w.document.write(html); w.document.close()
   w.onload = () => { w.focus(); w.print() }
+}
+
+// 🆕 采购历史数据导入：下载模板 / 上传导入
+async function downloadImportTemplate() {
+  try {
+    const res = await http.get('/purchase-mgmt/items/import-template', { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = '采购明细导入模板.xlsx'
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch { ElMessage.error('模板下载失败') }
+}
+const importing = ref(false)
+function importItems() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.xlsx,.xls'
+  input.onchange = async () => {
+    const f = input.files?.[0]; if (!f) return
+    const fd = new FormData(); fd.append('file', f)
+    importing.value = true
+    try {
+      const r = await http.post<{ created: number; suppliers_created: number; failed: number; errors: string[] }>(
+        '/purchase-mgmt/items/import', fd)
+      const d = r.data
+      const parts = [`成功导入 ${d.created} 条`]
+      if (d.suppliers_created) parts.push(`新建供应商 ${d.suppliers_created} 个`)
+      if (d.failed) parts.push(`跳过 ${d.failed} 条`)
+      if (d.failed && d.errors?.length) {
+        ElMessageBox.alert(d.errors.join('\n'), `导入完成：${parts.join('，')}`, { type: 'warning' })
+      } else {
+        ElMessage.success(parts.join('，'))
+      }
+      await Promise.all([loadItems(), loadSuppliers(), loadStatements()])
+    } catch { /* handled */ } finally { importing.value = false }
+  }
+  input.click()
 }
 
 const supplierDialogVisible = ref(false)
@@ -858,6 +900,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-button type="primary" @click="openNewOrder">+ 新建采购单</el-button>
               <el-button @click="openNewItem">+ 单条明细</el-button>
               <el-button :disabled="!selectedItems.length" type="warning" @click="openPaymentRequest">发起请款</el-button>
+              <el-button :icon="Upload" :loading="importing" @click="importItems">导入历史</el-button>
+              <el-button :icon="Download" link type="primary" @click="downloadImportTemplate">下载模板</el-button>
             </template>
           </div>
 
@@ -1118,14 +1162,22 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-date-picker v-model="orderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="6">
+          <el-col :span="4">
+            <el-form-item label="付款方式">
+              <el-select v-model="orderForm.payment_method" clearable allow-create filterable default-first-option
+                         placeholder="选择/输入" style="width:100%">
+                <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="4">
             <el-form-item label="合同编号">
               <el-input v-model="orderForm.contract_no" placeholder="选填" />
             </el-form-item>
           </el-col>
-          <el-col :span="6">
+          <el-col :span="4">
             <el-form-item label="默认订单编号">
-              <el-input v-model="orderForm.project_code" placeholder="行内可单独覆盖" />
+              <el-input v-model="orderForm.project_code" placeholder="行内可覆盖" />
             </el-form-item>
           </el-col>
         </el-row>

@@ -915,6 +915,7 @@ class PurchaseItemCreate(BaseModel):
     invoice_date: Optional[str] = None
     tax_rate: Optional[str] = None
     invoice_amount: float = 0
+    payment_method: Optional[str] = None
     invoice_status: str = "待对账"
     notes: Optional[str] = None
 
@@ -936,7 +937,15 @@ class PurchaseOrderCreate(BaseModel):
     delivery_date: Optional[str] = None          # 下单日期（总的）
     contract_no: Optional[str] = None
     project_code: Optional[str] = None           # 默认项目编号（行可覆盖）
+    payment_method: Optional[str] = None          # 🆕 付款方式（表头，作用于全单）
     lines: list[PurchaseOrderLine] = Field(min_length=1)
+
+
+class PurchaseImportResult(BaseModel):
+    created: int = 0
+    suppliers_created: int = 0
+    failed: int = 0
+    errors: list[str] = Field(default_factory=list)
 
 
 class PurchaseItemUpdate(BaseModel):
@@ -985,6 +994,7 @@ class PurchaseItemOut(BaseModel):
     invoice_amount: float = 0
     paid_amount: float = 0
     paid_date: Optional[str] = None
+    payment_method: Optional[str] = None
     invoice_status: str
     buyer_id: Optional[int] = None
     buyer_name: Optional[str] = None

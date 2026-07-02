@@ -1,9 +1,12 @@
-"""🆕 采购管理模块：供应商档案 / 采购明细 / 账目一览 / 请款流程 / 汇总报表"""
-from datetime import datetime, timezone
+"""🆕 采购管理模块：供应商档案 / 采购明细 / 账目一览 / 请款流程 / 汇总报表 / 历史导入"""
+from datetime import datetime, timezone, date as _date, datetime as _dt
+from io import BytesIO
 from typing import Optional, List
 from collections import defaultdict
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -279,6 +282,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         invoice_date=i.invoice_date, tax_rate=i.tax_rate,
         invoice_amount=i.invoice_amount or 0,
         paid_amount=i.paid_amount or 0, paid_date=i.paid_date,
+        payment_method=i.payment_method,
         invoice_status=i.invoice_status,
         buyer_id=i.buyer_id,
         buyer_name=_uname(i.buyer),
@@ -344,6 +348,7 @@ async def create_purchase_order(
             spec=ln.spec, qty=ln.qty, unit_price=ln.unit_price,
             received_amount=recv or 0,
             tax_rate=ln.tax_rate, notes=ln.notes,
+            payment_method=body.payment_method,
             buyer_id=current.id,
         ))
     await db.commit()
@@ -352,6 +357,171 @@ async def create_purchase_order(
         .order_by(models.PurchaseItem.id)
     )
     return [_item_out(x) for x in r.scalars().all()]
+
+
+# ==================== 采购历史数据 一键导入 ====================
+# 模板列（顺序即模板列顺序；* 为必填）。解析时按表头名匹配，允许调整列序。
+_IMPORT_COLS = [
+    "供应商名称*", "采购单号", "下单日期", "订单编号", "名称*", "规格型号",
+    "数量", "单价", "合计金额", "送货单号", "到货日期", "付款方式",
+    "开票日期", "开票金额", "税率", "对账状态", "备注",
+]
+
+
+def _norm_date(v) -> Optional[str]:
+    if v is None or v == "":
+        return None
+    if isinstance(v, (_dt, _date)):
+        return v.strftime("%Y-%m-%d")
+    s = str(v).strip().replace(".", "-").replace("/", "-")
+    return s[:10] if s else None
+
+
+def _norm_num(v) -> Optional[float]:
+    if v is None or v == "":
+        return None
+    try:
+        return float(str(v).replace(",", "").replace("￥", "").replace("¥", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _norm_str(v) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+@router.get("/items/import-template")
+async def import_template(
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+):
+    """下载采购明细导入模板（.xlsx，含表头 + 示例行 + 填写说明）。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "采购明细导入"
+    ws.append(_IMPORT_COLS)
+    hfill = PatternFill("solid", fgColor="E8F5EE")
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = hfill
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.append(["无锡示例金属制品有限公司", "CG20260101-001", "2026-01-05", "2026-046",
+               "轴承座", "SKF-6205", 4, 35, 140, "SF1234", "2026-01-08", "转账",
+               "", "", "13%", "待对账", "示例行，导入前请删除"])
+    widths = [26, 16, 12, 12, 18, 16, 8, 10, 12, 14, 12, 10, 12, 12, 8, 10, 20]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    ws.freeze_panes = "A2"
+
+    ws2 = wb.create_sheet("填写说明")
+    for line in [
+        ["采购历史数据导入说明"],
+        [""],
+        ["1. 带 * 的列为必填：供应商名称、名称。"],
+        ["2. 供应商名称若系统中不存在，会自动新建（仅带名称，其余资料后续在供应商档案补全）。"],
+        ["3. 日期格式 YYYY-MM-DD（如 2026-01-05），也兼容 2026.1.5 / 2026/1/5。"],
+        ["4. 单价、合计金额只填数字；合计金额留空且有数量与单价时，系统自动=数量×单价。"],
+        ["5. 付款方式：现金 / 转账 / 月结 / 承兑 / 预付（也可自定义）。"],
+        ["6. 对账状态：待对账 / 已对账 / 已开票（留空默认待对账）。"],
+        ["7. 第 2 行为示例，导入前请删除。可一次导入多个供应商、多条明细。"],
+    ]:
+        ws2.append(line)
+    ws2["A1"].font = Font(bold=True, size=13)
+    ws2.column_dimensions["A"].width = 80
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = "采购明细导入模板.xlsx"
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
+@router.post("/items/import", response_model=schemas.PurchaseImportResult)
+async def import_items(
+    file: UploadFile = File(...),
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """一键导入采购历史明细：按表头名匹配列；供应商按名称匹配，不存在则自动新建。"""
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(BytesIO(await file.read()), data_only=True, read_only=True)
+    except Exception:
+        raise HTTPException(400, "无法解析该文件，请使用模板导出的 .xlsx")
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if len(rows) < 2:
+        raise HTTPException(400, "文件为空或只有表头")
+    header = [(_norm_str(c) or "").replace("*", "").strip() for c in rows[0]]
+    col = {name: idx for idx, name in enumerate(header) if name}
+
+    def cell(row, name):
+        i = col.get(name)
+        return row[i] if (i is not None and i < len(row)) else None
+
+    if "供应商名称" not in col or "名称" not in col:
+        raise HTTPException(400, "表头缺少必填列「供应商名称」或「名称」，请用模板")
+
+    # 供应商名称 -> id 缓存（一次性载入现有）
+    sres = await db.execute(select(models.Supplier.id, models.Supplier.name))
+    sup_map = {n: i for i, n in sres.all()}
+
+    created = 0
+    suppliers_created = 0
+    errors: list[str] = []
+    for rn, row in enumerate(rows[1:], start=2):
+        if row is None or all(c is None or str(c).strip() == "" for c in row):
+            continue
+        sup_name = _norm_str(cell(row, "供应商名称"))
+        item_name = _norm_str(cell(row, "名称"))
+        if not sup_name or not item_name:
+            errors.append(f"第 {rn} 行：供应商名称/名称为空，已跳过")
+            continue
+        sid = sup_map.get(sup_name)
+        if sid is None:
+            s = models.Supplier(name=sup_name, status="active")
+            db.add(s)
+            await db.flush()
+            sid = s.id
+            sup_map[sup_name] = sid
+            suppliers_created += 1
+        qty = _norm_num(cell(row, "数量"))
+        unit_price = _norm_num(cell(row, "单价"))
+        recv = _norm_num(cell(row, "合计金额"))
+        if recv is None and qty is not None and unit_price is not None:
+            recv = round(qty * unit_price, 4)
+        db.add(models.PurchaseItem(
+            po_no=_norm_str(cell(row, "采购单号")),
+            supplier_id=sid,
+            delivery_date=_norm_date(cell(row, "下单日期")),
+            project_code=_norm_str(cell(row, "订单编号")),
+            item_name=item_name,
+            spec=_norm_str(cell(row, "规格型号")),
+            qty=qty, unit_price=unit_price, received_amount=recv or 0,
+            delivery_note_no=_norm_str(cell(row, "送货单号")),
+            arrival_date=_norm_date(cell(row, "到货日期")),
+            payment_method=_norm_str(cell(row, "付款方式")),
+            invoice_date=_norm_date(cell(row, "开票日期")),
+            invoice_amount=_norm_num(cell(row, "开票金额")) or 0,
+            tax_rate=_norm_str(cell(row, "税率")),
+            invoice_status=_norm_str(cell(row, "对账状态")) or "待对账",
+            notes=_norm_str(cell(row, "备注")),
+            buyer_id=current.id,
+        ))
+        created += 1
+    await db.commit()
+    return schemas.PurchaseImportResult(
+        created=created, suppliers_created=suppliers_created,
+        failed=len(errors), errors=errors[:50],
+    )
 
 
 @router.put("/items/{iid}", response_model=schemas.PurchaseItemOut)
