@@ -245,6 +245,8 @@ const supplierForm = reactive({
 
 const batchInvoiceVisible = ref(false)
 const batchInvoiceForm = reactive({ invoice_date: '', invoice_amount: null as number | null })
+// 🆕 #100 合计开票：已选明细的收货合计，作为填写合计开票金额的参考 + 后端分摊基数
+const selectedReceivedTotal = computed(() => selectedItems.value.reduce((s, i) => s + (i.received_amount || 0), 0))
 
 const payReqVisible = ref(false)
 const payReqForm = reactive({
@@ -1055,13 +1057,18 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
     <!-- ==================== 批量开票弹窗 ==================== -->
     <el-dialog v-model="batchInvoiceVisible" title="批量标记开票" width="480px">
-      <el-alert :title="`已选 ${selectedItems.length} 条明细`" type="info" :closable="false" style="margin-bottom:16px" />
+      <el-alert type="info" :closable="false" style="margin-bottom:16px"
+                :title="selectedItems.length === 1
+                  ? '已选 1 条明细'
+                  : `已选 ${selectedItems.length} 条明细 · 收货合计 ${fmtMoney(selectedReceivedTotal)}`"
+                :description="selectedItems.length > 1 ? '填写合计开票金额后，将按各明细收货金额比例分摊到每条。' : ''" />
       <el-form :model="batchInvoiceForm" label-width="100px">
         <el-form-item label="开票日期">
           <el-date-picker v-model="batchInvoiceForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
         </el-form-item>
-        <el-form-item v-if="selectedItems.length === 1" label="开票金额">
-          <el-input-number v-model="batchInvoiceForm.invoice_amount" :precision="2" :min="0" style="width:100%" />
+        <el-form-item :label="selectedItems.length === 1 ? '开票金额' : '合计开票金额'">
+          <el-input-number v-model="batchInvoiceForm.invoice_amount" :precision="2" :min="0" style="width:100%"
+                           :placeholder="selectedItems.length > 1 ? '按收货额比例分摊到各明细' : ''" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1111,7 +1118,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :span="12">
             <el-form-item label="分类">
-              <el-select v-model="supplierForm.category" style="width:100%" clearable allow-create filterable>
+              <el-select v-model="supplierForm.category" style="width:100%" clearable allow-create filterable
+                         default-first-option placeholder="可选择，或直接输入新分类后回车">
                 <el-option label="外协" value="外协" />
                 <el-option label="标准件" value="标准件" />
                 <el-option label="不锈钢" value="不锈钢" />

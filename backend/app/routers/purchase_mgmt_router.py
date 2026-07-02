@@ -322,12 +322,23 @@ async def batch_invoice(
         select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids))
     )
     items = r.scalars().all()
-    for item in items:
+    # 🆕 #100 对账后合计开票：合计开票金额按各明细「收货金额」比例分摊到 invoice_amount，
+    #     收货额全为 0 时均摊；末条兜余数，保证分摊合计精确等于填入的合计开票金额。
+    amt = body.invoice_amount
+    total_received = sum(float(i.received_amount or 0) for i in items)
+    n = len(items)
+    allocated = 0.0
+    for idx, item in enumerate(items):
         item.invoice_status = "已开票"
         if body.invoice_date:
             item.invoice_date = body.invoice_date
-        if body.invoice_amount is not None and len(body.item_ids) == 1:
-            item.invoice_amount = body.invoice_amount
+        if amt is not None:
+            if idx == n - 1:
+                item.invoice_amount = round(amt - allocated, 2)
+            else:
+                share = round(amt * float(item.received_amount or 0) / total_received, 2) if total_received > 0 else round(amt / n, 2)
+                item.invoice_amount = share
+                allocated += share
     await db.commit()
     return {"updated": len(items)}
 
