@@ -428,8 +428,9 @@ function importItems() {
 // 🆕 从清单下单：项目标准件清单 → 筛选 → 选供应商 → 生成采购单
 interface PurchasableRow {
   sheet_id: number; record_id: number; item_name: string; spec?: string | null
-  qty?: number | null; notes?: string | null; status: string
-  _checked: boolean; _price: number | null
+  qty?: number | null; stock: number; suggest_purchase: number
+  notes?: string | null; status: string
+  _checked: boolean; _price: number | null; _buyqty: number | null
 }
 const listOrderVisible = ref(false)
 const listOrderSaving = ref(false)
@@ -468,7 +469,13 @@ async function onListProjectChange() {
   purchasableLoading.value = true
   try {
     const r = await http.get<PurchasableRow[]>(`/purchase-mgmt/purchasable/${pid}`)
-    purchasableRows.value = r.data.map(x => ({ ...x, _checked: x.status === '未下单', _price: null }))
+    // 默认只勾选「未下单且有缺口(建议采购>0)」的行；采购数量默认取建议采购量，避免买多
+    purchasableRows.value = r.data.map(x => ({
+      ...x,
+      _checked: x.status === '未下单' && (x.suggest_purchase || 0) > 0,
+      _price: null,
+      _buyqty: x.suggest_purchase > 0 ? x.suggest_purchase : (x.qty ?? null),
+    }))
   } finally { purchasableLoading.value = false }
 }
 async function submitListOrder() {
@@ -484,7 +491,8 @@ async function submitListOrder() {
       payment_method: listOrderForm.payment_method || null,
       lines: sel.map(r => ({
         source_sheet_id: r.sheet_id, source_record_id: r.record_id,
-        item_name: r.item_name, spec: r.spec, qty: r.qty, unit_price: r._price,
+        item_name: r.item_name, spec: r.spec,
+        qty: r._buyqty ?? r.suggest_purchase ?? r.qty, unit_price: r._price,
       })),
     })
     ElMessage.success(`已生成采购单（${sel.length} 行），已回写清单订购日期`)
@@ -1284,19 +1292,37 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-table-column width="46" align="center">
           <template #default="{ row }"><el-checkbox v-model="row._checked" /></template>
         </el-table-column>
-        <el-table-column label="名称" min-width="150" prop="item_name" />
-        <el-table-column label="规格型号" min-width="150"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
-        <el-table-column label="数量" width="80" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
-        <el-table-column label="单价(选填)" width="130">
+        <el-table-column label="名称" min-width="140" prop="item_name" />
+        <el-table-column label="规格型号" min-width="130"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
+        <el-table-column label="需求量" width="72" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
+        <el-table-column label="现有库存" width="80" align="right">
+          <template #default="{ row }">
+            <span :class="{ 'stock-has': row.stock > 0 }">{{ row.stock }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="建议采购" width="82" align="right">
+          <template #default="{ row }">
+            <b :class="row.suggest_purchase > 0 ? 'sugg-buy' : 'sugg-none'">{{ row.suggest_purchase }}</b>
+          </template>
+        </el-table-column>
+        <el-table-column label="采购数量" width="120">
+          <template #default="{ row }">
+            <el-input-number v-model="row._buyqty" :min="0" :precision="2" :controls="false" style="width:100%" />
+          </template>
+        </el-table-column>
+        <el-table-column label="单价(选填)" width="120">
           <template #default="{ row }">
             <el-input-number v-model="row._price" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="后填留空" />
           </template>
         </el-table-column>
-        <el-table-column label="采购状态" width="100" align="center">
+        <el-table-column label="采购状态" width="92" align="center">
           <template #default="{ row }"><el-tag size="small" :type="listStatusTag(row.status)">{{ row.status }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="备注" min-width="120"><template #default="{ row }">{{ row.notes || '—' }}</template></el-table-column>
+        <el-table-column label="备注" min-width="110"><template #default="{ row }">{{ row.notes || '—' }}</template></el-table-column>
       </el-table>
+      <div class="muted" style="margin-top:6px">
+        提示：<b>建议采购 = 需求量 − 现有库存</b>（按名称+规格匹配仓库库存）。采购数量已默认按建议量填好，可手动调整；有库存的行不会重复采购。
+      </div>
       <EmptyHint v-if="listOrderForm.project_id && !purchasableLoading && !purchasableRows.length" text="该项目标准件清单为空" size="sm" />
       <template #footer>
         <el-button @click="listOrderVisible = false">取消</el-button>
@@ -1806,6 +1832,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .drawer-summary { display: flex; gap: 20px; padding: 12px 0 16px; font-size: 14px; border-bottom: 1px solid var(--el-border-color-lighter); margin-bottom: 12px; }
 .monthly-collapse { margin-bottom: 14px; }
 .muted { color: var(--el-text-color-secondary); font-size: 12.5px; }
+.stock-has { color: var(--el-color-success); font-weight: 600; }
+.sugg-buy { color: var(--el-color-danger); }
+.sugg-none { color: var(--el-text-color-secondary); font-weight: 400; }
 .tip-line { line-height: 1.7; }
 .dl-tip { font-size: 12.5px; color: var(--el-text-color-secondary); margin-bottom: 14px; line-height: 1.6; }
 .dl-sec { margin-bottom: 20px; }

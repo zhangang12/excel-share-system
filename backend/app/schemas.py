@@ -954,7 +954,9 @@ class PurchasableRow(BaseModel):
     record_id: int
     item_name: str
     spec: Optional[str] = None
-    qty: Optional[float] = None
+    qty: Optional[float] = None          # 清单需求量
+    stock: float = 0                      # 现有库存（按名称+规格匹配物料）
+    suggest_purchase: float = 0           # 建议采购量 = 需求 - 库存
     notes: Optional[str] = None
     status: str = "未下单"          # 未下单 / 已下单 / 已到货
 

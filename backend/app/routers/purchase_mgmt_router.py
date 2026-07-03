@@ -19,8 +19,9 @@ router = APIRouter(prefix="/api/purchase-mgmt", tags=["采购管理"])
 _PURCHASE_ROLES = ("buyer", "buyer_lead", "finance", "buyer_standard", "buyer_outsource")
 # 🆕 采购员（标准件/外协）也可新增/编辑/删除采购明细与供应商
 _WRITE_ROLES = ("buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
-# 🆕 采购收货：仓库填送货单号/到货日期/后填价格；采购与管理层亦可
-_RECEIVE_ROLES = ("warehouse", "warehouse_lead", "buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
+# 🆕 采购收货入库：仓库填送货单号/到货日期/后填价格 → 自动入库。
+# 收货归仓库（采购只下单、不收货）；admin/manager 由 require_roles 自动放行
+_RECEIVE_ROLES = ("warehouse", "warehouse_lead")
 
 
 def _uname(u: Optional[models.User]) -> Optional[str]:
@@ -408,7 +409,8 @@ async def purchasable(
     current: models.User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    """取项目「标准件清单」的可采购行 + 当前采购状态（供从清单下单：筛选→选供应商→生成采购单）。"""
+    """取项目「标准件清单」的可采购行 + 当前采购状态 + 现有库存/建议采购量。
+    建议采购量 = 需求数量 − 现有库存（按 名称+规格 匹配仓库物料），从源头避免买多。"""
     r = await db.execute(select(models.Datasheet).where(
         models.Datasheet.project_id == project_id, models.Datasheet.name == _STD_SHEET))
     sheet = r.scalar_one_or_none()
@@ -419,6 +421,19 @@ async def purchasable(
     by_rec: dict = {}
     for pi in lr.scalars().all():
         by_rec.setdefault(pi.source_record_id, []).append(pi)
+    # 🆕 现有库存：按 名称+规格 匹配物料主数据，汇总实时库存
+    from .warehouse_router import _stock_map
+
+    def _k(nm, sp):
+        return ((nm or "").strip(), (sp or "").strip())
+
+    mr = await db.execute(select(models.WhMaterial))
+    mats = list(mr.scalars().all())
+    stock_by_id = await _stock_map(db) if mats else {}
+    stock_by_key: dict = {}
+    for m in mats:
+        stock_by_key[_k(m.name, m.spec)] = stock_by_key.get(_k(m.name, m.spec), 0) + \
+            stock_by_id.get(m.id, m.init_stock or 0)
     rr = await db.execute(select(models.Record).where(
         models.Record.datasheet_id == sheet.id).order_by(models.Record.sort_order, models.Record.id))
     out = []
@@ -443,9 +458,14 @@ async def purchasable(
         else:
             status = "已下单"
         extra = "，".join(f"{c}:{gv(c)}" for c in ("材质", "品牌") if gv(c))
+        spec = gv("规格型号")
+        qty = _num(gv("数量"))
+        stock = round(stock_by_key.get(_k(name, spec), 0), 4)
+        suggest = round(max(0.0, (qty or 0) - stock), 4) if qty is not None else 0
         out.append(schemas.PurchasableRow(
-            sheet_id=sheet.id, record_id=rec.id, item_name=name, spec=gv("规格型号"),
-            qty=_num(gv("数量")), notes=(extra or gv("备注")), status=status))
+            sheet_id=sheet.id, record_id=rec.id, item_name=name, spec=spec,
+            qty=qty, stock=stock, suggest_purchase=suggest,
+            notes=(extra or gv("备注")), status=status))
     return out
 
 
