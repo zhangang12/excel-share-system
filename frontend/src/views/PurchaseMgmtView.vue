@@ -425,6 +425,77 @@ function importItems() {
   input.click()
 }
 
+// 🆕 从清单下单：项目标准件清单 → 筛选 → 选供应商 → 生成采购单
+interface PurchasableRow {
+  sheet_id: number; record_id: number; item_name: string; spec?: string | null
+  qty?: number | null; notes?: string | null; status: string
+  _checked: boolean; _price: number | null
+}
+const listOrderVisible = ref(false)
+const listOrderSaving = ref(false)
+const purchasableLoading = ref(false)
+const listProjects = ref<{ id: number; code: string; name: string }[]>([])
+const purchasableRows = ref<PurchasableRow[]>([])
+const purchasableFilter = ref('')
+const listOrderForm = reactive({
+  project_id: '' as number | '', project_code: '',
+  supplier_id: '' as number | '', delivery_date: '', payment_method: '',
+})
+const filteredPurchasable = computed(() => {
+  const kw = purchasableFilter.value.trim().toLowerCase()
+  if (!kw) return purchasableRows.value
+  return purchasableRows.value.filter(r =>
+    r.item_name.toLowerCase().includes(kw) || (r.spec || '').toLowerCase().includes(kw))
+})
+const listSelCount = computed(() => purchasableRows.value.filter(r => r._checked).length)
+async function openListOrder() {
+  Object.assign(listOrderForm, {
+    project_id: '', project_code: '', supplier_id: '',
+    delivery_date: new Date().toISOString().slice(0, 10), payment_method: '',
+  })
+  purchasableRows.value = []; purchasableFilter.value = ''
+  try {
+    const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
+    listProjects.value = r.data.filter(p => p.standard_sheet_id)
+      .map(p => ({ id: p.project_id, code: p.code, name: p.name }))
+  } catch { listProjects.value = [] }
+  listOrderVisible.value = true
+}
+async function onListProjectChange() {
+  const pid = listOrderForm.project_id
+  listOrderForm.project_code = listProjects.value.find(x => x.id === pid)?.code || ''
+  if (!pid) { purchasableRows.value = []; return }
+  purchasableLoading.value = true
+  try {
+    const r = await http.get<PurchasableRow[]>(`/purchase-mgmt/purchasable/${pid}`)
+    purchasableRows.value = r.data.map(x => ({ ...x, _checked: x.status === '未下单', _price: null }))
+  } finally { purchasableLoading.value = false }
+}
+async function submitListOrder() {
+  if (!listOrderForm.supplier_id) { ElMessage.error('请选择供应商'); return }
+  const sel = purchasableRows.value.filter(r => r._checked)
+  if (!sel.length) { ElMessage.error('请勾选要下单的清单行'); return }
+  listOrderSaving.value = true
+  try {
+    await http.post('/purchase-mgmt/orders/from-list', {
+      supplier_id: listOrderForm.supplier_id,
+      delivery_date: listOrderForm.delivery_date || null,
+      project_code: listOrderForm.project_code || null,
+      payment_method: listOrderForm.payment_method || null,
+      lines: sel.map(r => ({
+        source_sheet_id: r.sheet_id, source_record_id: r.record_id,
+        item_name: r.item_name, spec: r.spec, qty: r.qty, unit_price: r._price,
+      })),
+    })
+    ElMessage.success(`已生成采购单（${sel.length} 行），已回写清单订购日期`)
+    listOrderVisible.value = false
+    await loadItems()
+  } catch { /* handled */ } finally { listOrderSaving.value = false }
+}
+function listStatusTag(s: string): 'info' | 'warning' | 'success' {
+  return s === '已到货' ? 'success' : s === '已下单' ? 'warning' : 'info'
+}
+
 const supplierDialogVisible = ref(false)
 const editingSupplier = ref<SupplierOut | null>(null)
 const supplierForm = reactive({
@@ -919,7 +990,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-select>
             <el-button @click="loadItems">刷新</el-button>
             <template v-if="canWrite">
-              <el-button type="primary" @click="openNewOrder">+ 新建采购单</el-button>
+              <el-button type="primary" @click="openListOrder">📋 从清单下单</el-button>
+              <el-button @click="openNewOrder">+ 新建采购单</el-button>
               <el-button @click="openNewItem">+ 单条明细</el-button>
               <el-button :disabled="!selectedItems.length" type="warning" @click="openPaymentRequest">发起请款</el-button>
               <el-button :icon="Upload" :loading="importing" @click="importItems">导入历史</el-button>
@@ -1166,6 +1238,73 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
       </el-tabs>
     </el-card>
+
+    <!-- ==================== 从清单下单弹窗（标准件清单→采购单）==================== -->
+    <el-dialog v-model="listOrderVisible" title="从清单下单" width="960px" top="6vh">
+      <el-alert type="info" :closable="false" style="margin-bottom:14px"
+        title="选项目 → 它的标准件清单自动带出 → 筛选、勾选要买的行 → 选一个供应商 → 生成一张采购单。下单会回写清单的订购日期/采购负责人;清单也可在仓库「物料需求」里看库存。" />
+      <el-form :model="listOrderForm" label-position="top" class="order-form">
+        <el-row :gutter="20">
+          <el-col :span="7">
+            <el-form-item label="项目 *">
+              <el-select v-model="listOrderForm.project_id" filterable placeholder="选择项目(有标准件清单的)"
+                         style="width:100%" @change="onListProjectChange">
+                <el-option v-for="p in listProjects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="7">
+            <el-form-item label="供应商 *">
+              <el-select v-model="listOrderForm.supplier_id" filterable placeholder="选择供应商" style="width:100%">
+                <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="5">
+            <el-form-item label="下单日期">
+              <el-date-picker v-model="listOrderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="5">
+            <el-form-item label="付款方式">
+              <el-select v-model="listOrderForm.payment_method" clearable allow-create filterable default-first-option
+                         placeholder="选择/输入" style="width:100%">
+                <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+      <div class="order-lines-head">
+        <el-input v-model="purchasableFilter" placeholder="筛选名称/规格" clearable style="width:220px" />
+        <span class="muted">已勾选 {{ listSelCount }} / {{ purchasableRows.length }} 行</span>
+      </div>
+      <el-table :data="filteredPurchasable" v-loading="purchasableLoading" size="small" border
+                max-height="46vh" class="wrap-cells">
+        <el-table-column width="46" align="center">
+          <template #default="{ row }"><el-checkbox v-model="row._checked" /></template>
+        </el-table-column>
+        <el-table-column label="名称" min-width="150" prop="item_name" />
+        <el-table-column label="规格型号" min-width="150"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
+        <el-table-column label="数量" width="80" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
+        <el-table-column label="单价(选填)" width="130">
+          <template #default="{ row }">
+            <el-input-number v-model="row._price" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="后填留空" />
+          </template>
+        </el-table-column>
+        <el-table-column label="采购状态" width="100" align="center">
+          <template #default="{ row }"><el-tag size="small" :type="listStatusTag(row.status)">{{ row.status }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="备注" min-width="120"><template #default="{ row }">{{ row.notes || '—' }}</template></el-table-column>
+      </el-table>
+      <EmptyHint v-if="listOrderForm.project_id && !purchasableLoading && !purchasableRows.length" text="该项目标准件清单为空" size="sm" />
+      <template #footer>
+        <el-button @click="listOrderVisible = false">取消</el-button>
+        <el-button type="primary" :loading="listOrderSaving" :disabled="!listSelCount" @click="submitListOrder">
+          生成采购单（{{ listSelCount }} 行）
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- ==================== 采购单弹窗（同一供应商多个零件行）==================== -->
     <el-dialog v-model="orderDialogVisible" title="新建采购单" width="1080px" top="6vh">

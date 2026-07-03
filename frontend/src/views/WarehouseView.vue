@@ -182,6 +182,22 @@ async function submitReceive() {
   } catch { /* handled */ } finally { recvSaving.value = false }
 }
 
+// ===== 🆕 项目物料需求（清单→仓库）=====
+interface DemandRow {
+  item_name: string; spec?: string | null; demand_qty?: number | null
+  stock: number; suggest_purchase: number; purchase_status: string; in_stock: boolean
+}
+const demandProj = ref<number | undefined>()
+const demandRows = ref<DemandRow[]>([])
+const demandLoading = ref(false)
+async function loadDemand() {
+  if (!demandProj.value) { demandRows.value = []; return }
+  demandLoading.value = true
+  try { demandRows.value = (await http.get<DemandRow[]>(`/wh/demand/${demandProj.value}`)).data }
+  finally { demandLoading.value = false }
+}
+watch(demandProj, () => loadDemand())
+
 // ===== 发货清单上传 =====
 const projects = ref<{ id: number; code: string; name: string }[]>([])
 const shipProj = ref<number | undefined>()
@@ -251,6 +267,7 @@ function onTab(name: string) {
   if (name === 'txn' && !txns.value.length) loadTxns()
   if (name === 'sum') loadSummary()
   if (name === 'recv') loadReceiving()
+  if (name === 'demand' && !projects.value.length) loadProjects()
   if (name === 'ship') {
     if (!projects.value.length) loadProjects()
     loadShipPending()
@@ -372,6 +389,38 @@ function onTab(name: string) {
             <el-table-column v-if="canWrite" label="操作" width="80"><template #default="{ row }"><el-button size="small" link type="primary" @click="openMat(row)">编辑</el-button></template></el-table-column>
           </el-table>
           <EmptyHint v-if="!materials.length" text="暂无物料主数据，点「新增物料」开始" size="sm" />
+        </el-tab-pane>
+
+        <!-- 🆕 项目物料需求（清单→仓库）-->
+        <el-tab-pane label="物料需求" name="demand">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <el-select v-model="demandProj" filterable clearable placeholder="选择项目" style="width:300px">
+              <el-option v-for="p in projects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
+            </el-select>
+            <span class="muted small">读项目「标准件清单」,逐行看 需求量 / 现有库存 / 建议采购量。有货的可直接出库,缺的走采购。</span>
+          </div>
+          <el-table v-if="demandProj" :data="demandRows" v-loading="demandLoading" stripe size="small"
+                    max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
+            <el-table-column prop="item_name" label="名称" min-width="150" />
+            <el-table-column prop="spec" label="规格型号" min-width="150"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
+            <el-table-column label="需求量" width="90" align="right"><template #default="{ row }">{{ row.demand_qty ?? '—' }}</template></el-table-column>
+            <el-table-column label="现有库存" width="100" align="right">
+              <template #default="{ row }"><b :class="{ bad: row.stock <= 0 }">{{ row.stock }}</b></template>
+            </el-table-column>
+            <el-table-column label="建议采购" width="100" align="right">
+              <template #default="{ row }"><span :class="{ bad: row.suggest_purchase > 0 }">{{ row.suggest_purchase }}</span></template>
+            </el-table-column>
+            <el-table-column label="库存" width="90" align="center">
+              <template #default="{ row }"><StatusPill :text="row.in_stock ? '有货可出' : '需采购'" :variant="row.in_stock ? 'success' : 'warn'" /></template>
+            </el-table-column>
+            <el-table-column label="采购状态" width="100" align="center">
+              <template #default="{ row }">
+                <StatusPill :text="row.purchase_status" :variant="row.purchase_status === '已到货' ? 'success' : row.purchase_status === '已下单' ? 'primary' : 'muted'" />
+              </template>
+            </el-table-column>
+          </el-table>
+          <EmptyHint v-if="demandProj && !demandLoading && !demandRows.length" text="该项目暂无标准件清单或清单为空" size="sm" />
+          <EmptyHint v-if="!demandProj" text="选择项目查看物料需求" size="sm" />
         </el-tab-pane>
 
         <!-- 🆕 采购收货 -->

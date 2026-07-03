@@ -372,6 +372,9 @@ class WhTxn(Base):
     biz_date: Mapped[str] = mapped_column(String(10), index=True)        # YYYY-MM-DD
     direction: Mapped[str] = mapped_column(String(4))                    # in / out
     qty: Mapped[float] = mapped_column(default=0)                        # 正数
+    unit_price: Mapped[Optional[float]] = mapped_column()               # 🆕 单价（采购入库带采购单价）
+    amount: Mapped[Optional[float]] = mapped_column()                   # 🆕 金额=qty×unit_price（库存金额/成本）
+    purchase_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("purchase_items.id"), index=True)  # 🆕 采购收货自动入库来源
     source: Mapped[Optional[str]] = mapped_column(String(32))           # 采购入库/领料出库/冲红…
     party: Mapped[Optional[str]] = mapped_column(String(128))           # 供应商/领用方
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), index=True)
@@ -570,6 +573,9 @@ class PurchaseItem(Base):
     __tablename__ = "purchase_items"
     id: Mapped[int] = mapped_column(primary_key=True)
     po_no: Mapped[Optional[str]] = mapped_column(String(32), index=True)  # 🆕 采购单号（同一供应商多零件行共享）
+    # 🆕 来源：从项目清单（标准件清单等）生成采购单时，记来源数据表与行，用于回写进度
+    source_sheet_id: Mapped[Optional[int]] = mapped_column(index=True)
+    source_record_id: Mapped[Optional[int]] = mapped_column(index=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     delivery_date: Mapped[Optional[str]] = mapped_column(String(10))       # 下单日期（采购填）
     contract_no: Mapped[Optional[str]] = mapped_column(String(64))

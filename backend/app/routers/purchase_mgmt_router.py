@@ -364,6 +364,154 @@ async def create_purchase_order(
     return [_item_out(x) for x in r.scalars().all()]
 
 
+# ==================== 清单 → 采购下单 / 回写清单 ====================
+_STD_SHEET = "标准件清单"
+
+
+async def _sheet_fieldmap(db: AsyncSession, sheet_id: int) -> dict:
+    fr = await db.execute(select(models.Field).where(models.Field.datasheet_id == sheet_id))
+    return {f.name: str(f.id) for f in fr.scalars().all()}
+
+
+async def _writeback_sheet_row(db: AsyncSession, sheet_id: int, record_id: int, updates: dict) -> None:
+    """把 {列名: 值} 写进某数据表某行 values（按列名匹配 field_id）；列不存在则跳过。"""
+    if not sheet_id or not record_id:
+        return
+    name2id = await _sheet_fieldmap(db, sheet_id)
+    rr = await db.execute(select(models.Record).where(models.Record.id == record_id))
+    rec = rr.scalar_one_or_none()
+    if not rec:
+        return
+    vals = dict(rec.values or {})
+    hit = False
+    for col, val in updates.items():
+        fid = name2id.get(col)
+        if fid and val is not None:
+            vals[fid] = val
+            hit = True
+    if hit:
+        rec.values = vals
+
+
+def _num(v):
+    if v in (None, ""):
+        return None
+    try:
+        return float(str(v).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+@router.get("/purchasable/{project_id}", response_model=List[schemas.PurchasableRow])
+async def purchasable(
+    project_id: int,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """取项目「标准件清单」的可采购行 + 当前采购状态（供从清单下单：筛选→选供应商→生成采购单）。"""
+    r = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.project_id == project_id, models.Datasheet.name == _STD_SHEET))
+    sheet = r.scalar_one_or_none()
+    if not sheet:
+        return []
+    name2id = await _sheet_fieldmap(db, sheet.id)
+    lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == sheet.id))
+    by_rec: dict = {}
+    for pi in lr.scalars().all():
+        by_rec.setdefault(pi.source_record_id, []).append(pi)
+    rr = await db.execute(select(models.Record).where(
+        models.Record.datasheet_id == sheet.id).order_by(models.Record.sort_order, models.Record.id))
+    out = []
+    for rec in rr.scalars().all():
+        v = rec.values or {}
+
+        def gv(col):
+            fid = name2id.get(col)
+            x = v.get(fid) if fid else None
+            if isinstance(x, list):
+                x = "、".join(str(i) for i in x)
+            return str(x).strip() if x not in (None, "") else None
+
+        name = gv("项目")
+        if not name:
+            continue
+        pis = by_rec.get(rec.id, [])
+        if not pis:
+            status = "未下单"
+        elif all(p.arrival_date for p in pis):
+            status = "已到货"
+        else:
+            status = "已下单"
+        extra = "，".join(f"{c}:{gv(c)}" for c in ("材质", "品牌") if gv(c))
+        out.append(schemas.PurchasableRow(
+            sheet_id=sheet.id, record_id=rec.id, item_name=name, spec=gv("规格型号"),
+            qty=_num(gv("数量")), notes=(extra or gv("备注")), status=status))
+    return out
+
+
+@router.post("/orders/from-list", response_model=List[schemas.PurchaseItemOut])
+async def create_order_from_list(
+    body: schemas.OrderFromListCreate,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """从清单选定行 + 选供应商 → 生成一张采购单；回写清单的订购日期/采购负责人。"""
+    lines = [l for l in body.lines if (l.item_name or "").strip()]
+    if not lines:
+        raise HTTPException(400, "请至少选择一行")
+    po_no = await _next_po_no(db)
+    today = _date.today().isoformat()
+    uname = current.full_name or current.username
+    for l in lines:
+        recv = None
+        if l.qty and l.unit_price:
+            recv = round((l.qty or 0) * (l.unit_price or 0), 4)
+        db.add(models.PurchaseItem(
+            po_no=po_no, source_sheet_id=l.source_sheet_id, source_record_id=l.source_record_id,
+            supplier_id=body.supplier_id, delivery_date=body.delivery_date, project_code=body.project_code,
+            item_name=l.item_name.strip(), spec=l.spec, qty=l.qty, unit_price=l.unit_price,
+            received_amount=recv or 0, payment_method=body.payment_method, notes=l.notes, buyer_id=current.id))
+        if l.source_sheet_id and l.source_record_id:
+            await _writeback_sheet_row(db, l.source_sheet_id, l.source_record_id,
+                                       {"订购日期": (body.delivery_date or today), "采购负责人": uname})
+    await db.commit()
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
+                         .order_by(models.PurchaseItem.id))
+    return [_item_out(x) for x in r.scalars().all()]
+
+
+async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: models.User) -> None:
+    """采购收货 → 自动生成一笔入库（带采购单价/金额）；幂等：同一采购明细只入库一次。"""
+    if not item.qty or item.qty <= 0:
+        return
+    ex = await db.execute(select(models.WhTxn).where(
+        models.WhTxn.purchase_item_id == item.id, models.WhTxn.is_reversal == False))  # noqa: E712
+    if ex.scalars().first():
+        return
+    spec = (item.spec or "").strip() or None
+    mq = select(models.WhMaterial).where(models.WhMaterial.name == item.item_name)
+    mq = mq.where(models.WhMaterial.spec == spec) if spec else mq.where(models.WhMaterial.spec.is_(None))
+    m = (await db.execute(mq)).scalar_one_or_none()
+    if not m:
+        m = models.WhMaterial(name=item.item_name, spec=spec, unit="个", category="采购入库")
+        db.add(m)
+        await db.flush()
+    pid = None
+    if item.project_code:
+        pr = await db.execute(select(models.Project.id).where(models.Project.code == item.project_code))
+        pid = pr.scalar_one_or_none()
+    bd = item.arrival_date or _date.today().isoformat()
+    from .warehouse_router import _next_ref
+    ref = await _next_ref(db, "in", bd)
+    up = item.unit_price
+    amt = round((item.qty or 0) * up, 4) if up is not None else None
+    db.add(models.WhTxn(
+        material_id=m.id, biz_date=bd, direction="in", qty=item.qty,
+        unit_price=up, amount=amt, purchase_item_id=item.id,
+        source="采购入库", party=(item.supplier.name if item.supplier else None),
+        project_id=pid, ref_no=ref, operator_id=current.id))
+
+
 # ==================== 采购历史数据 一键导入 ====================
 # 模板列（顺序即模板列顺序；* 为必填）。解析时按表头名匹配，允许调整列序。
 _IMPORT_COLS = [
@@ -621,6 +769,13 @@ async def receive_item(
         item.received_amount = body.received_amount
     elif item.qty and item.unit_price:
         item.received_amount = round(item.qty * item.unit_price, 4)
+    # 🆕 回写清单：到货日期 / 进度(已到货) / 仓库签字
+    if item.source_sheet_id and item.source_record_id:
+        await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id,
+                                   {"到货日期": body.arrival_date, "进度": "已到货",
+                                    "仓库签字": (current.full_name or current.username)})
+    # 🆕 采购收货 → 自动入库（带采购单价/金额），库存与财务成本据此计算
+    await _auto_stock_in(db, item, current)
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == iid))
     return _item_out(r.scalar_one())

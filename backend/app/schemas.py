@@ -948,6 +948,45 @@ class PurchaseImportResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+# ---------- 🆕 清单 → 采购下单 / 仓库需求 ----------
+class PurchasableRow(BaseModel):
+    sheet_id: int
+    record_id: int
+    item_name: str
+    spec: Optional[str] = None
+    qty: Optional[float] = None
+    notes: Optional[str] = None
+    status: str = "未下单"          # 未下单 / 已下单 / 已到货
+
+
+class OrderFromListLine(BaseModel):
+    source_sheet_id: Optional[int] = None
+    source_record_id: Optional[int] = None
+    item_name: str = Field(min_length=1, max_length=128)
+    spec: Optional[str] = None
+    qty: Optional[float] = None
+    unit_price: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class OrderFromListCreate(BaseModel):
+    supplier_id: int
+    delivery_date: Optional[str] = None
+    project_code: Optional[str] = None
+    payment_method: Optional[str] = None
+    lines: list[OrderFromListLine] = Field(min_length=1)
+
+
+class WarehouseDemandRow(BaseModel):
+    item_name: str
+    spec: Optional[str] = None
+    demand_qty: Optional[float] = None      # 需求量（清单数量）
+    stock: float = 0                         # 现有库存
+    suggest_purchase: float = 0              # 建议采购量 = 需求 - 库存
+    purchase_status: str = "未下单"          # 未下单 / 已下单 / 已到货
+    in_stock: bool = False                   # 是否有货可出
+
+
 class PurchaseItemUpdate(BaseModel):
     supplier_id: Optional[int] = None
     delivery_date: Optional[str] = None

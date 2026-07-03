@@ -298,6 +298,133 @@ def _minus1(d: str) -> str:
     return (_d(int(y), int(m), int(dd)) - _t(days=1)).isoformat()
 
 
+# ==================== 🆕 项目物料需求（清单→仓库）+ 库存金额 / 项目成本（→财务） ====================
+async def _avg_price_map(db: AsyncSession) -> dict:
+    """各物料入库加权平均单价 = Σ入库金额 / Σ入库数量（仅统计带金额的入库）。"""
+    r = await db.execute(
+        select(models.WhTxn.material_id,
+               func.sum(models.WhTxn.amount), func.sum(models.WhTxn.qty))
+        .where(models.WhTxn.direction == "in", models.WhTxn.amount.isnot(None),
+               models.WhTxn.is_reversal == False)  # noqa: E712
+        .group_by(models.WhTxn.material_id))
+    out: dict = {}
+    for mid, amt, qty in r.all():
+        if qty:
+            out[mid] = (amt or 0) / qty
+    return out
+
+
+def _dnum(v):
+    if v in (None, ""):
+        return None
+    try:
+        return float(str(v).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+@router.get("/demand/{project_id}", response_model=List[schemas.WarehouseDemandRow])
+async def project_demand(
+    project_id: int,
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """项目物料需求（读「标准件清单」）：逐行显示 需求量 / 现有库存 / 建议采购量 / 采购状态。"""
+    r = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.project_id == project_id, models.Datasheet.name == "标准件清单"))
+    sheet = r.scalar_one_or_none()
+    if not sheet:
+        return []
+    fr = await db.execute(select(models.Field).where(models.Field.datasheet_id == sheet.id))
+    name2id = {f.name: str(f.id) for f in fr.scalars().all()}
+    lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == sheet.id))
+    by_rec: dict = {}
+    for pi in lr.scalars().all():
+        by_rec.setdefault(pi.source_record_id, []).append(pi)
+    stock = await _stock_map(db)
+    mats = (await db.execute(select(models.WhMaterial))).scalars().all()
+    mat_by_key = {(m.name, m.spec or None): m for m in mats}
+    rr = await db.execute(select(models.Record).where(
+        models.Record.datasheet_id == sheet.id).order_by(models.Record.sort_order, models.Record.id))
+    out = []
+    for rec in rr.scalars().all():
+        v = rec.values or {}
+
+        def gv(col):
+            fid = name2id.get(col)
+            x = v.get(fid) if fid else None
+            if isinstance(x, list):
+                x = "、".join(str(i) for i in x)
+            return str(x).strip() if x not in (None, "") else None
+
+        name = gv("项目")
+        if not name:
+            continue
+        spec = gv("规格型号")
+        demand = _dnum(gv("数量"))
+        m = mat_by_key.get((name, spec or None))
+        st = stock.get(m.id, 0) if m else 0
+        suggest = max(0, (demand or 0) - st)
+        pis = by_rec.get(rec.id, [])
+        status = "未下单" if not pis else ("已到货" if all(p.arrival_date for p in pis) else "已下单")
+        out.append(schemas.WarehouseDemandRow(
+            item_name=name, spec=spec, demand_qty=demand, stock=st,
+            suggest_purchase=suggest, purchase_status=status, in_stock=st > 0))
+    return out
+
+
+@router.get("/inventory-value")
+async def inventory_value(
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """库存金额：各物料 现存 × 入库加权平均单价，汇总总库存金额（供财务看）。"""
+    stock = await _stock_map(db)
+    avg = await _avg_price_map(db)
+    mats = (await db.execute(select(models.WhMaterial))).scalars().all()
+    rows = []
+    total = 0.0
+    for m in mats:
+        st = stock.get(m.id, 0)
+        price = avg.get(m.id)
+        val = round(st * price, 2) if price is not None else None
+        if val:
+            total += val
+        rows.append({"material_id": m.id, "name": m.name, "spec": m.spec,
+                     "unit": m.unit, "stock": st, "avg_price": price, "value": val})
+    rows.sort(key=lambda x: (x["value"] or 0), reverse=True)
+    return {"total_value": round(total, 2), "rows": rows}
+
+
+@router.get("/project-cost")
+async def project_cost(
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """项目材料成本：出库(领料)到各项目的数量 × 物料加权平均单价，按项目汇总。"""
+    avg = await _avg_price_map(db)
+    r = await db.execute(
+        select(models.WhTxn.project_id, models.WhTxn.material_id, func.sum(models.WhTxn.qty))
+        .where(models.WhTxn.direction == "out", models.WhTxn.project_id.isnot(None),
+               models.WhTxn.is_reversal == False)  # noqa: E712
+        .group_by(models.WhTxn.project_id, models.WhTxn.material_id))
+    by_proj: dict = defaultdict(float)
+    for pid, mid, qty in r.all():
+        price = avg.get(mid)
+        if price:
+            by_proj[pid] += (qty or 0) * price
+    if not by_proj:
+        return {"rows": []}
+    pr = await db.execute(select(models.Project.id, models.Project.code, models.Project.name)
+                          .where(models.Project.id.in_(list(by_proj.keys()))))
+    pmap = {i: (c, n) for i, c, n in pr.all()}
+    rows = [{"project_id": pid, "code": pmap.get(pid, ("", ""))[0],
+             "name": pmap.get(pid, ("", ""))[1], "cost": round(cost, 2)}
+            for pid, cost in by_proj.items()]
+    rows.sort(key=lambda x: x["cost"], reverse=True)
+    return {"rows": rows}
+
+
 # ==================== 发货清单：设计推送 -> 仓库备货完成 -> 物流可见 ====================
 @router.get("/ship-list/pending", response_model=List[schemas.ShipListPendingRow])
 async def ship_list_pending(

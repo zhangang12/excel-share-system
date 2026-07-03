@@ -44,6 +44,35 @@ const invoiced = ref<InvoiceRow[]>([])
 const aftersales = ref<AsRow[]>([])
 const asTotal = ref(0)
 
+// 🆕 采购应付（读采购供应商账目）+ 库存金额 / 项目成本
+interface PayableRow { supplier_id: number; supplier_name: string; category?: string | null
+  received_total: number; invoice_total: number; paid_total: number; outstanding: number; item_count: number }
+const payables = ref<PayableRow[]>([])
+const payablesLoading = ref(false)
+async function loadPayables() {
+  payablesLoading.value = true
+  try { payables.value = (await http.get<{ rows: PayableRow[] }>('/purchase-mgmt/statements')).data.rows || [] }
+  finally { payablesLoading.value = false }
+}
+const payablesTotal = computed(() => payables.value.reduce((s, r) => s + (r.outstanding || 0), 0))
+const invValue = ref<{ total_value: number; rows: any[] }>({ total_value: 0, rows: [] })
+const projCost = ref<{ code: string; name: string; cost: number }[]>([])
+const invLoading = ref(false)
+async function loadInventory() {
+  invLoading.value = true
+  try {
+    const [iv, pc] = await Promise.all([
+      http.get<{ total_value: number; rows: any[] }>('/wh/inventory-value').then(r => r.data),
+      http.get<{ rows: any[] }>('/wh/project-cost').then(r => r.data),
+    ])
+    invValue.value = iv; projCost.value = pc.rows || []
+  } finally { invLoading.value = false }
+}
+function onFinTab(name: string) {
+  if (name === 'payables') loadPayables()
+  if (name === 'inventory') loadInventory()
+}
+
 // 请款审批
 const prStatus = ref('pending')
 const payReqs = ref<PaymentRequestOut[]>([])
@@ -237,7 +266,7 @@ async function revokeInvoice(row: ViewRow) {
     </div>
 
     <el-card shadow="never" v-loading="loading">
-      <el-tabs v-model="tab">
+      <el-tabs v-model="tab" @tab-change="onFinTab">
         <el-tab-pane :label="`📥 待开票 (${pendingView.length})`" name="pending">
           <el-table :data="pendingView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="140">
@@ -389,6 +418,53 @@ async function revokeInvoice(row: ViewRow) {
           </el-table>
           <EmptyHint v-if="!payReqs.length" text="暂无请款申请" />
         </el-tab-pane>
+
+        <!-- 🆕 采购应付 -->
+        <el-tab-pane label="📄 采购应付" name="payables">
+          <div class="summary-bar" style="margin-bottom:10px">
+            <span>应付合计 <b class="danger">{{ fmtMoney(payablesTotal) }}</b></span>
+            <span class="muted small">已收货未付款 = 对供应商的应付;从「请款审批」页付款</span>
+          </div>
+          <el-table :data="payables" v-loading="payablesLoading" stripe size="small"
+                    max-height="calc(100vh - 300px)" :scrollbar-always-on="true" class="wrap-cells">
+            <el-table-column prop="supplier_name" label="供应商" min-width="180" />
+            <el-table-column prop="category" label="分类" width="90"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
+            <el-table-column label="收货合计" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.received_total) }}</template></el-table-column>
+            <el-table-column label="开票合计" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.invoice_total) }}</template></el-table-column>
+            <el-table-column label="已付款" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.paid_total) }}</template></el-table-column>
+            <el-table-column label="应付余额" width="120" align="right"><template #default="{ row }"><b class="danger">{{ fmtMoney(row.outstanding) }}</b></template></el-table-column>
+            <el-table-column prop="item_count" label="明细数" width="80" align="center" />
+          </el-table>
+          <EmptyHint v-if="!payablesLoading && !payables.length" text="暂无采购应付" />
+        </el-tab-pane>
+
+        <!-- 🆕 库存 / 成本 -->
+        <el-tab-pane label="📦 库存 / 成本" name="inventory">
+          <div class="summary-bar" style="margin-bottom:10px">
+            <span>库存总金额 <b class="amt">{{ fmtMoney(invValue.total_value) }}</b></span>
+            <span class="muted small">库存金额 = 现存 × 入库加权平均单价;项目成本 = 领料出库 × 单价</span>
+          </div>
+          <el-row :gutter="16">
+            <el-col :span="14">
+              <div class="section-title">库存金额（按物料）</div>
+              <el-table :data="invValue.rows" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="wrap-cells">
+                <el-table-column prop="name" label="物料" min-width="140" />
+                <el-table-column prop="spec" label="规格" min-width="110"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
+                <el-table-column label="现存" width="80" align="right"><template #default="{ row }">{{ row.stock }}</template></el-table-column>
+                <el-table-column label="均价" width="100" align="right"><template #default="{ row }">{{ row.avg_price != null ? fmtMoney(row.avg_price) : '—' }}</template></el-table-column>
+                <el-table-column label="金额" width="120" align="right"><template #default="{ row }"><b>{{ row.value != null ? fmtMoney(row.value) : '—' }}</b></template></el-table-column>
+              </el-table>
+            </el-col>
+            <el-col :span="10">
+              <div class="section-title">项目材料成本</div>
+              <el-table :data="projCost" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="wrap-cells">
+                <el-table-column label="项目" min-width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
+                <el-table-column label="材料成本" width="130" align="right"><template #default="{ row }"><b>{{ fmtMoney(row.cost) }}</b></template></el-table-column>
+              </el-table>
+              <EmptyHint v-if="!invLoading && !projCost.length" text="暂无项目领料成本" size="sm" />
+            </el-col>
+          </el-row>
+        </el-tab-pane>
       </el-tabs>
     </el-card>
 
@@ -440,4 +516,8 @@ async function revokeInvoice(row: ViewRow) {
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .small { font-size: 12px; }
+.summary-bar { display: flex; gap: 24px; align-items: center; padding: 10px 16px; background: var(--el-fill-color-light); border-radius: 6px; font-size: 14px; }
+.section-title { font-weight: 600; font-size: 14px; margin: 4px 0 8px; color: var(--el-text-color-primary); }
+.danger { color: var(--el-color-danger); }
+.amt { color: var(--el-color-primary); }
 </style>
