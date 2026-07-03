@@ -121,6 +121,28 @@ async function load() {
     loading.value = false
   }
 }
+// 🆕 导出销售台账为 Excel（销售主管/管理员）；按当前筛选导出全部匹配行
+const exporting = ref(false)
+async function exportLedger() {
+  exporting.value = true
+  try {
+    const blob = await salesApi.exportLedger({
+      kw: filters.kw || undefined,
+      cust_type: filters.cust_type || undefined,
+      contract: filters.contract || undefined,
+      sales_uid: filters.sales_uid,
+      balance_month: filters.balance_month || undefined,
+      year: listYear.value || undefined,
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `销售台账${listYear.value ? '_' + listYear.value : ''}.xlsx`
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    ElMessage.success('已导出')
+  } catch { ElMessage.error('导出失败') } finally { exporting.value = false }
+}
+
 // 改筛选 → 回到第 1 页再查；翻页 → 直接查
 function reload() { page.value = 1; load() }
 
@@ -696,6 +718,7 @@ async function openReport() {
       </div>
       <div class="spacer"></div>
       <el-button v-if="allView" type="primary" plain @click="openReport">📊 销售报表</el-button>
+      <el-button v-if="allView" :icon="Download" :loading="exporting" @click="exportLedger">导出Excel</el-button>
       <el-button v-if="allView" :icon="Stamp" @click="openApprovals">开票审批</el-button>
       <el-button v-if="allView" :icon="Select" @click="openOrderApprovals">下单审批</el-button>
       <el-button v-if="allView" :icon="CircleClose" @click="openVoidApprovals">作废审批</el-button>

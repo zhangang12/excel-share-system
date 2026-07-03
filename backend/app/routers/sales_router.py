@@ -261,6 +261,95 @@ async def list_ledger(
     return schemas.SalesLedgerListOut(rows=rows, totals=totals, total=total)
 
 
+_INVOICE_STATE_LABEL = {None: "未申请", "": "未申请", "applying": "待主管审批",
+                        "pending_invoice": "待财务开票", "invoiced": "已开票"}
+_VOID_STATE_LABEL = {"applying": "（作废待审）", "voided": "（已作废）"}
+
+
+@router.get("/ledger/export")
+async def export_ledger(
+    kw: Optional[str] = Query(None),
+    cust_type: Optional[str] = Query(None),
+    contract: Optional[str] = Query(None),
+    sales_uid: Optional[int] = Query(None),
+    balance_month: Optional[str] = Query(None),
+    year: Optional[str] = Query(None),
+    current: models.User = Depends(require_roles("sales_lead")),  # 销售主管 + admin/manager
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 导出销售台账（销售目录）为 Excel。权限：销售主管 / 管理员。
+    筛选口径与台账列表一致；导出全部匹配行（不分页）。"""
+    from io import BytesIO
+    from urllib.parse import quote
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    q = select(models.SalesLedger).join(
+        models.Project, models.SalesLedger.project_id == models.Project.id
+    ).where(models.Project.is_deleted == False)  # noqa: E712
+    if year:
+        q = q.where(models.Project.code.like(f"{year}-%"))
+    if sales_uid:
+        q = q.where(models.SalesLedger.sales_uid == sales_uid)
+    if cust_type:
+        q = q.where(models.SalesLedger.cust_type == cust_type)
+    if contract:
+        q = q.where(models.SalesLedger.contract == contract)
+    if balance_month:
+        q = q.where(models.SalesLedger.balance_date.like(f"{balance_month.strip()}%"))
+    res = await db.execute(q)
+    ledgers = [l for l in res.scalars().all()
+               if not str(((l.project.extra if l.project else None) or {}).get("__o__销售") or "").startswith("备机")]
+    if kw:
+        k = kw.strip()
+        ledgers = [l for l in ledgers if l.project and (
+            k in l.project.code or k in l.project.name or k in (l.customer or ""))]
+    ledgers.sort(key=_ledger_sort_key)
+    rows = await _ledger_rows(db, ledgers)
+
+    headers = ["项目编号", "设备名称", "客户单位", "客户分类", "订单类别", "销售",
+               "数量", "单位", "下单日期", "交货日期", "合同", "金额(元)", "税率",
+               "开票状态", "预付款", "发货前款", "发货应收", "尾款", "尾款日期",
+               "发货日期", "项目状态"]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "销售台账"
+    ws.append(headers)
+    hfill = PatternFill("solid", fgColor="E8F0FE")
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = hfill
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    for r in rows:
+        inv = _INVOICE_STATE_LABEL.get(r.invoice_state, r.invoice_state or "未申请")
+        if r.void_state in _VOID_STATE_LABEL:
+            inv += _VOID_STATE_LABEL[r.void_state]
+        ws.append([
+            r.code, r.name, r.customer or "", r.cust_type or "", r.order_type or "",
+            r.sales_name or "", r.qty, r.unit or "", r.sign_date or "", r.deliver_date or "",
+            r.contract or "", r.amount or 0, r.tax_rate or "", inv,
+            r.prepay or 0, r.before_ship or 0, r.ship_receivable or 0, r.balance or 0,
+            r.balance_date or "", r.ship_date or "", r.status or "",
+        ])
+    widths = [14, 22, 20, 10, 14, 8, 7, 7, 12, 12, 8, 14, 8, 14, 12, 12, 12, 12, 12, 12, 10]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    ws.freeze_panes = "A2"
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = f"销售台账{('_' + year) if year else ''}.xlsx"
+    await write_audit(db, user=current, action="export", target_type="sales_ledger",
+                      target_id=0, detail=f"导出销售台账 {len(rows)} 行")
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
 async def _compute_next_code(db: AsyncSession, year: Optional[str] = None) -> str:
     """指定年份(YYYY，留空=当年)的下一个项目编号：{年}-NNN，扫全部项目取该年最大序号 +1。"""
     y = (year or "").strip() or datetime.now(timezone.utc).strftime("%Y")

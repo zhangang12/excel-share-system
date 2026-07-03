@@ -86,6 +86,10 @@ export const salesApi = {
   ledger: (params?: { kw?: string; cust_type?: string; contract?: string; sales_uid?: number; balance_month?: string; year?: string; page?: number; page_size?: number }) =>
     http.get<SalesLedgerList>('/sales/ledger', { params }).then((r) => r.data),
 
+  // 🆕 导出销售台账为 Excel（权限：销售主管/管理员）
+  exportLedger: (params?: { kw?: string; cust_type?: string; contract?: string; sales_uid?: number; balance_month?: string; year?: string }) =>
+    http.get('/sales/ledger/export', { params, responseType: 'blob' }).then((r) => r.data as Blob),
+
   nextCode: (year?: string) =>
     http.get<{ code: string }>('/sales/next-code', { params: year ? { year } : {} }).then((r) => r.data.code),
 
