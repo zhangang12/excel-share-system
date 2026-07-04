@@ -954,6 +954,107 @@ async def supplier_statement_detail(
     return await _attach_pay_status(db, [_item_out(i) for i in r.scalars().all()])
 
 
+@router.get("/statements/{sid}/export")
+async def export_supplier_statement(
+    sid: int,
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 C6：导出某供应商采购对账单（.xlsx）：抬头 + 汇总 + 明细 + 合计。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    sr = await db.execute(select(models.Supplier).where(models.Supplier.id == sid))
+    sup = sr.scalar_one_or_none()
+    if not sup:
+        raise HTTPException(404, "供应商不存在")
+    ir = await db.execute(select(models.PurchaseItem).where(
+        models.PurchaseItem.supplier_id == sid).order_by(
+        models.PurchaseItem.delivery_date.asc().nullsfirst(), models.PurchaseItem.id.asc()))
+    items = await _attach_pay_status(db, [_item_out(i) for i in ir.scalars().all()])
+    obr = await db.execute(select(models.SupplierOpeningBalance).where(
+        models.SupplierOpeningBalance.supplier_id == sid))
+    ob = obr.scalar_one_or_none()
+    opening = (ob.outstanding_amount if ob else 0) or 0
+
+    recv = sum(i.received_amount or 0 for i in items)
+    inv = sum(i.invoice_amount or 0 for i in items)
+    paid = sum(i.paid_amount or 0 for i in items)
+    uninv = sum((i.received_amount or 0) for i in items if i.invoice_status != "已开票")
+    outstanding = opening + recv - paid
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "采购对账单"
+    thin = Side(style="thin", color="C0C4CC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    cols = ["下单日期", "采购单号", "项目编号", "名称", "规格型号", "品牌", "数量", "单价",
+            "收货金额", "开票日期", "开票金额", "已付款", "付款状态", "对账状态", "备注"]
+    n = len(cols)
+
+    def _cell(row, col, val, bold=False, fill=None, align="left", money=False):
+        c = ws.cell(row=row, column=col, value=val)
+        c.font = Font(bold=bold)
+        c.alignment = Alignment(horizontal=align, vertical="center", wrap_text=False)
+        if fill:
+            c.fill = PatternFill("solid", fgColor=fill)
+        if money and isinstance(val, (int, float)):
+            c.number_format = "#,##0.00"
+        return c
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n)
+    t = _cell(1, 1, f"{sup.name}  采购对账单", bold=True, align="center")
+    t.font = Font(bold=True, size=15)
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n)
+    _cell(2, 1, f"分类：{sup.category or '—'}    联系人：{sup.contact or '—'}    电话：{sup.phone or '—'}",
+          align="center")
+    # 汇总条
+    summ = (f"期初欠款：{opening:,.2f}    收货合计：{recv:,.2f}    开票合计：{inv:,.2f}    "
+            f"待开票：{uninv:,.2f}    已付款：{paid:,.2f}    欠款余额：{outstanding:,.2f}")
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=n)
+    _cell(3, 1, summ, bold=True, fill="FFF7E6", align="center")
+
+    hrow = 5
+    for j, name in enumerate(cols, start=1):
+        c = _cell(hrow, j, name, bold=True, fill="E8F5EE", align="center")
+        c.border = border
+    r0 = hrow + 1
+    for k, it in enumerate(items):
+        vals = [it.delivery_date or "", it.po_no or "", it.project_code or "", it.item_name,
+                it.spec or "", it.brand or "", it.qty, it.unit_price, it.received_amount or 0,
+                it.invoice_date or "", it.invoice_amount or 0, it.paid_amount or 0,
+                it.pay_status or "未付款", it.invoice_status, it.notes or ""]
+        for j, v in enumerate(vals, start=1):
+            money = j in (8, 9, 11, 12)
+            align = "right" if j in (7, 8, 9, 11, 12) else "center" if j in (1, 2, 3, 10, 13, 14) else "left"
+            c = _cell(r0 + k, j, v, align=align, money=money)
+            c.border = border
+    # 合计行
+    tot_row = r0 + len(items)
+    _cell(tot_row, 1, "合计", bold=True, fill="F5F7FA", align="center").border = border
+    for j in range(2, n + 1):
+        c = _cell(tot_row, j, "", fill="F5F7FA")
+        c.border = border
+    _cell(tot_row, 9, recv, bold=True, fill="F5F7FA", align="right", money=True).border = border
+    _cell(tot_row, 11, inv, bold=True, fill="F5F7FA", align="right", money=True).border = border
+    _cell(tot_row, 12, paid, bold=True, fill="F5F7FA", align="right", money=True).border = border
+
+    widths = [12, 15, 12, 20, 18, 10, 8, 10, 13, 12, 13, 12, 10, 10, 18]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[ws.cell(row=hrow, column=i).column_letter].width = w
+    ws.freeze_panes = f"A{r0}"
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = f"{sup.name}_采购对账单.xlsx"
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
 # ==================== 请款流程 ====================
 
 async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:

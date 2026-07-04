@@ -293,6 +293,7 @@ function onSupCmd(cmd: string, row: SupplierStatementRow) {
     if (s) openEditSupplier(s)
   } else if (cmd === 'balance') openOpeningBalance(row)
   else if (cmd === 'toggle') toggleSupplier(row)
+  else if (cmd === 'export') exportSupplierStatement(row.supplier_id, row.supplier_name)
   else if (cmd === 'delete') deleteSupplier(row)
 }
 
@@ -1067,6 +1068,18 @@ function buyerSummary() {
     String(byBuyer.value.reduce((s, r) => s + (r.count || 0), 0))]
 }
 
+// 🆕 C6：导出某供应商采购对账单（Excel）
+async function exportSupplierStatement(supplierId: number, supplierName: string) {
+  try {
+    const res = await http.get(`/purchase-mgmt/statements/${supplierId}/export`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `${supplierName}_采购对账单.xlsx`
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch { ElMessage.error('导出失败') }
+}
+
 // ===== statement drawer =====
 async function openDrawer(row: SupplierStatementRow) {
   drawerSupplier.value = row
@@ -1439,6 +1452,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                     </el-button>
                     <template #dropdown>
                       <el-dropdown-menu>
+                        <el-dropdown-item command="export">导出对账单</el-dropdown-item>
                         <el-dropdown-item command="balance">期初余额</el-dropdown-item>
                         <el-dropdown-item command="toggle">{{ supActive(row.supplier_id) ? '停用' : '启用' }}</el-dropdown-item>
                         <el-dropdown-item command="delete" divided><span class="danger">删除供应商</span></el-dropdown-item>
@@ -2073,6 +2087,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <span>收货合计 <b class="amt">{{ fmtMoney(drawerSupplier.received_total) }}</b></span>
         <span>已付款 <b class="amt">{{ fmtMoney(drawerSupplier.paid_total) }}</b></span>
         <span>欠款 <b class="danger">{{ fmtMoney(drawerSupplier.outstanding) }}</b></span>
+        <span class="flex-spacer" />
+        <el-button size="small" type="primary" plain :icon="Download"
+                   @click="exportSupplierStatement(drawerSupplier.supplier_id, drawerSupplier.supplier_name)">导出对账单</el-button>
       </div>
 
       <!-- 🆕 按月合计开票：按到货日期分月，未开票/已开票一目了然 -->
