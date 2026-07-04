@@ -428,27 +428,50 @@ async def project_cost(
 # ==================== 发货清单：设计推送 -> 仓库备货完成 -> 物流可见 ====================
 @router.get("/ship-list/pending", response_model=List[schemas.ShipListPendingRow])
 async def ship_list_pending(
+    status: str = Query("requested", description="requested 待备货(默认) / ready 已备齐 / all 全部"),
     _: models.User = Depends(require_roles(*WRITE_ROLES, "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 待备货发货清单：设计部已推送、仓库尚未标记完成的项目列表。"""
-    r = await db.execute(
-        select(models.Shipment).where(models.Shipment.packlist_status == "requested")
-        .order_by(models.Shipment.packlist_requested_at.desc())
-    )
-    rows = list(r.scalars().all())
+    """🆕 发货清单目录：设计部推送的发货清单（含文件），仓库据此备货、点「已备齐」通知物流。
+    status: requested=待备货 / ready=已备齐 / all=全部。仓库只看/下载/打印，不上传。"""
+    stmt = select(models.Shipment)
+    if status == "requested":
+        stmt = stmt.where(models.Shipment.packlist_status == "requested")
+    elif status == "ready":
+        stmt = stmt.where(models.Shipment.packlist_status == "ready")
+    else:  # all
+        stmt = stmt.where(models.Shipment.packlist_status.in_(["requested", "ready"]))
+    stmt = stmt.order_by(
+        models.Shipment.packlist_ready_at.desc().nullsfirst()
+        if status == "ready" else models.Shipment.packlist_requested_at.desc())
+    rows = list((await db.execute(stmt)).scalars().all())
     if not rows:
         return []
+    # 推送人 / 备货人 名称
     uids = {s.packlist_requested_by for s in rows if s.packlist_requested_by}
+    uids |= {s.packlist_ready_by for s in rows if s.packlist_ready_by}
     names: dict[int, str] = {}
     if uids:
         ur = await db.execute(select(models.User).where(models.User.id.in_(uids)))
         names = {u.id: (u.full_name or u.username) for u in ur.scalars().all()}
+    # 每个项目的发货清单文件（设计推送的附件），按项目分组
+    pids = [s.project_id for s in rows]
+    files_by_pid: dict[int, list] = {}
+    ar = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "ship_list",
+        models.Attachment.biz_id.in_(pids),
+    ).order_by(models.Attachment.id.desc()))
+    for a in ar.scalars().all():
+        files_by_pid.setdefault(a.biz_id, []).append(schemas.AttachmentOut.model_validate(a))
     return [
         schemas.ShipListPendingRow(
             project_id=s.project_id, code=s.project.code, name=s.project.name,
             requested_at=s.packlist_requested_at,
             requested_by_name=names.get(s.packlist_requested_by),
+            packlist_status=s.packlist_status,
+            ready_at=s.packlist_ready_at,
+            ready_by_name=names.get(s.packlist_ready_by),
+            files=files_by_pid.get(s.project_id, []),
         )
         for s in rows
     ]

@@ -727,8 +727,12 @@ async def ship_list_upload(
     p = o.project
     for role in ("warehouse", "warehouse_lead"):
         await push_message(db, to_role=role, kind="info",
-                           text=f"【发货清单待备货】{p.code} {p.name} 设计部已上传发货清单，请仓库备货。",
+                           text=f"【发货清单待备货】{p.code} {p.name} 设计部已下发发货清单，请仓库备货。",
                            biz_type="project", biz_id=p.id)
+    # 🆕 设计同时直推发货部/物流：让发货部提前拿到发货清单，仓库备齐后再安排发货
+    await push_message(db, to_role="logistics", kind="info",
+                       text=f"【发货清单已下发】{p.code} {p.name} 设计部已下发发货清单，待仓库备齐后安排发货。",
+                       biz_type="project", biz_id=p.id)
     await write_audit(db, user=current, action="ship_list_upload", target_type="attachment",
                       target_id=a.id)
     return schemas.AttachmentOut.model_validate(a)

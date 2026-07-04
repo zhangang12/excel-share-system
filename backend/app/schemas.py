@@ -1183,3 +1183,7 @@ class ShipListPendingRow(BaseModel):
     name: str
     requested_at: Optional[datetime] = None
     requested_by_name: Optional[str] = None
+    packlist_status: str = "requested"          # requested 待备货 / ready 已备齐
+    ready_at: Optional[datetime] = None
+    ready_by_name: Optional[str] = None
+    files: list[AttachmentOut] = []            # 设计推送的发货清单文件（仓库只看/下载/打印）

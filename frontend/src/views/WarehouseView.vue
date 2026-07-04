@@ -2,10 +2,10 @@
 // 🆕 v3 M07 仓库组：总览/出入库/收发存/流水/物料主数据/发货清单 六 tab
 import { ref, onMounted, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Lock, View, Download, Delete, Printer } from '@element-plus/icons-vue'
+import { Plus, Search, Lock, View, Download, Printer } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListItem, type ShipListPendingRow } from '@/api/warehouse'
+import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow } from '@/api/warehouse'
 import { canInlinePreview, attachmentBlobUrl, isPdfAtt, isImageAtt } from '@/api/attachments'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -96,20 +96,22 @@ async function submitMat() {
   } catch { /* 查重等错误由拦截器提示 */ } finally { matSubmitting.value = false }
 }
 
-// ===== 🆕 发货清单：待备货（设计推送）=====
+// ===== 🆕 发货清单目录（设计推送 → 仓库只看/下载/打印 → 点「已备齐」通知物流）=====
 const shipPending = ref<ShipListPendingRow[]>([])
 const shipPendingLoading = ref(false)
+const shipFilter = ref<'requested' | 'ready' | 'all'>('requested')
 async function loadShipPending() {
   shipPendingLoading.value = true
-  try { shipPending.value = await whApi.shipListPending() }
+  try { shipPending.value = await whApi.shipListPending(shipFilter.value) }
   finally { shipPendingLoading.value = false }
 }
+watch(shipFilter, () => loadShipPending())
 async function markShipReady(row: ShipListPendingRow) {
   try {
-    await ElMessageBox.confirm(`确认「${row.code} ${row.name}」发货清单已备货完成？将通知物流可安排发货。`, '备货完成', { type: 'success' })
+    await ElMessageBox.confirm(`确认「${row.code} ${row.name}」已按发货清单备齐货物？将通知物流发货部可安排发货。`, '已备齐', { type: 'success', confirmButtonText: '已备齐' })
   } catch { return }
   const r: any = await whApi.shipListReady(row.project_id)
-  ElMessage.success(r?.message || '已标记备货完成')
+  ElMessage.success(r?.message || '已标记备齐，已通知物流')
   await loadShipPending()
 }
 
@@ -198,51 +200,19 @@ async function loadDemand() {
 }
 watch(demandProj, () => loadDemand())
 
-// ===== 发货清单上传 =====
+// ===== 项目列表（物料需求 tab 与发货清单目录共用）=====
 const projects = ref<{ id: number; code: string; name: string }[]>([])
-const shipProj = ref<number | undefined>()
 async function loadProjects() {
   // 复用一览接口取项目（仓库有详单权限）
   try { projects.value = (await http.get('/projects')).data.map((p: any) => ({ id: p.id, code: p.code, name: p.name })) }
   catch { projects.value = [] }
 }
-// 🆕 #9 历史发货清单 列表 / 预览 / 更换(删除+重传)
-const shipLists = ref<ShipListItem[]>([])
-const shipListsLoading = ref(false)
-async function loadShipLists() {
-  if (!shipProj.value) { shipLists.value = []; return }
-  shipListsLoading.value = true
-  try { shipLists.value = await whApi.shipLists(shipProj.value) }
-  finally { shipListsLoading.value = false }
-}
-watch(shipProj, () => loadShipLists())  // 选项目即加载其历史发货清单
-async function uploadShipList() {
-  if (!shipProj.value) { ElMessage.warning('请选择项目'); return }
-  const input = document.createElement('input')
-  input.type = 'file'; input.accept = '.xlsx,.xls,.pdf'
-  input.onchange = async () => {
-    const f = input.files?.[0]; if (!f) return
-    const fd = new FormData(); fd.append('file', f)
-    await http.post(`/wh/ship-list/${shipProj.value}`, fd)
-    ElMessage.success('发货清单已上传并推送物流')
-    await loadShipLists()  // 上传后刷新列表
-  }
-  input.click()
-}
-async function deleteShipList(item: ShipListItem) {
-  try {
-    await ElMessageBox.confirm(`确认删除发货清单「${item.name}」？删除后物流看板将同步移除。`, '删除发货清单', { type: 'warning', confirmButtonText: '删除' })
-  } catch { return }
-  await whApi.deleteShipList(item.id)
-  ElMessage.success('已删除')
-  await loadShipLists()
-}
-// 预览：图片弹窗 / PDF 新标签 / 其它直接下载
+// 发货清单文件：预览（图片弹窗 / PDF 新标签 / 其它直接下载）
 const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
-function previewShipList(item: ShipListItem) { previewRef.value?.open({ id: item.id, name: item.name }) }
+function previewShipList(item: ShipListFile) { previewRef.value?.open({ id: item.id, name: item.name }) }
 
 // 🆕 打印发货清单：PDF/图片经隐藏 iframe 直接调起打印；Excel 等格式提示下载后打印
-async function printShipList(item: ShipListItem) {
+async function printShipList(item: ShipListFile) {
   if (!isPdfAtt(item.name) && !isImageAtt(item.name)) {
     ElMessage.info('该格式（如 Excel）请下载后打印')
     downloadAttachment({ id: item.id, name: item.name })
@@ -479,53 +449,64 @@ function onTab(name: string) {
           </template>
         </el-tab-pane>
 
-        <!-- 发货清单 -->
+        <!-- 发货清单目录：设计部下发 → 仓库核对备齐 → 通知物流 -->
         <el-tab-pane label="发货清单" name="ship">
-          <EmptyHint v-if="!canWrite" text="仅仓库角色可上传发货清单" :icon="Lock" />
+          <EmptyHint v-if="!canWrite" text="仅仓库角色可查看发货清单目录" :icon="Lock" />
           <template v-else>
-            <!-- 🆕 待备货：设计部已推送、尚未标记完成的项目 -->
-            <div class="ship-pending-sec">
-              <div class="ship-pending-title">📋 待备货清单（设计部已推送）</div>
-              <el-table :data="shipPending" v-loading="shipPendingLoading" stripe size="small" max-height="220">
-                <el-table-column label="项目编号" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
-                <el-table-column prop="name" label="项目名称" min-width="160" show-overflow-tooltip />
-                <el-table-column label="推送时间" width="170"><template #default="{ row }">{{ fmtDate(row.requested_at) }}</template></el-table-column>
-                <el-table-column label="推送人" width="100"><template #default="{ row }">{{ row.requested_by_name || '—' }}</template></el-table-column>
-                <el-table-column label="操作" width="120" align="center">
-                  <template #default="{ row }">
-                    <el-button size="small" type="success" plain @click="markShipReady(row)">备货完成</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-              <EmptyHint v-if="!shipPendingLoading && !shipPending.length" text="暂无待备货项目" size="sm" />
+            <div class="ship-cat-head">
+              <div class="ship-pending-title" style="margin:0">📋 发货清单目录</div>
+              <el-radio-group v-model="shipFilter" size="small">
+                <el-radio-button label="requested">待备货</el-radio-button>
+                <el-radio-button label="ready">已备齐</el-radio-button>
+                <el-radio-button label="all">全部</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div class="muted small" style="margin:4px 0 12px">
+              发货清单由设计部下发（同时直推发货部与仓库）。仓库只需按清单核对、备好货物后点「已备齐」，物流发货部即可安排发货——无需在此上传。
             </div>
 
-            <div style="display:flex;gap:10px;align-items:center;margin-top:18px">
-              <el-select v-model="shipProj" filterable placeholder="选择项目" style="width:300px">
-                <el-option v-for="p in projects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
-              </el-select>
-              <el-button type="primary" @click="uploadShipList">上传 / 更换发货清单 → 推物流</el-button>
-            </div>
-            <div class="muted small" style="margin:10px 0">上传后物流发货部看板「仓库发货清单」列出现该文件；如需更换，上传新文件后删除旧的即可。</div>
-
-            <!-- 🆕 #9 历史发货清单列表（预览 / 下载 / 删除） -->
-            <el-table v-if="shipProj" :data="shipLists" v-loading="shipListsLoading" stripe size="small"
-                      max-height="calc(100vh - 360px)" :scrollbar-always-on="true">
-              <el-table-column type="index" label="#" width="50" align="center" />
-              <el-table-column prop="name" label="发货清单文件" min-width="240" show-overflow-tooltip />
-              <el-table-column label="上传时间" width="170">
-                <template #default="{ row }">{{ fmtDate(row.created_at) }}</template>
-              </el-table-column>
-              <el-table-column label="操作" width="290" align="center">
+            <el-table :data="shipPending" v-loading="shipPendingLoading" stripe size="small"
+                      max-height="calc(100vh - 320px)" :scrollbar-always-on="true">
+              <el-table-column label="项目编号" width="118"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+              <el-table-column prop="name" label="项目名称" min-width="150" show-overflow-tooltip />
+              <el-table-column label="发货清单文件（设计下发）" min-width="300">
                 <template #default="{ row }">
-                  <el-button v-if="canInlinePreview(row.name)" size="small" link type="primary" :icon="View" @click="previewShipList(row)">预览</el-button>
-                  <el-button size="small" link :icon="Download" @click="downloadAttachment({ id: row.id, name: row.name })">下载</el-button>
-                  <el-button size="small" link :icon="Printer" @click="printShipList(row)">打印</el-button>
-                  <el-button v-if="canWrite" size="small" link type="danger" :icon="Delete" @click="deleteShipList(row)">删除</el-button>
+                  <div v-if="row.files.length" class="ship-files">
+                    <div v-for="f in row.files" :key="f.id" class="ship-file">
+                      <span class="ship-file-name" :title="f.name">📄 {{ f.name }}</span>
+                      <el-button v-if="canInlinePreview(f.name)" size="small" link type="primary" :icon="View" @click="previewShipList(f)">预览</el-button>
+                      <el-button size="small" link :icon="Download" @click="downloadAttachment({ id: f.id, name: f.name })">下载</el-button>
+                      <el-button size="small" link :icon="Printer" @click="printShipList(f)">打印</el-button>
+                    </div>
+                  </div>
+                  <span v-else class="muted">— 设计部尚未上传文件</span>
                 </template>
               </el-table-column>
+              <el-table-column label="下发人 / 时间" width="164">
+                <template #default="{ row }">
+                  <div>{{ row.requested_by_name || '—' }}</div>
+                  <div class="muted small">{{ fmtDate(row.requested_at) }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="备货状态" width="158" align="center">
+                <template #default="{ row }">
+                  <template v-if="row.packlist_status === 'ready'">
+                    <el-tag type="success" effect="light" size="small">✅ 已备齐</el-tag>
+                    <div class="muted small" style="margin-top:3px">{{ row.ready_by_name || '' }} {{ fmtDate(row.ready_at) }}</div>
+                  </template>
+                  <el-tag v-else type="warning" effect="light" size="small">⏳ 待备货</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="110" align="center" fixed="right">
+                <template #default="{ row }">
+                  <el-button v-if="row.packlist_status !== 'ready'" size="small" type="success" @click="markShipReady(row)">已备齐</el-button>
+                  <span v-else class="muted">已完成</span>
+                </template>
+              </el-table-column>
+              <template #empty>
+                <EmptyHint :text="shipFilter === 'ready' ? '暂无已备齐项目' : shipFilter === 'all' ? '暂无发货清单，等待设计部下发' : '暂无待备货项目，等待设计部下发发货清单'" size="sm" />
+              </template>
             </el-table>
-            <EmptyHint v-if="shipProj && !shipListsLoading && !shipLists.length" text="该项目暂无发货清单" size="sm" />
           </template>
         </el-tab-pane>
       </el-tabs>
@@ -623,11 +604,11 @@ function onTab(name: string) {
 .small { font-size: 12px; }
 .frow { display: flex; gap: 12px; flex-wrap: wrap; }
 .frow > * { flex: 1; min-width: 140px; }
-.ship-pending-sec {
-  border: 1px solid var(--el-border-color-lighter); border-radius: 8px;
-  padding: 12px; background: var(--el-fill-color-lighter);
-}
-.ship-pending-title { font-weight: 600; font-size: 13.5px; margin-bottom: 10px; color: var(--el-text-color-primary); }
+.ship-pending-title { font-weight: 600; font-size: 14px; margin-bottom: 10px; color: var(--el-text-color-primary); }
+.ship-cat-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 2px; }
+.ship-files { display: flex; flex-direction: column; gap: 4px; }
+.ship-file { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.ship-file-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .code { color: var(--el-color-primary, #2563eb); }
 .recv-info { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; padding: 12px 14px;
   background: var(--el-fill-color-light); border-radius: 8px; font-size: 13px; }

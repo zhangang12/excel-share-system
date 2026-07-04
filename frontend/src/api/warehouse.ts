@@ -19,17 +19,22 @@ export interface WhSummaryRow {
 
 // 🆕 #9 发货清单项
 export interface ShipListItem { id: number; name: string; created_at: string; uploaded_by?: number | null }
+export interface ShipListFile { id: number; name: string }
 
-// 🆕 发货清单：待备货项目行（设计部推送后、仓库尚未标记完成）
+// 🆕 发货清单目录行：设计部推送（含文件），仓库据此备货 → 点「已备齐」通知物流
 export interface ShipListPendingRow {
   project_id: number; code: string; name: string
   requested_at?: string | null; requested_by_name?: string | null
+  packlist_status: 'requested' | 'ready'
+  ready_at?: string | null; ready_by_name?: string | null
+  files: ShipListFile[]
 }
 
 export const whApi = {
   shipLists: (pid: number) => http.get<ShipListItem[]>(`/wh/ship-list/${pid}`).then((r) => r.data),
   deleteShipList: (aid: number) => http.delete<{ message: string }>(`/wh/ship-list/item/${aid}`).then((r) => r.data),
-  shipListPending: () => http.get<ShipListPendingRow[]>('/wh/ship-list/pending').then((r) => r.data),
+  shipListPending: (status: 'requested' | 'ready' | 'all' = 'requested') =>
+    http.get<ShipListPendingRow[]>('/wh/ship-list/pending', { params: { status } }).then((r) => r.data),
   shipListReady: (projectId: number) =>
     http.post<{ message: string }>(`/wh/ship-list/${projectId}/ready`).then((r) => r.data),
   materials: (kw?: string) =>
