@@ -19,7 +19,7 @@ function fmtMoney(v: number | undefined | null) {
 }
 
 // 🆕 付款方式下拉选项（可自定义追加）
-const PAY_METHODS = ['现金', '转账', '月结', '承兑', '预付']
+const PAY_METHODS = ['现金', '对公转账', '月结', '承兑', '预付']
 
 // ===== types =====
 interface Att { id: number; name: string }
@@ -41,7 +41,7 @@ interface PurchaseItemOut {
   id: number; po_no?: string | null; supplier_id: number; supplier_name: string
   delivery_date?: string | null; contract_no?: string | null; arrival_date?: string | null
   project_code?: string | null; delivery_note_no?: string | null
-  item_name: string; spec?: string | null; qty?: number | null; unit_price?: number | null
+  item_name: string; spec?: string | null; brand?: string | null; qty?: number | null; unit_price?: number | null
   received_amount: number; invoice_date?: string | null; tax_rate?: string | null
   invoice_amount: number; paid_amount: number; paid_date?: string | null
   payment_method?: string | null
@@ -316,7 +316,7 @@ const itemRules: FormRules = {
 const itemForm = reactive({
   supplier_id: '' as number | '',
   delivery_date: '', contract_no: '', project_code: '', delivery_note_no: '',
-  item_name: '', spec: '', qty: null as number | null, unit_price: null as number | null,
+  item_name: '', spec: '', brand: '', qty: null as number | null, unit_price: null as number | null,
   received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
   payment_method: '', invoice_status: '待对账', notes: '',
 })
@@ -532,9 +532,11 @@ function importItems() {
 // 🆕 从清单下单：项目标准件清单 → 筛选 → 选供应商 → 生成采购单
 interface PurchasableRow {
   sheet_id: number; record_id: number; item_name: string; spec?: string | null
+  brand?: string | null
   qty?: number | null; stock: number; suggest_purchase: number
   notes?: string | null; status: string
   _checked: boolean; _price: number | null; _buyqty: number | null
+  _supplier_id: number | ''; _brand: string   // 🆕 逐行选供应商/品牌
 }
 const listOrderVisible = ref(false)
 const listOrderSaving = ref(false)
@@ -543,10 +545,34 @@ const listProjects = ref<{ id: number; code: string; name: string }[]>([])
 const purchasableRows = ref<PurchasableRow[]>([])
 const purchasableFilter = ref('')
 const onlyGap = ref(false)   // 🆕 只看有缺口（建议采购>0）的行
+// 🆕 A4：去掉表头供应商，改逐行选；表头只留 项目/下单日期/付款方式
 const listOrderForm = reactive({
   project_id: '' as number | '', project_code: '',
-  supplier_id: '' as number | '', delivery_date: '', payment_method: '',
+  delivery_date: '', payment_method: '',
 })
+// 🆕 品牌历史选项（allow-create + 已用过的品牌，方便下拉复选）
+const brandOptions = computed(() => {
+  const set = new Set<string>()
+  for (const r of purchasableRows.value) { if (r.brand) set.add(r.brand); if (r._brand) set.add(r._brand) }
+  return Array.from(set)
+})
+// 🆕 批量把供应商/品牌填给已勾选行（逐行选太麻烦时用）
+const batchSupplier = ref<number | ''>('')
+const batchBrand = ref('')
+function applyBatchSupplier() {
+  if (!batchSupplier.value) { ElMessage.info('先选一个供应商'); return }
+  const t = purchasableRows.value.filter(r => r._checked)
+  if (!t.length) { ElMessage.info('先勾选要设置的行'); return }
+  t.forEach(r => { r._supplier_id = batchSupplier.value })
+  ElMessage.success(`已把供应商填给 ${t.length} 个勾选行`)
+}
+function applyBatchBrand() {
+  if (!batchBrand.value) { ElMessage.info('先选/输入一个品牌'); return }
+  const t = purchasableRows.value.filter(r => r._checked)
+  if (!t.length) { ElMessage.info('先勾选要设置的行'); return }
+  t.forEach(r => { r._brand = batchBrand.value })
+  ElMessage.success(`已把品牌填给 ${t.length} 个勾选行`)
+}
 const filteredPurchasable = computed(() => {
   const kw = purchasableFilter.value.trim().toLowerCase()
   return purchasableRows.value.filter(r =>
@@ -564,10 +590,11 @@ function toggleAllPurchasable(v: any) {
 }
 async function openListOrder() {
   Object.assign(listOrderForm, {
-    project_id: '', project_code: '', supplier_id: '',
+    project_id: '', project_code: '',
     delivery_date: new Date().toISOString().slice(0, 10), payment_method: '',
   })
   purchasableRows.value = []; purchasableFilter.value = ''; onlyGap.value = false
+  batchSupplier.value = ''; batchBrand.value = ''
   try {
     const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
     listProjects.value = r.data.filter(p => p.standard_sheet_id)
@@ -588,45 +615,72 @@ async function onListProjectChange() {
       _checked: x.status === '未下单' && (x.suggest_purchase || 0) > 0,
       _price: null,
       _buyqty: x.suggest_purchase > 0 ? x.suggest_purchase : (x.qty ?? null),
+      _supplier_id: '' as number | '',
+      _brand: x.brand || '',
     }))
   } finally { purchasableLoading.value = false }
 }
+function supplierName(sid: number | ''): string {
+  return suppliers.value.find(s => s.id === sid)?.name || ''
+}
 async function submitListOrder() {
-  if (!listOrderForm.supplier_id) { ElMessage.error('请选择供应商'); return }
   const sel = purchasableRows.value.filter(r => r._checked)
   if (!sel.length) { ElMessage.error('请勾选要下单的清单行'); return }
   // 🆕 采购数量为0/未填的行拦下来，避免下出0数量的单
-  const bad = sel.filter(r => !((r._buyqty ?? 0) > 0))
-  if (bad.length) {
-    ElMessage.error(`以下零件采购数量未填或为0：${bad.map(b => b.item_name).slice(0, 3).join('、')}${bad.length > 3 ? ` 等${bad.length}行` : ''}`)
+  const badQty = sel.filter(r => !((r._buyqty ?? 0) > 0))
+  if (badQty.length) {
+    ElMessage.error(`以下零件采购数量未填或为0：${badQty.map(b => b.item_name).slice(0, 3).join('、')}${badQty.length > 3 ? ` 等${badQty.length}行` : ''}`)
     return
   }
-  // 🆕 有勾选行正被筛选/缺口开关隐藏时，先确认再提交，避免看不见的行被静默下单
+  // 🆕 A5：勾选了却没选供应商的行，直接拦截报错
+  const noSup = sel.filter(r => !r._supplier_id)
+  if (noSup.length) {
+    ElMessage.error(`有 ${noSup.length} 行未选供应商：${noSup.map(b => b.item_name).slice(0, 3).join('、')}${noSup.length > 3 ? ' 等' : ''}。请逐行选好供应商再生成`)
+    return
+  }
+  // 🆕 有勾选行正被筛选/缺口开关隐藏时，先确认再提交
   const hidden = sel.filter(r => !filteredPurchasable.value.includes(r))
   if (hidden.length) {
     try {
       await ElMessageBox.confirm(
-        `有 ${hidden.length} 行已勾选的零件当前被筛选条件隐藏，会一并下给该供应商。确认继续？`,
+        `有 ${hidden.length} 行已勾选的零件当前被筛选条件隐藏，也会一并下单。确认继续？`,
         '提示', { type: 'warning', confirmButtonText: '继续下单', cancelButtonText: '返回检查' })
     } catch { return }
   }
+  // 🆕 A3/R3：按供应商分组，一个供应商生成一张采购单
+  const groups = new Map<number, PurchasableRow[]>()
+  for (const r of sel) {
+    const sid = r._supplier_id as number
+    if (!groups.has(sid)) groups.set(sid, [])
+    groups.get(sid)!.push(r)
+  }
+  const supNames = Array.from(groups.keys()).map(supplierName)
+  try {
+    await ElMessageBox.confirm(
+      `将按供应商拆成 ${groups.size} 张采购单：${supNames.join('、')}。确认生成？`,
+      '按供应商拆单', { type: 'info', confirmButtonText: '生成', cancelButtonText: '取消' })
+  } catch { return }
   listOrderSaving.value = true
   try {
-    const resp = await http.post<PurchaseItemOut[]>('/purchase-mgmt/orders/from-list', {
-      supplier_id: listOrderForm.supplier_id,
-      delivery_date: listOrderForm.delivery_date || null,
-      project_code: listOrderForm.project_code || null,
-      payment_method: listOrderForm.payment_method || null,
-      lines: sel.map(r => ({
-        source_sheet_id: r.sheet_id, source_record_id: r.record_id,
-        item_name: r.item_name, spec: r.spec,
-        qty: r._buyqty ?? r.suggest_purchase ?? r.qty, unit_price: r._price,
-      })),
-    })
-    ElMessage.success(`已生成采购单（${sel.length} 行），已回写清单订购日期`)
+    let firstPo: string | undefined
+    for (const [sid, rows] of groups) {
+      const resp = await http.post<PurchaseItemOut[]>('/purchase-mgmt/orders/from-list', {
+        supplier_id: sid,
+        delivery_date: listOrderForm.delivery_date || null,
+        project_code: listOrderForm.project_code || null,
+        payment_method: listOrderForm.payment_method || null,
+        lines: rows.map(r => ({
+          source_sheet_id: r.sheet_id, source_record_id: r.record_id,
+          item_name: r.item_name, spec: r.spec, brand: r._brand || null,
+          qty: r._buyqty ?? r.suggest_purchase ?? r.qty, unit_price: r._price,
+        })),
+      })
+      if (!firstPo) firstPo = resp.data[0]?.po_no || undefined
+    }
+    ElMessage.success(`已按供应商生成 ${groups.size} 张采购单（共 ${sel.length} 行），已回写清单`)
     listOrderVisible.value = false
     await loadItems()
-    offerPrint(resp.data[0]?.po_no)
+    if (groups.size === 1) offerPrint(firstPo)
   } catch { /* handled */ } finally { listOrderSaving.value = false }
 }
 function listStatusTag(s: string): 'info' | 'warning' | 'success' {
@@ -747,7 +801,7 @@ function openNewItem() {
   editingItem.value = null
   Object.assign(itemForm, {
     supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10), contract_no: '', project_code: '',
-    delivery_note_no: '', item_name: '', spec: '', qty: null, unit_price: null,
+    delivery_note_no: '', item_name: '', spec: '', brand: '', qty: null, unit_price: null,
     received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
     payment_method: '', invoice_status: '待对账', notes: '',
   })
@@ -760,7 +814,7 @@ function openEditItem(row: PurchaseItemOut) {
     supplier_id: row.supplier_id, delivery_date: row.delivery_date || '',
     contract_no: row.contract_no || '', project_code: row.project_code || '',
     delivery_note_no: row.delivery_note_no || '', item_name: row.item_name,
-    spec: row.spec || '', qty: row.qty, unit_price: row.unit_price,
+    spec: row.spec || '', brand: row.brand || '', qty: row.qty, unit_price: row.unit_price,
     received_amount: row.received_amount, invoice_date: row.invoice_date || '',
     tax_rate: row.tax_rate || '', invoice_amount: row.invoice_amount,
     payment_method: row.payment_method || '',
@@ -781,6 +835,7 @@ async function saveItem() {
       delivery_note_no: itemForm.delivery_note_no || null,
       item_name: itemForm.item_name,
       spec: itemForm.spec || null,
+      brand: itemForm.brand || null,
       qty: itemForm.qty,
       unit_price: itemForm.unit_price,
       received_amount: itemForm.received_amount,
@@ -1248,8 +1303,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </template>
             </el-table-column>
             <el-table-column prop="item_name" label="名称" min-width="150" />
-            <el-table-column prop="spec" label="规格" min-width="150">
+            <el-table-column prop="spec" label="规格" min-width="140">
               <template #default="{ row }">{{ row.spec || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="brand" label="品牌" width="100">
+              <template #default="{ row }">{{ row.brand || '—' }}</template>
             </el-table-column>
             <el-table-column prop="qty" label="数量" width="80" align="right">
               <template #default="{ row }">{{ row.qty ?? '—' }}</template>
@@ -1533,13 +1591,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </el-tabs>
     </el-card>
 
-    <!-- ==================== 从清单下单弹窗（标准件清单→采购单）==================== -->
-    <el-dialog v-model="listOrderVisible" title="从清单下单" width="960px" top="5vh" class="v3-scroll-dialog" :close-on-click-modal="false">
+    <!-- ==================== 从清单下单弹窗（清单→按供应商拆单）==================== -->
+    <el-dialog v-model="listOrderVisible" title="从清单下单" width="min(1320px, 97vw)" top="4vh" class="v3-scroll-dialog" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
-        title="选项目 → 它的标准件清单自动带出 → 筛选、勾选要买的行 → 选一个供应商 → 生成一张采购单。下单会回写清单的订购日期/采购负责人;清单也可在仓库「物料需求」里看库存。" />
+        title="选项目 → 清单自动带出 → 逐行选「供应商」「品牌」（可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的订购日期/采购负责人。" />
       <el-form :model="listOrderForm" label-position="top" class="order-form">
         <el-row :gutter="20">
-          <el-col :xs="24" :sm="12" :md="7">
+          <el-col :xs="24" :sm="12" :md="10">
             <el-form-item label="项目 *">
               <el-select v-model="listOrderForm.project_id" filterable placeholder="选择项目(有标准件清单的)"
                          style="width:100%" @change="onListProjectChange">
@@ -1547,19 +1605,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :xs="24" :sm="12" :md="7">
-            <el-form-item label="供应商 *">
-              <el-select v-model="listOrderForm.supplier_id" filterable placeholder="选择供应商" style="width:100%">
-                <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :xs="12" :sm="12" :md="5">
+          <el-col :xs="12" :sm="12" :md="7">
             <el-form-item label="下单日期">
               <el-date-picker v-model="listOrderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <el-col :xs="12" :sm="12" :md="5">
+          <el-col :xs="12" :sm="12" :md="7">
             <el-form-item label="付款方式">
               <el-select v-model="listOrderForm.payment_method" clearable allow-create filterable default-first-option
                          placeholder="选择/输入" style="width:100%">
@@ -1569,53 +1620,75 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
         </el-row>
       </el-form>
-      <div class="order-lines-head">
-        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-          <el-input v-model="purchasableFilter" placeholder="筛选名称/规格" clearable :prefix-icon="Search" style="width:200px" />
+      <div class="order-lines-head" style="flex-wrap:wrap;gap:10px">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <el-input v-model="purchasableFilter" placeholder="筛选名称/规格" clearable :prefix-icon="Search" style="width:170px" />
           <el-switch v-model="onlyGap" active-text="只看有缺口" style="--el-switch-on-color: var(--el-color-danger)" />
+          <!-- 🆕 批量填：逐行选太麻烦时，勾好行后一键填供应商/品牌 -->
+          <el-divider direction="vertical" />
+          <el-select v-model="batchSupplier" filterable clearable placeholder="批量供应商" style="width:150px">
+            <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+          <el-button size="small" @click="applyBatchSupplier">填给勾选行</el-button>
+          <el-select v-model="batchBrand" filterable allow-create clearable default-first-option placeholder="批量品牌" style="width:130px">
+            <el-option v-for="b in brandOptions" :key="b" :label="b" :value="b" />
+          </el-select>
+          <el-button size="small" @click="applyBatchBrand">填给勾选行</el-button>
         </div>
         <span class="muted">已勾选 <b>{{ listSelCount }}</b> / {{ purchasableRows.length }} 行</span>
       </div>
       <el-table :data="filteredPurchasable" v-loading="purchasableLoading" size="small" border stripe
                 :empty-text="listOrderForm.project_id ? '该项目标准件清单为空' : '请先在上方选择项目，标准件清单会自动带出'"
-                max-height="max(280px, 46vh)" :scrollbar-always-on="true" class="wrap-cells">
-        <el-table-column width="46" align="center">
+                max-height="max(320px, 56vh)" :scrollbar-always-on="true" class="wrap-cells">
+        <el-table-column width="46" align="center" fixed>
           <template #header>
             <el-checkbox :model-value="allFilteredChecked" :indeterminate="someFilteredChecked"
                          @change="toggleAllPurchasable" />
           </template>
           <template #default="{ row }"><el-checkbox v-model="row._checked" /></template>
         </el-table-column>
-        <el-table-column label="名称" min-width="140" prop="item_name" />
-        <el-table-column label="规格型号" min-width="130"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
-        <el-table-column label="需求量" width="72" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
-        <el-table-column label="现有库存" width="80" align="right">
+        <el-table-column label="名称" min-width="150" prop="item_name" fixed show-overflow-tooltip />
+        <el-table-column label="规格型号" min-width="130" show-overflow-tooltip><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
+        <el-table-column label="品牌" width="140">
           <template #default="{ row }">
-            <span :class="{ 'stock-has': row.stock > 0 }">{{ row.stock }}</span>
+            <el-select v-model="row._brand" filterable allow-create clearable default-first-option
+                       placeholder="选/填" size="small" style="width:100%" @change="row._checked = true">
+              <el-option v-for="b in brandOptions" :key="b" :label="b" :value="b" />
+            </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="建议采购" width="82" align="right">
-          <template #default="{ row }">
-            <b :class="row.suggest_purchase > 0 ? 'sugg-buy' : 'sugg-none'">{{ row.suggest_purchase }}</b>
-          </template>
+        <el-table-column label="需求量" width="70" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
+        <el-table-column label="现有库存" width="78" align="right">
+          <template #default="{ row }"><span :class="{ 'stock-has': row.stock > 0 }">{{ row.stock }}</span></template>
         </el-table-column>
-        <el-table-column label="采购数量" width="120">
+        <el-table-column label="建议采购" width="80" align="right">
+          <template #default="{ row }"><b :class="row.suggest_purchase > 0 ? 'sugg-buy' : 'sugg-none'">{{ row.suggest_purchase }}</b></template>
+        </el-table-column>
+        <el-table-column label="采购数量" width="116">
           <template #default="{ row }">
             <el-input-number v-model="row._buyqty" :min="0" :precision="2" :controls="false" style="width:100%" @change="row._checked = true" />
           </template>
         </el-table-column>
-        <el-table-column label="单价(选填)" width="120">
+        <el-table-column label="单价(选填)" width="116">
           <template #default="{ row }">
             <el-input-number v-model="row._price" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="后填留空" @change="row._checked = true" />
           </template>
         </el-table-column>
-        <el-table-column label="采购状态" width="92" align="center">
+        <el-table-column label="供应商 *" width="180">
+          <template #default="{ row }">
+            <el-select v-model="row._supplier_id" filterable clearable placeholder="必选" size="small"
+                       :class="{ 'sup-missing': row._checked && !row._supplier_id }" style="width:100%" @change="row._checked = true">
+              <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="采购状态" width="88" align="center">
           <template #default="{ row }"><el-tag size="small" :type="listStatusTag(row.status)">{{ row.status }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="备注" min-width="110"><template #default="{ row }">{{ row.notes || '—' }}</template></el-table-column>
+        <el-table-column label="备注" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ row.notes || '—' }}</template></el-table-column>
       </el-table>
       <div class="muted" style="margin-top:6px">
-        提示：<b>建议采购 = 需求量 − 现有库存</b>（按名称+规格匹配仓库库存）。采购数量已默认按建议量填好，可手动调整；有库存的行不会重复采购。
+        提示：<b>每行必须选供应商</b>，点生成时按供应商自动拆成多张采购单（一供应商一张单）。建议采购 = 需求量 − 现有库存，采购数量已默认填好可改。
       </div>
       <template #footer>
         <el-button @click="listOrderVisible = false">取消</el-button>
@@ -1748,6 +1821,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="规格型号">
               <el-input v-model="itemForm.spec" />
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8">
+            <el-form-item label="品牌">
+              <el-input v-model="itemForm.brand" placeholder="选填" />
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12" :md="8">
@@ -2139,6 +2217,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .drawer-summary { display: flex; gap: 20px; padding: 12px 0 16px; font-size: 14px; border-bottom: 1px solid var(--el-border-color-lighter); margin-bottom: 12px; }
 .monthly-collapse { margin-bottom: 14px; }
 .muted { color: var(--el-text-color-secondary); font-size: 13px; }
+.sup-missing :deep(.el-select__wrapper) { box-shadow: 0 0 0 1px var(--el-color-danger) inset; }
 .stock-has { color: var(--el-color-success); font-weight: 600; }
 .sugg-buy { color: var(--el-color-danger); }
 .sugg-none { color: var(--el-text-color-secondary); font-weight: 400; }

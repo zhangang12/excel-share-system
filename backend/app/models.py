@@ -584,6 +584,7 @@ class PurchaseItem(Base):
     arrival_date: Mapped[Optional[str]] = mapped_column(String(10))        # 🆕 到货日期（仓库收货填）
     item_name: Mapped[str] = mapped_column(String(128))
     spec: Mapped[Optional[str]] = mapped_column(String(255))
+    brand: Mapped[Optional[str]] = mapped_column(String(64))  # 🆕 品牌（下单时逐行选/填，自由输入）
     qty: Mapped[Optional[float]] = mapped_column()
     unit_price: Mapped[Optional[float]] = mapped_column()
     received_amount: Mapped[float] = mapped_column(default=0)

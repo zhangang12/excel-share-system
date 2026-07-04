@@ -59,6 +59,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("payment_method", "VARCHAR(16)"),         # 🆕 付款方式
         ("source_sheet_id", "INTEGER"),            # 🆕 来源数据表（清单→采购单）
         ("source_record_id", "INTEGER"),           # 🆕 来源行
+        ("brand", "VARCHAR(64)"),                  # 🆕 品牌（下单时逐行选/填）
     ],
     "payment_requests": [
         ("pay_voucher_file_id", "INTEGER"),        # 🆕 付款凭证附件

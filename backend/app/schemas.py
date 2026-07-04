@@ -909,6 +909,7 @@ class PurchaseItemCreate(BaseModel):
     delivery_note_no: Optional[str] = None
     item_name: str = Field(min_length=1, max_length=128)
     spec: Optional[str] = None
+    brand: Optional[str] = None
     qty: Optional[float] = None
     unit_price: Optional[float] = None
     received_amount: float = 0
@@ -954,6 +955,7 @@ class PurchasableRow(BaseModel):
     record_id: int
     item_name: str
     spec: Optional[str] = None
+    brand: Optional[str] = None          # 🆕 清单里带出的品牌（下单时可改）
     qty: Optional[float] = None          # 清单需求量
     stock: float = 0                      # 现有库存（按名称+规格匹配物料）
     suggest_purchase: float = 0           # 建议采购量 = 需求 - 库存
@@ -966,6 +968,7 @@ class OrderFromListLine(BaseModel):
     source_record_id: Optional[int] = None
     item_name: str = Field(min_length=1, max_length=128)
     spec: Optional[str] = None
+    brand: Optional[str] = None          # 🆕 逐行品牌
     qty: Optional[float] = None
     unit_price: Optional[float] = None
     notes: Optional[str] = None
@@ -997,6 +1000,7 @@ class PurchaseItemUpdate(BaseModel):
     delivery_note_no: Optional[str] = None
     item_name: Optional[str] = None
     spec: Optional[str] = None
+    brand: Optional[str] = None
     qty: Optional[float] = None
     unit_price: Optional[float] = None
     received_amount: Optional[float] = None
@@ -1029,6 +1033,7 @@ class PurchaseItemOut(BaseModel):
     arrival_date: Optional[str] = None
     item_name: str
     spec: Optional[str] = None
+    brand: Optional[str] = None
     qty: Optional[float] = None
     unit_price: Optional[float] = None
     received_amount: float = 0

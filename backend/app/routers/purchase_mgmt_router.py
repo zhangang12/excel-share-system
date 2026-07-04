@@ -300,7 +300,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         delivery_date=i.delivery_date, contract_no=i.contract_no,
         project_code=i.project_code, delivery_note_no=i.delivery_note_no,
         arrival_date=i.arrival_date,
-        item_name=i.item_name, spec=i.spec, qty=i.qty, unit_price=i.unit_price,
+        item_name=i.item_name, spec=i.spec, brand=i.brand, qty=i.qty, unit_price=i.unit_price,
         received_amount=i.received_amount or 0,
         invoice_date=i.invoice_date, tax_rate=i.tax_rate,
         invoice_amount=i.invoice_amount or 0,
@@ -474,13 +474,14 @@ async def purchasable(
             status = "已到货"
         else:
             status = "已下单"
-        extra = "，".join(f"{c}:{gv(c)}" for c in ("材质", "品牌") if gv(c))
+        brand = gv("品牌")
+        extra = "，".join(f"{c}:{gv(c)}" for c in ("材质",) if gv(c))
         spec = gv("规格型号")
         qty = _num(gv("数量"))
         stock = round(stock_by_key.get(_k(name, spec), 0), 4)
         suggest = round(max(0.0, (qty or 0) - stock), 4) if qty is not None else 0
         out.append(schemas.PurchasableRow(
-            sheet_id=sheet.id, record_id=rec.id, item_name=name, spec=spec,
+            sheet_id=sheet.id, record_id=rec.id, item_name=name, spec=spec, brand=brand,
             qty=qty, stock=stock, suggest_purchase=suggest,
             notes=(extra or gv("备注")), status=status))
     return out
@@ -506,7 +507,7 @@ async def create_order_from_list(
         db.add(models.PurchaseItem(
             po_no=po_no, source_sheet_id=l.source_sheet_id, source_record_id=l.source_record_id,
             supplier_id=body.supplier_id, delivery_date=body.delivery_date, project_code=body.project_code,
-            item_name=l.item_name.strip(), spec=l.spec, qty=l.qty, unit_price=l.unit_price,
+            item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=body.payment_method, notes=l.notes, buyer_id=current.id))
         if l.source_sheet_id and l.source_record_id:
             await _writeback_sheet_row(db, l.source_sheet_id, l.source_record_id,
