@@ -312,6 +312,7 @@ class Shipment(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending 待发货 / shipped 已发货
     receiver_name: Mapped[Optional[str]] = mapped_column(String(128))
+    receiver_company: Mapped[Optional[str]] = mapped_column(String(128))  # 🆕 收货单位（与收货人分开）
     receiver_phone: Mapped[Optional[str]] = mapped_column(String(64))
     receiver_addr: Mapped[Optional[str]] = mapped_column(String(255))
     ship_doc_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))

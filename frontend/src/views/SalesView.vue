@@ -179,7 +179,7 @@ const orderForm = reactive({
   amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
   ship_receivable: 0,
   balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
-  receiver: { name: '', phone: '', addr: '' },
+  receiver: { name: '', company: '', phone: '', addr: '' },
 })
 // 🆕 年度选项：选年份后按该年生成下一个编号（如 2027 → 2027-001），可跨年提前建档
 const orderYear = ref(String(new Date().getFullYear()))
@@ -205,7 +205,7 @@ async function openOrder() {
       amount: 0, tax_rate: '13%', prepay: 0, prepay_note: '', before_ship: 0, before_ship_note: '',
       ship_receivable: 0,
       balance: 0, balance_date: '', depts: ['design', 'electric', 'produce'], req_text: '',
-      receiver: { name: '', phone: '', addr: '' },
+      receiver: { name: '', company: '', phone: '', addr: '' },
     })
     orderFiles.value = []
     orderVisible.value = true
@@ -226,7 +226,7 @@ function openDraftEdit(r: SalesLedgerRow) {
     ship_receivable: r.ship_receivable || 0, balance: r.balance || 0, balance_date: r.balance_date || '',
     depts: (po.depts && po.depts.length) ? po.depts : ['design'],
     req_text: po.req_text || '',
-    receiver: { name: po.receiver?.name || '', phone: po.receiver?.phone || '', addr: po.receiver?.addr || '' },
+    receiver: { name: po.receiver?.name || '', company: po.receiver?.company || '', phone: po.receiver?.phone || '', addr: po.receiver?.addr || '' },
   })
   orderFiles.value = []
   orderVisible.value = true
@@ -243,6 +243,22 @@ function fmtFileSize(n: number): string {
   if (n < 1024) return n + ' B'
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
   return (n / 1024 / 1024).toFixed(2) + ' MB'
+}
+
+// 🆕 C4/#121：填/改项目编号后，按同数字编号(忽略末尾A/B/C)自动带出上次收货信息（已填则不覆盖）
+async function autofillReceiverByCode() {
+  const code = orderForm.code.trim()
+  if (!code || orderForm.receiver.name || orderForm.receiver.company) return
+  try {
+    const r = await salesApi.receiverByCode(code)
+    if (r.found) {
+      orderForm.receiver.name = r.name || ''
+      orderForm.receiver.company = r.company || ''
+      orderForm.receiver.phone = r.phone || ''
+      orderForm.receiver.addr = r.addr || ''
+      ElMessage.success('已按同编号自动带出收货信息，可修改')
+    }
+  } catch { /* 静默 */ }
 }
 
 async function submitOrder() {
@@ -301,7 +317,7 @@ const editVisible = ref(false)
 const editRow = ref<SalesLedgerRow | null>(null)
 const editForm = reactive<any>({})
 // 🆕 #3 收件信息（编辑弹窗内合并维护）/ #2 更换技术资料
-const editRcv = reactive({ name: '', phone: '', addr: '' })
+const editRcv = reactive({ name: '', company: '', phone: '', addr: '' })
 const editRcvShipped = ref(false)
 const replacingTech = ref(false)
 async function openEdit(r: SalesLedgerRow) {
@@ -314,13 +330,13 @@ async function openEdit(r: SalesLedgerRow) {
     sign_date: r.sign_date || '', deliver_date: r.deliver_date || '',
     sales_uid: r.sales_uid ?? undefined,
   })
-  Object.assign(editRcv, { name: '', phone: '', addr: '' })
+  Object.assign(editRcv, { name: '', company: '', phone: '', addr: '' })
   editRcvShipped.value = false
   editVisible.value = true
   // 预填当前收件信息
   try {
     const rc = await salesApi.getReceiver(r.id)
-    Object.assign(editRcv, { name: rc.name, phone: rc.phone, addr: rc.addr })
+    Object.assign(editRcv, { name: rc.name, company: rc.company || '', phone: rc.phone, addr: rc.addr })
     editRcvShipped.value = rc.shipped
   } catch { /* 静默 */ }
 }
@@ -979,7 +995,7 @@ async function openReport() {
             </el-select>
           </el-form-item>
           <el-form-item label="项目编号（可改）" required style="flex: 1">
-            <el-input v-model="orderForm.code" placeholder="如 2026-057 / 2026-050C" maxlength="64" clearable :disabled="!!draftEditLid" />
+            <el-input v-model="orderForm.code" placeholder="如 2026-057 / 2026-050C" maxlength="64" clearable :disabled="!!draftEditLid" @change="autofillReceiverByCode" />
           </el-form-item>
           <el-form-item label="设备名称" required style="flex: 1">
             <el-input v-model="orderForm.name" placeholder="如 300L真空乳化机" />
@@ -1065,9 +1081,10 @@ async function openReport() {
             </div>
           </div>
         </el-form-item>
-        <div class="fsec">📍 收货信息</div>
+        <div class="fsec">📍 收货信息 <span class="muted" style="font-size:12px;font-weight:400">（同数字编号可自动带出上次收货信息）</span></div>
         <div class="frow">
-          <el-form-item label="收货人 / 单位" style="flex: 1"><el-input v-model="orderForm.receiver.name" /></el-form-item>
+          <el-form-item label="收货人" style="flex: 1"><el-input v-model="orderForm.receiver.name" placeholder="联系人" /></el-form-item>
+          <el-form-item label="收货单位" style="flex: 1"><el-input v-model="orderForm.receiver.company" placeholder="公司/单位" /></el-form-item>
           <el-form-item label="联系电话" style="flex: 1"><el-input v-model="orderForm.receiver.phone" /></el-form-item>
         </div>
         <el-form-item label="收货地址"><el-input v-model="orderForm.receiver.addr" placeholder="省市区 + 详细地址" /></el-form-item>
@@ -1135,7 +1152,8 @@ async function openReport() {
         <div class="fsec">📍 收件信息（同步物流发货部）</div>
         <div v-if="editRcvShipped" class="muted small" style="margin-bottom:6px">该项目已发货，收件信息不可修改。</div>
         <div class="frow">
-          <el-form-item label="收货人 / 单位" style="flex: 1"><el-input v-model="editRcv.name" :disabled="editRcvShipped" /></el-form-item>
+          <el-form-item label="收货人" style="flex: 1"><el-input v-model="editRcv.name" :disabled="editRcvShipped" placeholder="联系人" /></el-form-item>
+          <el-form-item label="收货单位" style="flex: 1"><el-input v-model="editRcv.company" :disabled="editRcvShipped" placeholder="公司/单位" /></el-form-item>
           <el-form-item label="联系电话" style="flex: 1"><el-input v-model="editRcv.phone" :disabled="editRcvShipped" /></el-form-item>
         </div>
         <el-form-item label="收货地址"><el-input v-model="editRcv.addr" :disabled="editRcvShipped" placeholder="省市区 + 详细地址" /></el-form-item>

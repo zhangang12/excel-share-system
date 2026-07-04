@@ -45,6 +45,7 @@ class BoardRow(BaseModel):
     ship_list_files: list[schemas.AttachmentOut] = []
     packlist_status: str = "none"    # 🆕 发货清单：none 未推送 / requested 待仓库备货 / ready 已备货完成
     receiver_name: Optional[str] = None
+    receiver_company: Optional[str] = None
     receiver_phone: Optional[str] = None
     receiver_addr: Optional[str] = None
     ship_doc_name: Optional[str] = None
@@ -56,6 +57,7 @@ class BoardRow(BaseModel):
 
 class ReceiverIn(BaseModel):
     name: str = ""
+    company: str = ""
     phone: str = ""
     addr: str = ""
 
@@ -193,6 +195,7 @@ async def board(
                 ship_list_files=shiplist_by_pid.get(p.id, []),
                 packlist_status=s.packlist_status if s else "none",
                 receiver_name=s.receiver_name if s else None,
+                receiver_company=s.receiver_company if s else None,
                 receiver_phone=s.receiver_phone if s else None,
                 receiver_addr=s.receiver_addr if s else None,
                 ship_doc_name=doc_names.get(s.ship_doc_file_id) if s else None,
@@ -216,8 +219,8 @@ async def board(
                 produce_state=_dept_state(orders, "produce"),
                 ship_list_files=shiplist_by_pid.get(s.project_id, []),
                 packlist_status=s.packlist_status,
-                receiver_name=s.receiver_name, receiver_phone=s.receiver_phone,
-                receiver_addr=s.receiver_addr,
+                receiver_name=s.receiver_name, receiver_company=s.receiver_company,
+                receiver_phone=s.receiver_phone, receiver_addr=s.receiver_addr,
                 ship_doc_name=doc_names.get(s.ship_doc_file_id),
                 ship_doc_id=s.ship_doc_file_id,
                 shipped_at=s.shipped_at,
@@ -254,6 +257,7 @@ async def update_receiver(
         raise HTTPException(404, "发货单不存在")
     old = f"{s.receiver_name or ''}/{s.receiver_phone or ''}/{s.receiver_addr or ''}"
     s.receiver_name = data.name.strip() or None
+    s.receiver_company = (data.company or "").strip() or None
     s.receiver_phone = data.phone.strip() or None
     s.receiver_addr = data.addr.strip() or None
     await db.commit()

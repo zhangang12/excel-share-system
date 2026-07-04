@@ -404,10 +404,11 @@ async def _materialize_order_downstream(db: AsyncSession, p: models.Project, dep
     调货订单（depts 为空）：不派生产部门任务，但仍建发货待办、同步发货部（物流确认发货）。"""
     await _add_all_active_users_as_members(db, p.id)
     # 发货待办：所有订单都建（含调货——调货也要同步发货部确认发货）
-    name_, phone_, addr_ = receiver
+    name_, phone_, addr_, company_ = (list(receiver) + [None, None, None, None])[:4]
     db.add(models.Shipment(
         project_id=p.id,
         receiver_name=(name_ or "").strip() or None,
+        receiver_company=(company_ or "").strip() or None,
         receiver_phone=(phone_ or "").strip() or None,
         receiver_addr=(addr_ or "").strip() or None,
     ))
@@ -498,7 +499,7 @@ async def create_sales_order(
         extra = dict(p.extra or {})
         extra["__pending_order__"] = {
             "depts": depts, "req_text": req,
-            "receiver": {"name": rcv.name.strip(), "phone": rcv.phone.strip(), "addr": rcv.addr.strip()},
+            "receiver": {"name": rcv.name.strip(), "company": (rcv.company or "").strip(), "phone": rcv.phone.strip(), "addr": rcv.addr.strip()},
         }
         p.extra = extra
         await db.commit()
@@ -609,9 +610,50 @@ async def get_receiver(
     ship = sr.scalar_one_or_none()
     return {
         "name": (ship.receiver_name if ship else "") or "",
+        "company": (ship.receiver_company if ship else "") or "",
         "phone": (ship.receiver_phone if ship else "") or "",
         "addr": (ship.receiver_addr if ship else "") or "",
         "shipped": bool(ship and ship.status == "shipped"),
+    }
+
+
+def _code_base(code: str) -> str:
+    """同编号基数：去掉末尾字母子项后缀（2026-057C → 2026-057）。"""
+    import re
+    return re.sub(r"[A-Za-z]+$", "", (code or "").strip())
+
+
+@router.get("/receiver-by-code")
+async def receiver_by_code(
+    code: str,
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 C4/#121：按「同数字编号」（忽略末尾 A/B/C 子项）带出已填的收货信息。
+    找同基数编号里最近一个已填收货人的项目，返回其收货信息供下单/编辑时自动填充。"""
+    base = _code_base(code)
+    if not base:
+        return {"found": False}
+    # 取所有同基数编号的项目，找一个已有收货人的发货单（最新优先）
+    pr = await db.execute(select(models.Project).where(models.Project.is_deleted == False))  # noqa: E712
+    pids = [p.id for p in pr.scalars().all() if _code_base(p.code) == base]
+    if not pids:
+        return {"found": False}
+    sr = await db.execute(
+        select(models.Shipment).where(
+            models.Shipment.project_id.in_(pids),
+            models.Shipment.receiver_name.isnot(None),
+        ).order_by(models.Shipment.id.desc())
+    )
+    ship = sr.scalars().first()
+    if not ship:
+        return {"found": False}
+    return {
+        "found": True,
+        "name": ship.receiver_name or "",
+        "company": ship.receiver_company or "",
+        "phone": ship.receiver_phone or "",
+        "addr": ship.receiver_addr or "",
     }
 
 
@@ -633,6 +675,7 @@ async def update_receiver(
         ship = models.Shipment(project_id=led.project_id, status="pending")
         db.add(ship)
     ship.receiver_name = (data.name or "").strip() or None
+    ship.receiver_company = (data.company or "").strip() or None
     ship.receiver_phone = (data.phone or "").strip() or None
     ship.receiver_addr = (data.addr or "").strip() or None
     await db.commit()
@@ -1296,7 +1339,7 @@ async def order_approve(
     req = payload.get("req_text") or f"（销售下单）{p.name if p else ''}"
     rcv = payload.get("receiver") or {}
     order_ids = await _materialize_order_downstream(
-        db, p, depts, req, (rcv.get("name"), rcv.get("phone"), rcv.get("addr")),
+        db, p, depts, req, (rcv.get("name"), rcv.get("phone"), rcv.get("addr"), rcv.get("company")),
         led.sales_user or current)
     led.order_state = None
     led.order_type = "调货订单" if not depts else "工厂制作订单"
@@ -1383,7 +1426,7 @@ async def order_draft_resubmit(
     extra = dict(p.extra or {}) if p else {}
     extra["__pending_order__"] = {
         "depts": depts, "req_text": req,
-        "receiver": {"name": rcv.name.strip(), "phone": rcv.phone.strip(), "addr": rcv.addr.strip()},
+        "receiver": {"name": rcv.name.strip(), "company": (rcv.company or "").strip(), "phone": rcv.phone.strip(), "addr": rcv.addr.strip()},
     }
     if p:
         p.extra = extra

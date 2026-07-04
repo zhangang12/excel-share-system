@@ -52,6 +52,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("packlist_requested_by", "INTEGER"),
         ("packlist_ready_at", "TIMESTAMP"),
         ("packlist_ready_by", "INTEGER"),
+        ("receiver_company", "VARCHAR(128)"),   # 🆕 收货单位
     ],
     "purchase_items": [                            # 🆕 采购单号（同一供应商多零件行共享一个采购单）
         ("po_no", "VARCHAR(32)"),

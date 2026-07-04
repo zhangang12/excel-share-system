@@ -27,6 +27,7 @@ interface BoardRow {
   ship_list_files: AttOut[]
   packlist_status: 'none' | 'requested' | 'ready'
   receiver_name?: string | null
+  receiver_company?: string | null
   receiver_phone?: string | null
   receiver_addr?: string | null
   ship_doc_name?: string | null
@@ -80,30 +81,34 @@ function stateTag(s: DeptState): 'success' | 'primary' | 'info' {
 // 收货信息编辑
 const rcvVisible = ref(false)
 const rcvRow = ref<BoardRow | null>(null)
-const rcvForm = reactive({ name: '', phone: '', addr: '' })
+const rcvForm = reactive({ name: '', company: '', phone: '', addr: '' })
 function openReceiver(r: BoardRow) {
   rcvRow.value = r
   rcvForm.name = r.receiver_name || ''
+  rcvForm.company = r.receiver_company || ''
   rcvForm.phone = r.receiver_phone || ''
   rcvForm.addr = r.receiver_addr || ''
   rcvVisible.value = true
+  // 🆕 C4/#121：本条没填收货人、但同编号兄弟已填 → 自动带出（可再改）
+  if (!rcvForm.name && !rcvForm.company && siblingRcv.value) applySibling(true)
 }
 // 同数字编号兄弟项目（去末尾字母后缀，如 2026-060B/2026-060A → 2026-060）
 function codeBase(code?: string | null) { return (code || '').replace(/[A-Za-z]+$/, '') }
-// 找同编号、已填收货信息的兄弟，供「完善信息」时一键复用
+// 找同编号、已填收货信息的兄弟，供自动/一键复用
 const siblingRcv = computed(() => {
   const r = rcvRow.value
   if (!r) return null
   const base = codeBase(r.code)
   return rows.value.find(x => x.id !== r.id && x.receiver_name && codeBase(x.code) === base) || null
 })
-function applySibling() {
+function applySibling(auto = false) {
   const s = siblingRcv.value
   if (!s) return
   rcvForm.name = s.receiver_name || ''
+  rcvForm.company = s.receiver_company || ''
   rcvForm.phone = s.receiver_phone || ''
   rcvForm.addr = s.receiver_addr || ''
-  ElMessage.success(`已复用 ${s.code} 的收货信息`)
+  ElMessage.success(`${auto ? '已自动带出' : '已复用'} 同编号 ${s.code} 的收货信息`)
 }
 const savingRcv = ref(false)
 async function saveReceiver() {
@@ -212,7 +217,7 @@ async function confirmShip(force = false) {
             <div class="rcv-cell">
               <template v-if="row.receiver_name">
                 <div class="rcv-info">
-                  <div class="rcv-name">{{ row.receiver_name }}</div>
+                  <div class="rcv-name">{{ row.receiver_name }}<span v-if="row.receiver_company" class="muted" style="font-weight:400">（{{ row.receiver_company }}）</span></div>
                   <div class="rcv-line">
                     <el-icon class="rcv-ico"><Phone /></el-icon>{{ row.receiver_phone || '—' }}
                   </div>
@@ -271,11 +276,14 @@ async function confirmShip(force = false) {
       <el-alert v-if="siblingRcv" type="info" :closable="false" show-icon style="margin-bottom:12px">
         <template #title>
           同编号项目「{{ siblingRcv.code }}」已有收货信息（{{ siblingRcv.receiver_name }}），
-          <el-button link type="primary" style="padding:0" @click="applySibling">点此复用</el-button>
+          <el-button link type="primary" style="padding:0" @click="applySibling(false)">点此复用</el-button>
         </template>
       </el-alert>
       <el-form label-position="top">
-        <el-form-item label="收货人 / 单位" required><el-input v-model="rcvForm.name" /></el-form-item>
+        <div style="display:flex;gap:12px">
+          <el-form-item label="收货人" required style="flex:1"><el-input v-model="rcvForm.name" placeholder="联系人" /></el-form-item>
+          <el-form-item label="收货单位" style="flex:1"><el-input v-model="rcvForm.company" placeholder="公司/单位" /></el-form-item>
+        </div>
         <el-form-item label="联系电话" required><el-input v-model="rcvForm.phone" /></el-form-item>
         <el-form-item label="收货地址" required><el-input v-model="rcvForm.addr" /></el-form-item>
       </el-form>

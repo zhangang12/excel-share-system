@@ -236,6 +236,7 @@ class OrderRejectIn(BaseModel):
 
 class SalesReceiverIn(BaseModel):
     name: str = ""
+    company: str = ""
     phone: str = ""
     addr: str = ""
 

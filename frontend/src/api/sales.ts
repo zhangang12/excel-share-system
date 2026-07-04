@@ -26,7 +26,7 @@ export interface SalesLedgerRow {
   void_reason?: string | null
   order_state?: 'pending' | 'draft' | null    // 🆕 下单审批流：None 已生效 / pending 待审批 / draft 被退回
   order_reject_reason?: string | null
-  pending_order?: { depts?: string[]; req_text?: string; receiver?: { name?: string; phone?: string; addr?: string } } | null
+  pending_order?: { depts?: string[]; req_text?: string; receiver?: { name?: string; company?: string; phone?: string; addr?: string } } | null
   invoice_apply_file_id?: number | null
   invoice_apply_file_name?: string | null
   invoice_file_id?: number | null
@@ -79,7 +79,7 @@ export interface SalesOrderForm {
   balance_date: string
   depts: string[]
   req_text: string
-  receiver: { name: string; phone: string; addr: string }
+  receiver: { name: string; company: string; phone: string; addr: string }
 }
 
 export const salesApi = {
@@ -114,7 +114,9 @@ export const salesApi = {
 
   // 🆕 #3 补充/修改客户收件信息 → 同步物流
   getReceiver: (id: number) =>
-    http.get<{ name: string; phone: string; addr: string; shipped: boolean }>(`/sales/ledger/${id}/receiver`).then((r) => r.data),
+    http.get<{ name: string; company: string; phone: string; addr: string; shipped: boolean }>(`/sales/ledger/${id}/receiver`).then((r) => r.data),
+  receiverByCode: (code: string) =>
+    http.get<{ found: boolean; name?: string; company?: string; phone?: string; addr?: string }>(`/sales/receiver-by-code`, { params: { code } }).then((r) => r.data),
   updateReceiver: (id: number, data: { name: string; phone: string; addr: string }) =>
     http.put(`/sales/ledger/${id}/receiver`, data).then((r) => r.data),
 
