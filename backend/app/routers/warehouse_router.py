@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update as sa_update
 
 from ..database import get_db
 from .. import models, schemas
@@ -131,6 +131,108 @@ async def update_material(
     m.safety_stock = data.safety_stock or 0
     await db.commit()
     return schemas.Msg(message="已保存")
+
+
+# ==================== 🆕 物料字典（类别 / 单位 受管理取值）====================
+# 维护：采购主管（admin/manager 由 require_roles 自动放行）；读取：所有登录用户
+_DICT_ADMIN_ROLES = ("buyer_lead",)
+
+
+async def _dict_items(db: AsyncSession, dtype: Optional[str] = None, enabled_only: bool = False):
+    q = select(models.MaterialDict)
+    if dtype:
+        q = q.where(models.MaterialDict.dtype == dtype)
+    if enabled_only:
+        q = q.where(models.MaterialDict.enabled == True)  # noqa: E712
+    q = q.order_by(models.MaterialDict.dtype, models.MaterialDict.sort_order, models.MaterialDict.id)
+    return list((await db.execute(q)).scalars().all())
+
+
+@router.get("/material-dict", response_model=List[schemas.MaterialDictOut])
+async def list_material_dict(
+    dtype: Optional[str] = Query(None, description="category / unit；空=全部"),
+    enabled_only: bool = Query(False),
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """物料字典读取——物料表单渲染「类别 / 单位」下拉用（所有登录用户可读）。"""
+    return [schemas.MaterialDictOut.model_validate(x) for x in await _dict_items(db, dtype, enabled_only)]
+
+
+@router.post("/material-dict", response_model=schemas.MaterialDictOut)
+async def create_material_dict(
+    body: schemas.MaterialDictIn,
+    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    val = body.value.strip()
+    if not val:
+        raise HTTPException(400, "取值不能为空")
+    dup = await db.execute(select(models.MaterialDict).where(
+        models.MaterialDict.dtype == body.dtype, models.MaterialDict.value == val))
+    if dup.scalar_one_or_none():
+        raise HTTPException(409, "该取值已存在")
+    it = models.MaterialDict(dtype=body.dtype, value=val,
+                             sort_order=body.sort_order, enabled=body.enabled)
+    db.add(it)
+    await db.commit()
+    await db.refresh(it)
+    await write_audit(db, user=current, action="create", target_type="material_dict", target_id=it.id)
+    return schemas.MaterialDictOut.model_validate(it)
+
+
+@router.put("/material-dict/{did}", response_model=schemas.MaterialDictOut)
+async def update_material_dict(
+    did: int, body: schemas.MaterialDictIn,
+    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(models.MaterialDict).where(models.MaterialDict.id == did))
+    it = r.scalar_one_or_none()
+    if not it:
+        raise HTTPException(404, "字典项不存在")
+    val = body.value.strip()
+    if not val:
+        raise HTTPException(400, "取值不能为空")
+    dup = await db.execute(select(models.MaterialDict).where(
+        models.MaterialDict.dtype == body.dtype, models.MaterialDict.value == val,
+        models.MaterialDict.id != did))
+    if dup.scalar_one_or_none():
+        raise HTTPException(409, "该取值已存在")
+    old_val, old_dtype = it.value, it.dtype
+    it.dtype = body.dtype
+    it.value = val
+    it.sort_order = body.sort_order
+    it.enabled = body.enabled
+    # 改名级联到存量物料，避免旧值成孤儿、下次启动又被并入字典
+    if old_dtype == body.dtype and val != old_val:
+        col = models.WhMaterial.category if body.dtype == "category" else models.WhMaterial.unit
+        field = "category" if body.dtype == "category" else "unit"
+        await db.execute(sa_update(models.WhMaterial).where(col == old_val).values(**{field: val}))
+    await db.commit()
+    await db.refresh(it)
+    return schemas.MaterialDictOut.model_validate(it)
+
+
+@router.delete("/material-dict/{did}", response_model=schemas.Msg)
+async def delete_material_dict(
+    did: int,
+    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除字典项。若仍被物料使用则拦截（改用「停用」，避免下拉丢值/被重新并入）。"""
+    r = await db.execute(select(models.MaterialDict).where(models.MaterialDict.id == did))
+    it = r.scalar_one_or_none()
+    if not it:
+        raise HTTPException(404, "字典项不存在")
+    col = models.WhMaterial.category if it.dtype == "category" else models.WhMaterial.unit
+    used = await db.execute(select(func.count(models.WhMaterial.id)).where(col == it.value))
+    if used.scalar():
+        raise HTTPException(400, "该取值已被物料使用，不能删除；可改为「停用」")
+    await db.delete(it)
+    await db.commit()
+    await write_audit(db, user=current, action="delete", target_type="material_dict", target_id=did)
+    return schemas.Msg(message="已删除该字典项")
 
 
 # ==================== 出入库 ====================

@@ -1373,6 +1373,45 @@ async def normalize_tax_rate_no_invoice(db: AsyncSession) -> dict:
     return {"updated": n}
 
 
+async def backfill_material_dict(db: AsyncSession) -> dict:
+    """🆕 物料字典（幂等）：把「预置 ∪ 存量已用过的」类别/单位并入 material_dict。
+    存量物料用过的自定义值不丢；字典里已存在的值跳过。"""
+    DEFAULT_CATS = ["标准件", "不锈钢", "激光", "外协", "电气", "耗材"]
+    DEFAULT_UNITS = ["个", "件", "套", "米", "公斤", "张", "卷", "桶"]
+    er = await db.execute(select(models.MaterialDict.dtype, models.MaterialDict.value))
+    existing = {(d, v) for d, v in er.all()}
+    mr = await db.execute(select(models.WhMaterial.category, models.WhMaterial.unit))
+    used_cats: set[str] = set()
+    used_units: set[str] = set()
+    for cat, unit in mr.all():
+        if cat and cat.strip():
+            used_cats.add(cat.strip())
+        if unit and unit.strip():
+            used_units.add(unit.strip())
+    added = 0
+
+    def _merge(dtype: str, defaults: list[str], used: set[str]) -> None:
+        nonlocal added
+        seq: list[str] = []
+        for v in defaults:                       # 预置在前，保序
+            if v not in seq:
+                seq.append(v)
+        for v in sorted(used):                   # 历史自定义值追加在后
+            if v not in seq:
+                seq.append(v)
+        for i, v in enumerate(seq):
+            if (dtype, v) not in existing:
+                db.add(models.MaterialDict(dtype=dtype, value=v, sort_order=i, enabled=True))
+                added += 1
+
+    _merge("category", DEFAULT_CATS, used_cats)
+    _merge("unit", DEFAULT_UNITS, used_units)
+    if added:
+        await db.commit()
+        log.info("[backfill_material_dict] 并入物料字典 %d 条", added)
+    return {"added": added}
+
+
 async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
     """🆕 2026-06-20（幂等）：给存量 SalesLedger 补 order_type（默认工厂制作订单，2026-008 为调货订单）。
     注：原"为进行中项目补建 design/electric/produce 任务单"已于 2026-06-23 停用——它每次启动都跑、
@@ -1662,3 +1701,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_v2_template_for_058_plus(db)
     except Exception as e:
         log.warning("backfill_v2_template_for_058_plus failed: %s", e)
+    try:
+        await backfill_material_dict(db)
+    except Exception as e:
+        log.warning("backfill_material_dict failed: %s", e)

@@ -623,6 +623,18 @@ class PurchaseCustomField(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class MaterialDict(Base):
+    """🆕 物料字典：受管理的「类别 / 单位」取值表（替代原来的预置∪自由输入）。
+    dtype: category（物料类别）| unit（计量单位）。物料表单只能从启用项里选。"""
+    __tablename__ = "material_dict"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dtype: Mapped[str] = mapped_column(String(16), index=True)     # category / unit
+    value: Mapped[str] = mapped_column(String(64))                 # 取值
+    sort_order: Mapped[int] = mapped_column(default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class SupplierOpeningBalance(Base):
     """供应商期初余额（每家一条）"""
     __tablename__ = "supplier_opening_balances"

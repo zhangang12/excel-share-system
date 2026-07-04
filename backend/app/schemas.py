@@ -960,6 +960,23 @@ class PurchaseCustomFieldOut(BaseModel):
     enabled: bool
 
 
+# ---------- 🆕 物料字典（类别 / 单位 受管理取值） ----------
+class MaterialDictIn(BaseModel):
+    dtype: str = Field(pattern="^(category|unit)$")   # category / unit
+    value: str = Field(min_length=1, max_length=64)
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class MaterialDictOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    dtype: str
+    value: str
+    sort_order: int
+    enabled: bool
+
+
 class PurchaseOrderCreate(BaseModel):
     supplier_id: int
     delivery_date: Optional[str] = None          # 下单日期（总的）

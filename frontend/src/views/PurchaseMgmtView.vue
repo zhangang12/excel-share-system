@@ -2,7 +2,7 @@
 // 采购管理（含采购部）：采购部 / 采购明细 / 供应商账目 / 汇总报表
 import { ref, computed, onMounted, onBeforeUnmount, reactive, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, Search, Tickets, EditPen, Setting } from '@element-plus/icons-vue'
+import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, Search, Tickets, EditPen, Setting, Collection } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
@@ -65,6 +65,46 @@ async function cfSave() {
 async function cfDelete(f: CustomField) {
   try { await ElMessageBox.confirm(`删除字段「${f.label}」？已录入明细的历史值保留但不再显示/校验。`, '删除字段', { type: 'warning', confirmButtonText: '删除' }) } catch { return }
   try { await http.delete(`/purchase-mgmt/custom-fields/${f.id}`); ElMessage.success('已删除'); await loadCustomFields() } catch { /* handled */ }
+}
+
+// 🆕 物料字典（类别/单位）维护 —— 采购主管/admin/manager；仓库物料表单只能从字典选
+interface MatDictItem { id: number; dtype: string; value: string; sort_order: number; enabled: boolean }
+const matDictVisible = ref(false)
+const matDict = ref<MatDictItem[]>([])
+const mdTab = ref<'category' | 'unit'>('category')
+const mdEditingId = ref<number | null>(null)
+const mdSaving = ref(false)
+const mdForm = reactive({ value: '', sort_order: 0, enabled: true })
+const mdList = computed(() => matDict.value.filter(d => d.dtype === mdTab.value))
+async function loadMatDict() {
+  try { matDict.value = (await http.get<MatDictItem[]>('/wh/material-dict')).data }
+  catch { matDict.value = [] }
+}
+function mdResetForm() { mdEditingId.value = null; Object.assign(mdForm, { value: '', sort_order: 0, enabled: true }) }
+function openMatDictManager() { mdResetForm(); mdTab.value = 'category'; loadMatDict(); matDictVisible.value = true }
+function mdEdit(d: MatDictItem) {
+  mdEditingId.value = d.id; mdTab.value = d.dtype as 'category' | 'unit'
+  Object.assign(mdForm, { value: d.value, sort_order: d.sort_order, enabled: d.enabled })
+}
+async function mdSave() {
+  if (!mdForm.value.trim()) { ElMessage.warning('请填写取值'); return }
+  const payload = { dtype: mdTab.value, value: mdForm.value.trim(), sort_order: mdForm.sort_order, enabled: mdForm.enabled }
+  mdSaving.value = true
+  try {
+    if (mdEditingId.value) { await http.put(`/wh/material-dict/${mdEditingId.value}`, payload); ElMessage.success('已更新') }
+    else { await http.post('/wh/material-dict', payload); ElMessage.success('已新增') }
+    mdResetForm(); await loadMatDict()
+  } catch { /* handled */ } finally { mdSaving.value = false }
+}
+async function mdDelete(d: MatDictItem) {
+  try { await ElMessageBox.confirm(`删除字典项「${d.value}」？若已被物料使用会被拦截，可改为「停用」。`, '删除取值', { type: 'warning', confirmButtonText: '删除' }) } catch { return }
+  try { await http.delete(`/wh/material-dict/${d.id}`); ElMessage.success('已删除'); await loadMatDict() } catch { /* handled */ }
+}
+async function mdToggle(d: MatDictItem) {
+  try {
+    await http.put(`/wh/material-dict/${d.id}`, { dtype: d.dtype, value: d.value, sort_order: d.sort_order, enabled: !d.enabled })
+    await loadMatDict()
+  } catch { /* handled */ }
 }
 
 function fmtMoney(v: number | undefined | null) {
@@ -1375,6 +1415,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                     <el-dropdown-item :icon="Upload" @click="importItems">导入历史数据</el-dropdown-item>
                     <el-dropdown-item :icon="Download" @click="downloadImportTemplate">下载导入模板</el-dropdown-item>
                     <el-dropdown-item v-if="canConfigFields" :icon="Setting" divided @click="openFieldManager">自定义字段设置</el-dropdown-item>
+                    <el-dropdown-item v-if="canConfigFields" :icon="Collection" @click="openMatDictManager">物料字典设置</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -2412,6 +2453,52 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-button v-if="cfEditingId" @click="cfResetForm">取消编辑</el-button>
         <el-button @click="cfManagerVisible = false">关闭</el-button>
         <el-button type="primary" :loading="cfSaving" @click="cfSave">{{ cfEditingId ? '保存修改' : '新增字段' }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ==================== 🆕 物料字典设置（类别 / 单位）==================== -->
+    <el-dialog v-model="matDictVisible" title="物料字典设置（类别 / 单位）" width="min(720px, 96vw)" top="6vh" class="v3-scroll-dialog">
+      <el-alert type="info" :closable="false" style="margin-bottom:14px"
+        title="维护仓库物料的「类别 / 单位」可选值。仓库录入物料时只能从这里“启用”的取值中选（不再自由输入）；停用的值不再出现在下拉里但保留历史；改名会同步更新已用该值的物料。" />
+      <el-radio-group v-model="mdTab" style="margin-bottom:12px" @change="mdResetForm">
+        <el-radio-button value="category">物料类别</el-radio-button>
+        <el-radio-button value="unit">计量单位</el-radio-button>
+      </el-radio-group>
+      <el-table :data="mdList" size="small" border stripe max-height="34vh">
+        <el-table-column type="index" label="#" width="46" align="center" />
+        <el-table-column prop="value" label="取值" min-width="150" />
+        <el-table-column label="排序" width="64" align="center" prop="sort_order" />
+        <el-table-column label="状态" width="72" align="center">
+          <template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="操作" width="160" align="center" :show-overflow-tooltip="false">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="mdEdit(row)">编辑</el-button>
+            <el-button size="small" link :type="row.enabled ? 'warning' : 'success'" @click="mdToggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+            <el-button size="small" link type="danger" @click="mdDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+        <template #empty><EmptyHint text="还没有取值，下面新增一个" size="sm" /></template>
+      </el-table>
+
+      <div class="form-section-title" style="margin-top:16px">{{ mdEditingId ? '编辑取值' : '新增取值' }}（{{ mdTab === 'category' ? '类别' : '单位' }}）</div>
+      <el-form :model="mdForm" label-position="top">
+        <el-row :gutter="16">
+          <el-col :xs="14" :sm="14">
+            <el-form-item label="取值 *"><el-input v-model="mdForm.value" :placeholder="mdTab === 'category' ? '如 标准件 / 不锈钢' : '如 个 / 米 / 公斤'" /></el-form-item>
+          </el-col>
+          <el-col :xs="10" :sm="6">
+            <el-form-item label="排序（小在前）"><el-input-number v-model="mdForm.sort_order" :controls="false" style="width:100%" /></el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <span>启用 <el-switch v-model="mdForm.enabled" /></span>
+          </el-col>
+        </el-row>
+      </el-form>
+      <template #footer>
+        <el-button v-if="mdEditingId" @click="mdResetForm">取消编辑</el-button>
+        <el-button @click="matDictVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="mdSaving" @click="mdSave">{{ mdEditingId ? '保存修改' : '新增取值' }}</el-button>
       </template>
     </el-dialog>
   </div>
