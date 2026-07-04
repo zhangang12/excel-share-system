@@ -1764,7 +1764,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-card>
 
     <!-- ==================== 从清单下单弹窗（清单→按供应商拆单）==================== -->
-    <el-dialog v-model="listOrderVisible" title="从清单下单" width="min(1320px, 97vw)" top="4vh" class="v3-scroll-dialog" :close-on-click-modal="false">
+    <el-dialog v-model="listOrderVisible" title="从清单下单" width="min(1460px, 98vw)" top="4vh" class="listorder-dialog" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
         title="选项目 + 清单类型（标准件/电工/不锈钢/外协/激光）→ 逐行选「供应商」「品牌」（可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的下单日期/采购负责人。外协/激光无数量，采购数量手填。" />
       <el-form :model="listOrderForm" label-position="top" class="order-form">
@@ -1819,7 +1819,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </div>
       <el-table :data="filteredPurchasable" v-loading="purchasableLoading" size="small" border stripe
                 :empty-text="listOrderForm.project_id ? '该清单为空' : '请先选择项目和清单类型'"
-                max-height="max(320px, 56vh)" :scrollbar-always-on="true" class="wrap-cells">
+                max-height="calc(100vh - 430px)" class="wrap-cells">
         <el-table-column width="46" align="center" fixed>
           <template #header>
             <el-checkbox :model-value="allFilteredChecked" :indeterminate="someFilteredChecked"
@@ -1829,7 +1829,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-table-column>
         <el-table-column label="名称" min-width="150" prop="item_name" fixed show-overflow-tooltip />
         <el-table-column label="规格型号" min-width="130" show-overflow-tooltip><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
-        <el-table-column label="品牌" width="140">
+        <el-table-column label="品牌" width="118">
           <template #default="{ row }">
             <el-select v-model="row._brand" filterable allow-create clearable default-first-option
                        placeholder="选/填" size="small" style="width:100%" @change="row._checked = true">
@@ -1844,17 +1844,17 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-table-column v-if="curSheetHasQty" label="建议采购" width="80" align="right">
           <template #default="{ row }"><b :class="row.suggest_purchase > 0 ? 'sugg-buy' : 'sugg-none'">{{ row.suggest_purchase }}</b></template>
         </el-table-column>
-        <el-table-column label="采购数量" width="116">
+        <el-table-column label="采购数量" width="104">
           <template #default="{ row }">
             <el-input-number v-model="row._buyqty" :min="0" :precision="2" :controls="false" style="width:100%" @change="row._checked = true" />
           </template>
         </el-table-column>
-        <el-table-column label="单价(选填)" width="116">
+        <el-table-column label="单价(选填)" width="104">
           <template #default="{ row }">
             <el-input-number v-model="row._price" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="后填留空" @change="row._checked = true" />
           </template>
         </el-table-column>
-        <el-table-column label="供应商 *" width="180">
+        <el-table-column label="供应商 *" width="158">
           <template #default="{ row }">
             <el-select v-model="row._supplier_id" filterable clearable placeholder="必选" size="small"
                        :class="{ 'sup-missing': row._checked && !row._supplier_id }" style="width:100%" @change="row._checked = true">
@@ -1867,14 +1867,16 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-table-column>
         <el-table-column label="备注" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ row.notes || '—' }}</template></el-table-column>
       </el-table>
-      <div class="muted" style="margin-top:6px">
-        提示：<b>每行必须选供应商</b>，点生成时按供应商自动拆成多张采购单（一供应商一张单）。<span v-if="curSheetHasQty">建议采购 = 需求量 − 现有库存，采购数量已默认填好可改。</span><span v-else>本清单无数量，采购数量请手动填写。</span>
-      </div>
       <template #footer>
-        <el-button @click="listOrderVisible = false">取消</el-button>
-        <el-button type="primary" :loading="listOrderSaving" :disabled="!listSelCount" @click="submitListOrder">
-          生成采购单（{{ listSelCount }} 行）
-        </el-button>
+        <div class="listorder-footer">
+          <span class="muted lo-hint"><b>每行必须选供应商</b>，生成时按供应商自动拆成多张采购单。<span v-if="curSheetHasQty">建议采购 = 需求量 − 现有库存，数量已默认填好可改。</span><span v-else>本清单无数量，采购数量请手填。</span></span>
+          <span class="lo-actions">
+            <el-button @click="listOrderVisible = false">取消</el-button>
+            <el-button type="primary" :loading="listOrderSaving" :disabled="!listSelCount" @click="submitListOrder">
+              生成采购单（{{ listSelCount }} 行）
+            </el-button>
+          </span>
+        </div>
       </template>
     </el-dialog>
 

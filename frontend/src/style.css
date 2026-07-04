@@ -241,6 +241,17 @@ a:hover { text-decoration: none; opacity: .85; }
   .v3-scroll-dialog .el-dialog__body { max-height: 60vh; }
 }
 
+/* ===== 🆕 从清单下单：单一滚动区（只表格内部滚 + 表头吸顶），去掉正文/表格双滚动条与常显滚动条；
+   正文不再自带滚动，整窗按内容高度自适应，页脚常驻可见 ===== */
+.listorder-dialog .el-dialog__body { max-height: none; overflow: visible; padding-top: 8px; }
+.listorder-dialog .el-dialog__footer {
+  position: sticky; bottom: 0; margin: 0 -16px -16px; padding: 12px 16px;
+  background: var(--el-bg-color); border-top: 1px solid var(--el-border-color-lighter); z-index: 3;
+}
+.listorder-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.listorder-footer .lo-hint { flex: 1; text-align: left; font-size: 12px; line-height: 1.4; }
+.listorder-footer .lo-actions { flex: none; white-space: nowrap; }
+
 /* ===== 🆕 去卡通空状态：el-empty 默认插画太卡通，统一灰度淡化（未替换为 EmptyHint 的兜底） ===== */
 .el-empty__image { filter: grayscale(1); opacity: .28; }
 .el-empty { padding: 28px 0; }
