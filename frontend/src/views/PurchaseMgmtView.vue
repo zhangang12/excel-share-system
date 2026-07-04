@@ -44,7 +44,7 @@ interface PurchaseItemOut {
   item_name: string; spec?: string | null; brand?: string | null; qty?: number | null; unit_price?: number | null
   received_amount: number; invoice_date?: string | null; tax_rate?: string | null
   invoice_amount: number; paid_amount: number; paid_date?: string | null
-  payment_method?: string | null
+  payment_method?: string | null; pay_status?: string
   invoice_status: string; buyer_id?: number | null; buyer_name?: string | null
   notes?: string | null; created_at: string
 }
@@ -1092,6 +1092,14 @@ function prStatusTag(s: string) {
   if (s === 'rejected') return 'danger'
   return 'info'
 }
+// 🆕 采购明细付款状态标签（B1=a）
+function payStatusTag(s?: string): 'success' | 'warning' | 'info' | 'primary' | 'danger' {
+  if (s === '已付款') return 'success'
+  if (s === '部分付款') return 'warning'
+  if (s === '已批待付') return 'primary'
+  if (s === '已请款') return 'info'
+  return 'danger'   // 未付款
+}
 const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '已批', rejected: '已驳', paid: '已付' }
 </script>
 
@@ -1327,7 +1335,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column prop="paid_amount" label="已付款" width="118" align="right" sortable>
               <template #default="{ row }">{{ row.paid_amount ? fmtMoney(row.paid_amount) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="状态" width="80">
+            <el-table-column label="付款状态" width="92" align="center">
+              <template #default="{ row }">
+                <el-tag :type="payStatusTag(row.pay_status)" size="small" effect="light">{{ row.pay_status || '未付款' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="对账状态" width="80">
               <template #default="{ row }">
                 <el-tag :type="statusTag(row.invoice_status)" size="small">{{ row.invoice_status }}</el-tag>
               </template>

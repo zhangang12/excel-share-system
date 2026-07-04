@@ -78,6 +78,19 @@ async function loadSummary() { summary.value = await whApi.summary(period.value)
 // ===== 物料主数据 =====
 const matVisible = ref(false)
 const matForm = reactive<any>({ id: null, name: '', spec: '', category: '', unit: '个', location: '', safety_stock: 0, init_stock: 0 })
+// 🆕 #117：类别/单位 可选下拉（预置 + 已用过的 + allow-create 自定义）
+const DEFAULT_MAT_CATS = ['标准件', '不锈钢', '激光', '外协', '电气', '耗材']
+const DEFAULT_MAT_UNITS = ['个', '件', '套', '米', '公斤', '张', '卷', '桶']
+const matCatOptions = computed(() => {
+  const set = new Set<string>(DEFAULT_MAT_CATS)
+  for (const m of materials.value) { if (m.category) set.add(m.category) }
+  return Array.from(set)
+})
+const matUnitOptions = computed(() => {
+  const set = new Set<string>(DEFAULT_MAT_UNITS)
+  for (const m of materials.value) { if (m.unit) set.add(m.unit) }
+  return Array.from(set)
+})
 function openMat(m?: WhMaterial) {
   if (m) Object.assign(matForm, { ...m })
   else Object.assign(matForm, { id: null, name: '', spec: '', category: '', unit: '个', location: '', safety_stock: 0, init_stock: 0 })
@@ -545,8 +558,18 @@ function onTab(name: string) {
           <el-form-item label="规格型号" style="flex:1"><el-input v-model="matForm.spec" /></el-form-item>
         </div>
         <div class="frow">
-          <el-form-item label="类别" style="flex:1"><el-input v-model="matForm.category" /></el-form-item>
-          <el-form-item label="单位" style="flex:1"><el-input v-model="matForm.unit" /></el-form-item>
+          <el-form-item label="类别" style="flex:1">
+            <el-select v-model="matForm.category" filterable allow-create clearable default-first-option
+                       placeholder="选择/输入" style="width:100%">
+              <el-option v-for="c in matCatOptions" :key="c" :label="c" :value="c" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="单位" style="flex:1">
+            <el-select v-model="matForm.unit" filterable allow-create clearable default-first-option
+                       placeholder="选择/输入" style="width:100%">
+              <el-option v-for="u in matUnitOptions" :key="u" :label="u" :value="u" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="库位" style="flex:1"><el-input v-model="matForm.location" /></el-form-item>
         </div>
         <div class="frow">

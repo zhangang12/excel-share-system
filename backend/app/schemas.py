@@ -1044,6 +1044,7 @@ class PurchaseItemOut(BaseModel):
     paid_date: Optional[str] = None
     payment_method: Optional[str] = None
     invoice_status: str
+    pay_status: str = "未付款"   # 🆕 未付款/已请款/已批待付/部分付款/已付款（B1=a：记录付款才算已付）
     buyer_id: Optional[int] = None
     buyer_name: Optional[str] = None
     notes: Optional[str] = None

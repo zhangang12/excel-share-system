@@ -275,7 +275,7 @@ async def list_items(
         stmt = stmt.where(models.PurchaseItem.supplier_id.in_(
             select(models.Supplier.id).where(models.Supplier.category == category)))
     r = await db.execute(stmt.limit(page_size).offset((page - 1) * page_size))
-    return [_item_out(i) for i in r.scalars().all()]
+    return await _attach_pay_status(db, [_item_out(i) for i in r.scalars().all()])
 
 
 @router.get("/orders/{po_no}", response_model=List[schemas.PurchaseItemOut])
@@ -290,7 +290,39 @@ async def get_order(
     rows = list(r.scalars().all())
     if not rows:
         raise HTTPException(404, "采购单不存在")
-    return [_item_out(x) for x in rows]
+    return await _attach_pay_status(db, [_item_out(x) for x in rows])
+
+
+async def _attach_pay_status(db: AsyncSession, outs: list) -> list:
+    """按 已付金额 + 关联请款单状态 计算每条采购明细的付款状态（B1=a：记录付款才算已付）。
+    优先级：已付款 > 部分付款 > 已批待付 > 已请款 > 未付款。"""
+    if not outs:
+        return outs
+    ids = [o.id for o in outs]
+    # 每条明细关联到的请款单状态集合
+    r = await db.execute(
+        select(models.PaymentRequestItem.item_id, models.PaymentRequest.status)
+        .join(models.PaymentRequest, models.PaymentRequestItem.request_id == models.PaymentRequest.id)
+        .where(models.PaymentRequestItem.item_id.in_(ids))
+    )
+    pr_by_item: dict[int, set] = {}
+    for item_id, st in r.all():
+        pr_by_item.setdefault(item_id, set()).add(st)
+    for o in outs:
+        prs = pr_by_item.get(o.id, set())
+        recv = o.received_amount or 0
+        paid = o.paid_amount or 0
+        if recv > 0 and paid >= recv - 0.005:
+            o.pay_status = "已付款"
+        elif paid > 0:
+            o.pay_status = "部分付款"
+        elif "approved" in prs:
+            o.pay_status = "已批待付"
+        elif "pending" in prs:
+            o.pay_status = "已请款"
+        else:
+            o.pay_status = "未付款"
+    return outs
 
 
 def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
@@ -919,7 +951,7 @@ async def supplier_statement_detail(
     if _buyer_restricted(current):
         stmt = stmt.where(models.PurchaseItem.buyer_id == current.id)
     r = await db.execute(stmt.limit(500))
-    return [_item_out(i) for i in r.scalars().all()]
+    return await _attach_pay_status(db, [_item_out(i) for i in r.scalars().all()])
 
 
 # ==================== 请款流程 ====================

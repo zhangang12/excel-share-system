@@ -73,8 +73,8 @@ function onFinTab(name: string) {
   if (name === 'inventory') loadInventory()
 }
 
-// 请款审批
-const prStatus = ref('pending')
+// 请款审批（🆕 #119：默认显示全部，避免只看待审批时列表空）
+const prStatus = ref('all')
 const payReqs = ref<PaymentRequestOut[]>([])
 const prLoading = ref(false)
 const rejectDialogVisible = ref(false)
