@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from .. import models, schemas
 from ..deps import require_roles, get_current_user
+from ..utils import write_audit
 
 router = APIRouter(prefix="/api/purchase-mgmt", tags=["采购管理"])
 
@@ -339,6 +340,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         paid_amount=i.paid_amount or 0, paid_date=i.paid_date,
         payment_method=i.payment_method,
         invoice_status=i.invoice_status,
+        custom_values=i.custom_values or {},
         buyer_id=i.buyer_id,
         buyer_name=_uname(i.buyer),
         notes=i.notes, created_at=i.created_at,
@@ -354,6 +356,7 @@ async def create_item(
     data = body.model_dump()
     if not data.get("received_amount") and data.get("qty") and data.get("unit_price"):
         data["received_amount"] = round((data["qty"] or 0) * (data["unit_price"] or 0), 4)
+    data["custom_values"] = await _clean_custom(db, data.get("custom_values"))
     data["buyer_id"] = current.id
     item = models.PurchaseItem(**data)
     db.add(item)
@@ -393,6 +396,7 @@ async def create_purchase_order(
         recv = ln.received_amount
         if not recv and ln.qty and ln.unit_price:
             recv = round((ln.qty or 0) * (ln.unit_price or 0), 4)
+        cv = await _clean_custom(db, ln.custom_values)
         db.add(models.PurchaseItem(
             po_no=po_no,
             supplier_id=body.supplier_id,
@@ -400,10 +404,11 @@ async def create_purchase_order(
             contract_no=body.contract_no,
             project_code=(ln.project_code or body.project_code),
             item_name=ln.item_name.strip(),
-            spec=ln.spec, qty=ln.qty, unit_price=ln.unit_price,
+            spec=ln.spec, brand=ln.brand, qty=ln.qty, unit_price=ln.unit_price,
             received_amount=recv or 0,
             tax_rate=ln.tax_rate, notes=ln.notes,
             payment_method=body.payment_method,
+            custom_values=cv,
             buyer_id=current.id,
         ))
     await db.commit()
@@ -464,6 +469,96 @@ def _num(v):
         return float(str(v).replace(",", "").strip())
     except (ValueError, TypeError):
         return None
+
+
+# ==================== R6：采购自定义字段 ====================
+_FIELD_ADMIN_ROLES = ("buyer_lead",)   # 配置字段：采购主管（admin/manager 由 require_roles 自动放行）
+
+
+async def _custom_fields(db: AsyncSession, enabled_only: bool = False):
+    q = select(models.PurchaseCustomField).order_by(
+        models.PurchaseCustomField.sort_order, models.PurchaseCustomField.id)
+    if enabled_only:
+        q = q.where(models.PurchaseCustomField.enabled == True)  # noqa: E712
+    r = await db.execute(q)
+    return list(r.scalars().all())
+
+
+async def _clean_custom(db: AsyncSession, custom_values: Optional[dict]) -> dict:
+    """校验必填、净化自定义字段值（只保留启用字段、去空）。"""
+    fields = await _custom_fields(db, enabled_only=True)
+    cv = custom_values or {}
+    clean: dict = {}
+    missing: list[str] = []
+    for f in fields:
+        key = str(f.id)
+        val = cv.get(key)
+        sval = "" if val is None else str(val).strip()
+        if f.required and not sval:
+            missing.append(f.label)
+        elif sval:
+            clean[key] = val
+    if missing:
+        raise HTTPException(400, f"必填自定义字段未填写：{'、'.join(missing)}")
+    return clean
+
+
+@router.get("/custom-fields", response_model=List[schemas.PurchaseCustomFieldOut])
+async def list_custom_fields(
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """采购自定义字段列表（所有采购/财务角色可读，用于渲染列与输入框）。"""
+    return [schemas.PurchaseCustomFieldOut.model_validate(f) for f in await _custom_fields(db)]
+
+
+@router.post("/custom-fields", response_model=schemas.PurchaseCustomFieldOut)
+async def create_custom_field(
+    body: schemas.PurchaseCustomFieldIn,
+    current: models.User = Depends(require_roles(*_FIELD_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    f = models.PurchaseCustomField(**body.model_dump())
+    db.add(f)
+    await db.commit()
+    await db.refresh(f)
+    await write_audit(db, user=current, action="create", target_type="purchase_custom_field", target_id=f.id)
+    return schemas.PurchaseCustomFieldOut.model_validate(f)
+
+
+@router.put("/custom-fields/{fid}", response_model=schemas.PurchaseCustomFieldOut)
+async def update_custom_field(
+    fid: int,
+    body: schemas.PurchaseCustomFieldIn,
+    current: models.User = Depends(require_roles(*_FIELD_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(models.PurchaseCustomField).where(models.PurchaseCustomField.id == fid))
+    f = r.scalar_one_or_none()
+    if not f:
+        raise HTTPException(404, "字段不存在")
+    for k, v in body.model_dump().items():
+        setattr(f, k, v)
+    await db.commit()
+    await db.refresh(f)
+    return schemas.PurchaseCustomFieldOut.model_validate(f)
+
+
+@router.delete("/custom-fields/{fid}", response_model=schemas.Msg)
+async def delete_custom_field(
+    fid: int,
+    current: models.User = Depends(require_roles(*_FIELD_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除字段定义（已录入明细里的历史值保留在 custom_values 中，只是不再展示/校验）。"""
+    r = await db.execute(select(models.PurchaseCustomField).where(models.PurchaseCustomField.id == fid))
+    f = r.scalar_one_or_none()
+    if not f:
+        raise HTTPException(404, "字段不存在")
+    await db.delete(f)
+    await db.commit()
+    await write_audit(db, user=current, action="delete", target_type="purchase_custom_field", target_id=fid)
+    return schemas.Msg(message="已删除该自定义字段")
 
 
 @router.get("/purchasable/{project_id}", response_model=List[schemas.PurchasableRow])
@@ -785,6 +880,8 @@ async def update_item(
     if _buyer_restricted(current) and item.buyer_id != current.id:
         raise HTTPException(403, "无权编辑他人明细")
     data = body.model_dump(exclude_unset=True)
+    if "custom_values" in data:
+        data["custom_values"] = await _clean_custom(db, data.get("custom_values"))
     for k, v in data.items():
         setattr(item, k, v)
     if ("qty" in data or "unit_price" in data) and "received_amount" not in data:

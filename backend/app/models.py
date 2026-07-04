@@ -598,6 +598,8 @@ class PurchaseItem(Base):
     invoice_status: Mapped[str] = mapped_column(String(16), default="待对账", index=True)
     buyer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    # 🆕 R6：自定义字段值 {str(field_id): value}；存量行为空 dict，不受新增字段影响
+    custom_values: Mapped[Optional[dict]] = mapped_column(PortableJSON(), default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -605,6 +607,20 @@ class PurchaseItem(Base):
 
     supplier: Mapped["Supplier"] = relationship(lazy="joined")
     buyer: Mapped[Optional["User"]] = relationship(foreign_keys=[buyer_id], lazy="joined")
+
+
+class PurchaseCustomField(Base):
+    """🆕 R6：采购单/采购明细的可配置自定义字段定义（值存 PurchaseItem.custom_values）。"""
+    __tablename__ = "purchase_custom_fields"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    label: Mapped[str] = mapped_column(String(64))                 # 显示名称
+    ftype: Mapped[str] = mapped_column(String(16), default="text")  # text/number/date/select
+    options: Mapped[Optional[dict]] = mapped_column(PortableJSON(), default=list)  # select 选项 list[str]
+    required: Mapped[bool] = mapped_column(default=False)           # 是否必填
+    show_in_list: Mapped[bool] = mapped_column(default=True)        # 列表是否显示
+    sort_order: Mapped[int] = mapped_column(default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class SupplierOpeningBalance(Base):

@@ -2,7 +2,7 @@
 // 采购管理（含采购部）：采购部 / 采购明细 / 供应商账目 / 汇总报表
 import { ref, computed, onMounted, onBeforeUnmount, reactive, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, Search, Tickets, EditPen } from '@element-plus/icons-vue'
+import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, Search, Tickets, EditPen, Setting } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
@@ -12,6 +12,60 @@ const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
 const isLeadOrAbove = computed(() => auth.hasRole('buyer_lead', 'finance', 'admin', 'manager'))
 const showPurchaseTab = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
+// 🆕 R6：采购自定义字段
+const canConfigFields = computed(() => auth.hasRole('buyer_lead', 'admin', 'manager'))
+interface CustomField {
+  id: number; label: string; ftype: string; options: string[]
+  required: boolean; show_in_list: boolean; sort_order: number; enabled: boolean
+}
+const customFields = ref<CustomField[]>([])
+async function loadCustomFields() {
+  try { customFields.value = (await http.get<CustomField[]>('/purchase-mgmt/custom-fields')).data }
+  catch { customFields.value = [] }
+}
+const listCustomFields = computed(() => customFields.value.filter(f => f.enabled && f.show_in_list))
+const formCustomFields = computed(() => customFields.value.filter(f => f.enabled))
+function cfDisplay(cv: Record<string, any> | undefined, f: CustomField): string {
+  const v = cv?.[String(f.id)]
+  return v == null || v === '' ? '—' : String(v)
+}
+// 🆕 R6 字段管理器
+const CF_TYPES = [{ v: 'text', l: '文本' }, { v: 'number', l: '数字' }, { v: 'date', l: '日期' }, { v: 'select', l: '下拉选项' }]
+const cfManagerVisible = ref(false)
+const cfEditingId = ref<number | null>(null)
+const cfSaving = ref(false)
+const cfForm = reactive({ label: '', ftype: 'text', options: '', required: false, show_in_list: true, sort_order: 0, enabled: true })
+function cfResetForm() {
+  cfEditingId.value = null
+  Object.assign(cfForm, { label: '', ftype: 'text', options: '', required: false, show_in_list: true, sort_order: 0, enabled: true })
+}
+function openFieldManager() { cfResetForm(); loadCustomFields(); cfManagerVisible.value = true }
+function cfEdit(f: CustomField) {
+  cfEditingId.value = f.id
+  Object.assign(cfForm, {
+    label: f.label, ftype: f.ftype, options: (f.options || []).join('\n'),
+    required: f.required, show_in_list: f.show_in_list, sort_order: f.sort_order, enabled: f.enabled,
+  })
+}
+async function cfSave() {
+  if (!cfForm.label.trim()) { ElMessage.warning('请填写字段名称'); return }
+  const payload = {
+    label: cfForm.label.trim(), ftype: cfForm.ftype,
+    options: cfForm.ftype === 'select' ? cfForm.options.split('\n').map(s => s.trim()).filter(Boolean) : [],
+    required: cfForm.required, show_in_list: cfForm.show_in_list, sort_order: cfForm.sort_order, enabled: cfForm.enabled,
+  }
+  cfSaving.value = true
+  try {
+    if (cfEditingId.value) { await http.put(`/purchase-mgmt/custom-fields/${cfEditingId.value}`, payload); ElMessage.success('已更新') }
+    else { await http.post('/purchase-mgmt/custom-fields', payload); ElMessage.success('已新增字段') }
+    cfResetForm()
+    await loadCustomFields()
+  } catch { /* handled */ } finally { cfSaving.value = false }
+}
+async function cfDelete(f: CustomField) {
+  try { await ElMessageBox.confirm(`删除字段「${f.label}」？已录入明细的历史值保留但不再显示/校验。`, '删除字段', { type: 'warning', confirmButtonText: '删除' }) } catch { return }
+  try { await http.delete(`/purchase-mgmt/custom-fields/${f.id}`); ElMessage.success('已删除'); await loadCustomFields() } catch { /* handled */ }
+}
 
 function fmtMoney(v: number | undefined | null) {
   if (v == null) return '¥0'
@@ -45,6 +99,7 @@ interface PurchaseItemOut {
   received_amount: number; invoice_date?: string | null; tax_rate?: string | null
   invoice_amount: number; paid_amount: number; paid_date?: string | null
   payment_method?: string | null; pay_status?: string
+  custom_values?: Record<string, any>
   invoice_status: string; buyer_id?: number | null; buyer_name?: string | null
   notes?: string | null; created_at: string
 }
@@ -320,6 +375,7 @@ const itemForm = reactive({
   item_name: '', spec: '', brand: '', qty: null as number | null, unit_price: null as number | null,
   received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
   payment_method: '', invoice_status: '待对账', notes: '',
+  custom_values: {} as Record<string, any>,   // 🆕 R6
 })
 // 🆕 数量×单价 自动带出合计（与采购单行为一致，仍可手改）
 function onItemCalc() {
@@ -331,10 +387,10 @@ function onItemCalc() {
 interface OrderLine {
   item_name: string; spec: string; project_code: string
   qty: number | null; unit_price: number | null; received_amount: number | null
-  tax_rate: string; notes: string
+  tax_rate: string; notes: string; custom_values: Record<string, any>
 }
 function blankLine(): OrderLine {
-  return { item_name: '', spec: '', project_code: '', qty: null, unit_price: null, received_amount: null, tax_rate: '', notes: '' }
+  return { item_name: '', spec: '', project_code: '', qty: null, unit_price: null, received_amount: null, tax_rate: '', notes: '', custom_values: {} }
 }
 const orderDialogVisible = ref(false)
 const orderSaving = ref(false)
@@ -394,6 +450,7 @@ async function saveOrder() {
         received_amount: l.received_amount,
         tax_rate: l.tax_rate || null,
         notes: l.notes || null,
+        custom_values: l.custom_values || {},
       })),
     })
     ElMessage.success(`采购单已保存（${lines.length} 个零件行）`)
@@ -810,7 +867,7 @@ async function loadProjectReport() {
 }
 
 onMounted(async () => {
-  await loadSuppliers()
+  await Promise.all([loadSuppliers(), loadCustomFields()])
   if (showPurchaseTab.value) {
     await loadPurchaseRows()
   } else {
@@ -834,6 +891,7 @@ function openNewItem() {
     delivery_note_no: '', item_name: '', spec: '', brand: '', qty: null, unit_price: null,
     received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
     payment_method: '', invoice_status: '待对账', notes: '',
+    custom_values: {},
   })
   itemDialogVisible.value = true
 }
@@ -849,6 +907,7 @@ function openEditItem(row: PurchaseItemOut) {
     tax_rate: row.tax_rate || '', invoice_amount: row.invoice_amount,
     payment_method: row.payment_method || '',
     invoice_status: row.invoice_status, notes: row.notes || '',
+    custom_values: { ...(row.custom_values || {}) },
   })
   itemDialogVisible.value = true
 }
@@ -875,6 +934,7 @@ async function saveItem() {
       payment_method: itemForm.payment_method || null,
       invoice_status: itemForm.invoice_status,
       notes: itemForm.notes || null,
+      custom_values: itemForm.custom_values,
     }
     if (editingItem.value) {
       await http.put(`/purchase-mgmt/items/${editingItem.value.id}`, payload)
@@ -1304,6 +1364,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                   <el-dropdown-menu>
                     <el-dropdown-item :icon="Upload" @click="importItems">导入历史数据</el-dropdown-item>
                     <el-dropdown-item :icon="Download" @click="downloadImportTemplate">下载导入模板</el-dropdown-item>
+                    <el-dropdown-item v-if="canConfigFields" :icon="Setting" divided @click="openFieldManager">自定义字段设置</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -1386,6 +1447,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <template #default="{ row }">
                 <el-tag :type="statusTag(row.invoice_status)" size="small">{{ row.invoice_status }}</el-tag>
               </template>
+            </el-table-column>
+            <!-- 🆕 R6 自定义列 -->
+            <el-table-column v-for="f in listCustomFields" :key="f.id" :label="f.label" min-width="100">
+              <template #default="{ row }">{{ cfDisplay(row.custom_values, f) }}</template>
             </el-table-column>
             <el-table-column v-if="isLeadOrAbove" prop="buyer_name" label="采购员" width="80">
               <template #default="{ row }">{{ row.buyer_name || '—' }}</template>
@@ -1834,7 +1899,18 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-table-column label="备注" min-width="130">
             <template #default="{ row }"><el-input v-model="row.notes" placeholder="选填" /></template>
           </el-table-column>
-          <el-table-column label="" width="50" align="center">
+          <!-- 🆕 R6 自定义列（逐行填） -->
+          <el-table-column v-for="f in formCustomFields" :key="f.id" :label="f.label + (f.required ? ' *' : '')" min-width="130">
+            <template #default="{ row }">
+              <el-select v-if="f.ftype === 'select'" v-model="row.custom_values[String(f.id)]" clearable filterable placeholder="选择" style="width:100%">
+                <el-option v-for="o in f.options" :key="o" :label="o" :value="o" />
+              </el-select>
+              <el-date-picker v-else-if="f.ftype === 'date'" v-model="row.custom_values[String(f.id)]" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+              <el-input-number v-else-if="f.ftype === 'number'" v-model="row.custom_values[String(f.id)]" :controls="false" style="width:100%" />
+              <el-input v-else v-model="row.custom_values[String(f.id)]" placeholder="选填" />
+            </template>
+          </el-table-column>
+          <el-table-column label="" width="50" align="center" fixed="right">
             <template #default="{ $index }">
               <el-button size="small" link type="danger" :icon="Delete" @click="removeOrderLine($index)" />
             </template>
@@ -1925,6 +2001,24 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-form-item>
           </el-col>
         </el-row>
+
+        <!-- 🆕 R6 自定义字段 -->
+        <template v-if="formCustomFields.length">
+          <div class="form-section-title">自定义字段</div>
+          <el-row :gutter="24">
+            <el-col v-for="f in formCustomFields" :key="f.id" :xs="24" :sm="12" :md="8">
+              <el-form-item>
+                <template #label>{{ f.label }}<span v-if="f.required" style="color:var(--el-color-danger)"> *</span></template>
+                <el-select v-if="f.ftype === 'select'" v-model="itemForm.custom_values[String(f.id)]" clearable filterable placeholder="请选择" style="width:100%">
+                  <el-option v-for="o in f.options" :key="o" :label="o" :value="o" />
+                </el-select>
+                <el-date-picker v-else-if="f.ftype === 'date'" v-model="itemForm.custom_values[String(f.id)]" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+                <el-input-number v-else-if="f.ftype === 'number'" v-model="itemForm.custom_values[String(f.id)]" :controls="false" style="width:100%" />
+                <el-input v-else v-model="itemForm.custom_values[String(f.id)]" placeholder="选填" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </template>
 
         <!-- 开票 / 对账 / 送货单号：仅编辑时显示（新增时精简，货到仓库或需要开票时再补） -->
         <template v-if="editingItem">
@@ -2250,6 +2344,64 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </el-table>
       <template #footer>
         <el-button @click="previewVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ==================== 🆕 R6 自定义字段设置 ==================== -->
+    <el-dialog v-model="cfManagerVisible" title="采购单自定义字段设置" width="min(860px, 96vw)" top="6vh" class="v3-scroll-dialog">
+      <el-alert type="info" :closable="false" style="margin-bottom:14px"
+        title="在这里给采购明细增删自定义列（如 用途 / 项目阶段 / 交货周期 等）。新增字段只对之后录入/编辑的明细生效；删除字段不影响已录入的历史值。" />
+      <el-table :data="customFields" size="small" border stripe max-height="34vh" class="wrap-cells">
+        <el-table-column type="index" label="#" width="46" align="center" />
+        <el-table-column prop="label" label="字段名称" min-width="120" />
+        <el-table-column label="类型" width="90"><template #default="{ row }">{{ CF_TYPES.find(t => t.v === row.ftype)?.l || row.ftype }}</template></el-table-column>
+        <el-table-column label="必填" width="64" align="center"><template #default="{ row }"><el-tag v-if="row.required" size="small" type="danger" effect="plain">必填</el-tag><span v-else class="muted">—</span></template></el-table-column>
+        <el-table-column label="列表显示" width="80" align="center"><template #default="{ row }"><el-tag :type="row.show_in_list ? 'success' : 'info'" size="small" effect="plain">{{ row.show_in_list ? '显示' : '隐藏' }}</el-tag></template></el-table-column>
+        <el-table-column label="启用" width="64" align="center"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
+        <el-table-column label="排序" width="60" align="center" prop="sort_order" />
+        <el-table-column label="操作" width="110" align="center" :show-overflow-tooltip="false">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="cfEdit(row)">编辑</el-button>
+            <el-button size="small" link type="danger" @click="cfDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+        <template #empty><EmptyHint text="还没有自定义字段，下面新增一个" size="sm" /></template>
+      </el-table>
+
+      <div class="form-section-title" style="margin-top:16px">{{ cfEditingId ? '编辑字段' : '新增字段' }}</div>
+      <el-form :model="cfForm" label-position="top">
+        <el-row :gutter="16">
+          <el-col :xs="24" :sm="8">
+            <el-form-item label="字段名称 *"><el-input v-model="cfForm.label" placeholder="如 用途 / 交货周期" /></el-form-item>
+          </el-col>
+          <el-col :xs="12" :sm="8">
+            <el-form-item label="类型">
+              <el-select v-model="cfForm.ftype" style="width:100%">
+                <el-option v-for="t in CF_TYPES" :key="t.v" :label="t.l" :value="t.v" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="12" :sm="8">
+            <el-form-item label="排序（小在前）"><el-input-number v-model="cfForm.sort_order" :controls="false" style="width:100%" /></el-form-item>
+          </el-col>
+          <el-col :span="24" v-if="cfForm.ftype === 'select'">
+            <el-form-item label="下拉选项（每行一个）">
+              <el-input v-model="cfForm.options" type="textarea" :rows="3" placeholder="选项A&#10;选项B&#10;选项C" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+              <span>必填 <el-switch v-model="cfForm.required" /></span>
+              <span>列表显示 <el-switch v-model="cfForm.show_in_list" /></span>
+              <span>启用 <el-switch v-model="cfForm.enabled" /></span>
+            </div>
+          </el-col>
+        </el-row>
+      </el-form>
+      <template #footer>
+        <el-button v-if="cfEditingId" @click="cfResetForm">取消编辑</el-button>
+        <el-button @click="cfManagerVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="cfSaving" @click="cfSave">{{ cfEditingId ? '保存修改' : '新增字段' }}</el-button>
       </template>
     </el-dialog>
   </div>

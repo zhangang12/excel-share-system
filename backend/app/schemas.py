@@ -920,18 +920,44 @@ class PurchaseItemCreate(BaseModel):
     payment_method: Optional[str] = None
     invoice_status: str = "待对账"
     notes: Optional[str] = None
+    custom_values: dict = Field(default_factory=dict)   # 🆕 R6 {str(field_id): value}
 
 
 # ---------- 🆕 采购单：同一供应商一次录入多个零件行 ----------
 class PurchaseOrderLine(BaseModel):
     item_name: str = Field(min_length=1, max_length=128)
     spec: Optional[str] = None
+    brand: Optional[str] = None
     project_code: Optional[str] = None          # 行级项目编号（留空则用采购单默认项目）
     qty: Optional[float] = None
     unit_price: Optional[float] = None           # 选填：后填价格流程可留空，货到仓库再补
     received_amount: Optional[float] = None
     tax_rate: Optional[str] = None
     notes: Optional[str] = None
+    custom_values: dict = Field(default_factory=dict)   # 🆕 R6
+
+
+# ---------- 🆕 R6 采购自定义字段 ----------
+class PurchaseCustomFieldIn(BaseModel):
+    label: str = Field(min_length=1, max_length=64)
+    ftype: str = "text"                           # text/number/date/select
+    options: list[str] = Field(default_factory=list)
+    required: bool = False
+    show_in_list: bool = True
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class PurchaseCustomFieldOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    label: str
+    ftype: str
+    options: list[str] = Field(default_factory=list)
+    required: bool
+    show_in_list: bool
+    sort_order: int
+    enabled: bool
 
 
 class PurchaseOrderCreate(BaseModel):
@@ -1010,6 +1036,7 @@ class PurchaseItemUpdate(BaseModel):
     invoice_amount: Optional[float] = None
     payment_method: Optional[str] = None
     arrival_date: Optional[str] = None
+    custom_values: Optional[dict] = None   # 🆕 R6
     invoice_status: Optional[str] = None
     notes: Optional[str] = None
 
@@ -1046,6 +1073,7 @@ class PurchaseItemOut(BaseModel):
     payment_method: Optional[str] = None
     invoice_status: str
     pay_status: str = "未付款"   # 🆕 未付款/已请款/已批待付/部分付款/已付款（B1=a：记录付款才算已付）
+    custom_values: dict = Field(default_factory=dict)   # 🆕 R6 自定义字段值
     buyer_id: Optional[int] = None
     buyer_name: Optional[str] = None
     notes: Optional[str] = None
