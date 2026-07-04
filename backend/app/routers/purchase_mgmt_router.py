@@ -250,10 +250,12 @@ async def list_items(
     month: Optional[str] = Query(None),
     invoice_status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=10, le=500),
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    from sqlalchemy import desc, nulls_last
+    """采购明细（服务端分页：总条数用 /items/summary 的 count，随筛选联动）。"""
     stmt = select(models.PurchaseItem).order_by(
         models.PurchaseItem.delivery_date.desc(),
         models.PurchaseItem.id.desc(),
@@ -272,8 +274,23 @@ async def list_items(
         # 🆕 按供应商分类筛选（明细本身无分类，取供应商分类）
         stmt = stmt.where(models.PurchaseItem.supplier_id.in_(
             select(models.Supplier.id).where(models.Supplier.category == category)))
-    r = await db.execute(stmt)
+    r = await db.execute(stmt.limit(page_size).offset((page - 1) * page_size))
     return [_item_out(i) for i in r.scalars().all()]
+
+
+@router.get("/orders/{po_no}", response_model=List[schemas.PurchaseItemOut])
+async def get_order(
+    po_no: str,
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """按采购单号取整单明细（补打印采购单用）。"""
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
+                         .order_by(models.PurchaseItem.id))
+    rows = list(r.scalars().all())
+    if not rows:
+        raise HTTPException(404, "采购单不存在")
+    return [_item_out(x) for x in rows]
 
 
 def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
@@ -900,7 +917,7 @@ async def supplier_statement_detail(
     ).order_by(models.PurchaseItem.delivery_date.desc(), models.PurchaseItem.id.desc())
     if _buyer_restricted(current):
         stmt = stmt.where(models.PurchaseItem.buyer_id == current.id)
-    r = await db.execute(stmt)
+    r = await db.execute(stmt.limit(500))
     return [_item_out(i) for i in r.scalars().all()]
 
 

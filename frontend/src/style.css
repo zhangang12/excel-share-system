@@ -31,6 +31,16 @@
   --sidebar-text-light: #94a3b8;
   --sidebar-text-active: #ffffff;
 
+  /* 🆕 Element Plus 主色对齐品牌蓝（修复 EP 默认 #409EFF 与品牌 #2563eb 两套蓝并存：
+     按钮/链接/选中态/分页等全部走品牌色；light-N 为 #2563eb 与白的对应比例混色） */
+  --el-color-primary: var(--primary);
+  --el-color-primary-dark-2: var(--primary-dark);
+  --el-color-primary-light-3: #6692f1;
+  --el-color-primary-light-5: #92b1f5;
+  --el-color-primary-light-7: #bed0f9;
+  --el-color-primary-light-8: #d3e0fb;
+  --el-color-primary-light-9: #e9effd;
+
   /* 圆角 / 阴影 */
   --radius-sm: 6px;
   --radius: 10px;
@@ -125,6 +135,9 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-table .cell { white-space: nowrap; }
 /* 🆕 加了 wrap-cells 类的表格：单元格内容自动换行、完整显示、不截断（采购各表用） */
 .el-table.wrap-cells .cell { white-space: normal; word-break: break-word; line-height: 1.5; }
+/* 🆕 右对齐列（金额/数量）：任何情况下不把数字折成两行，且等宽数字纵向对齐，方便逐行扫金额 */
+.el-table td.is-right .cell,
+.el-table th.is-right .cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .el-table--striped .el-table__row.el-table__row--striped {
   background: #fafbfc;
 }
@@ -148,6 +161,8 @@ a:hover { text-decoration: none; opacity: .85; }
   /* 🆕 14寸/小屏笔记本：任何固定宽度的弹窗都不超出视口，避免横向看不全 */
   max-width: 94vw !important;
 }
+/* 🆕 固定像素宽度的抽屉（如 440px 打包下载）在窄窗口不超出视口 */
+.el-drawer { max-width: 96vw !important; }
 .el-dialog__header {
   padding: 20px 24px 12px !important;
   font-size: 17px !important;

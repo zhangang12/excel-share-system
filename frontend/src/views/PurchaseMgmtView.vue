@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 采购管理（含采购部）：采购部 / 采购明细 / 供应商账目 / 汇总报表
-import { ref, computed, onMounted, reactive } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Refresh, View, Plus, Delete, Printer, Upload } from '@element-plus/icons-vue'
+import { ref, computed, onMounted, onBeforeUnmount, reactive, watch } from 'vue'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, Search, Tickets, EditPen } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
@@ -112,10 +112,15 @@ const previewLoading = ref(false)
 const previewTitle = ref('')
 const previewFields = ref<{ id: number; name: string }[]>([])
 const previewRecords = ref<any[]>([])
+// 🆕 窗口宽度实时跟踪：全屏预览的列宽随窗口缩放重算
+const winW = ref(typeof window !== 'undefined' ? window.innerWidth : 1280)
+function onWinResize() { winW.value = window.innerWidth }
+onMounted(() => window.addEventListener('resize', onWinResize))
+onBeforeUnmount(() => window.removeEventListener('resize', onWinResize))
 const previewColWidth = computed(() => {
   const n = previewFields.value.length
   if (!n) return 120
-  const usable = (typeof window !== 'undefined' ? window.innerWidth : 1280) - 50 - 32
+  const usable = winW.value - 50 - 32
   return Math.max(80, Math.floor(usable / n))
 })
 
@@ -207,11 +212,34 @@ async function packDownload() {
 const items = ref<PurchaseItemOut[]>([])
 const itemSummary = ref<ItemSummary | null>(null)
 const selectedItems = ref<PurchaseItemOut[]>([])
+const itemsTableRef = ref<{ clearSelection: () => void }>()
 const filterSupplierId = ref<number | ''>('')
 const filterProjectCode = ref('')
 const filterMonth = ref('')
 const filterInvoiceStatus = ref('')
 const filterCategory = ref('')   // 🆕 按供应商分类筛选
+
+// 🆕 服务端分页（总条数用 summary.count，随筛选联动）
+const page = ref(1)
+const pageSize = ref(100)
+async function onFilterChange() { page.value = 1; await loadItems() }
+
+// 🆕 一键清空所有筛选
+const hasFilter = computed(() =>
+  !!(filterSupplierId.value || filterProjectCode.value || filterMonth.value || filterInvoiceStatus.value || filterCategory.value))
+async function resetFilters() {
+  filterSupplierId.value = ''; filterProjectCode.value = ''
+  filterMonth.value = ''; filterInvoiceStatus.value = ''; filterCategory.value = ''
+  page.value = 1
+  await loadItems()
+}
+
+// 🆕 勾选行的汇总（浮出操作条：请款金额一目了然；跨供应商时禁止请款并提示）
+const selUnpaidTotal = computed(() =>
+  selectedItems.value.reduce((s, i) => s + (i.received_amount - i.paid_amount), 0))
+const selSameSupplier = computed(() =>
+  selectedItems.value.length > 0 && selectedItems.value.every(i => i.supplier_id === selectedItems.value[0].supplier_id))
+function clearSelection() { itemsTableRef.value?.clearSelection() }
 
 // suppliers & statements
 const suppliers = ref<SupplierOut[]>([])
@@ -255,6 +283,18 @@ const filteredStatementRows = computed(() => {
     (!cat || (r.category || '') === cat)
   )
 })
+// 🆕 供应商状态查询（避免模板里反复 find）+ 操作收进下拉菜单
+function supActive(supplierId: number): boolean {
+  return suppliers.value.find(s => s.id === supplierId)?.status === 'active'
+}
+function onSupCmd(cmd: string, row: SupplierStatementRow) {
+  if (cmd === 'edit') {
+    const s = suppliers.value.find(x => x.id === row.supplier_id)
+    if (s) openEditSupplier(s)
+  } else if (cmd === 'balance') openOpeningBalance(row)
+  else if (cmd === 'toggle') toggleSupplier(row)
+  else if (cmd === 'delete') deleteSupplier(row)
+}
 
 // reports
 const kpi = ref<PurchaseKPI | null>(null)
@@ -267,6 +307,12 @@ const projectSearch = ref('')
 // dialogs
 const itemDialogVisible = ref(false)
 const editingItem = ref<PurchaseItemOut | null>(null)
+const itemSaving = ref(false)
+const itemFormRef = ref<FormInstance>()
+const itemRules: FormRules = {
+  supplier_id: [{ required: true, message: '请选择供应商', trigger: 'change' }],
+  item_name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
+}
 const itemForm = reactive({
   supplier_id: '' as number | '',
   delivery_date: '', contract_no: '', project_code: '', delivery_note_no: '',
@@ -274,6 +320,11 @@ const itemForm = reactive({
   received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
   payment_method: '', invoice_status: '待对账', notes: '',
 })
+// 🆕 数量×单价 自动带出合计（与采购单行为一致，仍可手改）
+function onItemCalc() {
+  if (itemForm.qty != null && itemForm.unit_price != null)
+    itemForm.received_amount = Number((itemForm.qty * itemForm.unit_price).toFixed(2))
+}
 
 // 🆕 采购单：同一供应商 + 多个零件行（表头共享，单价选填以支持「先填/后填价格」两种流程）
 interface OrderLine {
@@ -308,6 +359,14 @@ function removeOrderLine(idx: number) {
   orderForm.lines.splice(idx, 1)
   if (!orderForm.lines.length) orderForm.lines.push(blankLine())
 }
+// 🆕 已填了零件行时，点遮罩/叉号先确认，避免误关丢掉整单录入
+function onOrderDialogClose(done: () => void) {
+  if (orderForm.lines.some(l => l.item_name.trim())) {
+    ElMessageBox.confirm('已填写零件行，关闭将丢失当前录入。确认放弃？', '提示',
+      { type: 'warning', confirmButtonText: '放弃录入', cancelButtonText: '继续编辑' })
+      .then(() => done()).catch(() => {})
+  } else done()
+}
 // 数量/单价变动 → 自动带出收货金额（仍可手改，后填价格流程只填金额也行）
 function onLineCalc(l: OrderLine) {
   if (l.qty != null && l.unit_price != null) l.received_amount = Number((l.qty * l.unit_price).toFixed(2))
@@ -319,7 +378,7 @@ async function saveOrder() {
   if (!lines.length) { ElMessage.error('请至少填写一行零件（名称必填）'); return }
   orderSaving.value = true
   try {
-    await http.post('/purchase-mgmt/orders', {
+    const resp = await http.post<PurchaseItemOut[]>('/purchase-mgmt/orders', {
       supplier_id: orderForm.supplier_id,
       delivery_date: orderForm.delivery_date || null,
       contract_no: orderForm.contract_no || null,
@@ -339,24 +398,27 @@ async function saveOrder() {
     ElMessage.success(`采购单已保存（${lines.length} 个零件行）`)
     orderDialogVisible.value = false
     await loadItems()
+    offerPrint(resp.data[0]?.po_no)
   } catch { /* handled */ } finally { orderSaving.value = false }
 }
 
-// 打印采购单：把当前表单渲染成可打印的采购单（浏览器打印 → 可另存为 PDF 发供应商）
-function printPurchaseOrder() {
-  if (!orderForm.supplier_id) { ElMessage.warning('请先选择供应商'); return }
-  const sup = suppliers.value.find(s => s.id === orderForm.supplier_id)
-  const lines = orderForm.lines.filter(l => l.item_name.trim())
-  if (!lines.length) { ElMessage.warning('请至少填写一行零件'); return }
+// ===== 打印采购单（保存前预览打印 / 保存后按单号补打印共用一套模板）=====
+interface POLine {
+  project_code?: string | null; item_name: string; spec?: string | null
+  qty?: number | null; unit_price?: number | null; amount?: number | null; notes?: string | null
+}
+function renderPOHtml(o: { poNo?: string; supplierName: string; orderDate: string; payMethod: string; defaultProject?: string; lines: POLine[] }): string {
   const esc = (v: unknown) => String(v ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))
-  const rows = lines.map((l, i) => `<tr>
+  const total = o.lines.reduce((s, l) =>
+    s + (l.amount ?? ((l.qty || 0) * (l.unit_price || 0))), 0)
+  const rows = o.lines.map((l, i) => `<tr>
     <td class="c">${i + 1}</td>
-    <td class="c">${esc(l.project_code || orderForm.project_code)}</td>
+    <td class="c">${esc(l.project_code || o.defaultProject || '')}</td>
     <td>${esc(l.item_name)}</td><td>${esc(l.spec)}</td>
     <td class="r">${l.qty ?? ''}</td><td class="r">${l.unit_price ?? ''}</td>
-    <td class="r">${l.received_amount ?? (l.qty != null && l.unit_price != null ? (l.qty * l.unit_price).toFixed(2) : '')}</td>
+    <td class="r">${l.amount ?? (l.qty != null && l.unit_price != null ? (l.qty * l.unit_price).toFixed(2) : '')}</td>
     <td>${esc(l.notes)}</td></tr>`).join('')
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>采购单</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>采购单${o.poNo ? ' ' + esc(o.poNo) : ''}</title>
     <style>@page{size:A4;margin:16mm}body{font-family:'Microsoft YaHei',SimSun,sans-serif;color:#111;font-size:13px}
     h1{text-align:center;font-size:22px;margin:0 0 12px;letter-spacing:2px}
     table{width:100%;border-collapse:collapse}
@@ -369,23 +431,65 @@ function printPurchaseOrder() {
     <h1>采购单</h1>
     <table class="meta">
       <tr><td style="width:14%"><b>需方</b></td><td style="width:40%">${esc(PO_COMPANY)}</td>
-          <td style="width:14%"><b>下单日期</b></td><td>${esc(orderForm.delivery_date)}</td></tr>
-      <tr><td><b>供方</b></td><td>${esc(sup?.name || '')}</td>
-          <td><b>付款方式</b></td><td>${esc(orderForm.payment_method || '')}</td></tr>
+          <td style="width:14%"><b>下单日期</b></td><td>${esc(o.orderDate)}</td></tr>
+      <tr><td><b>供方</b></td><td>${esc(o.supplierName)}</td>
+          <td><b>付款方式</b></td><td>${esc(o.payMethod)}</td></tr>
+      ${o.poNo ? `<tr><td><b>采购单号</b></td><td colspan="3">${esc(o.poNo)}</td></tr>` : ''}
     </table>
     <table class="items"><thead><tr>
       <th style="width:40px">序号</th><th style="width:100px">订单编号</th><th>名称</th><th>规格型号</th>
       <th style="width:60px">数量</th><th style="width:82px">单价</th><th style="width:104px">合计金额</th><th style="width:120px">备注</th>
     </tr></thead><tbody>${rows}
       <tr><td class="c" colspan="6"><b>合计</b></td>
-      <td class="r"><b>￥${orderTotal.value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></td><td></td></tr>
+      <td class="r"><b>￥${total.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></td><td></td></tr>
     </tbody></table>
     <div class="foot"><div class="sign">采购（签字）：____________</div><div class="sign">供方（盖章）：____________</div></div>
     </body></html>`
+}
+function openPrintWindow(html: string) {
   const w = window.open('', '_blank', 'width=900,height=700')
   if (!w) { ElMessage.warning('请允许弹窗以打印采购单'); return }
   w.document.write(html); w.document.close()
   w.onload = () => { w.focus(); w.print() }
+}
+// 保存前：直接打当前表单内容（无单号）
+function printPurchaseOrder() {
+  if (!orderForm.supplier_id) { ElMessage.warning('请先选择供应商'); return }
+  const sup = suppliers.value.find(s => s.id === orderForm.supplier_id)
+  const lines = orderForm.lines.filter(l => l.item_name.trim())
+  if (!lines.length) { ElMessage.warning('请至少填写一行零件'); return }
+  openPrintWindow(renderPOHtml({
+    supplierName: sup?.name || '', orderDate: orderForm.delivery_date,
+    payMethod: orderForm.payment_method, defaultProject: orderForm.project_code,
+    lines: lines.map(l => ({
+      project_code: l.project_code, item_name: l.item_name, spec: l.spec,
+      qty: l.qty, unit_price: l.unit_price, amount: l.received_amount, notes: l.notes,
+    })),
+  }))
+}
+// 🆕 保存后随时补打印：按采购单号取整单明细（列表里点采购单号即可）
+async function printPO(poNo?: string | null) {
+  if (!poNo) return
+  try {
+    const r = await http.get<PurchaseItemOut[]>(`/purchase-mgmt/orders/${encodeURIComponent(poNo)}`)
+    const rows = r.data
+    if (!rows.length) { ElMessage.info('该采购单没有明细'); return }
+    openPrintWindow(renderPOHtml({
+      poNo, supplierName: rows[0].supplier_name, orderDate: rows[0].delivery_date || '',
+      payMethod: rows[0].payment_method || '',
+      lines: rows.map(x => ({
+        project_code: x.project_code, item_name: x.item_name, spec: x.spec,
+        qty: x.qty, unit_price: x.unit_price, amount: x.received_amount, notes: x.notes,
+      })),
+    }))
+  } catch { /* handled */ }
+}
+// 保存成功后询问是否立即打印（带正式单号）
+function offerPrint(poNo?: string | null) {
+  if (!poNo) return
+  ElMessageBox.confirm(`采购单已保存，单号 ${poNo}。是否立即打印？（之后也可在明细列表点采购单号补打）`,
+    '保存成功', { type: 'success', confirmButtonText: '打印采购单', cancelButtonText: '暂不打印' })
+    .then(() => printPO(poNo)).catch(() => {})
 }
 
 // 🆕 采购历史数据导入：下载模板 / 上传导入
@@ -438,23 +542,32 @@ const purchasableLoading = ref(false)
 const listProjects = ref<{ id: number; code: string; name: string }[]>([])
 const purchasableRows = ref<PurchasableRow[]>([])
 const purchasableFilter = ref('')
+const onlyGap = ref(false)   // 🆕 只看有缺口（建议采购>0）的行
 const listOrderForm = reactive({
   project_id: '' as number | '', project_code: '',
   supplier_id: '' as number | '', delivery_date: '', payment_method: '',
 })
 const filteredPurchasable = computed(() => {
   const kw = purchasableFilter.value.trim().toLowerCase()
-  if (!kw) return purchasableRows.value
   return purchasableRows.value.filter(r =>
-    r.item_name.toLowerCase().includes(kw) || (r.spec || '').toLowerCase().includes(kw))
+    (!onlyGap.value || r.suggest_purchase > 0) &&
+    (!kw || r.item_name.toLowerCase().includes(kw) || (r.spec || '').toLowerCase().includes(kw)))
 })
 const listSelCount = computed(() => purchasableRows.value.filter(r => r._checked).length)
+// 🆕 表头全选：作用于当前筛选出的行
+const allFilteredChecked = computed(() =>
+  filteredPurchasable.value.length > 0 && filteredPurchasable.value.every(r => r._checked))
+const someFilteredChecked = computed(() =>
+  filteredPurchasable.value.some(r => r._checked) && !allFilteredChecked.value)
+function toggleAllPurchasable(v: any) {
+  filteredPurchasable.value.forEach(r => { r._checked = !!v })
+}
 async function openListOrder() {
   Object.assign(listOrderForm, {
     project_id: '', project_code: '', supplier_id: '',
     delivery_date: new Date().toISOString().slice(0, 10), payment_method: '',
   })
-  purchasableRows.value = []; purchasableFilter.value = ''
+  purchasableRows.value = []; purchasableFilter.value = ''; onlyGap.value = false
   try {
     const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
     listProjects.value = r.data.filter(p => p.standard_sheet_id)
@@ -482,9 +595,24 @@ async function submitListOrder() {
   if (!listOrderForm.supplier_id) { ElMessage.error('请选择供应商'); return }
   const sel = purchasableRows.value.filter(r => r._checked)
   if (!sel.length) { ElMessage.error('请勾选要下单的清单行'); return }
+  // 🆕 采购数量为0/未填的行拦下来，避免下出0数量的单
+  const bad = sel.filter(r => !((r._buyqty ?? 0) > 0))
+  if (bad.length) {
+    ElMessage.error(`以下零件采购数量未填或为0：${bad.map(b => b.item_name).slice(0, 3).join('、')}${bad.length > 3 ? ` 等${bad.length}行` : ''}`)
+    return
+  }
+  // 🆕 有勾选行正被筛选/缺口开关隐藏时，先确认再提交，避免看不见的行被静默下单
+  const hidden = sel.filter(r => !filteredPurchasable.value.includes(r))
+  if (hidden.length) {
+    try {
+      await ElMessageBox.confirm(
+        `有 ${hidden.length} 行已勾选的零件当前被筛选条件隐藏，会一并下给该供应商。确认继续？`,
+        '提示', { type: 'warning', confirmButtonText: '继续下单', cancelButtonText: '返回检查' })
+    } catch { return }
+  }
   listOrderSaving.value = true
   try {
-    await http.post('/purchase-mgmt/orders/from-list', {
+    const resp = await http.post<PurchaseItemOut[]>('/purchase-mgmt/orders/from-list', {
       supplier_id: listOrderForm.supplier_id,
       delivery_date: listOrderForm.delivery_date || null,
       project_code: listOrderForm.project_code || null,
@@ -498,6 +626,7 @@ async function submitListOrder() {
     ElMessage.success(`已生成采购单（${sel.length} 行），已回写清单订购日期`)
     listOrderVisible.value = false
     await loadItems()
+    offerPrint(resp.data[0]?.po_no)
   } catch { /* handled */ } finally { listOrderSaving.value = false }
 }
 function listStatusTag(s: string): 'info' | 'warning' | 'success' {
@@ -506,6 +635,11 @@ function listStatusTag(s: string): 'info' | 'warning' | 'success' {
 
 const supplierDialogVisible = ref(false)
 const editingSupplier = ref<SupplierOut | null>(null)
+const supplierSaving = ref(false)
+const supplierFormRef = ref<FormInstance>()
+const supplierRules: FormRules = {
+  name: [{ required: true, message: '请输入供应商名称', trigger: 'blur' }],
+}
 const supplierForm = reactive({
   name: '', code: '', category: '', contact: '', phone: '', address: '',
   tax_no: '', bank_name: '', bank_account: '', settlement_type: '', credit_days: null as number | null,
@@ -513,14 +647,23 @@ const supplierForm = reactive({
 })
 
 const payReqVisible = ref(false)
+const payReqSaving = ref(false)
 const payReqForm = reactive({
   supplier_id: '' as number | '',
   requested_amount: 0,
   notes: '',
-  items: [] as Array<{ item_id: number; item_name: string; allocated_amount: number }>,
+  items: [] as Array<{ item_id: number; item_name: string; allocated_amount: number; max: number }>,
+})
+// 🆕 改动任一明细的分配金额 → 请款总额自动跟着汇总（避免总额与分配对不上）
+watch(() => payReqForm.items.map(i => i.allocated_amount), () => {
+  if (!payReqVisible.value) return
+  payReqForm.requested_amount = Number(
+    payReqForm.items.reduce((s, i) => s + (i.allocated_amount || 0), 0).toFixed(2))
 })
 
 const openingBalanceVisible = ref(false)
+const openingBalanceLoading = ref(false)
+const openingBalanceSaving = ref(false)
 const openingBalanceSupplierId = ref<number | null>(null)
 const openingBalanceSupplierName = ref('')
 const openingBalanceForm = reactive({ balance_date: '', outstanding_amount: 0, notes: '' })
@@ -534,15 +677,16 @@ async function loadSuppliers() {
 async function loadItems() {
   loading.value = true
   try {
-    const params: Record<string, string> = {}
-    if (filterSupplierId.value) params.supplier_id = String(filterSupplierId.value)
-    if (filterProjectCode.value) params.project_code = filterProjectCode.value
-    if (filterMonth.value) params.month = filterMonth.value
-    if (filterInvoiceStatus.value) params.invoice_status = filterInvoiceStatus.value
-    if (filterCategory.value) params.category = filterCategory.value
+    const fparams: Record<string, string> = {}
+    if (filterSupplierId.value) fparams.supplier_id = String(filterSupplierId.value)
+    if (filterProjectCode.value) fparams.project_code = filterProjectCode.value
+    if (filterMonth.value) fparams.month = filterMonth.value
+    if (filterInvoiceStatus.value) fparams.invoice_status = filterInvoiceStatus.value
+    if (filterCategory.value) fparams.category = filterCategory.value
     const [ir, sr] = await Promise.all([
-      http.get<PurchaseItemOut[]>('/purchase-mgmt/items', { params }),
-      http.get<ItemSummary>('/purchase-mgmt/items/summary', { params }),
+      http.get<PurchaseItemOut[]>('/purchase-mgmt/items', {
+        params: { ...fparams, page: String(page.value), page_size: String(pageSize.value) } }),
+      http.get<ItemSummary>('/purchase-mgmt/items/summary', { params: fparams }),
     ])
     items.value = ir.data
     itemSummary.value = sr.data
@@ -594,6 +738,7 @@ async function onTabChange(name: string) {
   if (name === 'purchase') await loadPurchaseRows()
   else if (name === 'items') await loadItems()
   else if (name === 'statements') { await loadSuppliers(); await loadStatements() }
+  else if (name === 'payreq') await loadPayReqs()
   else if (name === 'reports' && isLeadOrAbove.value) { await loadReports(); await loadProjectReport() }
 }
 
@@ -601,7 +746,7 @@ async function onTabChange(name: string) {
 function openNewItem() {
   editingItem.value = null
   Object.assign(itemForm, {
-    supplier_id: '', delivery_date: '', contract_no: '', project_code: '',
+    supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10), contract_no: '', project_code: '',
     delivery_note_no: '', item_name: '', spec: '', qty: null, unit_price: null,
     received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
     payment_method: '', invoice_status: '待对账', notes: '',
@@ -625,10 +770,8 @@ function openEditItem(row: PurchaseItemOut) {
 }
 
 async function saveItem() {
-  if (!itemForm.item_name || !itemForm.supplier_id) {
-    ElMessage.error('名称和供应商为必填项')
-    return
-  }
+  try { await itemFormRef.value?.validate() } catch { return }
+  itemSaving.value = true
   try {
     const payload = {
       supplier_id: itemForm.supplier_id,
@@ -657,7 +800,7 @@ async function saveItem() {
     }
     itemDialogVisible.value = false
     await loadItems()
-  } catch { /* handled by axios interceptor */ }
+  } catch { /* handled by axios interceptor */ } finally { itemSaving.value = false }
 }
 
 async function deleteItem(row: PurchaseItemOut) {
@@ -686,6 +829,7 @@ function openPaymentRequest() {
     item_id: i.id,
     item_name: i.item_name,
     allocated_amount: i.received_amount - i.paid_amount,
+    max: i.received_amount - i.paid_amount,
   }))
   payReqVisible.value = true
 }
@@ -695,6 +839,7 @@ async function submitPaymentRequest() {
     ElMessage.error('请款金额必须大于0')
     return
   }
+  payReqSaving.value = true
   try {
     await http.post('/purchase-mgmt/payment-requests', {
       supplier_id: payReqForm.supplier_id,
@@ -704,8 +849,8 @@ async function submitPaymentRequest() {
     })
     ElMessage.success('请款单已提交，等待财务审批')
     payReqVisible.value = false
-    selectedItems.value = []
-  } catch { /* handled */ }
+    clearSelection()
+  } catch { /* handled */ } finally { payReqSaving.value = false }
 }
 
 // ===== supplier CRUD =====
@@ -731,7 +876,8 @@ function openEditSupplier(s: SupplierOut) {
 }
 
 async function saveSupplier() {
-  if (!supplierForm.name) { ElMessage.error('供应商名称为必填项'); return }
+  try { await supplierFormRef.value?.validate() } catch { return }
+  supplierSaving.value = true
   try {
     const payload = {
       name: supplierForm.name,
@@ -756,7 +902,7 @@ async function saveSupplier() {
     }
     supplierDialogVisible.value = false
     await Promise.all([loadSuppliers(), loadStatements()])
-  } catch { /* handled */ }
+  } catch { /* handled */ } finally { supplierSaving.value = false }
 }
 
 async function toggleSupplier(row: SupplierStatementRow) {
@@ -803,6 +949,7 @@ function openOpeningBalance(row: SupplierStatementRow) {
   openingBalanceForm.outstanding_amount = row.opening_balance
   openingBalanceForm.notes = ''
   openingBalanceVisible.value = true
+  openingBalanceLoading.value = true
   http.get<{ balance_date: string; outstanding_amount: number; notes?: string }>(
     `/purchase-mgmt/suppliers/${row.supplier_id}/opening-balance`
   ).then(r => {
@@ -811,11 +958,12 @@ function openOpeningBalance(row: SupplierStatementRow) {
       openingBalanceForm.outstanding_amount = r.data.outstanding_amount
       openingBalanceForm.notes = r.data.notes || ''
     }
-  }).catch(() => {})
+  }).catch(() => {}).finally(() => { openingBalanceLoading.value = false })
 }
 
 async function saveOpeningBalance() {
   if (!openingBalanceForm.balance_date) { ElMessage.error('截止日期为必填项'); return }
+  openingBalanceSaving.value = true
   try {
     await http.post(`/purchase-mgmt/suppliers/${openingBalanceSupplierId.value}/opening-balance`, {
       balance_date: openingBalanceForm.balance_date,
@@ -825,12 +973,49 @@ async function saveOpeningBalance() {
     ElMessage.success('期初余额已保存')
     openingBalanceVisible.value = false
     await loadStatements()
-  } catch { /* handled */ }
+  } catch { /* handled */ } finally { openingBalanceSaving.value = false }
+}
+
+// 🆕 供应商账目合计行（列对齐：供应商/分类/状态/期初/收货/开票/待开票/已付/欠款/明细数/操作）
+function stmtSummary() {
+  const rows = filteredStatementRows.value
+  const sum = (k: keyof SupplierStatementRow) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0)
+  return ['合计', '', '',
+    fmtMoney(sum('opening_balance')), fmtMoney(sum('received_total')),
+    fmtMoney(sum('invoice_total')), fmtMoney(sum('uninvoiced')),
+    fmtMoney(sum('paid_total')), fmtMoney(sum('outstanding')),
+    String(rows.reduce((a, r) => a + (r.item_count || 0), 0)), '']
+}
+
+// 🆕 请款记录页签：采购员能看到自己请款单的审批状态/驳回原因（后端已按角色过滤：普通采购员只看自己的）
+const payReqs = ref<PaymentRequestOut[]>([])
+const prLoading = ref(false)
+const prStatusFilter = ref('')
+async function loadPayReqs() {
+  prLoading.value = true
+  try {
+    const params: Record<string, string> = {}
+    if (prStatusFilter.value) params.status = prStatusFilter.value
+    payReqs.value = (await http.get<PaymentRequestOut[]>('/purchase-mgmt/payment-requests', { params })).data
+  } finally { prLoading.value = false }
+}
+
+// 🆕 报表小表合计
+function trendSummary() {
+  const a = monthlyTrend.value.reduce((s, r) => s + (r.amount || 0), 0)
+  const p = monthlyTrend.value.reduce((s, r) => s + (r.paid || 0), 0)
+  return ['合计', fmtMoney(a), fmtMoney(p), fmtMoney(a - p)]
+}
+function buyerSummary() {
+  return ['合计',
+    fmtMoney(byBuyer.value.reduce((s, r) => s + (r.amount || 0), 0)),
+    String(byBuyer.value.reduce((s, r) => s + (r.count || 0), 0))]
 }
 
 // ===== statement drawer =====
 async function openDrawer(row: SupplierStatementRow) {
   drawerSupplier.value = row
+  drawerItems.value = []   // 清掉上一个供应商的数据，避免切换时残影
   drawerVisible.value = true
   drawerLoading.value = true
   try {
@@ -882,7 +1067,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-button :icon="Refresh" :loading="purchaseLoading" @click="loadPurchaseRows">刷新</el-button>
           </div>
 
-          <el-table :data="purchaseRows" stripe v-loading="purchaseLoading" max-height="calc(100vh - 310px)" :scrollbar-always-on="true" class="wrap-cells">
+          <el-table :data="purchaseRows" stripe v-loading="purchaseLoading" max-height="max(320px, calc(100vh - 310px))" :scrollbar-always-on="true" class="wrap-cells">
             <el-table-column type="index" label="#" width="50" fixed />
             <el-table-column label="项目编号" width="116" fixed>
               <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
@@ -975,60 +1160,88 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 <el-button size="small" link type="primary" :icon="Download" @click="openDownload(row)">打包</el-button>
               </template>
             </el-table-column>
+            <template #empty><EmptyHint text="暂无项目" size="sm" /></template>
           </el-table>
-          <EmptyHint v-if="!purchaseLoading && !purchaseRows.length" text="暂无项目" />
         </el-tab-pane>
 
         <!-- ==================== Tab 1: 采购明细 ==================== -->
-        <el-tab-pane label="📦 采购明细" name="items">
+        <el-tab-pane label="📦 采购明细" name="items" lazy>
           <div class="filter-bar">
-            <el-select v-model="filterSupplierId" placeholder="全部供应商" clearable style="width:160px" @change="loadItems">
+            <el-select v-model="filterSupplierId" placeholder="全部供应商" clearable filterable style="width:160px" @change="onFilterChange">
               <el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id" />
             </el-select>
-            <el-input v-model="filterProjectCode" placeholder="项目编号" clearable style="width:130px" @change="loadItems" />
+            <el-input v-model="filterProjectCode" placeholder="项目编号" clearable :prefix-icon="Search"
+                      style="width:140px" @change="onFilterChange" />
             <el-date-picker v-model="filterMonth" type="month" placeholder="下单月份" value-format="YYYY-MM"
-                            clearable style="width:140px" @change="loadItems" />
-            <el-select v-model="filterInvoiceStatus" placeholder="对账状态" clearable style="width:120px" @change="loadItems">
+                            clearable style="width:130px" @change="onFilterChange" />
+            <el-select v-model="filterInvoiceStatus" placeholder="对账状态" clearable style="width:110px" @change="onFilterChange">
               <el-option label="待对账" value="待对账" />
               <el-option label="已对账" value="已对账" />
               <el-option label="已开票" value="已开票" />
             </el-select>
-            <el-select v-model="filterCategory" placeholder="供应商分类" clearable style="width:130px" @change="loadItems">
+            <el-select v-model="filterCategory" placeholder="供应商分类" clearable style="width:120px" @change="onFilterChange">
               <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
             </el-select>
-            <el-button @click="loadItems">刷新</el-button>
+            <el-tooltip content="刷新" placement="top">
+              <el-button :icon="Refresh" @click="loadItems" />
+            </el-tooltip>
+            <el-button v-if="hasFilter" link type="info" :icon="RefreshLeft" @click="resetFilters">清空筛选</el-button>
+            <span class="flex-spacer" />
             <template v-if="canWrite">
-              <el-button type="primary" @click="openListOrder">📋 从清单下单</el-button>
-              <el-button @click="openNewOrder">+ 新建采购单</el-button>
-              <el-button @click="openNewItem">+ 单条明细</el-button>
-              <el-button :disabled="!selectedItems.length" type="warning" @click="openPaymentRequest">发起请款</el-button>
-              <el-button :icon="Upload" :loading="importing" @click="importItems">导入历史</el-button>
-              <el-button :icon="Download" link type="primary" @click="downloadImportTemplate">下载模板</el-button>
+              <el-button type="primary" :icon="Tickets" @click="openListOrder">从清单下单</el-button>
+              <el-button :icon="Plus" @click="openNewOrder">新建采购单</el-button>
+              <el-button :icon="EditPen" @click="openNewItem">单条明细</el-button>
+              <el-dropdown trigger="click">
+                <el-button :loading="importing">
+                  更多<el-icon style="margin-left:4px"><ArrowDown /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item :icon="Upload" @click="importItems">导入历史数据</el-dropdown-item>
+                    <el-dropdown-item :icon="Download" @click="downloadImportTemplate">下载导入模板</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </template>
           </div>
 
+          <!-- 🆕 勾选后浮出操作条：金额一目了然，请款入口就近 -->
+          <div v-if="selectedItems.length" class="sel-bar">
+            <span>已选 <b>{{ selectedItems.length }}</b> 条</span>
+            <span>未付合计 <b class="amt">{{ fmtMoney(selUnpaidTotal) }}</b></span>
+            <span v-if="!selSameSupplier" class="warn">跨供应商不能一起请款，请选择同一供应商的明细</span>
+            <el-button size="small" type="warning" :disabled="!selSameSupplier" @click="openPaymentRequest">发起请款</el-button>
+            <el-button size="small" link @click="clearSelection">取消选择</el-button>
+          </div>
+
           <el-table
+            ref="itemsTableRef"
             :data="items" stripe
             @selection-change="(v: PurchaseItemOut[]) => selectedItems = v"
-            max-height="calc(100vh - 340px)"
+            max-height="max(320px, calc(100vh - 340px))"
             :scrollbar-always-on="true"
             class="wrap-cells"
           >
-            <el-table-column v-if="canWrite" type="selection" width="40" />
-            <el-table-column prop="po_no" label="采购单号" width="128">
-              <template #default="{ row }"><span class="po-no">{{ row.po_no || '—' }}</span></template>
-            </el-table-column>
-            <el-table-column label="供应商" min-width="170">
+            <el-table-column v-if="canWrite" type="selection" width="40" fixed />
+            <el-table-column label="供应商" min-width="170" fixed>
               <template #default="{ row }"><span class="sup-name">{{ row.supplier_name }}</span></template>
             </el-table-column>
-            <el-table-column prop="delivery_date" label="下单日期" width="105" />
+            <el-table-column prop="po_no" label="采购单号" width="152">
+              <template #default="{ row }">
+                <el-tooltip v-if="row.po_no" content="点击打印这张采购单" placement="top">
+                  <el-button link type="primary" class="po-no" @click="printPO(row.po_no)">{{ row.po_no }}</el-button>
+                </el-tooltip>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="delivery_date" label="下单日期" width="112" sortable />
             <el-table-column prop="project_code" label="项目编号" width="105">
               <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
             </el-table-column>
             <el-table-column prop="delivery_note_no" label="送货单号" width="120">
               <template #default="{ row }">{{ row.delivery_note_no || '—' }}</template>
             </el-table-column>
-            <el-table-column prop="arrival_date" label="到货日期" width="100">
+            <el-table-column prop="arrival_date" label="到货日期" width="108" sortable>
               <template #default="{ row }">
                 <span v-if="row.arrival_date">{{ row.arrival_date }}</span>
                 <el-tag v-else size="small" type="info" effect="plain">待收货</el-tag>
@@ -1038,22 +1251,22 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column prop="spec" label="规格" min-width="150">
               <template #default="{ row }">{{ row.spec || '—' }}</template>
             </el-table-column>
-            <el-table-column label="数量" width="80" align="right">
+            <el-table-column prop="qty" label="数量" width="80" align="right">
               <template #default="{ row }">{{ row.qty ?? '—' }}</template>
             </el-table-column>
             <el-table-column label="单价" width="110" align="right">
               <template #default="{ row }">{{ row.unit_price != null ? fmtMoney(row.unit_price) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="收货金额" width="120" align="right">
+            <el-table-column prop="received_amount" label="收货金额" width="126" align="right" sortable>
               <template #default="{ row }"><b>{{ fmtMoney(row.received_amount) }}</b></template>
             </el-table-column>
             <el-table-column prop="invoice_date" label="开票日期" width="105">
               <template #default="{ row }">{{ row.invoice_date || '—' }}</template>
             </el-table-column>
-            <el-table-column label="开票金额" width="120" align="right">
+            <el-table-column prop="invoice_amount" label="开票金额" width="122" align="right" sortable>
               <template #default="{ row }">{{ row.invoice_amount ? fmtMoney(row.invoice_amount) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="已付款" width="120" align="right">
+            <el-table-column prop="paid_amount" label="已付款" width="118" align="right" sortable>
               <template #default="{ row }">{{ row.paid_amount ? fmtMoney(row.paid_amount) : '—' }}</template>
             </el-table-column>
             <el-table-column label="状态" width="80">
@@ -1070,120 +1283,193 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 <el-button size="small" link type="danger" @click="deleteItem(row)">删除</el-button>
               </template>
             </el-table-column>
+            <template #empty>
+              <EmptyHint :text="hasFilter ? '没有匹配的采购明细，试试清空筛选' : '暂无采购明细，点右上角「新建采购单」开始'" size="sm" />
+            </template>
           </el-table>
 
-          <div v-if="itemSummary" class="summary-bar">
+          <div v-if="itemSummary && items.length" class="summary-bar">
             <span>共 <b>{{ itemSummary.count }}</b> 条</span>
             <span>收货合计 <b class="amt">{{ fmtMoney(itemSummary.received_total) }}</b></span>
             <span>待开票 <b class="amt warn">{{ fmtMoney(itemSummary.uninvoiced) }}</b></span>
             <span>已付款 <b class="amt">{{ fmtMoney(itemSummary.paid_total) }}</b></span>
             <span>欠款 <b class="amt danger">{{ fmtMoney(itemSummary.outstanding) }}</b></span>
           </div>
+          <div class="pager-bar">
+            <el-pagination background layout="total, sizes, prev, pager, next, jumper"
+              :total="itemSummary?.count || 0" v-model:current-page="page" v-model:page-size="pageSize"
+              :page-sizes="[50, 100, 200, 500]"
+              @current-change="loadItems" @size-change="onFilterChange" />
+          </div>
         </el-tab-pane>
 
         <!-- ==================== Tab 2: 供应商账目一览 ==================== -->
-        <el-tab-pane label="📊 供应商账目" name="statements">
+        <el-tab-pane label="📊 供应商账目" name="statements" lazy>
           <div class="filter-bar">
-            <el-input v-model="stmtNameFilter" placeholder="搜索供应商名称" clearable style="width:200px" />
+            <el-input v-model="stmtNameFilter" placeholder="搜索供应商名称" clearable :prefix-icon="Search" style="width:200px" />
             <el-select v-model="stmtCatFilter" placeholder="全部分类" clearable style="width:140px">
               <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
             </el-select>
-            <el-button v-if="canWrite" type="primary" @click="openNewSupplier">+ 新增供应商</el-button>
+            <el-tooltip content="刷新" placement="top">
+              <el-button :icon="Refresh" @click="loadStatements" />
+            </el-tooltip>
+            <span class="flex-spacer" />
+            <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openNewSupplier">新增供应商</el-button>
           </div>
           <el-table
             :data="filteredStatementRows"
             stripe show-summary
-            :summary-method="() => {
-              const rows = filteredStatementRows
-              const sum = (k: keyof SupplierStatementRow) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0)
-              return ['合计', '', '',
-                fmtMoney(sum('opening_balance')),
-                fmtMoney(sum('received_total')), '','',
-                fmtMoney(sum('paid_total')),
-                fmtMoney(sum('outstanding')), '', '', '']
-            }"
-            max-height="calc(100vh - 280px)"
+            :summary-method="stmtSummary"
+            :default-sort="{ prop: 'outstanding', order: 'descending' }"
+            max-height="max(320px, calc(100vh - 280px))"
             :scrollbar-always-on="true"
             class="wrap-cells"
           >
-            <el-table-column prop="supplier_name" label="供应商" min-width="200" />
+            <el-table-column prop="supplier_name" label="供应商" min-width="200" fixed sortable />
             <el-table-column prop="category" label="分类" width="92">
               <template #default="{ row }">{{ row.category || '—' }}</template>
             </el-table-column>
             <el-table-column label="状态" width="76">
               <template #default="{ row }">
-                <el-tag :type="suppliers.find(s=>s.id===row.supplier_id)?.status==='active'?'success':'info'" size="small">
-                  {{ suppliers.find(s=>s.id===row.supplier_id)?.status==='active' ? '启用' : '停用' }}
+                <el-tag :type="supActive(row.supplier_id) ? 'success' : 'info'" size="small">
+                  {{ supActive(row.supplier_id) ? '启用' : '停用' }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="期初欠款" width="118" align="right">
+            <el-table-column prop="opening_balance" label="期初欠款" width="118" align="right" sortable>
               <template #default="{ row }">{{ fmtMoney(row.opening_balance) }}</template>
             </el-table-column>
-            <el-table-column label="收货合计" width="118" align="right">
+            <el-table-column prop="received_total" label="收货合计" width="122" align="right" sortable>
               <template #default="{ row }"><b>{{ fmtMoney(row.received_total) }}</b></template>
             </el-table-column>
-            <el-table-column label="开票合计" width="118" align="right">
+            <el-table-column prop="invoice_total" label="开票合计" width="122" align="right" sortable>
               <template #default="{ row }">{{ fmtMoney(row.invoice_total) }}</template>
             </el-table-column>
-            <el-table-column label="待开票" width="118" align="right">
+            <el-table-column prop="uninvoiced" label="待开票" width="114" align="right" sortable>
               <template #default="{ row }"><span class="warn">{{ fmtMoney(row.uninvoiced) }}</span></template>
             </el-table-column>
-            <el-table-column label="已付款" width="118" align="right">
+            <el-table-column prop="paid_total" label="已付款" width="114" align="right" sortable>
               <template #default="{ row }">{{ fmtMoney(row.paid_total) }}</template>
             </el-table-column>
-            <el-table-column label="欠款余额" width="118" align="right">
+            <el-table-column prop="outstanding" label="欠款余额" width="122" align="right" sortable>
               <template #default="{ row }"><b class="danger">{{ fmtMoney(row.outstanding) }}</b></template>
             </el-table-column>
             <el-table-column label="明细数" width="72" align="center">
               <template #default="{ row }">{{ row.item_count }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="336" fixed="right">
+            <el-table-column label="操作" :width="canWrite ? 210 : 100" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button size="small" link type="primary" @click="openDrawer(row)">查看明细</el-button>
                 <template v-if="canWrite">
-                  <el-button size="small" link @click="openEditSupplier(suppliers.find(s=>s.id===row.supplier_id)!)">编辑</el-button>
-                  <el-button size="small" link @click="openOpeningBalance(row)">期初余额</el-button>
-                  <el-button size="small" link type="warning" @click="toggleSupplier(row)">
-                    {{ suppliers.find(s=>s.id===row.supplier_id)?.status==='active' ? '停用' : '启用' }}
-                  </el-button>
-                  <el-button size="small" link type="danger" @click="deleteSupplier(row)">删除</el-button>
+                  <el-button size="small" link @click="onSupCmd('edit', row)">编辑</el-button>
+                  <el-dropdown trigger="click" @command="(cmd: string) => onSupCmd(cmd, row)">
+                    <el-button size="small" link>
+                      更多<el-icon style="margin-left:2px"><ArrowDown /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="balance">期初余额</el-dropdown-item>
+                        <el-dropdown-item command="toggle">{{ supActive(row.supplier_id) ? '停用' : '启用' }}</el-dropdown-item>
+                        <el-dropdown-item command="delete" divided><span class="danger">删除供应商</span></el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
                 </template>
               </template>
             </el-table-column>
+            <template #empty>
+              <EmptyHint :text="stmtNameFilter || stmtCatFilter ? '没有匹配的供应商，试试清空筛选' : '暂无供应商，点右上角「新增供应商」开始'" size="sm" />
+            </template>
+          </el-table>
+        </el-tab-pane>
+
+        <!-- ==================== Tab: 请款记录（采购员跟进审批进度） ==================== -->
+        <el-tab-pane v-if="showPurchaseTab" label="💳 请款记录" name="payreq" lazy>
+          <div class="filter-bar">
+            <el-select v-model="prStatusFilter" placeholder="全部状态" clearable style="width:130px" @change="loadPayReqs">
+              <el-option label="待审" value="pending" />
+              <el-option label="已批" value="approved" />
+              <el-option label="已驳" value="rejected" />
+              <el-option label="已付" value="paid" />
+            </el-select>
+            <el-tooltip content="刷新" placement="top">
+              <el-button :icon="Refresh" @click="loadPayReqs" />
+            </el-tooltip>
+            <span class="muted">发起请款后在这里跟进财务审批进度，被驳回会显示原因；点行首箭头看关联明细</span>
+          </div>
+          <el-table :data="payReqs" stripe v-loading="prLoading"
+                    max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="wrap-cells">
+            <el-table-column type="expand" width="36">
+              <template #default="{ row }">
+                <div class="pr-expand">
+                  <div v-for="it in row.items" :key="it.item_id" class="pr-expand-row">
+                    <span>{{ it.item_name }}</span><b>{{ fmtMoney(it.allocated_amount) }}</b>
+                  </div>
+                  <div v-if="!row.items?.length" class="muted">无关联明细</div>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="申请时间" width="108">
+              <template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template>
+            </el-table-column>
+            <el-table-column prop="supplier_name" label="供应商" min-width="170" />
+            <el-table-column prop="requested_amount" label="请款金额" width="130" align="right" sortable>
+              <template #default="{ row }"><b>{{ fmtMoney(row.requested_amount) }}</b></template>
+            </el-table-column>
+            <el-table-column label="状态" width="82" align="center">
+              <template #default="{ row }">
+                <el-tag :type="prStatusTag(row.status)" size="small">{{ PR_STATUS_LABEL[row.status] || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="驳回原因" min-width="130">
+              <template #default="{ row }"><span :class="{ danger: !!row.reject_reason }">{{ row.reject_reason || '—' }}</span></template>
+            </el-table-column>
+            <el-table-column label="实付金额" width="118" align="right">
+              <template #default="{ row }">{{ row.paid_amount ? fmtMoney(row.paid_amount) : '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="paid_date" label="付款日期" width="102">
+              <template #default="{ row }">{{ row.paid_date || '—' }}</template>
+            </el-table-column>
+            <el-table-column v-if="isLeadOrAbove" prop="requester_name" label="申请人" width="88">
+              <template #default="{ row }">{{ row.requester_name || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="notes" label="备注" min-width="110">
+              <template #default="{ row }">{{ row.notes || '—' }}</template>
+            </el-table-column>
+            <template #empty><EmptyHint text="暂无请款记录：在采购明细勾选行后点「发起请款」" size="sm" /></template>
           </el-table>
         </el-tab-pane>
 
         <!-- ==================== Tab 3: 汇总报表 ==================== -->
-        <el-tab-pane v-if="isLeadOrAbove" label="📈 汇总报表" name="reports">
-          <div v-if="kpi" class="kpi-row">
-            <div class="kpi-card">
-              <div class="kpi-label">本月采购额</div>
-              <div class="kpi-value">{{ fmtMoney(kpi.month_amount) }}</div>
+        <el-tab-pane v-if="isLeadOrAbove" label="📈 汇总报表" name="reports" lazy>
+          <div v-if="kpi" class="kpi-grid" style="margin-bottom:16px">
+            <div class="kpi is-primary">
+              <div class="kpi-v">{{ fmtMoney(kpi.month_amount) }}</div>
+              <div class="kpi-l">本月采购额</div>
             </div>
-            <div class="kpi-card">
-              <div class="kpi-label">本季采购额</div>
-              <div class="kpi-value">{{ fmtMoney(kpi.quarter_amount) }}</div>
+            <div class="kpi">
+              <div class="kpi-v">{{ fmtMoney(kpi.quarter_amount) }}</div>
+              <div class="kpi-l">本季采购额</div>
             </div>
-            <div class="kpi-card">
-              <div class="kpi-label">本年采购额</div>
-              <div class="kpi-value">{{ fmtMoney(kpi.year_amount) }}</div>
+            <div class="kpi">
+              <div class="kpi-v">{{ fmtMoney(kpi.year_amount) }}</div>
+              <div class="kpi-l">本年采购额</div>
             </div>
-            <div class="kpi-card danger-card">
-              <div class="kpi-label">应付总额</div>
-              <div class="kpi-value danger">{{ fmtMoney(kpi.total_outstanding) }}</div>
+            <div class="kpi is-bad">
+              <div class="kpi-v">{{ fmtMoney(kpi.total_outstanding) }}</div>
+              <div class="kpi-l">应付总额</div>
             </div>
-            <div class="kpi-card">
-              <div class="kpi-label">待审请款</div>
-              <div class="kpi-value">{{ kpi.pending_requests }} 单</div>
+            <div class="kpi" :class="{ 'is-warn': kpi.pending_requests > 0 }">
+              <div class="kpi-v">{{ kpi.pending_requests }} 单</div>
+              <div class="kpi-l">待审请款</div>
             </div>
           </div>
 
           <el-row :gutter="16">
-            <el-col :span="14">
+            <el-col :xs="24" :sm="24" :md="14">
               <div class="report-section">
-                <div class="section-title">月度趋势（近12个月）</div>
-                <el-table :data="monthlyTrend" stripe size="small" max-height="320" class="wrap-cells">
+                <div class="sec-title" style="margin-top:0">月度趋势（近12个月）</div>
+                <el-table :data="monthlyTrend" stripe size="small" max-height="320" show-summary :summary-method="trendSummary" class="wrap-cells">
                   <el-table-column prop="month" label="月份" width="90" />
                   <el-table-column label="收货金额" align="right">
                     <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
@@ -1197,9 +1483,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 </el-table>
               </div>
             </el-col>
-            <el-col :span="10">
+            <el-col :xs="24" :sm="24" :md="10">
               <div class="report-section">
-                <div class="section-title">Top 供应商</div>
+                <div class="sec-title" style="margin-top:0">Top 供应商</div>
                 <el-table :data="topSuppliers" stripe size="small" max-height="320" class="wrap-cells">
                   <el-table-column type="index" width="40" />
                   <el-table-column prop="supplier_name" label="供应商" min-width="100" />
@@ -1211,11 +1497,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-col>
           </el-row>
 
-          <el-row :gutter="16" style="margin-top:16px">
-            <el-col :span="10">
+          <el-row :gutter="16">
+            <el-col :xs="24" :sm="24" :md="10">
               <div class="report-section">
-                <div class="section-title">按采购员</div>
-                <el-table :data="byBuyer" stripe size="small" max-height="260" class="wrap-cells">
+                <div class="sec-title" style="margin-top:0">按采购员</div>
+                <el-table :data="byBuyer" stripe size="small" max-height="260" show-summary :summary-method="buyerSummary" class="wrap-cells">
                   <el-table-column prop="buyer_name" label="采购员" min-width="90" />
                   <el-table-column label="采购额" align="right">
                     <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
@@ -1224,18 +1510,18 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 </el-table>
               </div>
             </el-col>
-            <el-col :span="14">
+            <el-col :xs="24" :sm="24" :md="14">
               <div class="report-section">
-                <div class="section-title">按项目编号</div>
-                <div style="margin-bottom:8px;display:flex;gap:8px">
-                  <el-input v-model="projectSearch" placeholder="搜索项目编号" clearable style="width:180px" @change="loadProjectReport" />
+                <div class="sec-title" style="margin-top:0">按项目编号</div>
+                <div class="filter-bar">
+                  <el-input v-model="projectSearch" placeholder="搜索项目编号" clearable :prefix-icon="Search" style="width:180px" @change="loadProjectReport" />
                   <el-button @click="loadProjectReport">查询</el-button>
                 </div>
                 <el-table :data="byProject" stripe size="small" max-height="220" class="wrap-cells">
                   <el-table-column label="项目编号" min-width="110">
                     <template #default="{ row }"><b class="code">{{ row.project_code }}</b></template>
                   </el-table-column>
-                  <el-table-column label="采购额" align="right">
+                  <el-table-column prop="amount" label="采购额" align="right" sortable>
                     <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
                   </el-table-column>
                   <el-table-column prop="count" label="条数" width="60" align="right" />
@@ -1248,12 +1534,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-card>
 
     <!-- ==================== 从清单下单弹窗（标准件清单→采购单）==================== -->
-    <el-dialog v-model="listOrderVisible" title="从清单下单" width="960px" top="6vh">
+    <el-dialog v-model="listOrderVisible" title="从清单下单" width="960px" top="5vh" class="v3-scroll-dialog" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
         title="选项目 → 它的标准件清单自动带出 → 筛选、勾选要买的行 → 选一个供应商 → 生成一张采购单。下单会回写清单的订购日期/采购负责人;清单也可在仓库「物料需求」里看库存。" />
       <el-form :model="listOrderForm" label-position="top" class="order-form">
         <el-row :gutter="20">
-          <el-col :span="7">
+          <el-col :xs="24" :sm="12" :md="7">
             <el-form-item label="项目 *">
               <el-select v-model="listOrderForm.project_id" filterable placeholder="选择项目(有标准件清单的)"
                          style="width:100%" @change="onListProjectChange">
@@ -1261,19 +1547,19 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="7">
+          <el-col :xs="24" :sm="12" :md="7">
             <el-form-item label="供应商 *">
               <el-select v-model="listOrderForm.supplier_id" filterable placeholder="选择供应商" style="width:100%">
                 <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="5">
+          <el-col :xs="12" :sm="12" :md="5">
             <el-form-item label="下单日期">
               <el-date-picker v-model="listOrderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="5">
+          <el-col :xs="12" :sm="12" :md="5">
             <el-form-item label="付款方式">
               <el-select v-model="listOrderForm.payment_method" clearable allow-create filterable default-first-option
                          placeholder="选择/输入" style="width:100%">
@@ -1284,12 +1570,20 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-row>
       </el-form>
       <div class="order-lines-head">
-        <el-input v-model="purchasableFilter" placeholder="筛选名称/规格" clearable style="width:220px" />
-        <span class="muted">已勾选 {{ listSelCount }} / {{ purchasableRows.length }} 行</span>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <el-input v-model="purchasableFilter" placeholder="筛选名称/规格" clearable :prefix-icon="Search" style="width:200px" />
+          <el-switch v-model="onlyGap" active-text="只看有缺口" style="--el-switch-on-color: var(--el-color-danger)" />
+        </div>
+        <span class="muted">已勾选 <b>{{ listSelCount }}</b> / {{ purchasableRows.length }} 行</span>
       </div>
-      <el-table :data="filteredPurchasable" v-loading="purchasableLoading" size="small" border
-                max-height="46vh" class="wrap-cells">
+      <el-table :data="filteredPurchasable" v-loading="purchasableLoading" size="small" border stripe
+                :empty-text="listOrderForm.project_id ? '该项目标准件清单为空' : '请先在上方选择项目，标准件清单会自动带出'"
+                max-height="max(280px, 46vh)" :scrollbar-always-on="true" class="wrap-cells">
         <el-table-column width="46" align="center">
+          <template #header>
+            <el-checkbox :model-value="allFilteredChecked" :indeterminate="someFilteredChecked"
+                         @change="toggleAllPurchasable" />
+          </template>
           <template #default="{ row }"><el-checkbox v-model="row._checked" /></template>
         </el-table-column>
         <el-table-column label="名称" min-width="140" prop="item_name" />
@@ -1307,12 +1601,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-table-column>
         <el-table-column label="采购数量" width="120">
           <template #default="{ row }">
-            <el-input-number v-model="row._buyqty" :min="0" :precision="2" :controls="false" style="width:100%" />
+            <el-input-number v-model="row._buyqty" :min="0" :precision="2" :controls="false" style="width:100%" @change="row._checked = true" />
           </template>
         </el-table-column>
         <el-table-column label="单价(选填)" width="120">
           <template #default="{ row }">
-            <el-input-number v-model="row._price" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="后填留空" />
+            <el-input-number v-model="row._price" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="后填留空" @change="row._checked = true" />
           </template>
         </el-table-column>
         <el-table-column label="采购状态" width="92" align="center">
@@ -1323,7 +1617,6 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <div class="muted" style="margin-top:6px">
         提示：<b>建议采购 = 需求量 − 现有库存</b>（按名称+规格匹配仓库库存）。采购数量已默认按建议量填好，可手动调整；有库存的行不会重复采购。
       </div>
-      <EmptyHint v-if="listOrderForm.project_id && !purchasableLoading && !purchasableRows.length" text="该项目标准件清单为空" size="sm" />
       <template #footer>
         <el-button @click="listOrderVisible = false">取消</el-button>
         <el-button type="primary" :loading="listOrderSaving" :disabled="!listSelCount" @click="submitListOrder">
@@ -1333,24 +1626,24 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 采购单弹窗（同一供应商多个零件行）==================== -->
-    <el-dialog v-model="orderDialogVisible" title="新建采购单" width="1080px" top="6vh">
+    <el-dialog v-model="orderDialogVisible" title="新建采购单" width="1080px" top="5vh" class="v3-scroll-dialog" :close-on-click-modal="false" :before-close="onOrderDialogClose">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
         title="同一供应商一次录入多个零件：表头（供应商 / 下单日期 / 合同 / 默认项目）在上，零件逐行填。单价「选填」——已谈好价先填；激光板材等到货送货单才带价的，单价留空，货到仓库再补。保存后自动生成采购单号；可「打印采购单」发供应商。" />
       <el-form :model="orderForm" label-position="top" class="order-form">
         <el-row :gutter="20">
-          <el-col :span="7">
+          <el-col :xs="24" :sm="12" :md="7">
             <el-form-item label="供应商 *">
               <el-select v-model="orderForm.supplier_id" filterable placeholder="选择供应商" style="width:100%">
                 <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="5">
+          <el-col :xs="12" :sm="12" :md="5">
             <el-form-item label="下单日期">
               <el-date-picker v-model="orderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="4">
+          <el-col :xs="12" :sm="8" :md="4">
             <el-form-item label="付款方式">
               <el-select v-model="orderForm.payment_method" clearable allow-create filterable default-first-option
                          placeholder="选择/输入" style="width:100%">
@@ -1358,12 +1651,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="4">
+          <el-col :xs="12" :sm="8" :md="4">
             <el-form-item label="合同编号">
               <el-input v-model="orderForm.contract_no" placeholder="选填" />
             </el-form-item>
           </el-col>
-          <el-col :span="4">
+          <el-col :xs="12" :sm="8" :md="4">
             <el-form-item label="默认订单编号">
               <el-input v-model="orderForm.project_code" placeholder="行内可覆盖" />
             </el-form-item>
@@ -1371,10 +1664,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-row>
 
         <div class="order-lines-head">
-          <span class="section-title" style="margin:0">零件明细（{{ orderForm.lines.length }} 行）</span>
+          <span class="order-lines-title">零件明细（{{ orderForm.lines.length }} 行）</span>
           <el-button size="small" :icon="Plus" @click="addOrderLine">添加一行</el-button>
         </div>
-        <el-table :data="orderForm.lines" size="small" border class="order-lines">
+        <el-table :data="orderForm.lines" size="small" border :scrollbar-always-on="true" max-height="max(240px, 40vh)" class="order-lines">
           <el-table-column type="index" label="#" width="44" align="center" />
           <el-table-column label="名称 *" min-width="150">
             <template #default="{ row }"><el-input v-model="row.item_name" placeholder="零件名称" /></template>
@@ -1411,7 +1704,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-table-column>
         </el-table>
         <div class="order-total-bar">
-          <span>合计金额 <b class="amt">{{ fmtMoney(orderTotal) }}</b></span>
+          <div style="display:flex;gap:14px;align-items:center">
+            <el-button size="small" :icon="Plus" @click="addOrderLine">添加一行</el-button>
+            <span>合计金额 <b class="amt">{{ fmtMoney(orderTotal) }}</b></span>
+          </div>
           <span class="muted">送货单号 / 到货日期由仓库收货时填写</span>
         </div>
       </el-form>
@@ -1423,38 +1719,38 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 采购明细弹窗 ==================== -->
-    <el-dialog v-model="itemDialogVisible" :title="editingItem ? '编辑采购明细' : '新增采购明细'" width="860px">
-      <el-form :model="itemForm" label-position="top" class="item-form">
+    <el-dialog v-model="itemDialogVisible" :title="editingItem ? '编辑采购明细' : '新增采购明细'" width="860px" top="5vh" class="v3-scroll-dialog" :close-on-click-modal="false" @closed="itemFormRef?.clearValidate()">
+      <el-form ref="itemFormRef" :model="itemForm" :rules="itemRules" label-position="top" class="item-form">
         <div class="form-section-title">基本信息</div>
         <el-row :gutter="24">
-          <el-col :span="8">
-            <el-form-item label="供应商 *">
-              <el-select v-model="itemForm.supplier_id" placeholder="选择供应商" style="width:100%">
+          <el-col :xs="24" :sm="12" :md="8">
+            <el-form-item label="供应商" prop="supplier_id">
+              <el-select v-model="itemForm.supplier_id" filterable placeholder="选择供应商" style="width:100%">
                 <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="下单日期">
               <el-date-picker v-model="itemForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="项目编号">
               <el-input v-model="itemForm.project_code" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
-            <el-form-item label="名称 *">
-              <el-input v-model="itemForm.item_name" />
+          <el-col :xs="24" :sm="12" :md="8">
+            <el-form-item label="名称" prop="item_name">
+              <el-input v-model="itemForm.item_name" placeholder="零件/物料名称" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="规格型号">
               <el-input v-model="itemForm.spec" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="付款方式">
               <el-select v-model="itemForm.payment_method" clearable allow-create filterable default-first-option
                          placeholder="选择/输入" style="width:100%">
@@ -1466,17 +1762,17 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
         <div class="form-section-title">数量与金额</div>
         <el-row :gutter="24">
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="数量">
-              <el-input-number v-model="itemForm.qty" :precision="2" :min="0" style="width:100%" />
+              <el-input-number v-model="itemForm.qty" :precision="2" :min="0" style="width:100%" @change="onItemCalc" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="单价">
-              <el-input-number v-model="itemForm.unit_price" :precision="4" :min="0" style="width:100%" />
+              <el-input-number v-model="itemForm.unit_price" :precision="4" :min="0" style="width:100%" @change="onItemCalc" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="合计金额">
               <el-input-number v-model="itemForm.received_amount" :precision="2" :min="0" style="width:100%" />
             </el-form-item>
@@ -1492,22 +1788,22 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <template v-if="editingItem">
           <div class="form-section-title">送货 · 开票与对账</div>
           <el-row :gutter="24">
-            <el-col :span="8">
+            <el-col :xs="24" :sm="12" :md="8">
               <el-form-item label="送货单号">
                 <el-input v-model="itemForm.delivery_note_no" />
               </el-form-item>
             </el-col>
-            <el-col :span="8">
+            <el-col :xs="24" :sm="12" :md="8">
               <el-form-item label="合同编号">
                 <el-input v-model="itemForm.contract_no" />
               </el-form-item>
             </el-col>
-            <el-col :span="8">
+            <el-col :xs="24" :sm="12" :md="8">
               <el-form-item label="开票日期">
                 <el-date-picker v-model="itemForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
               </el-form-item>
             </el-col>
-            <el-col :span="8">
+            <el-col :xs="24" :sm="12" :md="8">
               <el-form-item label="税率">
                 <el-select v-model="itemForm.tax_rate" style="width:100%" clearable placeholder="请选择">
                   <el-option label="13%" value="13%" />
@@ -1517,12 +1813,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 </el-select>
               </el-form-item>
             </el-col>
-            <el-col :span="8">
+            <el-col :xs="24" :sm="12" :md="8">
               <el-form-item label="开票金额">
                 <el-input-number v-model="itemForm.invoice_amount" :precision="2" :min="0" style="width:100%" />
               </el-form-item>
             </el-col>
-            <el-col :span="8">
+            <el-col :xs="24" :sm="12" :md="8">
               <el-form-item label="对账状态">
                 <el-select v-model="itemForm.invoice_status" style="width:100%">
                   <el-option label="待对账" value="待对账" />
@@ -1536,52 +1832,54 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </el-form>
       <template #footer>
         <el-button @click="itemDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveItem">保存</el-button>
+        <el-button type="primary" :loading="itemSaving" @click="saveItem">保存</el-button>
       </template>
     </el-dialog>
 
 
     <!-- ==================== 请款弹窗 ==================== -->
-    <el-dialog v-model="payReqVisible" title="发起请款" width="620px">
-      <el-form :model="payReqForm" label-width="100px">
+    <el-dialog v-model="payReqVisible" title="发起请款" width="620px" class="v3-scroll-dialog" :close-on-click-modal="false">
+      <el-form :model="payReqForm" label-position="top">
         <el-form-item label="供应商">
-          <span>{{ suppliers.find(s => s.id === payReqForm.supplier_id)?.name }}</span>
+          <b>{{ suppliers.find(s => s.id === payReqForm.supplier_id)?.name }}</b>
         </el-form-item>
-        <el-form-item label="关联明细">
-          <div v-for="it in payReqForm.items" :key="it.item_id" class="pr-item-row">
-            <span>{{ it.item_name }}</span>
-            <el-input-number v-model="it.allocated_amount" :precision="2" :min="0" size="small" style="width:120px;margin-left:8px" />
+        <el-form-item :label="`关联明细（${payReqForm.items.length} 条，金额可按行调整）`">
+          <div class="pr-item-list">
+            <div v-for="it in payReqForm.items" :key="it.item_id" class="pr-item-row">
+              <span class="pr-item-name">{{ it.item_name }}</span>
+              <el-input-number v-model="it.allocated_amount" :precision="2" :min="0" :max="it.max" size="small" style="width:130px" />
+            </div>
           </div>
         </el-form-item>
         <el-form-item label="请款总额">
           <el-input-number v-model="payReqForm.requested_amount" :precision="2" :min="0" style="width:100%" />
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="payReqForm.notes" type="textarea" :rows="2" />
+          <el-input v-model="payReqForm.notes" type="textarea" :rows="2" placeholder="选填：付款说明、账期等" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="payReqVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitPaymentRequest">提交请款</el-button>
+        <el-button type="primary" :loading="payReqSaving" @click="submitPaymentRequest">提交请款</el-button>
       </template>
     </el-dialog>
 
     <!-- ==================== 供应商弹窗 ==================== -->
-    <el-dialog v-model="supplierDialogVisible" :title="editingSupplier ? '编辑供应商' : '新增供应商'" width="780px">
-      <el-form :model="supplierForm" label-position="top" class="supplier-form">
+    <el-dialog v-model="supplierDialogVisible" :title="editingSupplier ? '编辑供应商' : '新增供应商'" width="780px" top="5vh" class="v3-scroll-dialog" :close-on-click-modal="false" @closed="supplierFormRef?.clearValidate()">
+      <el-form ref="supplierFormRef" :model="supplierForm" :rules="supplierRules" label-position="top" class="supplier-form">
         <div class="form-section-title">基本信息</div>
         <el-row :gutter="24">
-          <el-col :span="12">
-            <el-form-item label="供应商名称 *">
+          <el-col :xs="24" :sm="12">
+            <el-form-item label="供应商名称" prop="name">
               <el-input v-model="supplierForm.name" placeholder="请输入供应商名称" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :sm="12">
             <el-form-item label="编码">
               <el-input v-model="supplierForm.code" placeholder="内部编码（可选）" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="分类">
               <el-select v-model="supplierForm.category" style="width:100%" clearable allow-create filterable
                          default-first-option placeholder="选择或输入新分类">
@@ -1589,7 +1887,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="结算方式">
               <el-select v-model="supplierForm.settlement_type" style="width:100%" clearable placeholder="请选择">
                 <el-option label="现金" value="现金" />
@@ -1598,7 +1896,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="账期天数" v-if="supplierForm.settlement_type === '月结'">
               <el-input-number v-model="supplierForm.credit_days" :min="0" :max="365" style="width:100%" />
             </el-form-item>
@@ -1607,12 +1905,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
         <div class="form-section-title">联系方式</div>
         <el-row :gutter="24">
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="联系人">
               <el-input v-model="supplierForm.contact" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="电话">
               <el-input v-model="supplierForm.phone" />
             </el-form-item>
@@ -1626,12 +1924,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
         <div class="form-section-title">财务信息</div>
         <el-row :gutter="24">
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="税号">
               <el-input v-model="supplierForm.tax_no" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="开户行">
               <el-input v-model="supplierForm.bank_name" />
             </el-form-item>
@@ -1649,15 +1947,19 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-row>
       </el-form>
       <template #footer>
-        <el-button v-if="editingSupplier" type="danger" plain style="margin-right:auto" @click="deleteEditingSupplier">删除供应商</el-button>
-        <el-button @click="supplierDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveSupplier">保存</el-button>
+        <div style="display:flex;align-items:center">
+          <el-button v-if="editingSupplier" type="danger" plain @click="deleteEditingSupplier">删除供应商</el-button>
+          <div style="margin-left:auto">
+            <el-button @click="supplierDialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="supplierSaving" @click="saveSupplier">保存</el-button>
+          </div>
+        </div>
       </template>
     </el-dialog>
 
     <!-- ==================== 期初余额弹窗 ==================== -->
     <el-dialog v-model="openingBalanceVisible" :title="`录入期初余额 — ${openingBalanceSupplierName}`" width="500px">
-      <el-form :model="openingBalanceForm" label-width="100px">
+      <el-form :model="openingBalanceForm" label-position="top" v-loading="openingBalanceLoading">
         <el-form-item label="截止日期" required>
           <el-date-picker v-model="openingBalanceForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
         </el-form-item>
@@ -1670,7 +1972,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </el-form>
       <template #footer>
         <el-button @click="openingBalanceVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveOpeningBalance">保存</el-button>
+        <el-button type="primary" :loading="openingBalanceSaving" @click="saveOpeningBalance">保存</el-button>
       </template>
     </el-dialog>
 
@@ -1705,7 +2007,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-collapse-item>
       </el-collapse>
       <el-table v-loading="drawerLoading" :data="drawerItems" stripe size="small"
-                max-height="calc(100vh - 180px)" :scrollbar-always-on="true" class="wrap-cells">
+                max-height="max(300px, calc(100vh - 180px))" :scrollbar-always-on="true" class="wrap-cells">
         <el-table-column prop="delivery_date" label="下单日期" width="100" />
         <el-table-column prop="project_code" label="项目编号" width="100">
           <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
@@ -1809,29 +2111,34 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 </template>
 
 <style scoped>
-/* 弹窗表单：标签与控件之间留出间距，行间距不过于紧凑 */
-:deep(.el-dialog .el-form-item__label) { padding-right: 10px; box-sizing: border-box; }
-:deep(.el-dialog .el-form-item) { margin-bottom: 20px; }
+/* 弹窗表单：行距统一 16px */
+:deep(.el-dialog .el-form-item) { margin-bottom: 16px; }
 :deep(.el-dialog .el-form-item:last-child) { margin-bottom: 0; }
 
 .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
-.summary-bar { display: flex; gap: 24px; padding: 12px 16px; background: var(--el-fill-color-light); border-radius: 6px; margin-top: 12px; font-size: 14px; }
-.kpi-row { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-.kpi-card { flex: 1; min-width: 140px; padding: 16px; background: var(--el-fill-color-light); border-radius: 8px; border: 1px solid var(--el-border-color-lighter); }
-.kpi-label { font-size: 13px; color: var(--el-text-color-secondary); margin-bottom: 6px; }
-.kpi-value { font-size: 22px; font-weight: 700; color: var(--el-color-primary); }
-.danger-card { border-color: var(--el-color-danger-light-5); }
+/* 间距全交给 gap：抵消 Element 默认按钮相邻 margin，换行后左缘对齐 */
+.filter-bar :deep(.el-button + .el-button) { margin-left: 0; }
+.flex-spacer { flex: 1; min-width: 8px; }
+/* 勾选后浮出的批量操作条 */
+.sel-bar {
+  display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  padding: 8px 14px; margin-bottom: 10px; font-size: 13.5px;
+  background: var(--el-color-warning-light-9); border: 1px solid var(--el-color-warning-light-7);
+  border-radius: 6px;
+}
+.summary-bar { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 16px; background: var(--el-fill-color-light); border-radius: 6px; margin-top: 12px; font-size: 14px; }
 .report-section { margin-bottom: 16px; }
-.section-title { font-weight: 600; font-size: 14px; margin-bottom: 8px; color: var(--el-text-color-primary); }
 .code { color: var(--el-color-primary, #2563eb); }
 .sup-name { font-weight: 500; }
 .amt { color: var(--el-color-primary); }
 .warn { color: var(--el-color-warning); }
 .danger { color: var(--el-color-danger); }
-.pr-item-row { display: flex; align-items: center; margin-bottom: 4px; font-size: 13px; }
+.pr-item-list { width: 100%; max-height: 220px; overflow-y: auto; }
+.pr-item-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+.pr-item-name { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
 .drawer-summary { display: flex; gap: 20px; padding: 12px 0 16px; font-size: 14px; border-bottom: 1px solid var(--el-border-color-lighter); margin-bottom: 12px; }
 .monthly-collapse { margin-bottom: 14px; }
-.muted { color: var(--el-text-color-secondary); font-size: 12.5px; }
+.muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .stock-has { color: var(--el-color-success); font-weight: 600; }
 .sugg-buy { color: var(--el-color-danger); }
 .sugg-none { color: var(--el-text-color-secondary); font-weight: 400; }
@@ -1839,28 +2146,25 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .dl-tip { font-size: 12.5px; color: var(--el-text-color-secondary); margin-bottom: 14px; line-height: 1.6; }
 .dl-sec { margin-bottom: 20px; }
 .dl-sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--el-border-color-lighter); }
-.dl-sec-title { font-weight: 600; color: #0f172a; font-size: 13px; }
+.dl-sec-title { font-weight: 600; color: var(--el-text-color-primary); font-size: 13px; }
 .dl-list { display: flex; flex-direction: column; gap: 6px; }
 .dl-item { width: 100%; margin-right: 0; height: auto; }
 .dl-item :deep(.el-checkbox__label) { white-space: normal; word-break: break-all; line-height: 1.5; }
-.dl-kind { display: inline-block; margin-right: 6px; padding: 0 6px; font-size: 11px; color: #1d4ed8; background: #dbeafe; border-radius: 8px; }
+.dl-kind { display: inline-block; margin-right: 6px; padding: 0 6px; font-size: 11px; color: var(--primary-dark); background: var(--el-color-primary-light-9); border-radius: 8px; }
 .dl-empty { padding: 4px 0; }
 .form-section-title {
   font-size: 13px; font-weight: 600; color: var(--el-color-primary);
   padding: 4px 0 10px; margin-top: 6px; border-bottom: 1px solid var(--el-border-color-lighter);
   margin-bottom: 16px;
 }
-.supplier-form :deep(.el-form-item),
-.item-form :deep(.el-form-item),
-.order-form :deep(.el-form-item) { margin-bottom: 16px; }
-.supplier-form :deep(.el-form-item__label),
-.item-form :deep(.el-form-item__label),
-.order-form :deep(.el-form-item__label) { font-size: 13px; color: var(--el-text-color-secondary); padding-bottom: 4px; }
 .form-section-title:first-child { margin-top: 0; }
-.po-no { font-family: monospace; font-size: 12.5px; color: #7c3aed; }
+.po-no { font-variant-numeric: tabular-nums; font-size: 13px; padding: 0 !important; }
 .order-lines-head { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 8px; }
-.order-lines :deep(.el-input__wrapper),
-.order-lines :deep(.el-input-number) { width: 100%; }
 .order-lines :deep(.cell) { padding-left: 6px; padding-right: 6px; }
-.order-total-bar { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding: 10px 14px; background: var(--el-fill-color-light); border-radius: 6px; font-size: 14px; }
+.order-total-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding: 10px 14px; background: var(--el-fill-color-light); border-radius: 6px; font-size: 14px; }
+.order-lines-title { font-weight: 600; font-size: 14px; }
+.pager-bar { display: flex; justify-content: flex-end; margin-top: 10px; }
+.pr-expand { padding: 6px 12px 6px 48px; }
+.pr-expand-row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; font-size: 13px; border-bottom: 1px dashed var(--el-border-color-lighter); max-width: 560px; }
+.pr-expand-row:last-of-type { border-bottom: none; }
 </style>
