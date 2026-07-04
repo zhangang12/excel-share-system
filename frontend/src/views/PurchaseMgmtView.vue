@@ -618,11 +618,21 @@ const listOrderForm = reactive({
   project_id: '' as number | '', project_code: '',
   delivery_date: '', payment_method: '',
 })
-// 当前项目拥有的来源清单（有对应 sheet_id 才可选）
+// 🆕 R4/A6：沿用采购部项目目录「按人分表」可见性——采购员只对自己负责的清单下单
+//（lixinxin=标准件+电工 / wangqin=不锈钢+激光 / fangbusen=外协；其余人看全部）
+const SHEET_VIS: Record<string, () => boolean> = {
+  standard: () => showStandardSheet.value,
+  elec_po: () => showElecPo.value,
+  material: () => showMaterial.value,
+  outsource: () => showOutsource.value,
+  laser: () => showLaser.value,
+}
+const sheetVisible = (key: string) => SHEET_VIS[key]?.() ?? true
+// 当前项目拥有 + 本采购员负责的来源清单（有对应 sheet_id 且有权限才可选）
 const availableSheets = computed(() => {
   const p = listProjects.value.find(x => x.id === listOrderForm.project_id)
   if (!p) return [] as typeof SHEET_TYPES[number][]
-  return SHEET_TYPES.filter(t => p.sheets[t.field])
+  return SHEET_TYPES.filter(t => p.sheets[t.field] && sheetVisible(t.key))
 })
 const curSheetHasQty = computed(() => SHEET_TYPES.find(t => t.key === listSheet.value)?.hasQty ?? true)
 // 🆕 品牌历史选项（allow-create + 已用过的品牌，方便下拉复选）
@@ -672,9 +682,9 @@ async function openListOrder() {
   batchSupplier.value = ''; batchBrand.value = ''; listSheet.value = 'standard'
   try {
     const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
-    // 只要有任意一张来源清单就可选
+    // 只要有任意一张「本采购员负责」的来源清单就可选（R4/A6）
     listProjects.value = r.data
-      .filter(p => SHEET_TYPES.some(t => p[t.field]))
+      .filter(p => SHEET_TYPES.some(t => p[t.field] && sheetVisible(t.key)))
       .map(p => ({
         id: p.project_id, code: p.code, name: p.name,
         sheets: Object.fromEntries(SHEET_TYPES.map(t => [t.field, p[t.field] || null])),

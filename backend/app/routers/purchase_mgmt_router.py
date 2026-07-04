@@ -24,6 +24,21 @@ _WRITE_ROLES = ("buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
 # 收货归仓库（采购只下单、不收货）；admin/manager 由 require_roles 自动放行
 _RECEIVE_ROLES = ("warehouse", "warehouse_lead")
 
+# 🆕 R4/A6：采购员按清单分工（沿用采购部项目目录「按人分表」的可见性）。
+# 仅限这三名采购员各管自己的清单；其他采购员 + 采购主管 + admin/manager 不受限（看全部）。
+_BUYER_SHEET_MAP: dict[str, set[str]] = {
+    "lixinxin": {"standard", "elec_po"},   # 李新新：标准件清单 + 电工采购单
+    "wangqin": {"material", "laser"},       # 王芹：不锈钢原料下料单 + 激光件清单
+    "fangbusen": {"outsource"},             # 方步森：外协加工
+}
+
+
+def _allowed_sheet_keys(user: Optional[models.User]) -> Optional[set[str]]:
+    """该采购员可下单的清单集合；None = 不限制（看全部清单）。"""
+    if not user:
+        return None
+    return _BUYER_SHEET_MAP.get((user.username or "").lower())
+
 
 def _uname(u: Optional[models.User]) -> Optional[str]:
     return (u.full_name or u.username) if u else None
@@ -573,6 +588,10 @@ async def purchasable(
     conf = _PURCHASABLE_SHEETS.get(sheet)
     if not conf:
         raise HTTPException(400, "未知清单类型")
+    # 🆕 R4/A6：采购员只能取自己负责清单的可采购行（管理员/主管/其他采购员不限）
+    allowed = _allowed_sheet_keys(current)
+    if allowed is not None and sheet not in allowed:
+        raise HTTPException(403, "你没有该清单的采购权限")
     sheet_name, item_col, spec_col, qty_col, brand_col = conf[:5]
     r = await db.execute(select(models.Datasheet).where(
         models.Datasheet.project_id == project_id, models.Datasheet.name == sheet_name))
@@ -645,6 +664,17 @@ async def create_order_from_list(
     lines = [l for l in body.lines if (l.item_name or "").strip()]
     if not lines:
         raise HTTPException(400, "请至少选择一行")
+    # 🆕 R4/A6：采购员只能对自己负责清单下单（管理员/主管/其他采购员不限）
+    allowed = _allowed_sheet_keys(current)
+    if allowed is not None:
+        sheet_ids = {l.source_sheet_id for l in lines if l.source_sheet_id}
+        if sheet_ids:
+            name2key = {conf[0]: k for k, conf in _PURCHASABLE_SHEETS.items()}
+            dsr = await db.execute(select(models.Datasheet).where(models.Datasheet.id.in_(sheet_ids)))
+            for ds in dsr.scalars().all():
+                key = name2key.get(ds.name)
+                if key and key not in allowed:
+                    raise HTTPException(403, f"你没有「{ds.name}」的采购权限")
     po_no = await _next_po_no(db)
     today = _date.today().isoformat()
     uname = current.full_name or current.username
