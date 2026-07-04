@@ -1103,11 +1103,11 @@ async def pay_payment_request(
             if item:
                 if total_alloc > 0:
                     ratio = pri.allocated_amount / total_alloc
-                    add = round(body.paid_amount * ratio, 4)
+                    add = round(paid_amount * ratio, 4)
                 else:
-                    add = round(body.paid_amount / len(pri_rows), 4)
+                    add = round(paid_amount / len(pri_rows), 4)
                 item.paid_amount = (item.paid_amount or 0) + add
-                item.paid_date = body.paid_date
+                item.paid_date = paid_date
 
     await db.commit()
     return {"ok": True}
