@@ -417,6 +417,20 @@ async def create_purchase_order(
 # ==================== 清单 → 采购下单 / 回写清单 ====================
 _STD_SHEET = "标准件清单"
 
+# 🆕 R1：可从清单下单的 5 张来源表 + 各表列名映射（列名各表不同）
+# key: (表名, 名称列, 规格列, 数量列|None, 品牌列|None, 下单日期回写列, 到货日期回写列, 仓库签字回写列)
+_PURCHASABLE_SHEETS = {
+    "standard":  ("标准件清单",       "项目",     "规格型号", "数量", "品牌", "订购日期", "到货日期", "仓库签字"),
+    "elec_po":   ("电工采购单",       "项目",     "规格型号", "数量", "品牌", "订购日期", "到货日期", "仓库签字"),
+    "material":  ("不锈钢原料下料单", "材料类别", "规格型号", "数量", None,   "下单日期", "到料日期", "仓库"),
+    "outsource": ("外协加工",         "名称",     "图纸名称", None,   None,   "发出日期", "到货日期", "仓库"),
+    "laser":     ("激光件清单",       "名称",     "图纸名称", None,   None,   "发出日期", "到料日期", "仓库"),
+}
+# 回写清单时把所有可能的「下单日期/到货日期/仓库签字」列名都写一遍，只有该表存在的列会生效
+_ALL_ORDER_DATE_COLS = ("订购日期", "下单日期", "发出日期")
+_ALL_ARRIVAL_COLS = ("到货日期", "到料日期")
+_ALL_WH_SIGN_COLS = ("仓库签字", "仓库")
+
 
 async def _sheet_fieldmap(db: AsyncSession, sheet_id: int) -> dict:
     fr = await db.execute(select(models.Field).where(models.Field.datasheet_id == sheet_id))
@@ -455,18 +469,23 @@ def _num(v):
 @router.get("/purchasable/{project_id}", response_model=List[schemas.PurchasableRow])
 async def purchasable(
     project_id: int,
+    sheet: str = Query("standard", description="清单类型: standard/elec_po/material/outsource/laser"),
     current: models.User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    """取项目「标准件清单」的可采购行 + 当前采购状态 + 现有库存/建议采购量。
-    建议采购量 = 需求数量 − 现有库存（按 名称+规格 匹配仓库物料），从源头避免买多。"""
+    """取项目某来源清单的可采购行 + 采购状态 + 现有库存/建议采购量。
+    5 张来源表列名各异（外协/激光无数量列），按 _PURCHASABLE_SHEETS 映射取数。"""
+    conf = _PURCHASABLE_SHEETS.get(sheet)
+    if not conf:
+        raise HTTPException(400, "未知清单类型")
+    sheet_name, item_col, spec_col, qty_col, brand_col = conf[:5]
     r = await db.execute(select(models.Datasheet).where(
-        models.Datasheet.project_id == project_id, models.Datasheet.name == _STD_SHEET))
-    sheet = r.scalar_one_or_none()
-    if not sheet:
+        models.Datasheet.project_id == project_id, models.Datasheet.name == sheet_name))
+    ds = r.scalar_one_or_none()
+    if not ds:
         return []
-    name2id = await _sheet_fieldmap(db, sheet.id)
-    lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == sheet.id))
+    name2id = await _sheet_fieldmap(db, ds.id)
+    lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == ds.id))
     by_rec: dict = {}
     for pi in lr.scalars().all():
         by_rec.setdefault(pi.source_record_id, []).append(pi)
@@ -484,19 +503,21 @@ async def purchasable(
         stock_by_key[_k(m.name, m.spec)] = stock_by_key.get(_k(m.name, m.spec), 0) + \
             stock_by_id.get(m.id, m.init_stock or 0)
     rr = await db.execute(select(models.Record).where(
-        models.Record.datasheet_id == sheet.id).order_by(models.Record.sort_order, models.Record.id))
+        models.Record.datasheet_id == ds.id).order_by(models.Record.sort_order, models.Record.id))
     out = []
     for rec in rr.scalars().all():
         v = rec.values or {}
 
         def gv(col):
+            if not col:
+                return None
             fid = name2id.get(col)
             x = v.get(fid) if fid else None
             if isinstance(x, list):
                 x = "、".join(str(i) for i in x)
             return str(x).strip() if x not in (None, "") else None
 
-        name = gv("项目")
+        name = gv(item_col)
         if not name:
             continue
         pis = by_rec.get(rec.id, [])
@@ -506,14 +527,14 @@ async def purchasable(
             status = "已到货"
         else:
             status = "已下单"
-        brand = gv("品牌")
+        brand = gv(brand_col)
         extra = "，".join(f"{c}:{gv(c)}" for c in ("材质",) if gv(c))
-        spec = gv("规格型号")
-        qty = _num(gv("数量"))
+        spec = gv(spec_col)
+        qty = _num(gv(qty_col)) if qty_col else None
         stock = round(stock_by_key.get(_k(name, spec), 0), 4)
         suggest = round(max(0.0, (qty or 0) - stock), 4) if qty is not None else 0
         out.append(schemas.PurchasableRow(
-            sheet_id=sheet.id, record_id=rec.id, item_name=name, spec=spec, brand=brand,
+            sheet_id=ds.id, record_id=rec.id, item_name=name, spec=spec, brand=brand,
             qty=qty, stock=stock, suggest_purchase=suggest,
             notes=(extra or gv("备注")), status=status))
     return out
@@ -542,8 +563,11 @@ async def create_order_from_list(
             item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=body.payment_method, notes=l.notes, buyer_id=current.id))
         if l.source_sheet_id and l.source_record_id:
-            await _writeback_sheet_row(db, l.source_sheet_id, l.source_record_id,
-                                       {"订购日期": (body.delivery_date or today), "采购负责人": uname})
+            # 各来源表的「下单日期」列名不同（订购/下单/发出日期），全写一遍只有存在的列生效
+            wb = {"采购负责人": uname}
+            for c in _ALL_ORDER_DATE_COLS:
+                wb[c] = (body.delivery_date or today)
+            await _writeback_sheet_row(db, l.source_sheet_id, l.source_record_id, wb)
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
                          .order_by(models.PurchaseItem.id))
@@ -841,9 +865,13 @@ async def receive_item(
         item.received_amount = round(item.qty * item.unit_price, 4)
     # 🆕 回写清单：到货日期 / 进度(已到货) / 仓库签字
     if item.source_sheet_id and item.source_record_id:
-        await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id,
-                                   {"到货日期": body.arrival_date, "进度": "已到货",
-                                    "仓库签字": (current.full_name or current.username)})
+        # 各来源表「到货日期/仓库签字」列名不同，全写一遍只有存在的列生效
+        wb = {"进度": "已到货"}
+        for c in _ALL_ARRIVAL_COLS:
+            wb[c] = body.arrival_date
+        for c in _ALL_WH_SIGN_COLS:
+            wb[c] = (current.full_name or current.username)
+        await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
     # 🆕 采购收货 → 自动入库（带采购单价/金额），库存与财务成本据此计算
     await _auto_stock_in(db, item, current)
     await db.commit()

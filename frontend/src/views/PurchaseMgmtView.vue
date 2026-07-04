@@ -542,15 +542,32 @@ interface PurchasableRow {
 const listOrderVisible = ref(false)
 const listOrderSaving = ref(false)
 const purchasableLoading = ref(false)
-const listProjects = ref<{ id: number; code: string; name: string }[]>([])
+// 🆕 R1：5 张来源清单（key ↔ 中文名 ↔ 项目字段名，用于判断项目是否有该表）
+const SHEET_TYPES = [
+  { key: 'standard', label: '标准件清单', field: 'standard_sheet_id', hasQty: true },
+  { key: 'elec_po', label: '电工采购单', field: 'elec_po_sheet_id', hasQty: true },
+  { key: 'material', label: '不锈钢原料下料单', field: 'material_sheet_id', hasQty: true },
+  { key: 'outsource', label: '外协加工', field: 'outsource_sheet_id', hasQty: false },
+  { key: 'laser', label: '激光件清单', field: 'laser_sheet_id', hasQty: false },
+] as const
+interface ListProject { id: number; code: string; name: string; sheets: Record<string, number | null> }
+const listProjects = ref<ListProject[]>([])
+const listSheet = ref<string>('standard')
 const purchasableRows = ref<PurchasableRow[]>([])
 const purchasableFilter = ref('')
 const onlyGap = ref(false)   // 🆕 只看有缺口（建议采购>0）的行
-// 🆕 A4：去掉表头供应商，改逐行选；表头只留 项目/下单日期/付款方式
+// 🆕 A4：去掉表头供应商，改逐行选；表头只留 项目/清单/下单日期/付款方式
 const listOrderForm = reactive({
   project_id: '' as number | '', project_code: '',
   delivery_date: '', payment_method: '',
 })
+// 当前项目拥有的来源清单（有对应 sheet_id 才可选）
+const availableSheets = computed(() => {
+  const p = listProjects.value.find(x => x.id === listOrderForm.project_id)
+  if (!p) return [] as typeof SHEET_TYPES[number][]
+  return SHEET_TYPES.filter(t => p.sheets[t.field])
+})
+const curSheetHasQty = computed(() => SHEET_TYPES.find(t => t.key === listSheet.value)?.hasQty ?? true)
 // 🆕 品牌历史选项（allow-create + 已用过的品牌，方便下拉复选）
 const brandOptions = computed(() => {
   const set = new Set<string>()
@@ -595,11 +612,16 @@ async function openListOrder() {
     delivery_date: new Date().toISOString().slice(0, 10), payment_method: '',
   })
   purchasableRows.value = []; purchasableFilter.value = ''; onlyGap.value = false
-  batchSupplier.value = ''; batchBrand.value = ''
+  batchSupplier.value = ''; batchBrand.value = ''; listSheet.value = 'standard'
   try {
     const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
-    listProjects.value = r.data.filter(p => p.standard_sheet_id)
-      .map(p => ({ id: p.project_id, code: p.code, name: p.name }))
+    // 只要有任意一张来源清单就可选
+    listProjects.value = r.data
+      .filter(p => SHEET_TYPES.some(t => p[t.field]))
+      .map(p => ({
+        id: p.project_id, code: p.code, name: p.name,
+        sheets: Object.fromEntries(SHEET_TYPES.map(t => [t.field, p[t.field] || null])),
+      }))
   } catch { listProjects.value = [] }
   listOrderVisible.value = true
 }
@@ -607,9 +629,16 @@ async function onListProjectChange() {
   const pid = listOrderForm.project_id
   listOrderForm.project_code = listProjects.value.find(x => x.id === pid)?.code || ''
   if (!pid) { purchasableRows.value = []; return }
+  // 选项目后：把清单类型定到该项目拥有的第一张，然后加载
+  listSheet.value = availableSheets.value[0]?.key || 'standard'
+  await loadPurchasable()
+}
+async function loadPurchasable() {
+  const pid = listOrderForm.project_id
+  if (!pid) { purchasableRows.value = []; return }
   purchasableLoading.value = true
   try {
-    const r = await http.get<PurchasableRow[]>(`/purchase-mgmt/purchasable/${pid}`)
+    const r = await http.get<PurchasableRow[]>(`/purchase-mgmt/purchasable/${pid}`, { params: { sheet: listSheet.value } })
     // 默认只勾选「未下单且有缺口(建议采购>0)」的行；采购数量默认取建议采购量，避免买多
     purchasableRows.value = r.data.map(x => ({
       ...x,
@@ -1621,23 +1650,31 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     <!-- ==================== 从清单下单弹窗（清单→按供应商拆单）==================== -->
     <el-dialog v-model="listOrderVisible" title="从清单下单" width="min(1320px, 97vw)" top="4vh" class="v3-scroll-dialog" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
-        title="选项目 → 清单自动带出 → 逐行选「供应商」「品牌」（可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的订购日期/采购负责人。" />
+        title="选项目 + 清单类型（标准件/电工/不锈钢/外协/激光）→ 逐行选「供应商」「品牌」（可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的下单日期/采购负责人。外协/激光无数量，采购数量手填。" />
       <el-form :model="listOrderForm" label-position="top" class="order-form">
         <el-row :gutter="20">
-          <el-col :xs="24" :sm="12" :md="10">
+          <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="项目 *">
-              <el-select v-model="listOrderForm.project_id" filterable placeholder="选择项目(有标准件清单的)"
+              <el-select v-model="listOrderForm.project_id" filterable placeholder="选择项目"
                          style="width:100%" @change="onListProjectChange">
                 <el-option v-for="p in listProjects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :xs="12" :sm="12" :md="7">
+          <el-col :xs="12" :sm="12" :md="6">
+            <el-form-item label="清单类型 *">
+              <el-select v-model="listSheet" :disabled="!listOrderForm.project_id" placeholder="选清单"
+                         style="width:100%" @change="loadPurchasable">
+                <el-option v-for="t in availableSheets" :key="t.key" :label="t.label" :value="t.key" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="12" :sm="12" :md="5">
             <el-form-item label="下单日期">
               <el-date-picker v-model="listOrderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <el-col :xs="12" :sm="12" :md="7">
+          <el-col :xs="12" :sm="12" :md="5">
             <el-form-item label="付款方式">
               <el-select v-model="listOrderForm.payment_method" clearable allow-create filterable default-first-option
                          placeholder="选择/输入" style="width:100%">
@@ -1650,7 +1687,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <div class="order-lines-head" style="flex-wrap:wrap;gap:10px">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <el-input v-model="purchasableFilter" placeholder="筛选名称/规格" clearable :prefix-icon="Search" style="width:170px" />
-          <el-switch v-model="onlyGap" active-text="只看有缺口" style="--el-switch-on-color: var(--el-color-danger)" />
+          <el-switch v-if="curSheetHasQty" v-model="onlyGap" active-text="只看有缺口" style="--el-switch-on-color: var(--el-color-danger)" />
           <!-- 🆕 批量填：逐行选太麻烦时，勾好行后一键填供应商/品牌 -->
           <el-divider direction="vertical" />
           <el-select v-model="batchSupplier" filterable clearable placeholder="批量供应商" style="width:150px">
@@ -1665,7 +1702,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <span class="muted">已勾选 <b>{{ listSelCount }}</b> / {{ purchasableRows.length }} 行</span>
       </div>
       <el-table :data="filteredPurchasable" v-loading="purchasableLoading" size="small" border stripe
-                :empty-text="listOrderForm.project_id ? '该项目标准件清单为空' : '请先在上方选择项目，标准件清单会自动带出'"
+                :empty-text="listOrderForm.project_id ? '该清单为空' : '请先选择项目和清单类型'"
                 max-height="max(320px, 56vh)" :scrollbar-always-on="true" class="wrap-cells">
         <el-table-column width="46" align="center" fixed>
           <template #header>
@@ -1684,11 +1721,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="需求量" width="70" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
-        <el-table-column label="现有库存" width="78" align="right">
+        <el-table-column v-if="curSheetHasQty" label="需求量" width="70" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
+        <el-table-column v-if="curSheetHasQty" label="现有库存" width="78" align="right">
           <template #default="{ row }"><span :class="{ 'stock-has': row.stock > 0 }">{{ row.stock }}</span></template>
         </el-table-column>
-        <el-table-column label="建议采购" width="80" align="right">
+        <el-table-column v-if="curSheetHasQty" label="建议采购" width="80" align="right">
           <template #default="{ row }"><b :class="row.suggest_purchase > 0 ? 'sugg-buy' : 'sugg-none'">{{ row.suggest_purchase }}</b></template>
         </el-table-column>
         <el-table-column label="采购数量" width="116">
@@ -1715,7 +1752,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-table-column label="备注" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ row.notes || '—' }}</template></el-table-column>
       </el-table>
       <div class="muted" style="margin-top:6px">
-        提示：<b>每行必须选供应商</b>，点生成时按供应商自动拆成多张采购单（一供应商一张单）。建议采购 = 需求量 − 现有库存，采购数量已默认填好可改。
+        提示：<b>每行必须选供应商</b>，点生成时按供应商自动拆成多张采购单（一供应商一张单）。<span v-if="curSheetHasQty">建议采购 = 需求量 − 现有库存，采购数量已默认填好可改。</span><span v-else>本清单无数量，采购数量请手动填写。</span>
       </div>
       <template #footer>
         <el-button @click="listOrderVisible = false">取消</el-button>
