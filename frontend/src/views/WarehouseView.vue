@@ -2,10 +2,10 @@
 // 🆕 v3 M07 仓库组：总览/出入库/收发存/流水/物料主数据/发货清单 六 tab
 import { ref, onMounted, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Lock, View, Download, Printer } from '@element-plus/icons-vue'
+import { Plus, Search, Lock, View, Download, Printer, Setting } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow } from '@/api/warehouse'
+import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow, type WhCustomField } from '@/api/warehouse'
 import { canInlinePreview, attachmentBlobUrl, isPdfAtt, isImageAtt } from '@/api/attachments'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -29,7 +29,7 @@ async function loadMaterials() {
     materials.value = j.materials; lowCount.value = j.low_count
   } finally { loading.value = false }
 }
-onMounted(() => { loadMaterials(); loadMatDict() })
+onMounted(() => { loadMaterials(); loadMatDict(); loadCustomFields() })
 
 const totalStock = computed(() => materials.value.reduce((s, m) => s + m.stock, 0))
 const lowList = computed(() => materials.value.filter(m => m.low))
@@ -78,7 +78,55 @@ async function loadSummary() { summary.value = await whApi.summary(period.value)
 
 // ===== 物料主数据 =====
 const matVisible = ref(false)
-const matForm = reactive<any>({ id: null, name: '', spec: '', category: '', unit: '个', location: '', safety_stock: 0, init_stock: 0 })
+const matForm = reactive<any>({ id: null, name: '', spec: '', category: '', unit: '个', location: '', safety_stock: 0, init_stock: 0, custom_values: {} })
+
+// ===== 🆕 物料自定义字段（可配置列，跟采购 R6 同一套做法） =====
+const canConfigFields = computed(() => auth.hasRole('warehouse_lead', 'admin', 'manager'))
+const customFields = ref<WhCustomField[]>([])
+async function loadCustomFields() {
+  try { customFields.value = await whApi.customFields() } catch { customFields.value = [] }
+}
+const listCustomFields = computed(() => customFields.value.filter(f => f.enabled && f.show_in_list))
+const formCustomFields = computed(() => customFields.value.filter(f => f.enabled))
+function cfDisplay(cv: Record<string, any> | undefined, f: WhCustomField): string {
+  const v = cv?.[String(f.id)]
+  return v == null || v === '' ? '—' : String(v)
+}
+const CF_TYPES = [{ v: 'text', l: '文本' }, { v: 'number', l: '数字' }, { v: 'date', l: '日期' }, { v: 'select', l: '下拉选项' }]
+const cfManagerVisible = ref(false)
+const cfEditingId = ref<number | null>(null)
+const cfSaving = ref(false)
+const cfForm = reactive({ label: '', ftype: 'text', options: '', required: false, show_in_list: true, sort_order: 0, enabled: true })
+function cfResetForm() {
+  cfEditingId.value = null
+  Object.assign(cfForm, { label: '', ftype: 'text', options: '', required: false, show_in_list: true, sort_order: 0, enabled: true })
+}
+function openFieldManager() { cfResetForm(); loadCustomFields(); cfManagerVisible.value = true }
+function cfEdit(f: WhCustomField) {
+  cfEditingId.value = f.id
+  Object.assign(cfForm, {
+    label: f.label, ftype: f.ftype, options: (f.options || []).join('\n'),
+    required: f.required, show_in_list: f.show_in_list, sort_order: f.sort_order, enabled: f.enabled,
+  })
+}
+async function cfSave() {
+  if (!cfForm.label.trim()) { ElMessage.warning('请填写字段名称'); return }
+  const payload = {
+    label: cfForm.label.trim(), ftype: cfForm.ftype,
+    options: cfForm.ftype === 'select' ? cfForm.options.split('\n').map(s => s.trim()).filter(Boolean) : [],
+    required: cfForm.required, show_in_list: cfForm.show_in_list, sort_order: cfForm.sort_order, enabled: cfForm.enabled,
+  }
+  cfSaving.value = true
+  try {
+    if (cfEditingId.value) { await whApi.updateCustomField(cfEditingId.value, payload); ElMessage.success('已更新') }
+    else { await whApi.createCustomField(payload); ElMessage.success('已新增字段') }
+    cfResetForm(); await loadCustomFields()
+  } catch { /* handled */ } finally { cfSaving.value = false }
+}
+async function cfDelete(f: WhCustomField) {
+  try { await ElMessageBox.confirm(`删除字段「${f.label}」？已录入物料的历史值保留但不再显示/校验。`, '删除字段', { type: 'warning', confirmButtonText: '删除' }) } catch { return }
+  try { await whApi.deleteCustomField(f.id); ElMessage.success('已删除'); await loadCustomFields() } catch { /* handled */ }
+}
 // 🆕 类别/单位 改为受管理字典：只从启用项里选（采购主管/admin 在采购管理页维护）
 interface MatDictItem { id: number; dtype: string; value: string; sort_order: number; enabled: boolean }
 const matDict = ref<MatDictItem[]>([])
@@ -90,8 +138,8 @@ const matCatOptions = computed(() => matDict.value.filter(d => d.dtype === 'cate
 const matUnitOptions = computed(() => matDict.value.filter(d => d.dtype === 'unit').map(d => d.value))
 const matGradeOptions = computed(() => matDict.value.filter(d => d.dtype === 'material_grade').map(d => d.value))
 function openMat(m?: WhMaterial) {
-  if (m) Object.assign(matForm, { ...m })
-  else Object.assign(matForm, { id: null, name: '', spec: '', category: '', material_grade: '', unit: '个', location: '', safety_stock: 0, init_stock: 0 })
+  if (m) Object.assign(matForm, { ...m, custom_values: { ...(m.custom_values || {}) } })
+  else Object.assign(matForm, { id: null, name: '', spec: '', category: '', material_grade: '', unit: '个', location: '', safety_stock: 0, init_stock: 0, custom_values: {} })
   matVisible.value = true
 }
 const matSubmitting = ref(false)
@@ -361,6 +409,7 @@ function onTab(name: string) {
         <!-- 物料主数据 -->
         <el-tab-pane label="物料主数据" name="mat">
           <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openMat()" style="margin-bottom:10px">新增物料</el-button>
+          <el-button v-if="canConfigFields" :icon="Setting" @click="openFieldManager" style="margin-bottom:10px;margin-left:8px">字段设置</el-button>
           <el-table :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="name" label="名称" min-width="120" />
             <el-table-column prop="spec" label="规格型号" min-width="120"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
@@ -370,6 +419,9 @@ function onTab(name: string) {
             <el-table-column prop="safety_stock" label="安全库存" width="90" />
             <el-table-column prop="init_stock" label="期初库存" width="90" />
             <el-table-column prop="location" label="库位" width="90"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
+            <el-table-column v-for="f in listCustomFields" :key="f.id" :label="f.label" min-width="100">
+              <template #default="{ row }">{{ cfDisplay(row.custom_values, f) }}</template>
+            </el-table-column>
             <el-table-column v-if="canWrite" label="操作" width="80"><template #default="{ row }"><el-button size="small" link type="primary" @click="openMat(row)">编辑</el-button></template></el-table-column>
           </el-table>
           <EmptyHint v-if="!materials.length" text="暂无物料主数据，点「新增物料」开始" size="sm" />
@@ -593,12 +645,60 @@ function onTab(name: string) {
           <el-form-item label="安全库存" style="flex:1"><el-input-number v-model="matForm.safety_stock" :min="0" :controls="false" style="width:100%" /></el-form-item>
           <el-form-item label="期初库存" style="flex:1"><el-input-number v-model="matForm.init_stock" :min="0" :controls="false" :disabled="!!matForm.id" style="width:100%" /></el-form-item>
         </div>
+        <!-- 🆕 自定义字段（仓库主管在「字段设置」里配置） -->
+        <div class="frow" v-for="f in formCustomFields" :key="f.id">
+          <el-form-item :label="f.required ? f.label + ' *' : f.label" style="flex:1">
+            <el-select v-if="f.ftype === 'select'" v-model="matForm.custom_values[String(f.id)]" clearable filterable style="width:100%" placeholder="请选择">
+              <el-option v-for="o in f.options" :key="o" :label="o" :value="o" />
+            </el-select>
+            <el-date-picker v-else-if="f.ftype === 'date'" v-model="matForm.custom_values[String(f.id)]" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+            <el-input-number v-else-if="f.ftype === 'number'" v-model="matForm.custom_values[String(f.id)]" :controls="false" style="width:100%" />
+            <el-input v-else v-model="matForm.custom_values[String(f.id)]" />
+          </el-form-item>
+        </div>
         <div v-if="matForm.id" class="muted small">期初库存建档后不可改（避免破坏库存勾稽，调整请用出入库）。</div>
       </el-form>
       <template #footer>
         <el-button @click="matVisible = false">取消</el-button>
         <el-button type="primary" :loading="matSubmitting" @click="submitMat">保存</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 🆕 物料自定义字段管理器 -->
+    <el-dialog v-model="cfManagerVisible" title="物料自定义字段设置" width="640px">
+      <el-alert type="info" :closable="false" style="margin-bottom:12px"
+        title="给物料表单加自定义字段（文本/数字/日期/下拉）。启用后新增/编辑物料会出现对应输入框；勾选「列表显示」的字段在物料主数据表里显示成一列。删除字段不影响已录入的历史值。" />
+      <el-table :data="customFields" size="small" border stripe max-height="34vh">
+        <el-table-column type="index" label="#" width="46" align="center" />
+        <el-table-column prop="label" label="字段名称" min-width="110" />
+        <el-table-column label="类型" width="90"><template #default="{ row }">{{ CF_TYPES.find(t => t.v === row.ftype)?.l || row.ftype }}</template></el-table-column>
+        <el-table-column label="必填" width="60"><template #default="{ row }">{{ row.required ? '是' : '—' }}</template></el-table-column>
+        <el-table-column label="列表显示" width="80"><template #default="{ row }">{{ row.show_in_list ? '是' : '—' }}</template></el-table-column>
+        <el-table-column label="排序" width="60" prop="sort_order" />
+        <el-table-column label="状态" width="70"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="100">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="cfEdit(row)">编辑</el-button>
+            <el-button size="small" link type="danger" @click="cfDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div style="margin-top:14px;font-weight:600">{{ cfEditingId ? '编辑字段' : '新增字段' }}</div>
+      <el-form :model="cfForm" label-position="top">
+        <el-row :gutter="12">
+          <el-col :xs="24" :sm="8"><el-form-item label="字段名称 *"><el-input v-model="cfForm.label" placeholder="如 品牌/保质期" /></el-form-item></el-col>
+          <el-col :xs="12" :sm="6"><el-form-item label="类型"><el-select v-model="cfForm.ftype" style="width:100%"><el-option v-for="t in CF_TYPES" :key="t.v" :label="t.l" :value="t.v" /></el-select></el-form-item></el-col>
+          <el-col :xs="6" :sm="4"><el-form-item label="排序"><el-input-number v-model="cfForm.sort_order" :controls="false" style="width:100%" /></el-form-item></el-col>
+          <el-col :xs="9" :sm="3"><el-form-item label="必填"><el-switch v-model="cfForm.required" /></el-form-item></el-col>
+          <el-col :xs="9" :sm="3"><el-form-item label="列表显示"><el-switch v-model="cfForm.show_in_list" /></el-form-item></el-col>
+          <el-col :xs="24" v-if="cfForm.ftype === 'select'"><el-form-item label="下拉选项（每行一个）"><el-input v-model="cfForm.options" type="textarea" :rows="3" placeholder="选项1&#10;选项2" /></el-form-item></el-col>
+        </el-row>
+      </el-form>
+      <div style="display:flex;gap:10px">
+        <el-button v-if="cfEditingId" @click="cfResetForm">取消编辑</el-button>
+        <el-button type="primary" :loading="cfSaving" @click="cfSave">{{ cfEditingId ? '保存修改' : '新增字段' }}</el-button>
+      </div>
+      <template #footer><el-button @click="cfManagerVisible = false">关闭</el-button></template>
     </el-dialog>
 
     <!-- 🆕 采购收货弹窗 -->

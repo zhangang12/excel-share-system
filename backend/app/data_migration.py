@@ -24,7 +24,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("done_at", "TIMESTAMP"),
     ],
     "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
-    "wh_materials": [("material_grade", "VARCHAR(32)")],   # 🆕 材质（字典管理）
+    "wh_materials": [("material_grade", "VARCHAR(32)"), ("custom_values", "JSON")],   # 🆕 材质（字典管理）+ 自定义字段值
     "produce_group_tasks": [("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)")],  # 🆕 派给具体人 + 本组预计完成
     "dept_orders": [
         ("design_done_flag",   "BOOLEAN DEFAULT FALSE"),  # 🆕 设计完成第一步标记

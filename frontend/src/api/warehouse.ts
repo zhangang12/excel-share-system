@@ -5,6 +5,12 @@ export interface WhMaterial {
   id: number; code?: string | null; name: string; spec?: string | null
   category?: string | null; material_grade?: string | null; unit: string; location?: string | null
   safety_stock: number; init_stock: number; status: string; stock: number; low: boolean
+  custom_values?: Record<string, any>   // 🆕 自定义字段值
+}
+// 🆕 仓库物料自定义字段定义（跟采购 R6 同一套）
+export interface WhCustomField {
+  id: number; label: string; ftype: string; options: string[]
+  required: boolean; show_in_list: boolean; sort_order: number; enabled: boolean
 }
 export interface WhTxn {
   id: number; material_id: number; material_name: string; spec?: string | null
@@ -43,6 +49,11 @@ export const whApi = {
     http.get<{ materials: WhMaterial[]; total: number; low_count: number }>('/wh/materials', { params: { kw } }).then((r) => r.data),
   createMaterial: (data: Partial<WhMaterial>) => http.post('/wh/materials', data).then((r) => r.data),
   updateMaterial: (id: number, data: Partial<WhMaterial>) => http.put(`/wh/materials/${id}`, data).then((r) => r.data),
+  // 🆕 物料自定义字段
+  customFields: () => http.get<WhCustomField[]>('/wh/material-custom-fields').then((r) => r.data),
+  createCustomField: (data: Partial<WhCustomField>) => http.post('/wh/material-custom-fields', data).then((r) => r.data),
+  updateCustomField: (id: number, data: Partial<WhCustomField>) => http.put(`/wh/material-custom-fields/${id}`, data).then((r) => r.data),
+  deleteCustomField: (id: number) => http.delete(`/wh/material-custom-fields/${id}`).then((r) => r.data),
   txns: (params?: { direction?: string; material_id?: number }) =>
     http.get<WhTxn[]>('/wh/txns', { params }).then((r) => r.data),
   createTxn: (data: any) => http.post('/wh/txns', data).then((r) => r.data),

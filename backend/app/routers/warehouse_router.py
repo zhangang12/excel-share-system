@@ -62,6 +62,7 @@ def _mat_out(m: models.WhMaterial, stock: float) -> schemas.WhMaterialOut:
         unit=m.unit, location=m.location, safety_stock=m.safety_stock or 0,
         init_stock=m.init_stock or 0, status=m.status, stock=stock,
         low=stock < (m.safety_stock or 0),
+        custom_values=m.custom_values or {},
     )
 
 
@@ -102,6 +103,7 @@ async def create_material(
         location=(data.location or "").strip() or None,
         safety_stock=data.safety_stock or 0, init_stock=data.init_stock or 0,
         code=(data.code or "").strip() or None,
+        custom_values=await _clean_wh_custom(db, data.custom_values),
     )
     db.add(m)
     await db.commit()
@@ -132,8 +134,98 @@ async def update_material(
     m.material_grade = (data.material_grade or "").strip() or None
     m.location = (data.location or "").strip() or None
     m.safety_stock = data.safety_stock or 0
+    m.custom_values = await _clean_wh_custom(db, data.custom_values)
     await db.commit()
     return schemas.Msg(message="已保存")
+
+
+# ==================== 🆕 仓库物料自定义字段（可配置列，跟采购 R6 同一套做法）====================
+_WH_FIELD_ADMIN_ROLES = ("warehouse_lead",)   # 配置字段：仓库主管（admin/manager 由 require_roles 自动放行）
+
+
+async def _wh_custom_fields(db: AsyncSession, enabled_only: bool = False):
+    q = select(models.WhMaterialCustomField).order_by(
+        models.WhMaterialCustomField.sort_order, models.WhMaterialCustomField.id)
+    if enabled_only:
+        q = q.where(models.WhMaterialCustomField.enabled == True)  # noqa: E712
+    return list((await db.execute(q)).scalars().all())
+
+
+async def _clean_wh_custom(db: AsyncSession, custom_values: Optional[dict]) -> dict:
+    """校验必填、净化物料自定义字段值（只保留启用字段、去空）。"""
+    fields = await _wh_custom_fields(db, enabled_only=True)
+    cv = custom_values or {}
+    clean: dict = {}
+    missing: list[str] = []
+    for f in fields:
+        key = str(f.id)
+        val = cv.get(key)
+        sval = "" if val is None else str(val).strip()
+        if f.required and not sval:
+            missing.append(f.label)
+        elif sval:
+            clean[key] = val
+    if missing:
+        raise HTTPException(400, f"必填自定义字段未填写：{'、'.join(missing)}")
+    return clean
+
+
+@router.get("/material-custom-fields", response_model=List[schemas.WhMaterialCustomFieldOut])
+async def list_wh_custom_fields(
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """仓库物料自定义字段列表（所有登录用户可读，用于渲染列与输入框）。"""
+    return [schemas.WhMaterialCustomFieldOut.model_validate(f) for f in await _wh_custom_fields(db)]
+
+
+@router.post("/material-custom-fields", response_model=schemas.WhMaterialCustomFieldOut)
+async def create_wh_custom_field(
+    body: schemas.WhMaterialCustomFieldIn,
+    current: models.User = Depends(require_roles(*_WH_FIELD_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    f = models.WhMaterialCustomField(**body.model_dump())
+    db.add(f)
+    await db.commit()
+    await db.refresh(f)
+    await write_audit(db, user=current, action="create", target_type="wh_material_custom_field", target_id=f.id)
+    return schemas.WhMaterialCustomFieldOut.model_validate(f)
+
+
+@router.put("/material-custom-fields/{fid}", response_model=schemas.WhMaterialCustomFieldOut)
+async def update_wh_custom_field(
+    fid: int,
+    body: schemas.WhMaterialCustomFieldIn,
+    current: models.User = Depends(require_roles(*_WH_FIELD_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    f = (await db.execute(select(models.WhMaterialCustomField).where(
+        models.WhMaterialCustomField.id == fid))).scalar_one_or_none()
+    if not f:
+        raise HTTPException(404, "字段不存在")
+    for k, v in body.model_dump().items():
+        setattr(f, k, v)
+    await db.commit()
+    await db.refresh(f)
+    return schemas.WhMaterialCustomFieldOut.model_validate(f)
+
+
+@router.delete("/material-custom-fields/{fid}", response_model=schemas.Msg)
+async def delete_wh_custom_field(
+    fid: int,
+    current: models.User = Depends(require_roles(*_WH_FIELD_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除字段定义（已录入物料里的历史值保留在 custom_values 中，只是不再展示/校验）。"""
+    f = (await db.execute(select(models.WhMaterialCustomField).where(
+        models.WhMaterialCustomField.id == fid))).scalar_one_or_none()
+    if not f:
+        raise HTTPException(404, "字段不存在")
+    await db.delete(f)
+    await db.commit()
+    await write_audit(db, user=current, action="delete", target_type="wh_material_custom_field", target_id=fid)
+    return schemas.Msg(message="已删除该自定义字段")
 
 
 # ==================== 🆕 字典维护（物料类别 / 计量单位 / 供应商分类 受管理取值）====================

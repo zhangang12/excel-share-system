@@ -364,6 +364,7 @@ class WhMaterial(Base):
     safety_stock: Mapped[float] = mapped_column(default=0)               # 安全库存（低于预警）
     init_stock: Mapped[float] = mapped_column(default=0)                 # 期初库存
     status: Mapped[str] = mapped_column(String(16), default="正常")       # 正常/停用
+    custom_values: Mapped[Optional[dict]] = mapped_column(PortableJSON(), default=dict)  # 🆕 自定义字段值（存量行为空）
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -614,6 +615,20 @@ class PurchaseItem(Base):
 class PurchaseCustomField(Base):
     """🆕 R6：采购单/采购明细的可配置自定义字段定义（值存 PurchaseItem.custom_values）。"""
     __tablename__ = "purchase_custom_fields"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    label: Mapped[str] = mapped_column(String(64))                 # 显示名称
+    ftype: Mapped[str] = mapped_column(String(16), default="text")  # text/number/date/select
+    options: Mapped[Optional[dict]] = mapped_column(PortableJSON(), default=list)  # select 选项 list[str]
+    required: Mapped[bool] = mapped_column(default=False)           # 是否必填
+    show_in_list: Mapped[bool] = mapped_column(default=True)        # 列表是否显示
+    sort_order: Mapped[int] = mapped_column(default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WhMaterialCustomField(Base):
+    """🆕 仓库物料的可配置自定义字段定义（值存 WhMaterial.custom_values）。跟采购 R6 同一套做法。"""
+    __tablename__ = "wh_material_custom_fields"
     id: Mapped[int] = mapped_column(primary_key=True)
     label: Mapped[str] = mapped_column(String(64))                 # 显示名称
     ftype: Mapped[str] = mapped_column(String(16), default="text")  # text/number/date/select

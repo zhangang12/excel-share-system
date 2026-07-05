@@ -378,6 +378,7 @@ class WhMaterialIn(BaseModel):
     safety_stock: float = 0
     init_stock: float = 0
     code: Optional[str] = None
+    custom_values: dict = Field(default_factory=dict)   # 🆕 自定义字段值
 
 
 class WhMaterialOut(BaseModel):
@@ -394,6 +395,29 @@ class WhMaterialOut(BaseModel):
     status: str
     stock: float = 0          # 实时库存
     low: bool = False         # 是否低于安全库存
+    custom_values: dict = Field(default_factory=dict)   # 🆕 自定义字段值
+
+
+class WhMaterialCustomFieldIn(BaseModel):
+    label: str = Field(min_length=1, max_length=64)
+    ftype: str = "text"                           # text/number/date/select
+    options: list[str] = Field(default_factory=list)
+    required: bool = False
+    show_in_list: bool = True
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class WhMaterialCustomFieldOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    label: str
+    ftype: str
+    options: list[str] = Field(default_factory=list)
+    required: bool
+    show_in_list: bool
+    sort_order: int
+    enabled: bool
 
 
 class WhTxnIn(BaseModel):
