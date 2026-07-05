@@ -144,8 +144,13 @@ async def list_equipment_names(
     _: models.User = Depends(require_roles("admin", "manager", "sales", "sales_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 下单/编辑台账「设备名称」联想：跟「客户单位」一样的做法，返回历史录入过的去重设备名。"""
-    res = await db.execute(select(models.SalesLedger.name).distinct())
+    """🆕 下单/编辑台账「设备名称」联想：返回历史录入过的去重设备名。
+    设备名称存在 Project.name（SalesLedger 无 name 列），故 join 项目取有台账的项目名。"""
+    res = await db.execute(
+        select(models.Project.name)
+        .join(models.SalesLedger, models.SalesLedger.project_id == models.Project.id)
+        .distinct()
+    )
     return sorted({(n or "").strip() for (n,) in res.all() if (n or "").strip()})
 
 
