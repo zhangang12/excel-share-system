@@ -594,7 +594,8 @@ class PurchaseItem(Base):
     invoice_amount: Mapped[float] = mapped_column(default=0)
     paid_amount: Mapped[float] = mapped_column(default=0)
     paid_date: Mapped[Optional[str]] = mapped_column(String(10))
-    payment_method: Mapped[Optional[str]] = mapped_column(String(16))  # 🆕 付款方式（现金/转账/月结/承兑/预付）
+    payment_method: Mapped[Optional[str]] = mapped_column(String(16))  # 🆕 付款方式：现金全款/对公全款/账期/现金预付/对公预付
+    prepay_ratio: Mapped[Optional[float]] = mapped_column()  # 🆕 预付比例(%)，仅现金预付/对公预付时有意义
     invoice_status: Mapped[str] = mapped_column(String(16), default="待对账", index=True)
     buyer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
     notes: Mapped[Optional[str]] = mapped_column(Text)

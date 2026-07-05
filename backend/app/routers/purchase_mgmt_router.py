@@ -353,7 +353,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         invoice_date=i.invoice_date, tax_rate=i.tax_rate,
         invoice_amount=i.invoice_amount or 0,
         paid_amount=i.paid_amount or 0, paid_date=i.paid_date,
-        payment_method=i.payment_method,
+        payment_method=i.payment_method, prepay_ratio=i.prepay_ratio,
         invoice_status=i.invoice_status,
         custom_values=i.custom_values or {},
         buyer_id=i.buyer_id,
@@ -422,7 +422,7 @@ async def create_purchase_order(
             spec=ln.spec, brand=ln.brand, qty=ln.qty, unit_price=ln.unit_price,
             received_amount=recv or 0,
             tax_rate=ln.tax_rate, notes=ln.notes,
-            payment_method=body.payment_method,
+            payment_method=body.payment_method, prepay_ratio=body.prepay_ratio,
             custom_values=cv,
             buyer_id=current.id,
         ))
@@ -687,6 +687,7 @@ async def create_order_from_list(
             supplier_id=body.supplier_id, delivery_date=body.delivery_date, project_code=body.project_code,
             item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=(l.payment_method or body.payment_method),
+            prepay_ratio=(l.prepay_ratio if l.prepay_ratio is not None else body.prepay_ratio),
             notes=l.notes, buyer_id=current.id))
         if l.source_sheet_id and l.source_record_id:
             # 各来源表的「下单日期」列名不同（订购/下单/发出日期），全写一遍只有存在的列生效

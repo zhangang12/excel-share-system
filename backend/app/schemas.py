@@ -918,6 +918,7 @@ class PurchaseItemCreate(BaseModel):
     tax_rate: Optional[str] = None
     invoice_amount: float = 0
     payment_method: Optional[str] = None
+    prepay_ratio: Optional[float] = None   # 🆕 预付比例(%)，仅现金预付/对公预付时有意义
     invoice_status: str = "待对账"
     notes: Optional[str] = None
     custom_values: dict = Field(default_factory=dict)   # 🆕 R6 {str(field_id): value}
@@ -983,6 +984,7 @@ class PurchaseOrderCreate(BaseModel):
     contract_no: Optional[str] = None
     project_code: Optional[str] = None           # 默认项目编号（行可覆盖）
     payment_method: Optional[str] = None          # 🆕 付款方式（表头，作用于全单）
+    prepay_ratio: Optional[float] = None          # 🆕 预付比例(%)（表头，作用于全单）
     lines: list[PurchaseOrderLine] = Field(min_length=1)
 
 
@@ -1016,6 +1018,7 @@ class OrderFromListLine(BaseModel):
     qty: Optional[float] = None
     unit_price: Optional[float] = None
     payment_method: Optional[str] = None  # 🆕 逐行付款方式（不同批次可能不一样，不随供应商固定）
+    prepay_ratio: Optional[float] = None  # 🆕 逐行预付比例(%)
     notes: Optional[str] = None
 
 
@@ -1024,6 +1027,7 @@ class OrderFromListCreate(BaseModel):
     delivery_date: Optional[str] = None
     project_code: Optional[str] = None
     payment_method: Optional[str] = None
+    prepay_ratio: Optional[float] = None
     lines: list[OrderFromListLine] = Field(min_length=1)
 
 
@@ -1053,6 +1057,7 @@ class PurchaseItemUpdate(BaseModel):
     tax_rate: Optional[str] = None
     invoice_amount: Optional[float] = None
     payment_method: Optional[str] = None
+    prepay_ratio: Optional[float] = None
     arrival_date: Optional[str] = None
     custom_values: Optional[dict] = None   # 🆕 R6
     invoice_status: Optional[str] = None
@@ -1089,6 +1094,7 @@ class PurchaseItemOut(BaseModel):
     paid_amount: float = 0
     paid_date: Optional[str] = None
     payment_method: Optional[str] = None
+    prepay_ratio: Optional[float] = None
     invoice_status: str
     pay_status: str = "未付款"   # 🆕 未付款/已请款/已批待付/部分付款/已付款（B1=a：记录付款才算已付）
     custom_values: dict = Field(default_factory=dict)   # 🆕 R6 自定义字段值

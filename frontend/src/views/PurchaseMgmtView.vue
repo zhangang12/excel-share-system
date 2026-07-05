@@ -113,7 +113,13 @@ function fmtMoney(v: number | undefined | null) {
 }
 
 // 🆕 付款方式下拉选项（可自定义追加）
-const PAY_METHODS = ['现金', '对公转账', '月结', '承兑', '预付']
+const PAY_METHODS = ['现金全款', '对公全款', '账期', '现金预付', '对公预付']
+const PREPAY_METHODS = ['现金预付', '对公预付']   // 🆕 选中这两种才需要填「预付比例」
+function isPrepayMethod(m?: string | null) { return !!m && PREPAY_METHODS.includes(m) }
+function payMethodLabel(m?: string | null, ratio?: number | null): string {
+  if (!m) return ''
+  return isPrepayMethod(m) && ratio != null ? `${m}（预付${ratio}%）` : m
+}
 
 // ===== types =====
 interface Att { id: number; name: string }
@@ -138,7 +144,7 @@ interface PurchaseItemOut {
   item_name: string; spec?: string | null; brand?: string | null; qty?: number | null; unit_price?: number | null
   received_amount: number; invoice_date?: string | null; tax_rate?: string | null
   invoice_amount: number; paid_amount: number; paid_date?: string | null
-  payment_method?: string | null; pay_status?: string
+  payment_method?: string | null; prepay_ratio?: number | null; pay_status?: string
   custom_values?: Record<string, any>
   invoice_status: string; buyer_id?: number | null; buyer_name?: string | null
   notes?: string | null; created_at: string
@@ -409,7 +415,7 @@ const itemForm = reactive({
   delivery_date: '', contract_no: '', project_code: '', delivery_note_no: '',
   item_name: '', spec: '', brand: '', qty: null as number | null, unit_price: null as number | null,
   received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
-  payment_method: '', invoice_status: '待对账', notes: '',
+  payment_method: '', prepay_ratio: null as number | null, invoice_status: '待对账', notes: '',
   custom_values: {} as Record<string, any>,   // 🆕 R6
 })
 // 🆕 数量×单价 自动带出合计（与采购单行为一致，仍可手改）
@@ -432,6 +438,7 @@ const orderSaving = ref(false)
 const orderForm = reactive({
   supplier_id: '' as number | '',
   delivery_date: '', contract_no: '', project_code: '', payment_method: '',
+  prepay_ratio: null as number | null,
   lines: [blankLine()] as OrderLine[],
 })
 // 采购商抬头（打印采购单用；如公司全称有出入，改这里即可）
@@ -442,7 +449,7 @@ const orderTotal = computed(() =>
 function openNewOrder() {
   Object.assign(orderForm, {
     supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10),
-    contract_no: '', project_code: '', payment_method: '', lines: [blankLine()],
+    contract_no: '', project_code: '', payment_method: '', prepay_ratio: null, lines: [blankLine()],
   })
   orderDialogVisible.value = true
 }
@@ -476,6 +483,7 @@ async function saveOrder() {
       contract_no: orderForm.contract_no || null,
       project_code: orderForm.project_code || null,
       payment_method: orderForm.payment_method || null,
+      prepay_ratio: isPrepayMethod(orderForm.payment_method) ? orderForm.prepay_ratio : null,
       lines: lines.map(l => ({
         item_name: l.item_name.trim(),
         spec: l.spec || null,
@@ -553,7 +561,7 @@ function printPurchaseOrder() {
   if (!lines.length) { ElMessage.warning('请至少填写一行零件'); return }
   openPrintWindow(renderPOHtml({
     supplierName: sup?.name || '', orderDate: orderForm.delivery_date,
-    payMethod: orderForm.payment_method, defaultProject: orderForm.project_code,
+    payMethod: payMethodLabel(orderForm.payment_method, orderForm.prepay_ratio), defaultProject: orderForm.project_code,
     lines: lines.map(l => ({
       project_code: l.project_code, item_name: l.item_name, spec: l.spec,
       qty: l.qty, unit_price: l.unit_price, amount: l.received_amount, notes: l.notes,
@@ -576,7 +584,7 @@ async function printPO(poNo?: string | null) {
     if (!rows.length) { w.close(); ElMessage.info('该采购单没有明细'); return }
     const html = renderPOHtml({
       poNo, supplierName: rows[0].supplier_name, orderDate: rows[0].delivery_date || '',
-      payMethod: rows[0].payment_method || '',
+      payMethod: payMethodLabel(rows[0].payment_method, rows[0].prepay_ratio),
       lines: rows.map(x => ({
         project_code: x.project_code, item_name: x.item_name, spec: x.spec,
         qty: x.qty, unit_price: x.unit_price, amount: x.received_amount, notes: x.notes,
@@ -640,6 +648,7 @@ interface PurchasableRow {
   _checked: boolean; _price: number | null; _buyqty: number | null
   _supplier_id: number | ''; _brand: string   // 🆕 逐行选供应商/品牌
   _payment_method: string   // 🆕 逐行付款方式（不同批次可能不一样，不跟供应商绑死）
+  _prepay_ratio: number | null   // 🆕 逐行预付比例(%)，仅现金预付/对公预付时有意义
 }
 const listOrderVisible = ref(false)
 const listOrderSaving = ref(false)
@@ -690,6 +699,7 @@ const brandOptions = computed(() => {
 const batchSupplier = ref<number | ''>('')
 const batchBrand = ref('')
 const batchPaymentMethod = ref('')
+const batchPrepayRatio = ref<number | null>(null)
 function applyBatchSupplier() {
   if (!batchSupplier.value) { ElMessage.info('先选一个供应商'); return }
   const t = purchasableRows.value.filter(r => r._checked)
@@ -705,11 +715,18 @@ function applyBatchBrand() {
   ElMessage.success(`已把品牌填给 ${t.length} 个勾选行`)
 }
 function applyBatchPaymentMethod() {
-  if (!batchPaymentMethod.value) { ElMessage.info('先选/输入一个付款方式'); return }
+  if (!batchPaymentMethod.value) { ElMessage.info('先选一个付款方式'); return }
   const t = purchasableRows.value.filter(r => r._checked)
   if (!t.length) { ElMessage.info('先勾选要设置的行'); return }
   t.forEach(r => { r._payment_method = batchPaymentMethod.value })
   ElMessage.success(`已把付款方式填给 ${t.length} 个勾选行`)
+}
+function applyBatchPrepayRatio() {
+  if (batchPrepayRatio.value == null) { ElMessage.info('先填一个预付比例'); return }
+  const t = purchasableRows.value.filter(r => r._checked)
+  if (!t.length) { ElMessage.info('先勾选要设置的行'); return }
+  t.forEach(r => { r._prepay_ratio = batchPrepayRatio.value })
+  ElMessage.success(`已把预付比例填给 ${t.length} 个勾选行`)
 }
 const filteredPurchasable = computed(() => {
   const kw = purchasableFilter.value.trim().toLowerCase()
@@ -732,7 +749,7 @@ async function openListOrder() {
     delivery_date: new Date().toISOString().slice(0, 10),
   })
   purchasableRows.value = []; purchasableFilter.value = ''; onlyGap.value = false
-  batchSupplier.value = ''; batchBrand.value = ''; batchPaymentMethod.value = ''; listSheet.value = 'standard'
+  batchSupplier.value = ''; batchBrand.value = ''; batchPaymentMethod.value = ''; batchPrepayRatio.value = null; listSheet.value = 'standard'
   try {
     const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
     // 只要有任意一张「本采购员负责」的来源清单就可选（R4/A6）
@@ -768,6 +785,7 @@ async function loadPurchasable() {
       _supplier_id: '' as number | '',
       _brand: x.brand || '',
       _payment_method: '',
+      _prepay_ratio: null,
     }))
   } finally { purchasableLoading.value = false }
 }
@@ -823,6 +841,7 @@ async function submitListOrder() {
           source_sheet_id: r.sheet_id, source_record_id: r.record_id,
           item_name: r.item_name, spec: r.spec, brand: r._brand || null,
           payment_method: r._payment_method || null,
+          prepay_ratio: isPrepayMethod(r._payment_method) ? r._prepay_ratio : null,
           qty: r._buyqty ?? r.suggest_purchase ?? r.qty, unit_price: r._price,
         })),
       })
@@ -954,7 +973,7 @@ function openNewItem() {
     supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10), contract_no: '', project_code: '',
     delivery_note_no: '', item_name: '', spec: '', brand: '', qty: null, unit_price: null,
     received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
-    payment_method: '', invoice_status: '待对账', notes: '',
+    payment_method: '', prepay_ratio: null, invoice_status: '待对账', notes: '',
     custom_values: {},
   })
   itemDialogVisible.value = true
@@ -969,7 +988,7 @@ function openEditItem(row: PurchaseItemOut) {
     spec: row.spec || '', brand: row.brand || '', qty: row.qty, unit_price: row.unit_price,
     received_amount: row.received_amount, invoice_date: row.invoice_date || '',
     tax_rate: row.tax_rate || '', invoice_amount: row.invoice_amount,
-    payment_method: row.payment_method || '',
+    payment_method: row.payment_method || '', prepay_ratio: row.prepay_ratio ?? null,
     invoice_status: row.invoice_status, notes: row.notes || '',
     custom_values: { ...(row.custom_values || {}) },
   })
@@ -996,6 +1015,7 @@ async function saveItem() {
       tax_rate: itemForm.tax_rate || null,
       invoice_amount: itemForm.invoice_amount,
       payment_method: itemForm.payment_method || null,
+      prepay_ratio: isPrepayMethod(itemForm.payment_method) ? itemForm.prepay_ratio : null,
       invoice_status: itemForm.invoice_status,
       notes: itemForm.notes || null,
       custom_values: itemForm.custom_values,
@@ -1820,10 +1840,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-option v-for="b in brandOptions" :key="b" :label="b" :value="b" />
           </el-select>
           <el-button size="small" @click="applyBatchBrand">填给勾选行</el-button>
-          <el-select v-model="batchPaymentMethod" clearable allow-create filterable default-first-option placeholder="批量付款方式" style="width:126px">
+          <el-select v-model="batchPaymentMethod" clearable filterable placeholder="批量付款方式" style="width:110px">
             <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
           </el-select>
           <el-button size="small" @click="applyBatchPaymentMethod">填给勾选行</el-button>
+          <el-input-number v-if="isPrepayMethod(batchPaymentMethod)" v-model="batchPrepayRatio"
+            :min="0" :max="100" placeholder="预付%" controls-position="right" style="width:100px" />
+          <el-button v-if="isPrepayMethod(batchPaymentMethod)" size="small" @click="applyBatchPrepayRatio">填给勾选行</el-button>
         </div>
         <span class="muted">已勾选 <b>{{ listSelCount }}</b> / {{ purchasableRows.length }} 行</span>
       </div>
@@ -1872,12 +1895,19 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="付款方式" width="108">
+        <el-table-column label="付款方式" width="100">
           <template #default="{ row }">
-            <el-select v-model="row._payment_method" clearable allow-create filterable default-first-option
-                       placeholder="选/填" size="small" style="width:100%" @change="row._checked = true">
+            <el-select v-model="row._payment_method" clearable filterable
+                       placeholder="选择" size="small" style="width:100%" @change="row._checked = true">
               <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
             </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="预付%" width="84">
+          <template #default="{ row }">
+            <el-input-number v-if="isPrepayMethod(row._payment_method)" v-model="row._prepay_ratio"
+              :min="0" :max="100" size="small" controls-position="right" style="width:100%" />
+            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
         <el-table-column label="采购状态" width="80" align="center">
@@ -1918,10 +1948,15 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :xs="12" :sm="8" :md="4">
             <el-form-item label="付款方式">
-              <el-select v-model="orderForm.payment_method" clearable allow-create filterable default-first-option
-                         placeholder="选择/输入" style="width:100%">
+              <el-select v-model="orderForm.payment_method" clearable filterable
+                         placeholder="选择" style="width:100%">
                 <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
               </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col v-if="isPrepayMethod(orderForm.payment_method)" :xs="12" :sm="8" :md="4">
+            <el-form-item label="预付比例(%)">
+              <el-input-number v-model="orderForm.prepay_ratio" :min="0" :max="100" style="width:100%" />
             </el-form-item>
           </el-col>
           <el-col :xs="12" :sm="8" :md="4">
@@ -2041,10 +2076,15 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="付款方式">
-              <el-select v-model="itemForm.payment_method" clearable allow-create filterable default-first-option
-                         placeholder="选择/输入" style="width:100%">
+              <el-select v-model="itemForm.payment_method" clearable filterable
+                         placeholder="选择" style="width:100%">
                 <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
               </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col v-if="isPrepayMethod(itemForm.payment_method)" :xs="24" :sm="12" :md="8">
+            <el-form-item label="预付比例(%)">
+              <el-input-number v-model="itemForm.prepay_ratio" :min="0" :max="100" style="width:100%" />
             </el-form-item>
           </el-col>
         </el-row>

@@ -58,6 +58,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("po_no", "VARCHAR(32)"),
         ("arrival_date", "VARCHAR(10)"),           # 🆕 到货日期（仓库收货填）
         ("payment_method", "VARCHAR(16)"),         # 🆕 付款方式
+        ("prepay_ratio", "FLOAT"),                 # 🆕 预付比例(%)，仅现金预付/对公预付时有意义
         ("source_sheet_id", "INTEGER"),            # 🆕 来源数据表（清单→采购单）
         ("source_record_id", "INTEGER"),           # 🆕 来源行
         ("brand", "VARCHAR(64)"),                  # 🆕 品牌（下单时逐行选/填）
@@ -1444,6 +1445,30 @@ async def backfill_supplier_category_dict(db: AsyncSession) -> dict:
     return {"added": added}
 
 
+async def backfill_payment_method_v2(db: AsyncSession) -> dict:
+    """🆕 付款方式改为5个精确值（现金全款/对公全款/账期/现金预付/对公预付），替换旧的
+    现金/对公转账/月结/承兑/预付。幂等：只对仍是旧值的行做一次性语义改写。
+    「承兑」「预付」跟新5值没有干净的一一对应关系（承兑是单独的票据工具；预付不知道是现金还是对公），
+    不强行瞎猜着改，保留原值——历史记录不会丢，只是下次编辑时需要人工挑一个新值。"""
+    from sqlalchemy import update as _upd, func as _f
+    CLEAN_MAP = {"现金": "现金全款", "对公转账": "对公全款", "月结": "账期"}
+    updated = 0
+    for old_val, new_val in CLEAN_MAP.items():
+        r = await db.execute(_upd(models.PurchaseItem)
+                              .where(models.PurchaseItem.payment_method == old_val)
+                              .values(payment_method=new_val))
+        updated += r.rowcount or 0
+    left = await db.execute(select(_f.count(models.PurchaseItem.id)).where(
+        models.PurchaseItem.payment_method.in_(["承兑", "预付"])))
+    left_count = left.scalar() or 0
+    if updated:
+        await db.commit()
+        log.info("[backfill_payment_method_v2] 改写 %d 条为新付款方式值", updated)
+    if left_count:
+        log.warning("[backfill_payment_method_v2] %d 条仍是「承兑/预付」旧值，无法自动对应新5值，保留原值待人工编辑", left_count)
+    return {"updated": updated, "left_ambiguous": left_count}
+
+
 async def backfill_oa_departments(db: AsyncSession) -> dict:
     """🆕 OA 部门字典默认值（幂等）：首次启动灌入常见部门；已存在则跳过，不覆盖管理层后续的改名/增删。
     lead_role 只给"有分组的部门"（普通员工/主管两个角色）设主管角色，让主管能看到本部门全部申请；
@@ -1788,6 +1813,10 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_supplier_category_dict(db)
     except Exception as e:
         log.warning("backfill_supplier_category_dict failed: %s", e)
+    try:
+        await backfill_payment_method_v2(db)
+    except Exception as e:
+        log.warning("backfill_payment_method_v2 failed: %s", e)
     try:
         await backfill_oa_departments(db)
     except Exception as e:
