@@ -1015,6 +1015,7 @@ class OrderFromListLine(BaseModel):
     brand: Optional[str] = None          # 🆕 逐行品牌
     qty: Optional[float] = None
     unit_price: Optional[float] = None
+    payment_method: Optional[str] = None  # 🆕 逐行付款方式（不同批次可能不一样，不随供应商固定）
     notes: Optional[str] = None
 
 

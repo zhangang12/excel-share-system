@@ -252,6 +252,22 @@ a:hover { text-decoration: none; opacity: .85; }
 .listorder-footer .lo-hint { flex: 1; text-align: left; font-size: 12px; line-height: 1.4; }
 .listorder-footer .lo-actions { flex: none; white-space: nowrap; }
 
+/* 🆕 从清单下单：版面收紧 + 字号随窗口/屏幕宽度连续变化（笔记本嫌挤、大屏嫌小一次解决）。
+   覆盖 Element Plus 的字号变量，而不是零散加 font-size——这样表格/下拉/输入框内部文字都跟着变，
+   不会出现"表头变了、格子里输入框字号没变"的不一致。 */
+.listorder-dialog {
+  --el-font-size-base: clamp(12px, 0.55vw + 8px, 14px);
+  --el-font-size-small: clamp(11px, 0.5vw + 7px, 13px);
+}
+.listorder-head-form :deep(.el-form-item) { margin-bottom: 8px; }
+.listorder-head-form :deep(.el-form-item__label) { padding-bottom: 2px; line-height: 1.2; }
+.listorder-toolbar { margin: 2px 0 8px; }
+.listorder-dialog .el-table .cell { padding: 0 6px; line-height: 1.3; }
+.listorder-dialog .el-table td.el-table__cell,
+.listorder-dialog .el-table th.el-table__cell { padding: 4px 0; }
+.listorder-dialog .el-table .el-input-number,
+.listorder-dialog .el-table .el-select { font-size: inherit; }
+
 /* ===== 🆕 去卡通空状态：el-empty 默认插画太卡通，统一灰度淡化（未替换为 EmptyHint 的兜底） ===== */
 .el-empty__image { filter: grayscale(1); opacity: .28; }
 .el-empty { padding: 28px 0; }

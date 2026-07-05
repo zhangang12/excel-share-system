@@ -686,7 +686,8 @@ async def create_order_from_list(
             po_no=po_no, source_sheet_id=l.source_sheet_id, source_record_id=l.source_record_id,
             supplier_id=body.supplier_id, delivery_date=body.delivery_date, project_code=body.project_code,
             item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
-            received_amount=recv or 0, payment_method=body.payment_method, notes=l.notes, buyer_id=current.id))
+            received_amount=recv or 0, payment_method=(l.payment_method or body.payment_method),
+            notes=l.notes, buyer_id=current.id))
         if l.source_sheet_id and l.source_record_id:
             # 各来源表的「下单日期」列名不同（订购/下单/发出日期），全写一遍只有存在的列生效
             wb = {"采购负责人": uname}
@@ -928,6 +929,9 @@ async def delete_item(
     current: models.User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
+    """删除只删「采购明细」这一条记录本身，不会级联删除/冲正仓库入库或财务请款——
+    如果链路已经走到那两边，直接物理删除会让仓库库存虚高、财务的钱对不上明细，所以直接拦截，
+    要求先去对应模块走正常的撤销流程（仓库冲红 / 请款单处理），保证两边流水都有据可查。"""
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == iid))
     item = r.scalar_one_or_none()
     if not item:
@@ -936,6 +940,15 @@ async def delete_item(
         raise HTTPException(403, "无权删除他人明细")
     if item.invoice_status in ("已对账", "已开票"):
         raise HTTPException(400, "已对账/已开票的明细不可删除")
+    wh = await db.execute(select(models.WhTxn.id).where(
+        models.WhTxn.purchase_item_id == iid, models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False))  # noqa: E712
+    if wh.scalar_one_or_none():
+        raise HTTPException(400, "该明细已收货入库，仓库库存已增加；请先到【仓库-出入库流水】把对应入库单冲红，再回来删除")
+    pri = await db.execute(select(func.count(models.PaymentRequestItem.id)).where(
+        models.PaymentRequestItem.item_id == iid))
+    if pri.scalar():
+        raise HTTPException(400, "该明细已被请款（含已批/已付），不可直接删除；请先到【请款记录】里处理对应请款单")
     await db.delete(item)
     await db.commit()
     return {"ok": True}
