@@ -960,9 +960,9 @@ class PurchaseCustomFieldOut(BaseModel):
     enabled: bool
 
 
-# ---------- 🆕 物料字典（类别 / 单位 受管理取值） ----------
+# ---------- 🆕 物料字典（类别 / 单位 / 供应商分类 受管理取值） ----------
 class MaterialDictIn(BaseModel):
-    dtype: str = Field(pattern="^(category|unit)$")   # category / unit
+    dtype: str = Field(pattern="^(category|unit|supplier_category)$")   # category / unit / supplier_category
     value: str = Field(min_length=1, max_length=64)
     sort_order: int = 0
     enabled: bool = True

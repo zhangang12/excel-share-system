@@ -133,9 +133,22 @@ async def update_material(
     return schemas.Msg(message="已保存")
 
 
-# ==================== 🆕 物料字典（类别 / 单位 受管理取值）====================
+# ==================== 🆕 字典维护（物料类别 / 计量单位 / 供应商分类 受管理取值）====================
+# 同一张表(dtype 区分)、同一套 CRUD；三者取值语义各自独立，互不并入对方下拉。
 # 维护：采购主管（admin/manager 由 require_roles 自动放行）；读取：所有登录用户
 _DICT_ADMIN_ROLES = ("buyer_lead",)
+
+
+def _dict_ref(dtype: str):
+    """字典取值被谁引用——用于改名级联 / 删除拦截。category/unit 挂在物料上，
+    supplier_category 是独立分类（不与物料类别混用，两边取值语义不同），挂在供应商上。"""
+    if dtype == "category":
+        return models.WhMaterial, models.WhMaterial.category, "category"
+    if dtype == "unit":
+        return models.WhMaterial, models.WhMaterial.unit, "unit"
+    if dtype == "supplier_category":
+        return models.Supplier, models.Supplier.category, "category"
+    return None, None, None
 
 
 async def _dict_items(db: AsyncSession, dtype: Optional[str] = None, enabled_only: bool = False):
@@ -150,7 +163,7 @@ async def _dict_items(db: AsyncSession, dtype: Optional[str] = None, enabled_onl
 
 @router.get("/material-dict", response_model=List[schemas.MaterialDictOut])
 async def list_material_dict(
-    dtype: Optional[str] = Query(None, description="category / unit；空=全部"),
+    dtype: Optional[str] = Query(None, description="category / unit / supplier_category；空=全部"),
     enabled_only: bool = Query(False),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -204,11 +217,11 @@ async def update_material_dict(
     it.value = val
     it.sort_order = body.sort_order
     it.enabled = body.enabled
-    # 改名级联到存量物料，避免旧值成孤儿、下次启动又被并入字典
+    # 改名级联到存量引用方，避免旧值成孤儿、下次启动又被并入字典
     if old_dtype == body.dtype and val != old_val:
-        col = models.WhMaterial.category if body.dtype == "category" else models.WhMaterial.unit
-        field = "category" if body.dtype == "category" else "unit"
-        await db.execute(sa_update(models.WhMaterial).where(col == old_val).values(**{field: val}))
+        model, col, field = _dict_ref(body.dtype)
+        if model is not None:
+            await db.execute(sa_update(model).where(col == old_val).values(**{field: val}))
     await db.commit()
     await db.refresh(it)
     return schemas.MaterialDictOut.model_validate(it)
@@ -225,10 +238,11 @@ async def delete_material_dict(
     it = r.scalar_one_or_none()
     if not it:
         raise HTTPException(404, "字典项不存在")
-    col = models.WhMaterial.category if it.dtype == "category" else models.WhMaterial.unit
-    used = await db.execute(select(func.count(models.WhMaterial.id)).where(col == it.value))
-    if used.scalar():
-        raise HTTPException(400, "该取值已被物料使用，不能删除；可改为「停用」")
+    model, col, _ = _dict_ref(it.dtype)
+    if model is not None:
+        used = await db.execute(select(func.count(model.id)).where(col == it.value))
+        if used.scalar():
+            raise HTTPException(400, "该取值已被使用，不能删除；可改为「停用」")
     await db.delete(it)
     await db.commit()
     await write_audit(db, user=current, action="delete", target_type="material_dict", target_id=did)

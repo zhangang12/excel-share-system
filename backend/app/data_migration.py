@@ -1412,6 +1412,38 @@ async def backfill_material_dict(db: AsyncSession) -> dict:
     return {"added": added}
 
 
+async def backfill_supplier_category_dict(db: AsyncSession) -> dict:
+    """🆕 供应商分类字典（幂等）：独立于物料类别字典（dtype='supplier_category'），
+    两者取值语义不同（供应商分类描述"这家供应商是做什么的"，物料类别描述"这个物料是什么类型"，
+    生产实际使用中已经分道扬镳——不能直接合并成一份下拉，否则互相污染）。
+    把「预置 ∪ 存量已用过的」供应商分类并入这个独立字典，历史自定义值不丢。"""
+    DEFAULT_CATS = ["外协", "标准件", "不锈钢", "激光", "电气", "运输"]
+    er = await db.execute(select(models.MaterialDict.value).where(
+        models.MaterialDict.dtype == "supplier_category"))
+    existing = {v for (v,) in er.all()}
+    sr = await db.execute(select(models.Supplier.category))
+    used: set[str] = set()
+    for (cat,) in sr.all():
+        if cat and cat.strip():
+            used.add(cat.strip())
+    seq: list[str] = []
+    for v in DEFAULT_CATS:
+        if v not in seq:
+            seq.append(v)
+    for v in sorted(used):
+        if v not in seq:
+            seq.append(v)
+    added = 0
+    for i, v in enumerate(seq):
+        if v not in existing:
+            db.add(models.MaterialDict(dtype="supplier_category", value=v, sort_order=i, enabled=True))
+            added += 1
+    if added:
+        await db.commit()
+        log.info("[backfill_supplier_category_dict] 并入供应商分类字典 %d 条", added)
+    return {"added": added}
+
+
 async def backfill_oa_departments(db: AsyncSession) -> dict:
     """🆕 OA 部门字典默认值（幂等）：首次启动灌入常见部门；已存在则跳过，不覆盖管理层后续的改名/增删。
     lead_role 只给"有分组的部门"（普通员工/主管两个角色）设主管角色，让主管能看到本部门全部申请；
@@ -1752,6 +1784,10 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_material_dict(db)
     except Exception as e:
         log.warning("backfill_material_dict failed: %s", e)
+    try:
+        await backfill_supplier_category_dict(db)
+    except Exception as e:
+        log.warning("backfill_supplier_category_dict failed: %s", e)
     try:
         await backfill_oa_departments(db)
     except Exception as e:
