@@ -40,7 +40,7 @@ check() {
 
 # 1. 4 个容器都在跑
 for svc in pms2_postgres pms2_backend pms2_frontend pms2_nginx; do
-    state=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null)
+    state=$(timeout -k 3 8 docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null)
     if [[ "$state" == "running" ]]; then
         check "container/$svc" ok "running"
     else
@@ -49,14 +49,17 @@ for svc in pms2_postgres pms2_backend pms2_frontend pms2_nginx; do
 done
 
 # 2. postgres 可连
-if docker exec pms2_postgres pg_isready -U pms_prod >/dev/null 2>&1; then
+# 🆕 全部套 timeout：诊断脚本是"出故障时"跑的，被查的服务本身卡住时，
+#    无超时的 docker exec / curl 会让脚本一起无限期卡死（就是之前在服务器上卡住的原因）。
+if timeout -k 3 8 docker exec pms2_postgres pg_isready -U pms_prod >/dev/null 2>&1; then
     check "postgres" ok "accepting connections"
 else
-    check "postgres" fail "pg_isready 失败"
+    check "postgres" fail "pg_isready 失败/超时"
 fi
 
 # 4. backend /api/health
-HTTP_CODE=$(curl -s -o /tmp/_hc -w '%{http_code}' http://localhost/api/health 2>/dev/null)
+# 🆕 --connect-timeout/--max-time：后端 hang 住(连上但不返回)时，裸 curl 会永远等 → 脚本卡死
+HTTP_CODE=$(curl -s --connect-timeout 3 --max-time 8 -o /tmp/_hc -w '%{http_code}' http://localhost/api/health 2>/dev/null)
 if [[ "$HTTP_CODE" == "200" ]] && grep -q '"status":"ok"' /tmp/_hc 2>/dev/null; then
     check "api/health" ok "$(cat /tmp/_hc)"
 else
@@ -83,7 +86,7 @@ else
 fi
 
 # 7. 数据库大小
-DB_SIZE=$(docker exec pms2_postgres psql -U pms_prod -d pms -tA -c \
+DB_SIZE=$(timeout -k 3 10 docker exec pms2_postgres psql -U pms_prod -d pms -tA -c \
     "SELECT pg_size_pretty(pg_database_size('pms'));" 2>/dev/null)
 [[ -n "$DB_SIZE" ]] && check "db-size" ok "$DB_SIZE"
 
@@ -103,7 +106,7 @@ fi
 
 # 9. 异常日志（近 1h）
 # 注意: grep -c 无匹配时已输出 "0" 并以非0退出, 不能再 `|| echo 0`(会变成 "0\n0" 致 [[ 算术语法错)。
-ERR_CNT=$(docker logs --since 1h pms2_backend 2>&1 | grep -ciE 'ERROR|Traceback|Exception' || true)
+ERR_CNT=$(timeout -k 3 20 docker logs --since 1h pms2_backend 2>&1 | grep -ciE 'ERROR|Traceback|Exception' || true)
 ERR_CNT=$(echo "$ERR_CNT" | head -1); ERR_CNT=${ERR_CNT:-0}
 if [[ "$ERR_CNT" -gt 50 ]]; then
     check "backend-errors-1h" fail "$ERR_CNT errors in last 1h"
