@@ -538,8 +538,19 @@ function renderPOHtml(o: { poNo?: string; supplierName: string; orderDate: strin
     table.items{margin-top:-1px}
     table.items th,table.items td{border:1px solid #333;padding:6px 8px}
     table.items th{background:#e8f5ee}.r{text-align:right}.c{text-align:center}
-    .foot{margin-top:22px;display:flex;justify-content:space-between}.sign{margin-top:36px}</style></head>
+    .foot{margin-top:22px;display:flex;justify-content:space-between}.sign{margin-top:36px}
+    /* 🆕 下载PDF入口：屏幕上常驻显示，真正打印/另存为PDF时(@media print)自动隐藏，不会印到纸上/PDF里 */
+    .dl-bar{position:sticky;top:0;background:#fffbe6;border:1px solid #f0d060;border-radius:6px;
+      padding:10px 14px;margin-bottom:16px;display:flex;align-items:center;gap:12px;font-size:13px;color:#7a5c00}
+    .dl-bar button{background:#1a7f4b;color:#fff;border:none;border-radius:4px;padding:7px 16px;
+      font-size:13px;cursor:pointer;white-space:nowrap}
+    .dl-bar button:hover{background:#146138}
+    @media print{.dl-bar{display:none}}</style></head>
     <body>
+    <div class="dl-bar no-print">
+      <span>💡 下载PDF：点右边按钮 → 弹出的打印窗口里，目标/打印机选「另存为PDF」即可保存到本地。</span>
+      <button onclick="window.print()">🖨️ 打印 / 下载PDF</button>
+    </div>
     <h1>采购单</h1>
     <table class="meta">
       <tr><td style="width:14%"><b>需方</b></td><td style="width:40%">${esc(PO_COMPANY)}</td>
