@@ -626,11 +626,12 @@ class PurchaseCustomField(Base):
 
 
 class MaterialDict(Base):
-    """🆕 物料字典：受管理的「类别 / 单位」取值表（替代原来的预置∪自由输入）。
-    dtype: category（物料类别）| unit（计量单位）。物料表单只能从启用项里选。"""
+    """🆕 物料字典：受管理的「类别 / 单位 / 材质 / 供应商分类」取值表（替代原来的预置∪自由输入）。"""
     __tablename__ = "material_dict"
     id: Mapped[int] = mapped_column(primary_key=True)
-    dtype: Mapped[str] = mapped_column(String(16), index=True)     # category / unit
+    # 🆕 原为 String(16)："supplier_category"(17字符) 超长，Postgres 下插入直接报错(SQLite不检查长度，
+    # 沙箱测试没发现)——生产那边"供应商分类"字典一直是空的、点新增就500，根因就是这个。
+    dtype: Mapped[str] = mapped_column(String(32), index=True)     # category/unit/material_grade/supplier_category
     value: Mapped[str] = mapped_column(String(64))                 # 取值
     sort_order: Mapped[int] = mapped_column(default=0)
     enabled: Mapped[bool] = mapped_column(default=True)

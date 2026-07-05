@@ -76,8 +76,16 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
 }
 
 
+# 表名 -> [(列名, 新类型)]：存量列类型不够长，需要真的 ALTER TYPE（跟"补新列"不是一回事）。
+# 只有 Postgres 需要跑——SQLite 本来就不检查 VARCHAR 长度，字符串多长都能塞进去，
+# 这也是 supplier_category(17字符) 超过 VARCHAR(16) 这个 bug 在沙箱(SQLite)里一直没暴露的原因。
+_WIDEN_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "material_dict": [("dtype", "VARCHAR(32)")],
+}
+
+
 async def ensure_schema_columns(engine: AsyncEngine) -> int:
-    """启动时在 create_all 之后、seed 之前运行：给存量表补新增列。幂等。"""
+    """启动时在 create_all 之后、seed 之前运行：给存量表补新增列/放宽列类型。幂等。"""
     added = 0
 
     def _existing_cols(sync_conn, table: str) -> set[str]:
@@ -97,6 +105,16 @@ async def ensure_schema_columns(engine: AsyncEngine) -> int:
                 await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
                 added += 1
                 log.info("[ensure_schema_columns] %s.%s 已补列", table, col)
+        if engine.dialect.name == "postgresql":
+            for table, cols in _WIDEN_COLUMNS.items():
+                existing = await conn.run_sync(_existing_cols, table)
+                if not existing:
+                    continue
+                for col, new_type in cols:
+                    if col not in existing:
+                        continue
+                    await conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {col} TYPE {new_type}"))
+                    log.info("[ensure_schema_columns] %s.%s 类型已放宽为 %s", table, col, new_type)
     return added
 
 
