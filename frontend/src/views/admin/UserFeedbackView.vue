@@ -62,9 +62,10 @@ async function submitReply() {
 
 async function exportHtml() {
   // 走 http(axios) 客户端：统一用拦截器里的 pms_token 鉴权（之前 fetch 读错 key 'token' → 401）
+  // 🆕 导出只要待处理的——已处理的是历史记录，导出给管理层看是为了盯着还没解决的，混进已处理的没意义
   try {
     const r = await http.get('/user-feedback/export.html', {
-      params: { kind: filterKind.value || undefined, status: filterStatus.value || undefined },
+      params: { kind: filterKind.value || undefined, status: 'open' },
       responseType: 'blob',
     })
     const a = document.createElement('a')
@@ -119,11 +120,13 @@ function closePreview() {
     <div class="page-header">
       <div>
         <h1>用户反馈</h1>
-        <div class="desc">所有用户通过右下角「反馈」小助手提交的问题与建议；可标记已处理、按筛选条件导出 HTML</div>
+        <div class="desc">所有用户通过右下角「反馈」小助手提交的问题与建议；可标记已处理、导出待处理项为 HTML</div>
       </div>
       <div class="spacer"></div>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-      <el-button type="primary" :icon="Download" @click="exportHtml">导出 HTML</el-button>
+      <el-tooltip content="只导出「待处理」的反馈，已处理的不会包含在内" placement="top">
+        <el-button type="primary" :icon="Download" @click="exportHtml">导出待处理 HTML</el-button>
+      </el-tooltip>
     </div>
 
     <div class="sec-title">概览</div>
