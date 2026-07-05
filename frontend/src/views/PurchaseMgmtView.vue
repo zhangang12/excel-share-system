@@ -1482,13 +1482,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             @selection-change="(v: PurchaseItemOut[]) => selectedItems = v"
             max-height="max(320px, calc(100vh - 340px))"
             :scrollbar-always-on="true"
-            class="wrap-cells"
+            class="wrap-cells compact-tbl"
           >
             <el-table-column v-if="canWrite" type="selection" width="40" fixed />
             <el-table-column label="供应商" min-width="170" fixed>
               <template #default="{ row }"><span class="sup-name">{{ row.supplier_name }}</span></template>
             </el-table-column>
-            <el-table-column prop="po_no" label="采购单号" width="152">
+            <el-table-column prop="po_no" label="采购单号" width="136">
               <template #default="{ row }">
                 <el-tooltip v-if="row.po_no" content="点击打印这张采购单" placement="top">
                   <el-button link type="primary" class="po-no" @click="printPO(row.po_no)">{{ row.po_no }}</el-button>
@@ -1496,50 +1496,50 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column prop="delivery_date" label="下单日期" width="112" sortable />
-            <el-table-column prop="project_code" label="项目编号" width="105">
+            <el-table-column prop="delivery_date" label="下单日期" width="98" sortable />
+            <el-table-column prop="project_code" label="项目编号" width="92">
               <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
             </el-table-column>
-            <el-table-column prop="delivery_note_no" label="送货单号" width="120">
+            <el-table-column prop="delivery_note_no" label="送货单号" width="106">
               <template #default="{ row }">{{ row.delivery_note_no || '—' }}</template>
             </el-table-column>
-            <el-table-column prop="arrival_date" label="到货日期" width="108" sortable>
+            <el-table-column prop="arrival_date" label="到货日期" width="98" sortable>
               <template #default="{ row }">
                 <span v-if="row.arrival_date">{{ row.arrival_date }}</span>
                 <el-tag v-else size="small" type="info" effect="plain">待收货</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="item_name" label="名称" min-width="150" />
-            <el-table-column prop="spec" label="规格" min-width="140">
+            <el-table-column prop="item_name" label="名称" min-width="130" />
+            <el-table-column prop="spec" label="规格" min-width="120">
               <template #default="{ row }">{{ row.spec || '—' }}</template>
             </el-table-column>
-            <el-table-column prop="brand" label="品牌" width="100">
+            <el-table-column prop="brand" label="品牌" width="88">
               <template #default="{ row }">{{ row.brand || '—' }}</template>
             </el-table-column>
-            <el-table-column prop="qty" label="数量" width="80" align="right">
+            <el-table-column prop="qty" label="数量" width="68" align="right">
               <template #default="{ row }">{{ row.qty ?? '—' }}</template>
             </el-table-column>
-            <el-table-column label="单价" width="110" align="right">
+            <el-table-column label="单价" width="96" align="right">
               <template #default="{ row }">{{ row.unit_price != null ? fmtMoney(row.unit_price) : '—' }}</template>
             </el-table-column>
-            <el-table-column prop="received_amount" label="收货金额" width="126" align="right" sortable>
+            <el-table-column prop="received_amount" label="收货金额" width="110" align="right" sortable>
               <template #default="{ row }"><b>{{ fmtMoney(row.received_amount) }}</b></template>
             </el-table-column>
-            <el-table-column prop="invoice_date" label="开票日期" width="105">
+            <el-table-column prop="invoice_date" label="开票日期" width="96">
               <template #default="{ row }">{{ row.invoice_date || '—' }}</template>
             </el-table-column>
-            <el-table-column prop="invoice_amount" label="开票金额" width="122" align="right" sortable>
+            <el-table-column prop="invoice_amount" label="开票金额" width="106" align="right" sortable>
               <template #default="{ row }">{{ row.invoice_amount ? fmtMoney(row.invoice_amount) : '—' }}</template>
             </el-table-column>
-            <el-table-column prop="paid_amount" label="已付款" width="118" align="right" sortable>
+            <el-table-column prop="paid_amount" label="已付款" width="102" align="right" sortable>
               <template #default="{ row }">{{ row.paid_amount ? fmtMoney(row.paid_amount) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="付款状态" width="92" align="center">
+            <el-table-column label="付款状态" width="84" align="center">
               <template #default="{ row }">
                 <el-tag :type="payStatusTag(row.pay_status)" size="small" effect="light">{{ row.pay_status || '未付款' }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="对账状态" width="80">
+            <el-table-column label="对账状态" width="76">
               <template #default="{ row }">
                 <el-tag :type="statusTag(row.invoice_status)" size="small">{{ row.invoice_status }}</el-tag>
               </template>
@@ -1597,7 +1597,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             :default-sort="{ prop: 'outstanding', order: 'descending' }"
             max-height="max(320px, calc(100vh - 280px))"
             :scrollbar-always-on="true"
-            class="wrap-cells"
+            class="wrap-cells compact-tbl"
           >
             <el-table-column prop="supplier_name" label="供应商" min-width="200" fixed sortable />
             <el-table-column prop="category" label="分类" width="92">
@@ -1673,7 +1673,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <span class="muted">发起请款后在这里跟进财务审批进度，被驳回会显示原因；点行首箭头看关联明细</span>
           </div>
           <el-table :data="payReqs" stripe v-loading="prLoading"
-                    max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="wrap-cells">
+                    max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="wrap-cells compact-tbl">
             <el-table-column type="expand" width="36">
               <template #default="{ row }">
                 <div class="pr-expand">
@@ -1809,7 +1809,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-card>
 
     <!-- ==================== 从清单下单弹窗（清单→按供应商拆单）==================== -->
-    <el-dialog v-model="listOrderVisible" title="从清单下单" width="min(1580px, 98vw)" top="3vh" class="listorder-dialog" :close-on-click-modal="false">
+    <el-dialog v-model="listOrderVisible" title="从清单下单" width="min(1580px, 98vw)" top="3vh" class="compact-dialog-scroll compact-tbl" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
         title="选项目 + 清单类型（标准件/电工/不锈钢/外协/激光）→ 逐行选「供应商」「品牌」（可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的下单日期/采购负责人。外协/激光无数量，采购数量手填。" />
       <el-form :model="listOrderForm" label-position="top" class="order-form listorder-head-form">
@@ -1940,7 +1940,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 采购单弹窗（同一供应商多个零件行）==================== -->
-    <el-dialog v-model="orderDialogVisible" title="新建采购单" width="1080px" top="5vh" class="v3-scroll-dialog" :close-on-click-modal="false" :before-close="onOrderDialogClose">
+    <el-dialog v-model="orderDialogVisible" title="新建采购单" width="min(1180px, 98vw)" top="4vh" class="compact-dialog-scroll compact-tbl" :close-on-click-modal="false" :before-close="onOrderDialogClose">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
         title="同一供应商一次录入多个零件：表头（供应商 / 下单日期 / 合同 / 默认项目）在上，零件逐行填。单价「选填」——已谈好价先填；激光板材等到货送货单才带价的，单价留空，货到仓库再补。保存后自动生成采购单号；可「打印采购单」发供应商。" />
       <el-form :model="orderForm" label-position="top" class="order-form">
@@ -2367,7 +2367,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-collapse-item>
       </el-collapse>
       <el-table v-loading="drawerLoading" :data="drawerItems" stripe size="small"
-                max-height="max(300px, calc(100vh - 180px))" :scrollbar-always-on="true" class="wrap-cells">
+                max-height="max(300px, calc(100vh - 180px))" :scrollbar-always-on="true" class="wrap-cells compact-tbl">
         <el-table-column prop="delivery_date" label="下单日期" width="100" />
         <el-table-column prop="project_code" label="项目编号" width="100">
           <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
