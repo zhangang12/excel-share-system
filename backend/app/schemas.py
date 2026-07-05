@@ -1355,6 +1355,7 @@ class OaRequestOut(BaseModel):
     steps: list[OaRequestStepOut] = []
     can_approve: bool = False   # 当前登录人是否能对"当前待处理步骤"操作
     can_withdraw: bool = False  # 当前登录人（提交人）是否能撤回
+    can_mark_paid: bool = False  # 🆕 待付款状态下，财务/admin/manager 是否能标记已付款
 
 
 class OaActionIn(BaseModel):

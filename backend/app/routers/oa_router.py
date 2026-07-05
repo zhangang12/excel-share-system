@@ -298,6 +298,7 @@ async def _req_out(db: AsyncSession, req: models.OaRequest, current: models.User
         and steps_sorted and steps_sorted[0].step_order == req.current_step_order
         and steps_sorted[0].status == "pending"
     )
+    can_mark_paid = bool(req.status == "pending_payment" and current.has_role("finance", "admin", "manager"))
     related_no = None
     if req.related_request_id:
         r = await db.execute(select(models.OaRequest.request_no).where(models.OaRequest.id == req.related_request_id))
@@ -318,7 +319,7 @@ async def _req_out(db: AsyncSession, req: models.OaRequest, current: models.User
             actor_name=(s.actor.full_name or s.actor.username) if s.actor else None,
             acted_at=s.acted_at, note=s.note,
         ) for s in steps_sorted],
-        can_approve=can_approve, can_withdraw=can_withdraw,
+        can_approve=can_approve, can_withdraw=can_withdraw, can_mark_paid=can_mark_paid,
     )
 
 
@@ -451,17 +452,44 @@ async def approve_request(
     if body.settle_amount is not None:
         req.settle_amount = body.settle_amount
     next_step = next((s for s in steps_sorted if s.step_order > cur_step.step_order), None)
+    # 🆕 最后一步是财务审批的（多见于报销类），先进"待付款"，财务还要再单独点"标记已付款"，
+    # 不能审批通过=已付款——审批只代表"同意报销"，钱有没有真的付出去是另一件事，得分开记。
     if next_step:
         req.current_step_order = next_step.step_order
+    elif cur_step.approver_role == "finance":
+        req.status = "pending_payment"; req.current_step_order = None
     else:
         req.status = "approved"; req.current_step_order = None
     await db.commit()
     if next_step:
         await push_message(db, to_role=next_step.approver_role, kind="info",
                            text=f"【OA审批】{req.request_no} 待你审批", biz_type="oa_request", biz_id=req.id)
+    elif req.status == "pending_payment":
+        await push_message(db, to_user_id=req.requester_id, kind="info",
+                           text=f"【OA审批】你的申请 {req.request_no} 已审批通过，等待财务付款", biz_type="oa_request", biz_id=req.id)
     else:
         await push_message(db, to_user_id=req.requester_id, kind="info",
                            text=f"【OA审批】你的申请 {req.request_no} 已全部审批通过", biz_type="oa_request", biz_id=req.id)
+    req = await _fetch_request(db, rid)
+    return await _req_out(db, req, current)
+
+
+@router.put("/requests/{rid}/mark-paid", response_model=schemas.OaRequestOut)
+async def mark_paid(
+    rid: int,
+    current: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """财务把「待付款」的申请标记为已付款——跟审批通过分开操作，避免"批了=钱到账"的误解。"""
+    req = await _fetch_request(db, rid)
+    if not req:
+        raise HTTPException(404, "申请不存在")
+    if req.status != "pending_payment":
+        raise HTTPException(400, "该申请当前不是待付款状态")
+    req.status = "approved"
+    await db.commit()
+    await push_message(db, to_user_id=req.requester_id, kind="info",
+                       text=f"【OA审批】你的申请 {req.request_no} 财务已付款", biz_type="oa_request", biz_id=req.id)
     req = await _fetch_request(db, rid)
     return await _req_out(db, req, current)
 

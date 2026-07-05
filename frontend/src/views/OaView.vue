@@ -59,10 +59,10 @@ function onTabChange(name: string | number) {
 }
 
 const STATUS_VARIANT: Record<string, 'success' | 'warn' | 'info' | 'danger' | 'muted'> = {
-  pending: 'warn', approved: 'success', rejected: 'danger', withdrawn: 'muted',
+  pending: 'warn', pending_payment: 'info', approved: 'success', rejected: 'danger', withdrawn: 'muted',
 }
 const STATUS_TEXT: Record<string, string> = {
-  pending: '审批中', approved: '已通过', rejected: '已驳回', withdrawn: '已撤回',
+  pending: '审批中', pending_payment: '待付款', approved: '已通过', rejected: '已驳回', withdrawn: '已撤回',
 }
 function curStepLabel(r: OaRequest): string {
   if (r.status !== 'pending') return '—'
@@ -204,6 +204,18 @@ async function doWithdraw() {
     ElMessage.success('已撤回')
     await refreshDetail(); await loadList()
   } catch { /* 全局拦截器已提示 */ }
+}
+const markingPaid = ref(false)
+async function doMarkPaid() {
+  if (!detailReq.value) return
+  try { await ElMessageBox.confirm('确认这笔申请的款项已经付出去了？', '标记已付款', { type: 'warning' }) } catch { return }
+  markingPaid.value = true
+  try {
+    await oaApi.markPaid(detailReq.value.id)
+    ElMessage.success('已标记为已付款')
+    await refreshDetail(); await loadList()
+  } catch { /* 全局拦截器已提示 */ }
+  finally { markingPaid.value = false }
 }
 
 // ===== 设置：部门字典 =====
@@ -651,7 +663,7 @@ onMounted(async () => {
         </div>
         <el-button size="small" :icon="Upload" @click="uploadAttachment" style="margin-top:8px">上传附件</el-button>
 
-        <div class="drawer-actions" v-if="detailReq.can_approve || detailReq.can_withdraw">
+        <div class="drawer-actions" v-if="detailReq.can_approve || detailReq.can_withdraw || detailReq.can_mark_paid">
           <el-divider />
           <template v-if="detailReq.can_approve">
             <el-input v-model="approveNote" placeholder="审批意见（选填）" style="margin-bottom:8px" />
@@ -661,6 +673,10 @@ onMounted(async () => {
               <el-button type="success" :icon="Check" :loading="approving" @click="doApprove">审批通过</el-button>
               <el-button type="danger" :icon="Close" :loading="rejecting" @click="doReject">驳回</el-button>
             </div>
+          </template>
+          <template v-if="detailReq.can_mark_paid">
+            <div class="muted small" style="margin-bottom:8px">已审批通过，等待财务实际付款；付款后点下面按钮标记，跟"审批通过"是两件事。</div>
+            <el-button type="primary" :icon="Check" :loading="markingPaid" @click="doMarkPaid">标记已付款</el-button>
           </template>
           <el-button v-if="detailReq.can_withdraw" type="warning" plain @click="doWithdraw" style="margin-top:8px">撤回申请</el-button>
         </div>

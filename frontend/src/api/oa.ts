@@ -26,7 +26,7 @@ export interface OaRequest {
   settle_amount?: number | null; settle_note?: string | null; reject_reason?: string | null
   created_at: string; updated_at: string
   steps: OaRequestStep[]
-  can_approve: boolean; can_withdraw: boolean
+  can_approve: boolean; can_withdraw: boolean; can_mark_paid: boolean
 }
 export interface OaSummaryRow {
   department_id: number; department_name: string; doc_type: string; count: number; amount: number
@@ -66,6 +66,7 @@ export const oaApi = {
   reject: (id: number, reason: string) =>
     http.put<OaRequest>(`/oa/requests/${id}/reject`, { reason }).then(r => r.data),
   withdraw: (id: number) => http.put<{ message: string }>(`/oa/requests/${id}/withdraw`).then(r => r.data),
+  markPaid: (id: number) => http.put<OaRequest>(`/oa/requests/${id}/mark-paid`).then(r => r.data),
 
   summary: () => http.get<OaSummaryRow[]>('/oa/reports/summary').then(r => r.data),
 }
