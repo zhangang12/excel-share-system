@@ -4,7 +4,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Check, Close, Download, Upload, RefreshLeft } from '@element-plus/icons-vue'
 import { http } from '@/api'
-import { oaApi, type Department, type OaDocType, type OaApprovalStep, type OaRequest, type OaSummaryRow } from '@/api/oa'
+import { oaApi, type Department, type OaDocType, type OaApprovalStep, type OaRequest, type OaSummaryRow, type OaChainOverviewRow } from '@/api/oa'
 import { adminApi } from '@/api/admin'
 import { downloadAttachment } from '@/api/orders'
 import { useAuthStore } from '@/stores/auth'
@@ -298,6 +298,15 @@ async function loadChainSteps() {
   finally { chainLoading.value = false }
 }
 watch([chainDeptId, chainDocType], loadChainSteps)
+// 🆕 已配置流程一览
+const chainOverview = ref<OaChainOverviewRow[]>([])
+async function loadChainOverview() {
+  try { chainOverview.value = await oaApi.chainsOverview() } catch { chainOverview.value = [] }
+}
+function loadChainForEdit(row: OaChainOverviewRow) {
+  chainDeptId.value = row.department_id
+  chainDocType.value = row.doc_type
+}
 const stepEditId = ref<number | null>(null)
 const stepForm = reactive({ step_order: 1, approver_role: '', step_label: '', enabled: true })
 function stepResetForm() {
@@ -321,12 +330,12 @@ async function stepSave() {
   try {
     if (stepEditId.value) { await oaApi.updateChainStep(stepEditId.value, payload); ElMessage.success('已更新') }
     else { await oaApi.createChainStep(payload); ElMessage.success('已新增步骤') }
-    stepResetForm(); await loadChainSteps()
+    stepResetForm(); await loadChainSteps(); await loadChainOverview()
   } catch { /* 全局拦截器已提示 */ } finally { stepSaving.value = false }
 }
 async function stepDelete(s: OaApprovalStep) {
   try { await ElMessageBox.confirm(`删除步骤「${s.step_label}」？不影响已提交的历史申请。`, '删除步骤', { type: 'warning', confirmButtonText: '删除' }) } catch { return }
-  try { await oaApi.deleteChainStep(s.id); ElMessage.success('已删除'); await loadChainSteps() } catch { /* 全局拦截器已提示 */ }
+  try { await oaApi.deleteChainStep(s.id); ElMessage.success('已删除'); await loadChainSteps(); await loadChainOverview() } catch { /* 全局拦截器已提示 */ }
 }
 
 // ===== 汇总报表 =====
@@ -341,7 +350,7 @@ const summaryTotal = computed(() => summaryRows.value.reduce((s, r) => s + r.amo
 
 function onMainTabChange(name: string | number) {
   const n = String(name)
-  if (n === 'settings' && canConfig.value) { loadDepartments(); loadRoles(); stepResetForm() }
+  if (n === 'settings' && canConfig.value) { loadDepartments(); loadRoles(); stepResetForm(); loadChainOverview() }
   else if (n === 'summary' && canViewSummary.value) { loadSummary() }
   else onTabChange(n)
 }
@@ -548,6 +557,26 @@ onMounted(async () => {
         </div>
 
         <div v-else-if="settingsTab === 'chain'">
+          <!-- 🆕 已配置流程一览：一屏看到所有部门×单据类型的审批链 -->
+          <div class="form-section-title" style="margin-top:0">已配置的审批流程一览</div>
+          <el-table :data="chainOverview" size="small" border stripe max-height="32vh" style="margin-bottom:18px">
+            <el-table-column label="部门" width="120"><template #default="{ row }">{{ row.department_name }}</template></el-table-column>
+            <el-table-column label="单据类型" width="130"><template #default="{ row }">{{ row.doc_label }}</template></el-table-column>
+            <el-table-column label="审批链（按顺序）" min-width="280">
+              <template #default="{ row }">
+                <span v-for="(s, i) in row.steps" :key="s.step_order" class="chain-step">
+                  <el-tag :type="s.enabled ? 'primary' : 'info'" size="small" effect="plain">{{ s.step_order }}. {{ s.step_label || s.role_name }}</el-tag>
+                  <span v-if="i < row.steps.length - 1" class="chain-arrow">→</span>
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="80">
+              <template #default="{ row }"><el-button size="small" link type="primary" @click="loadChainForEdit(row)">编辑</el-button></template>
+            </el-table-column>
+            <template #empty><EmptyHint text="还没有配置任何审批流程，在下方选部门+单据类型开始配置" size="sm" /></template>
+          </el-table>
+
+          <el-divider content-position="left">配置某个「部门 + 单据类型」的审批链</el-divider>
           <el-alert type="info" :closable="false" style="margin-bottom:14px"
             title="选部门+单据类型 → 配置该组合下的多级审批步骤（按顺序）。改配置不影响已提交的历史申请。" />
           <el-row :gutter="16" style="margin-bottom:14px">
@@ -753,6 +782,8 @@ onMounted(async () => {
 .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 16px; margin-bottom: 14px; }
 .detail-json { background: var(--el-fill-color-light); border-radius: 6px; padding: 10px 14px; font-size: 13px; line-height: 1.8; margin-bottom: 14px; }
 .cc-line { margin-bottom: 14px; font-size: 13px; }
+.chain-step { display: inline-flex; align-items: center; }
+.chain-arrow { margin: 0 5px; color: var(--el-text-color-secondary); }
 .reject-box { background: var(--el-color-danger-light-9); color: var(--el-color-danger); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
 .att-list { display: flex; flex-direction: column; gap: 4px; }
 .att-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--el-border-color-lighter); font-size: 13px; }

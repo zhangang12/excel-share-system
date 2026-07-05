@@ -255,6 +255,39 @@ async def delete_chain_step(
     return schemas.Msg(message="已删除该审批步骤")
 
 
+@router.get("/chains/overview")
+async def chains_overview(
+    current: models.User = Depends(require_roles()),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 已配置审批流程一览：把所有 部门×单据类型 的审批链按顺序汇总，一屏总览。"""
+    steps = (await db.execute(select(models.OaApprovalStep).order_by(
+        models.OaApprovalStep.department_id, models.OaApprovalStep.doc_type,
+        models.OaApprovalStep.step_order))).scalars().all()
+    depts = {d.id: d for d in (await db.execute(select(models.Department))).scalars().all()}
+    docs = {d.key: d.label for d in await _doc_types(db)}
+    roles = {r.code: r.name for r in (await db.execute(select(models.Role))).scalars().all()}
+    groups: dict[tuple, dict] = {}
+    for s in steps:
+        key = (s.department_id, s.doc_type)
+        g = groups.get(key)
+        if not g:
+            dept = depts.get(s.department_id)
+            g = {"department_id": s.department_id,
+                 "department_name": dept.name if dept else f"#{s.department_id}",
+                 "dept_sort": dept.sort_order if dept else 9999,
+                 "doc_type": s.doc_type, "doc_label": docs.get(s.doc_type, s.doc_type),
+                 "steps": []}
+            groups[key] = g
+        g["steps"].append({
+            "step_order": s.step_order, "approver_role": s.approver_role,
+            "role_name": roles.get(s.approver_role, s.approver_role),
+            "step_label": s.step_label, "enabled": s.enabled,
+        })
+    # 按 部门排序→单据类型 输出
+    return sorted(groups.values(), key=lambda g: (g["dept_sort"], g["department_id"], g["doc_label"]))
+
+
 # ==================== 申请单 ====================
 async def _next_oa_no(db: AsyncSession) -> str:
     prefix = f"OA{_date.today().strftime('%Y%m%d')}-"

@@ -33,6 +33,14 @@ export interface OaRequest {
 export interface OaSummaryRow {
   department_id: number; department_name: string; doc_type: string; count: number; amount: number
 }
+// 🆕 已配置审批流程一览
+export interface OaChainOverviewStep {
+  step_order: number; approver_role: string; role_name: string; step_label?: string | null; enabled: boolean
+}
+export interface OaChainOverviewRow {
+  department_id: number; department_name: string; doc_type: string; doc_label: string
+  steps: OaChainOverviewStep[]
+}
 
 export const oaApi = {
   docTypes: () => http.get<OaDocType[]>('/oa/doc-types').then(r => r.data),
@@ -51,6 +59,7 @@ export const oaApi = {
 
   chainSteps: (departmentId: number, docType: string) =>
     http.get<OaApprovalStep[]>('/oa/chains', { params: { department_id: departmentId, doc_type: docType } }).then(r => r.data),
+  chainsOverview: () => http.get<OaChainOverviewRow[]>('/oa/chains/overview').then(r => r.data),
   createChainStep: (body: Partial<OaApprovalStep>) => http.post<OaApprovalStep>('/oa/chains', body).then(r => r.data),
   updateChainStep: (id: number, body: Partial<OaApprovalStep>) =>
     http.put<OaApprovalStep>(`/oa/chains/${id}`, body).then(r => r.data),
