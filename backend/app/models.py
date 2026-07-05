@@ -358,6 +358,7 @@ class WhMaterial(Base):
     name: Mapped[str] = mapped_column(String(128), index=True)
     spec: Mapped[Optional[str]] = mapped_column(String(128))              # 规格型号
     category: Mapped[Optional[str]] = mapped_column(String(64))          # 类别（搅拌桨/标准件…）
+    material_grade: Mapped[Optional[str]] = mapped_column(String(32))    # 🆕 材质（304不锈钢/碳钢/铝合金…，字典管理）
     unit: Mapped[str] = mapped_column(String(16), default="个")
     location: Mapped[Optional[str]] = mapped_column(String(64))          # 库位（单仓仅文本）
     safety_stock: Mapped[float] = mapped_column(default=0)               # 安全库存（低于预警）

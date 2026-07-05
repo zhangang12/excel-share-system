@@ -58,6 +58,7 @@ async def _stock_map(db: AsyncSession, material_ids: Optional[list[int]] = None,
 def _mat_out(m: models.WhMaterial, stock: float) -> schemas.WhMaterialOut:
     return schemas.WhMaterialOut(
         id=m.id, code=m.code, name=m.name, spec=m.spec, category=m.category,
+        material_grade=m.material_grade,
         unit=m.unit, location=m.location, safety_stock=m.safety_stock or 0,
         init_stock=m.init_stock or 0, status=m.status, stock=stock,
         low=stock < (m.safety_stock or 0),
@@ -96,7 +97,8 @@ async def create_material(
         raise HTTPException(409, "同名同规格物料已存在")
     m = models.WhMaterial(
         name=data.name.strip(), spec=(data.spec or "").strip() or None,
-        category=(data.category or "").strip() or None, unit=data.unit or "个",
+        category=(data.category or "").strip() or None,
+        material_grade=(data.material_grade or "").strip() or None, unit=data.unit or "个",
         location=(data.location or "").strip() or None,
         safety_stock=data.safety_stock or 0, init_stock=data.init_stock or 0,
         code=(data.code or "").strip() or None,
@@ -127,6 +129,7 @@ async def update_material(
         raise HTTPException(409, "同名同规格物料已存在")
     m.name = data.name.strip(); m.spec = (data.spec or "").strip() or None
     m.category = (data.category or "").strip() or None; m.unit = data.unit or "个"
+    m.material_grade = (data.material_grade or "").strip() or None
     m.location = (data.location or "").strip() or None
     m.safety_stock = data.safety_stock or 0
     await db.commit()
@@ -140,12 +143,14 @@ _DICT_ADMIN_ROLES = ("buyer_lead",)
 
 
 def _dict_ref(dtype: str):
-    """字典取值被谁引用——用于改名级联 / 删除拦截。category/unit 挂在物料上，
+    """字典取值被谁引用——用于改名级联 / 删除拦截。category/unit/material_grade 挂在物料上，
     supplier_category 是独立分类（不与物料类别混用，两边取值语义不同），挂在供应商上。"""
     if dtype == "category":
         return models.WhMaterial, models.WhMaterial.category, "category"
     if dtype == "unit":
         return models.WhMaterial, models.WhMaterial.unit, "unit"
+    if dtype == "material_grade":
+        return models.WhMaterial, models.WhMaterial.material_grade, "material_grade"
     if dtype == "supplier_category":
         return models.Supplier, models.Supplier.category, "category"
     return None, None, None
@@ -163,7 +168,7 @@ async def _dict_items(db: AsyncSession, dtype: Optional[str] = None, enabled_onl
 
 @router.get("/material-dict", response_model=List[schemas.MaterialDictOut])
 async def list_material_dict(
-    dtype: Optional[str] = Query(None, description="category / unit / supplier_category；空=全部"),
+    dtype: Optional[str] = Query(None, description="category / unit / supplier_category / material_grade；空=全部"),
     enabled_only: bool = Query(False),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -280,8 +285,10 @@ async def create_txn(
         if data.qty > stock:
             raise HTTPException(400, f"出库数量 {data.qty} 超过现存 {stock}")
     ref = await _next_ref(db, data.direction, bd)
+    amount = round(data.qty * data.unit_price, 4) if data.unit_price is not None else None
     txn = models.WhTxn(
         material_id=data.material_id, biz_date=bd, direction=data.direction, qty=data.qty,
+        unit_price=data.unit_price, amount=amount,
         source=(data.source or ("采购入库" if data.direction == "in" else "领料出库")),
         party=(data.party or "").strip() or None, project_id=data.project_id,
         ref_no=ref, operator_id=current.id,
@@ -325,6 +332,7 @@ async def reverse_txn(
     ref = await _next_ref(db, rev_dir, bd)
     rev = models.WhTxn(
         material_id=o.material_id, biz_date=bd, direction=rev_dir, qty=o.qty,
+        unit_price=o.unit_price, amount=o.amount,
         source="冲红", party=f"冲销 {o.ref_no}", project_id=o.project_id,
         ref_no=ref, operator_id=current.id, is_reversal=True, reversal_of=o.id,
     )
@@ -360,7 +368,8 @@ async def list_txns(
     return [schemas.WhTxnOut(
         id=t.id, material_id=t.material_id,
         material_name=t.material.name if t.material else "", spec=t.material.spec if t.material else None,
-        biz_date=t.biz_date, direction=t.direction, qty=t.qty, source=t.source, party=t.party,
+        biz_date=t.biz_date, direction=t.direction, qty=t.qty,
+        unit_price=t.unit_price, amount=t.amount, source=t.source, party=t.party,
         project_id=t.project_id, project_code=pmap.get(t.project_id),
         ref_no=t.ref_no, is_reversal=t.is_reversal, reversed=t.reversed, created_at=t.created_at,
     ) for t in txns]

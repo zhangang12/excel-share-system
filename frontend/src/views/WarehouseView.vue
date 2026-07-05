@@ -11,7 +11,7 @@ import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'
-import { fmtDate } from '@/utils/format'
+import { fmtDate, fmtMoney } from '@/utils/format'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('warehouse', 'warehouse_lead', 'admin', 'manager'))
@@ -37,12 +37,13 @@ const lowList = computed(() => materials.value.filter(m => m.low))
 // ===== 出入库登记 =====
 const ioVisible = ref(false)
 const ioForm = reactive({ material_id: undefined as number | undefined, direction: 'in', qty: 1,
-  biz_date: new Date().toISOString().slice(0, 10), source: '', party: '' })
+  unit_price: null as number | null, biz_date: new Date().toISOString().slice(0, 10), source: '', party: '' })
 function openIo(dir: string) {
-  Object.assign(ioForm, { material_id: undefined, direction: dir, qty: 1,
+  Object.assign(ioForm, { material_id: undefined, direction: dir, qty: 1, unit_price: null,
     biz_date: new Date().toISOString().slice(0, 10), source: '', party: '' })
   ioVisible.value = true
 }
+const ioAmount = computed(() => ioForm.unit_price != null ? Number((ioForm.qty * ioForm.unit_price).toFixed(2)) : null)
 const ioSubmitting = ref(false)
 async function submitIo() {
   if (!ioForm.material_id) { ElMessage.warning('请选择物料'); return }
@@ -87,9 +88,10 @@ async function loadMatDict() {
 }
 const matCatOptions = computed(() => matDict.value.filter(d => d.dtype === 'category').map(d => d.value))
 const matUnitOptions = computed(() => matDict.value.filter(d => d.dtype === 'unit').map(d => d.value))
+const matGradeOptions = computed(() => matDict.value.filter(d => d.dtype === 'material_grade').map(d => d.value))
 function openMat(m?: WhMaterial) {
   if (m) Object.assign(matForm, { ...m })
-  else Object.assign(matForm, { id: null, name: '', spec: '', category: '', unit: '个', location: '', safety_stock: 0, init_stock: 0 })
+  else Object.assign(matForm, { id: null, name: '', spec: '', category: '', material_grade: '', unit: '个', location: '', safety_stock: 0, init_stock: 0 })
   matVisible.value = true
 }
 const matSubmitting = ref(false)
@@ -340,6 +342,8 @@ function onTab(name: string) {
               <template #default="{ row }"><StatusPill :text="row.direction === 'in' ? '入库' : '出库'" :variant="row.direction === 'in' ? 'success' : 'warn'" /></template>
             </el-table-column>
             <el-table-column prop="qty" label="数量" width="70" />
+            <el-table-column label="单价" width="90"><template #default="{ row }">{{ fmtMoney(row.unit_price) }}</template></el-table-column>
+            <el-table-column label="金额" width="100"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
             <el-table-column prop="source" label="来源/用途" width="100"><template #default="{ row }">{{ row.source || '—' }}</template></el-table-column>
             <el-table-column prop="party" label="供应商/领用方" min-width="110"><template #default="{ row }">{{ row.party || '—' }}</template></el-table-column>
             <el-table-column prop="project_code" label="项目" width="100"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>
@@ -361,6 +365,7 @@ function onTab(name: string) {
             <el-table-column prop="name" label="名称" min-width="120" />
             <el-table-column prop="spec" label="规格型号" min-width="120"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="category" label="类别" width="100"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
+            <el-table-column prop="material_grade" label="材质" width="100"><template #default="{ row }">{{ row.material_grade || '—' }}</template></el-table-column>
             <el-table-column prop="unit" label="单位" width="60" />
             <el-table-column prop="safety_stock" label="安全库存" width="90" />
             <el-table-column prop="init_stock" label="期初库存" width="90" />
@@ -534,6 +539,14 @@ function onTab(name: string) {
           <el-form-item label="业务日期" style="flex:1"><el-date-picker v-model="ioForm.biz_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
         </div>
         <div class="frow">
+          <el-form-item label="单价" style="flex:1">
+            <el-input-number v-model="ioForm.unit_price" :min="0" :controls="false" placeholder="选填" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="金额" style="flex:1">
+            <el-input :model-value="ioAmount ?? '—'" disabled style="width:100%" />
+          </el-form-item>
+        </div>
+        <div class="frow">
           <el-form-item :label="ioForm.direction === 'in' ? '来源' : '用途'" style="flex:1">
             <el-input v-model="ioForm.source" :placeholder="ioForm.direction === 'in' ? '采购入库' : '领料出库'" />
           </el-form-item>
@@ -560,12 +573,20 @@ function onTab(name: string) {
               <el-option v-for="c in matCatOptions" :key="c" :label="c" :value="c" />
             </el-select>
           </el-form-item>
+          <el-form-item label="材质" style="flex:1">
+            <el-select v-model="matForm.material_grade" filterable clearable
+                       placeholder="从字典选择" style="width:100%">
+              <el-option v-for="g in matGradeOptions" :key="g" :label="g" :value="g" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="单位" style="flex:1">
             <el-select v-model="matForm.unit" filterable clearable
                        placeholder="从字典选择" style="width:100%">
               <el-option v-for="u in matUnitOptions" :key="u" :label="u" :value="u" />
             </el-select>
           </el-form-item>
+        </div>
+        <div class="frow">
           <el-form-item label="库位" style="flex:1"><el-input v-model="matForm.location" /></el-form-item>
         </div>
         <div class="frow">

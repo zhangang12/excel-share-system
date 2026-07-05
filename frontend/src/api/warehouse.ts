@@ -3,12 +3,14 @@ import { http } from './index'
 // 🆕 v3 M07 仓库组
 export interface WhMaterial {
   id: number; code?: string | null; name: string; spec?: string | null
-  category?: string | null; unit: string; location?: string | null
+  category?: string | null; material_grade?: string | null; unit: string; location?: string | null
   safety_stock: number; init_stock: number; status: string; stock: number; low: boolean
 }
 export interface WhTxn {
   id: number; material_id: number; material_name: string; spec?: string | null
-  biz_date: string; direction: string; qty: number; source?: string | null; party?: string | null
+  biz_date: string; direction: string; qty: number
+  unit_price?: number | null; amount?: number | null
+  source?: string | null; party?: string | null
   project_id?: number | null; project_code?: string | null; ref_no: string
   is_reversal: boolean; reversed: boolean; created_at: string
 }

@@ -71,11 +71,22 @@ async function cfDelete(f: CustomField) {
 interface MatDictItem { id: number; dtype: string; value: string; sort_order: number; enabled: boolean }
 const matDictVisible = ref(false)
 const matDict = ref<MatDictItem[]>([])
-const mdTab = ref<'category' | 'unit' | 'supplier_category'>('category')
+const mdTab = ref<'category' | 'unit' | 'supplier_category' | 'material_grade'>('category')
 const mdEditingId = ref<number | null>(null)
 const mdSaving = ref(false)
 const mdForm = reactive({ value: '', sort_order: 0, enabled: true })
 const mdList = computed(() => matDict.value.filter(d => d.dtype === mdTab.value))
+const MD_TAB_LABELS: Record<string, string> = { category: '类别', unit: '单位', supplier_category: '供应商分类', material_grade: '材质' }
+const MD_TAB_PLACEHOLDERS: Record<string, string> = {
+  category: '如 标准件 / 不锈钢', unit: '如 个 / 米 / 公斤',
+  supplier_category: '如 外协 / 运输', material_grade: '如 304不锈钢 / 碳钢',
+}
+const MD_TAB_ALERTS: Record<string, string> = {
+  category: '维护仓库物料的「类别 / 单位」可选值。仓库录入物料时只能从这里"启用"的取值中选（不再自由输入）；停用的值不再出现在下拉里但保留历史；改名会同步更新已用该值的物料。',
+  unit: '维护仓库物料的「类别 / 单位」可选值。仓库录入物料时只能从这里"启用"的取值中选（不再自由输入）；停用的值不再出现在下拉里但保留历史；改名会同步更新已用该值的物料。',
+  material_grade: '维护仓库物料的「材质」可选值，跟类别是两套独立字典。仓库录入物料时只能从这里"启用"的取值中选；停用的值不再出现在下拉里但保留历史；改名会同步更新已用该值的物料。',
+  supplier_category: '维护供应商的「分类」可选值。新增/编辑供应商时只能从这里"启用"的取值中选（不再自由输入）；停用的值不再出现在下拉里但保留历史；改名会同步更新已用该值的供应商。与物料类别是两套独立字典，互不混用。',
+}
 async function loadMatDict() {
   try { matDict.value = (await http.get<MatDictItem[]>('/wh/material-dict')).data }
   catch { matDict.value = [] }
@@ -83,7 +94,7 @@ async function loadMatDict() {
 function mdResetForm() { mdEditingId.value = null; Object.assign(mdForm, { value: '', sort_order: 0, enabled: true }) }
 function openMatDictManager() { mdResetForm(); mdTab.value = 'category'; loadMatDict(); matDictVisible.value = true }
 function mdEdit(d: MatDictItem) {
-  mdEditingId.value = d.id; mdTab.value = d.dtype as 'category' | 'unit' | 'supplier_category'
+  mdEditingId.value = d.id; mdTab.value = d.dtype as 'category' | 'unit' | 'supplier_category' | 'material_grade'
   Object.assign(mdForm, { value: d.value, sort_order: d.sort_order, enabled: d.enabled })
 }
 async function mdSave() {
@@ -2515,15 +2526,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </template>
     </el-dialog>
 
-    <!-- ==================== 🆕 字典设置（物料类别 / 单位 / 供应商分类）==================== -->
-    <el-dialog v-model="matDictVisible" title="字典设置（物料类别 / 单位 / 供应商分类）" width="min(720px, 96vw)" top="6vh" class="v3-scroll-dialog">
-      <el-alert type="info" :closable="false" style="margin-bottom:14px"
-        :title="mdTab === 'supplier_category'
-          ? '维护供应商的「分类」可选值。新增/编辑供应商时只能从这里“启用”的取值中选（不再自由输入）；停用的值不再出现在下拉里但保留历史；改名会同步更新已用该值的供应商。与物料类别是两套独立字典，互不混用。'
-          : '维护仓库物料的「类别 / 单位」可选值。仓库录入物料时只能从这里“启用”的取值中选（不再自由输入）；停用的值不再出现在下拉里但保留历史；改名会同步更新已用该值的物料。'" />
+    <!-- ==================== 🆕 字典设置（物料类别 / 单位 / 材质 / 供应商分类）==================== -->
+    <el-dialog v-model="matDictVisible" title="字典设置（物料类别 / 单位 / 材质 / 供应商分类）" width="min(720px, 96vw)" top="6vh" class="v3-scroll-dialog">
+      <el-alert type="info" :closable="false" style="margin-bottom:14px" :title="MD_TAB_ALERTS[mdTab]" />
       <el-radio-group v-model="mdTab" style="margin-bottom:12px" @change="mdResetForm">
         <el-radio-button value="category">物料类别</el-radio-button>
         <el-radio-button value="unit">计量单位</el-radio-button>
+        <el-radio-button value="material_grade">材质</el-radio-button>
         <el-radio-button value="supplier_category">供应商分类</el-radio-button>
       </el-radio-group>
       <el-table :data="mdList" size="small" border stripe max-height="34vh">
@@ -2543,11 +2552,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <template #empty><EmptyHint text="还没有取值，下面新增一个" size="sm" /></template>
       </el-table>
 
-      <div class="form-section-title" style="margin-top:16px">{{ mdEditingId ? '编辑取值' : '新增取值' }}（{{ mdTab === 'category' ? '类别' : mdTab === 'unit' ? '单位' : '供应商分类' }}）</div>
+      <div class="form-section-title" style="margin-top:16px">{{ mdEditingId ? '编辑取值' : '新增取值' }}（{{ MD_TAB_LABELS[mdTab] }}）</div>
       <el-form :model="mdForm" label-position="top">
         <el-row :gutter="16">
           <el-col :xs="14" :sm="14">
-            <el-form-item label="取值 *"><el-input v-model="mdForm.value" :placeholder="mdTab === 'category' ? '如 标准件 / 不锈钢' : mdTab === 'unit' ? '如 个 / 米 / 公斤' : '如 外协 / 运输'" /></el-form-item>
+            <el-form-item label="取值 *"><el-input v-model="mdForm.value" :placeholder="MD_TAB_PLACEHOLDERS[mdTab]" /></el-form-item>
           </el-col>
           <el-col :xs="10" :sm="6">
             <el-form-item label="排序（小在前）"><el-input-number v-model="mdForm.sort_order" :controls="false" style="width:100%" /></el-form-item>

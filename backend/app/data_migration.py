@@ -24,6 +24,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("done_at", "TIMESTAMP"),
     ],
     "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
+    "wh_materials": [("material_grade", "VARCHAR(32)")],   # 🆕 材质（字典管理）
     "produce_group_tasks": [("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)")],  # 🆕 派给具体人 + 本组预计完成
     "dept_orders": [
         ("design_done_flag",   "BOOLEAN DEFAULT FALSE"),  # 🆕 设计完成第一步标记
@@ -1375,20 +1376,24 @@ async def normalize_tax_rate_no_invoice(db: AsyncSession) -> dict:
 
 
 async def backfill_material_dict(db: AsyncSession) -> dict:
-    """🆕 物料字典（幂等）：把「预置 ∪ 存量已用过的」类别/单位并入 material_dict。
+    """🆕 物料字典（幂等）：把「预置 ∪ 存量已用过的」类别/单位/材质并入 material_dict。
     存量物料用过的自定义值不丢；字典里已存在的值跳过。"""
     DEFAULT_CATS = ["标准件", "不锈钢", "激光", "外协", "电气", "耗材"]
     DEFAULT_UNITS = ["个", "件", "套", "米", "公斤", "张", "卷", "桶"]
+    DEFAULT_GRADES = ["304不锈钢", "201不锈钢", "碳钢", "Q235", "铝合金", "45#钢"]   # 🆕 材质常见起始值，可在字典设置里增删
     er = await db.execute(select(models.MaterialDict.dtype, models.MaterialDict.value))
     existing = {(d, v) for d, v in er.all()}
-    mr = await db.execute(select(models.WhMaterial.category, models.WhMaterial.unit))
+    mr = await db.execute(select(models.WhMaterial.category, models.WhMaterial.unit, models.WhMaterial.material_grade))
     used_cats: set[str] = set()
     used_units: set[str] = set()
-    for cat, unit in mr.all():
+    used_grades: set[str] = set()
+    for cat, unit, grade in mr.all():
         if cat and cat.strip():
             used_cats.add(cat.strip())
         if unit and unit.strip():
             used_units.add(unit.strip())
+        if grade and grade.strip():
+            used_grades.add(grade.strip())
     added = 0
 
     def _merge(dtype: str, defaults: list[str], used: set[str]) -> None:
@@ -1407,6 +1412,7 @@ async def backfill_material_dict(db: AsyncSession) -> dict:
 
     _merge("category", DEFAULT_CATS, used_cats)
     _merge("unit", DEFAULT_UNITS, used_units)
+    _merge("material_grade", DEFAULT_GRADES, used_grades)
     if added:
         await db.commit()
         log.info("[backfill_material_dict] 并入物料字典 %d 条", added)

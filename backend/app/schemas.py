@@ -372,6 +372,7 @@ class WhMaterialIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     spec: Optional[str] = None
     category: Optional[str] = None
+    material_grade: Optional[str] = None   # 🆕 材质（字典管理，如 304不锈钢/碳钢/铝合金）
     unit: str = "个"
     location: Optional[str] = None
     safety_stock: float = 0
@@ -385,6 +386,7 @@ class WhMaterialOut(BaseModel):
     name: str
     spec: Optional[str] = None
     category: Optional[str] = None
+    material_grade: Optional[str] = None
     unit: str
     location: Optional[str] = None
     safety_stock: float
@@ -399,6 +401,7 @@ class WhTxnIn(BaseModel):
     biz_date: str
     direction: str            # in / out
     qty: float
+    unit_price: Optional[float] = None   # 🆕 单价（选填；填了自动算金额，用于库存金额/成本统计）
     source: Optional[str] = None
     party: Optional[str] = None
     project_id: Optional[int] = None
@@ -412,6 +415,8 @@ class WhTxnOut(BaseModel):
     biz_date: str
     direction: str
     qty: float
+    unit_price: Optional[float] = None
+    amount: Optional[float] = None
     source: Optional[str] = None
     party: Optional[str] = None
     project_id: Optional[int] = None
@@ -963,7 +968,7 @@ class PurchaseCustomFieldOut(BaseModel):
 
 # ---------- 🆕 物料字典（类别 / 单位 / 供应商分类 受管理取值） ----------
 class MaterialDictIn(BaseModel):
-    dtype: str = Field(pattern="^(category|unit|supplier_category)$")   # category / unit / supplier_category
+    dtype: str = Field(pattern="^(category|unit|supplier_category|material_grade)$")   # category / unit / supplier_category / material_grade
     value: str = Field(min_length=1, max_length=64)
     sort_order: int = 0
     enabled: bool = True
