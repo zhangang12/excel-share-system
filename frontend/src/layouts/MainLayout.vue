@@ -9,7 +9,7 @@ import {
   Key, SwitchButton, Grid, Lock,
   Suitcase, EditPen, Lightning, SetUp, Scissor, ShoppingCart,
   Box, Van, Money, Service, TrendCharts, Bell, Stamp, ChatDotRound, ChatLineRound,
-  Aim,
+  Aim, Checked,
 } from '@element-plus/icons-vue'
 import { messagesApi } from '@/api/messages'
 import { userFeedbackApi } from '@/api/userFeedback'
@@ -24,7 +24,7 @@ const MENU_ICONS: Record<string, any> = {
   sales: Suitcase, leads: Aim, design: EditPen, electric: Lightning, produce: SetUp,
   sheet: Scissor, purchase: ShoppingCart, warehouse: Box, logistics: Van,
   finance: Money, aftersales: Service, report: TrendCharts, messages: Bell,
-  approve: Stamp, wxbind: ChatDotRound, 'user-feedback': ChatLineRound,
+  approve: Stamp, wxbind: ChatDotRound, 'user-feedback': ChatLineRound, oa: Checked,
 }
 const ADMIN_EXTRA = ['approve', 'wxbind', 'user-feedback']
 // 业务部门菜单（排除 messages 单独放底部、管理组的归管理组）

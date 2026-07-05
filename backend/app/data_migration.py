@@ -1412,6 +1412,53 @@ async def backfill_material_dict(db: AsyncSession) -> dict:
     return {"added": added}
 
 
+async def backfill_oa_departments(db: AsyncSession) -> dict:
+    """🆕 OA 部门字典默认值（幂等）：首次启动灌入常见部门；已存在则跳过，不覆盖管理层后续的改名/增删。
+    lead_role 只给"有分组的部门"（普通员工/主管两个角色）设主管角色，让主管能看到本部门全部申请；
+    人事/财务/物流这类单一角色部门直接把该角色设为 lead_role（该角色本身即视同"部门负责人"）。"""
+    DEFAULTS = [
+        ("销售部", "sales_lead"), ("采购部", "buyer_lead"), ("售后部", "as_lead"),
+        ("设计部", "design_lead"), ("生产部", "pm_lead"), ("仓库", "warehouse_lead"),
+        ("电工部", "electric_lead"), ("物流发货部", None), ("财务部", "finance"), ("人事部", "hr"),
+    ]
+    r = await db.execute(select(models.Department.name))
+    existing = {n for (n,) in r.all()}
+    added = 0
+    for i, (name, lead_role) in enumerate(DEFAULTS):
+        if name in existing:
+            continue
+        db.add(models.Department(name=name, lead_role=lead_role, sort_order=i, enabled=True))
+        added += 1
+    if added:
+        await db.commit()
+        log.info("[backfill_oa_departments] 新增默认部门 %d 个", added)
+    return {"added": added}
+
+
+async def backfill_oa_doc_types(db: AsyncSession) -> dict:
+    """🆕 OA 单据类型字典默认值（幂等）：首次启动灌入业务方明确列出的8种单据类型。
+    key 是历史申请/审批链配置引用的稳定标识，不因后续改名/重新排序而变。"""
+    DEFAULTS = [
+        ("trip", "business", "出差申请"), ("hospitality", "business", "招待申请"),
+        ("company_car", "business", "公车申请"), ("private_car", "business", "私车公用申请"),
+        ("other_biz", "business", "其他申请"),
+        ("travel_expense", "reimbursement", "差旅费用报销"), ("expense", "reimbursement", "费用报销"),
+        ("purchase", "purchase", "采购申请"),
+    ]
+    r = await db.execute(select(models.OaDocTypeDict.key))
+    existing = {k for (k,) in r.all()}
+    added = 0
+    for i, (key, category, label) in enumerate(DEFAULTS):
+        if key in existing:
+            continue
+        db.add(models.OaDocTypeDict(key=key, category=category, label=label, sort_order=i, enabled=True))
+        added += 1
+    if added:
+        await db.commit()
+        log.info("[backfill_oa_doc_types] 新增默认单据类型 %d 个", added)
+    return {"added": added}
+
+
 async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
     """🆕 2026-06-20（幂等）：给存量 SalesLedger 补 order_type（默认工厂制作订单，2026-008 为调货订单）。
     注：原"为进行中项目补建 design/electric/produce 任务单"已于 2026-06-23 停用——它每次启动都跑、
@@ -1705,3 +1752,11 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_material_dict(db)
     except Exception as e:
         log.warning("backfill_material_dict failed: %s", e)
+    try:
+        await backfill_oa_departments(db)
+    except Exception as e:
+        log.warning("backfill_oa_departments failed: %s", e)
+    try:
+        await backfill_oa_doc_types(db)
+    except Exception as e:
+        log.warning("backfill_oa_doc_types failed: %s", e)

@@ -127,6 +127,12 @@ const router = createRouter({
           meta: { menuKey: 'warehouse' },
         },
         {
+          path: 'oa',
+          name: 'oa',
+          component: () => import('@/views/OaView.vue'),
+          meta: { menuKey: 'oa' },
+        },
+        {
           path: 'admin/approve',
           name: 'approve',
           component: () => import('@/views/admin/ApproveView.vue'),

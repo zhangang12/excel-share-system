@@ -681,3 +681,93 @@ class PaymentRequestItem(Base):
         ForeignKey("purchase_items.id", ondelete="CASCADE"), index=True
     )
     allocated_amount: Mapped[float] = mapped_column(default=0)
+
+
+# ==================== 🆕 OA 审批 ====================
+class Department(Base):
+    """OA 部门字典（与角色分组独立、手动维护）。lead_role 设置后，持有该角色的人
+    可查看本部门全部 OA 申请（部门负责人视角），不设则无该项额外可见性。"""
+    __tablename__ = "departments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    lead_role: Mapped[Optional[str]] = mapped_column(String(32))
+    sort_order: Mapped[int] = mapped_column(default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OaDocTypeDict(Base):
+    """OA 单据类型字典（业务/报销/采购三大类下的具体单据类型，管理层可增删改）。
+    key 一旦创建不可改（OaRequest/OaApprovalStep 按 key 字符串引用）；可改 label/分类/排序/启用。"""
+    __tablename__ = "oa_doc_types"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(32), unique=True)
+    category: Mapped[str] = mapped_column(String(16))   # business/reimbursement/purchase
+    label: Mapped[str] = mapped_column(String(64))
+    sort_order: Mapped[int] = mapped_column(default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OaApprovalStep(Base):
+    """审批链配置（管理层维护）：某部门+某单据类型 的第几步由哪个角色审批。
+    提交申请时按此快照生成 OaRequestStep，之后改配置不影响在途申请。"""
+    __tablename__ = "oa_approval_steps"
+    __table_args__ = (UniqueConstraint("department_id", "doc_type", "step_order", name="uq_oa_step"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"), index=True)
+    doc_type: Mapped[str] = mapped_column(String(24), index=True)
+    step_order: Mapped[int] = mapped_column()
+    approver_role: Mapped[str] = mapped_column(String(32))
+    step_label: Mapped[Optional[str]] = mapped_column(String(32))  # 展示名，如"部门主管审批"；空则显示角色名
+    enabled: Mapped[bool] = mapped_column(default=True)
+
+    department: Mapped["Department"] = relationship(lazy="joined")
+
+
+class OaRequest(Base):
+    """OA 申请单（业务申请/报销申请/采购申请，共用一张表，type-specific 字段落 detail JSON）。"""
+    __tablename__ = "oa_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_no: Mapped[str] = mapped_column(String(24), unique=True, index=True)
+    category: Mapped[str] = mapped_column(String(16), index=True)   # business/reimbursement/purchase
+    doc_type: Mapped[str] = mapped_column(String(24), index=True)   # trip/hospitality/company_car/...
+    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"), index=True)
+    requester_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[Optional[str]] = mapped_column(String(128))
+    amount: Mapped[Optional[float]] = mapped_column()
+    detail: Mapped[Optional[dict]] = mapped_column(PortableJSON(), default=dict)  # 分类型的表单字段
+    related_request_id: Mapped[Optional[int]] = mapped_column(ForeignKey("oa_requests.id"))  # 报销↔业务申请
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/approved/rejected/withdrawn
+    current_step_order: Mapped[Optional[int]] = mapped_column()
+    settle_amount: Mapped[Optional[float]] = mapped_column()   # 财务等环节核定的实际金额（可与申请金额不同）
+    settle_note: Mapped[Optional[str]] = mapped_column(Text)
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    department: Mapped["Department"] = relationship(lazy="joined")
+    requester: Mapped["User"] = relationship(foreign_keys=[requester_id], lazy="joined")
+    related_request: Mapped[Optional["OaRequest"]] = relationship(remote_side=[id])
+    steps: Mapped[list["OaRequestStep"]] = relationship(
+        back_populates="request", order_by="OaRequestStep.step_order",
+        cascade="all, delete-orphan",
+    )
+
+
+class OaRequestStep(Base):
+    """某申请单的审批步骤快照+实际操作记录（与 OaApprovalStep 配置解耦，改配置不影响在途单）。"""
+    __tablename__ = "oa_request_steps"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("oa_requests.id", ondelete="CASCADE"), index=True)
+    step_order: Mapped[int] = mapped_column()
+    approver_role: Mapped[str] = mapped_column(String(32))
+    step_label: Mapped[Optional[str]] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending/approved/rejected/skipped
+    acted_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    acted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    note: Mapped[Optional[str]] = mapped_column(Text)
+
+    request: Mapped["OaRequest"] = relationship(back_populates="steps")
+    actor: Mapped[Optional["User"]] = relationship(lazy="joined")

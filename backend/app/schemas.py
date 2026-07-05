@@ -1239,3 +1239,124 @@ class ShipListPendingRow(BaseModel):
     ready_at: Optional[datetime] = None
     ready_by_name: Optional[str] = None
     files: list[AttachmentOut] = []            # 设计推送的发货清单文件（仓库只看/下载/打印）
+
+
+# ==================== 🆕 OA 审批 ====================
+class DepartmentIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    lead_role: Optional[str] = None
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class DepartmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    lead_role: Optional[str] = None
+    sort_order: int
+    enabled: bool
+
+
+class OaDocTypeIn(BaseModel):
+    key: str = Field(min_length=1, max_length=32, pattern=r"^[a-zA-Z0-9_]+$")
+    category: str = Field(pattern="^(business|reimbursement|purchase)$")
+    label: str = Field(min_length=1, max_length=64)
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class OaDocTypeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    key: str
+    category: str
+    label: str
+    sort_order: int
+    enabled: bool
+
+
+class OaApprovalStepIn(BaseModel):
+    department_id: int
+    doc_type: str
+    step_order: int
+    approver_role: str
+    step_label: Optional[str] = None
+    enabled: bool = True
+
+
+class OaApprovalStepOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    department_id: int
+    doc_type: str
+    step_order: int
+    approver_role: str
+    step_label: Optional[str] = None
+    enabled: bool
+
+
+class OaRequestStepOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    step_order: int
+    approver_role: str
+    step_label: Optional[str] = None
+    status: str
+    acted_by: Optional[int] = None
+    actor_name: Optional[str] = None
+    acted_at: Optional[datetime] = None
+    note: Optional[str] = None
+
+
+class OaRequestCreate(BaseModel):
+    category: str
+    doc_type: str
+    department_id: int
+    title: Optional[str] = None
+    amount: Optional[float] = None
+    detail: dict = Field(default_factory=dict)
+    related_request_id: Optional[int] = None
+
+
+class OaRequestOut(BaseModel):
+    id: int
+    request_no: str
+    category: str
+    doc_type: str
+    department_id: int
+    department_name: str
+    requester_id: int
+    requester_name: str
+    title: Optional[str] = None
+    amount: Optional[float] = None
+    detail: dict = Field(default_factory=dict)
+    related_request_id: Optional[int] = None
+    related_request_no: Optional[str] = None
+    status: str
+    current_step_order: Optional[int] = None
+    settle_amount: Optional[float] = None
+    settle_note: Optional[str] = None
+    reject_reason: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    steps: list[OaRequestStepOut] = []
+    can_approve: bool = False   # 当前登录人是否能对"当前待处理步骤"操作
+    can_withdraw: bool = False  # 当前登录人（提交人）是否能撤回
+
+
+class OaActionIn(BaseModel):
+    note: Optional[str] = None
+    settle_amount: Optional[float] = None   # 审批时可选录入核定金额（通常财务环节使用）
+
+
+class OaRejectIn(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class OaSummaryRow(BaseModel):
+    department_id: int
+    department_name: str
+    doc_type: str
+    count: int = 0
+    amount: float = 0

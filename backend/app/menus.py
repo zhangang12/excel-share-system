@@ -29,6 +29,7 @@ MENU_DEFS: list[dict] = [
     {"key": "finance",    "label": "财务部"},
     {"key": "aftersales", "label": "售后部"},
     {"key": "report",     "label": "月度工作报表"},
+    {"key": "oa",         "label": "OA审批"},     # 🆕 全员可见（业务/报销/采购申请+审批）
     {"key": "messages",   "label": "消息中心"},
 ]
 
@@ -46,7 +47,7 @@ _ALL_KEYS = [m["key"] for m in MENU_DEFS]
 _ADMIN_KEYS = [m["key"] for m in ADMIN_MENU_DEFS]
 
 # role_code -> 可见菜单 key 集合（admin/manager 不在表内=全可见）
-# 注意：messages 全员可见，统一在 user_menu_keys 里追加，不在矩阵重复
+# 注意：messages/oa 全员可见，统一在 user_menu_keys 里追加，不在矩阵重复
 ROLE_MENUS: dict[str, list[str]] = {
     # ---- 老角色：保持既有可见性（catalog+list），叠加对应部门工作台 ----
     "designer":         ["catalog", "list", "design"],
@@ -86,6 +87,7 @@ def user_menu_keys(user: models.User) -> list[str]:
     for code in (codes or {""}):
         allowed |= set(ROLE_MENUS.get(code, ["catalog", "list"]))  # 未知角色按老默认（目录+详单）
     allowed.add("messages")
+    allowed.add("oa")  # 🆕 OA审批：全员可见，不受角色矩阵限制
     return [k for k in _ALL_KEYS if k in allowed]
 
 

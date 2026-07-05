@@ -34,6 +34,7 @@ ALLOWED_BIZ_TYPES = {
     "ship_doc", "ship_list", "aftersales_mat", "purchase_list", "misc",
     "user_feedback",  # 🆕 用户反馈截图
     "payment_voucher",  # 🆕 请款付款凭证
+    "oa_request",  # 🆕 OA 申请附件（票据/凭证）
 }
 
 # 统一允许的扩展名（按业务需要可在端点层再细化）
