@@ -13,7 +13,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
     # 不开放外网端口，仅服务间访问
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      # 🆕 必须带 -d：不加 -d 时 pg_isready 默认拿用户名当库名探测(=pms_prod)，
+      #    而实际库叫 pms(POSTGRES_DB)，每10s探一次就往 postgres 日志刷一条
+      #    "FATAL: database \"pms_prod\" does not exist"(虚增错误计数、干扰健康检查)。
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5

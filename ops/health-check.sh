@@ -51,7 +51,7 @@ done
 # 2. postgres 可连
 # 🆕 全部套 timeout：诊断脚本是"出故障时"跑的，被查的服务本身卡住时，
 #    无超时的 docker exec / curl 会让脚本一起无限期卡死（就是之前在服务器上卡住的原因）。
-if timeout -k 3 8 docker exec pms2_postgres pg_isready -U pms_prod >/dev/null 2>&1; then
+if timeout -k 3 8 docker exec pms2_postgres pg_isready -U pms_prod -d pms >/dev/null 2>&1; then
     check "postgres" ok "accepting connections"
 else
     check "postgres" fail "pg_isready 失败/超时"
