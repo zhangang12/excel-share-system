@@ -2397,10 +2397,25 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-table-column label="开票金额" width="105" align="right">
           <template #default="{ row }">{{ row.invoice_amount ? fmtMoney(row.invoice_amount) : '—' }}</template>
         </el-table-column>
+        <el-table-column label="未开票" width="105" align="right">
+          <template #default="{ row }">
+            <span class="warn">{{ fmtMoney(Math.max(0, (row.received_amount || 0) - (row.invoice_amount || 0))) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="已付款" width="105" align="right">
           <template #default="{ row }">{{ row.paid_amount ? fmtMoney(row.paid_amount) : '—' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="80" fixed="right">
+        <el-table-column label="未付款" width="105" align="right">
+          <template #default="{ row }">
+            <span class="danger">{{ fmtMoney(Math.max(0, (row.received_amount || 0) - (row.paid_amount || 0))) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="付款状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="payStatusTag(row.pay_status)" size="small" effect="light">{{ row.pay_status || '未付款' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="对账状态" width="80" fixed="right">
           <template #default="{ row }">
             <el-tag :type="statusTag(row.invoice_status)" size="small">{{ row.invoice_status }}</el-tag>
           </template>
