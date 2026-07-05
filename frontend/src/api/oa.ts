@@ -16,6 +16,7 @@ export interface OaRequestStep {
   status: string; acted_by?: number | null; actor_name?: string | null
   acted_at?: string | null; note?: string | null
 }
+export interface OaCcUser { id: number; name: string }
 export interface OaRequest {
   id: number; request_no: string; category: string; doc_type: string
   department_id: number; department_name: string
@@ -26,6 +27,7 @@ export interface OaRequest {
   settle_amount?: number | null; settle_note?: string | null; reject_reason?: string | null
   created_at: string; updated_at: string
   steps: OaRequestStep[]
+  cc_users: OaCcUser[]   // 🆕 抄送人
   can_approve: boolean; can_withdraw: boolean; can_mark_paid: boolean
 }
 export interface OaSummaryRow {
@@ -54,9 +56,13 @@ export const oaApi = {
     http.put<OaApprovalStep>(`/oa/chains/${id}`, body).then(r => r.data),
   deleteChainStep: (id: number) => http.delete<{ message: string }>(`/oa/chains/${id}`).then(r => r.data),
 
+  // 🆕 抄送人可选名单（在职用户）
+  ccCandidates: () => http.get<OaCcUser[]>('/oa/cc-candidates').then(r => r.data),
+
   createRequest: (body: {
     category: string; doc_type: string; department_id: number
     title?: string; amount?: number | null; detail?: Record<string, any>; related_request_id?: number | null
+    cc_user_ids?: number[]
   }) => http.post<OaRequest>('/oa/requests', body).then(r => r.data),
   listRequests: (params: { scope?: string; department_id?: number; doc_type?: string; status?: string }) =>
     http.get<OaRequest[]>('/oa/requests', { params }).then(r => r.data),

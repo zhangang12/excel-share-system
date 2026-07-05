@@ -42,7 +42,7 @@ const isDeptLead = computed(() => departments.value.some(d => d.lead_role && aut
 
 // ===== 列表 tab =====
 const mainTab = ref('mine')
-type Scope = 'mine' | 'pending_me' | 'dept' | 'all'
+type Scope = 'mine' | 'pending_me' | 'cc_me' | 'dept' | 'all'
 const activeTab = ref<Scope>('mine')
 const rows = ref<OaRequest[]>([])
 const listLoading = ref(false)
@@ -52,7 +52,7 @@ async function loadList() {
   finally { listLoading.value = false }
 }
 function onTabChange(name: string | number) {
-  if (['mine', 'pending_me', 'dept', 'all'].includes(String(name))) {
+  if (['mine', 'pending_me', 'cc_me', 'dept', 'all'].includes(String(name))) {
     activeTab.value = name as Scope
     loadList()
   }
@@ -85,6 +85,7 @@ const subForm = reactive({
   doc_type: '', department_id: '' as number | '', title: '', amount: null as number | null,
   related_request_id: null as number | '' | null,
   d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
+  cc_user_ids: [] as number[],   // 🆕 抄送人
 })
 const subDocType = computed(() => docTypes.value.find(d => d.key === subForm.doc_type))
 const subCategory = computed(() => subDocType.value?.category || '')
@@ -99,16 +100,23 @@ async function loadMyApprovedTrips() {
   try { myApprovedTrips.value = await oaApi.listRequests({ scope: 'mine', doc_type: 'trip', status: 'approved' }) }
   catch { myApprovedTrips.value = [] }
 }
+// 🆕 抄送人可选名单（在职用户）
+const ccCandidates = ref<{ id: number; name: string }[]>([])
+async function loadCcCandidates() {
+  try { ccCandidates.value = await oaApi.ccCandidates() } catch { ccCandidates.value = [] }
+}
 function resetSubForm() {
   Object.assign(subForm, {
     doc_type: '', department_id: '', title: '', amount: null, related_request_id: null,
     d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
+    cc_user_ids: [],
   })
 }
 function openSubmit() {
   resetSubForm()
   subVisible.value = true
   loadMyApprovedTrips()
+  loadCcCandidates()
 }
 async function submitNew() {
   if (!subForm.doc_type) { ElMessage.warning('请选择单据类型'); return }
@@ -128,6 +136,7 @@ async function submitNew() {
       category: subCategory.value, doc_type: subForm.doc_type, department_id: subForm.department_id as number,
       title: subForm.title || undefined, amount: subForm.amount,
       detail, related_request_id: showRelatedTrip.value && subForm.related_request_id ? (subForm.related_request_id as number) : null,
+      cc_user_ids: subForm.cc_user_ids,
     })
     ElMessage.success(`已提交 ${r.request_no}`)
     subVisible.value = false
@@ -389,6 +398,24 @@ onMounted(async () => {
         </el-table>
       </el-tab-pane>
 
+      <el-tab-pane label="抄送我的" name="cc_me">
+        <div class="toolbar"><el-button :icon="RefreshLeft" @click="loadList">刷新</el-button></div>
+        <el-table :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
+          <el-table-column prop="request_no" label="单号" width="150" />
+          <el-table-column label="单据类型" width="120"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
+          <el-table-column prop="department_name" label="部门" width="100" />
+          <el-table-column prop="requester_name" label="申请人" width="100" />
+          <el-table-column prop="title" label="标题" min-width="150" show-overflow-tooltip />
+          <el-table-column label="金额" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+          <el-table-column label="状态" width="100"><template #default="{ row }"><StatusPill :text="STATUS_TEXT[row.status]" :variant="STATUS_VARIANT[row.status]" /></template></el-table-column>
+          <el-table-column label="提交时间" width="150"><template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template></el-table-column>
+          <el-table-column label="操作" width="90" fixed="right">
+            <template #default="{ row }"><el-button size="small" link type="primary" @click="openDetail(row.id)">查看</el-button></template>
+          </el-table-column>
+          <template #empty><EmptyHint text="没有抄送给你的申请" /></template>
+        </el-table>
+      </el-tab-pane>
+
       <el-tab-pane v-if="isDeptLead" label="部门审批" name="dept">
         <div class="toolbar"><el-button :icon="RefreshLeft" @click="loadList">刷新</el-button></div>
         <el-table :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
@@ -629,6 +656,15 @@ onMounted(async () => {
             <el-col :span="24"><el-form-item label="物品清单"><el-input v-model="subForm.d_items" type="textarea" :rows="2" placeholder="名称/规格/数量，每行一项" /></el-form-item></el-col>
             <el-col :span="24"><el-form-item label="用途"><el-input v-model="subForm.d_purpose" /></el-form-item></el-col>
           </template>
+
+          <el-col :span="24">
+            <el-form-item label="抄送（选填）">
+              <el-select v-model="subForm.cc_user_ids" multiple filterable clearable collapse-tags collapse-tags-tooltip
+                         style="width:100%" placeholder="抄送给谁看——不参与审批，仅收到通知并可查看该申请">
+                <el-option v-for="u in ccCandidates" :key="u.id" :label="u.name" :value="u.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
         </el-row>
       </el-form>
       <template #footer>
@@ -647,6 +683,10 @@ onMounted(async () => {
           <div><span class="muted">状态</span><div><StatusPill :text="STATUS_TEXT[detailReq.status]" :variant="STATUS_VARIANT[detailReq.status]" /></div></div>
           <div v-if="detailReq.related_request_no"><span class="muted">关联申请</span><div>{{ detailReq.related_request_no }}</div></div>
           <div v-if="detailReq.settle_amount != null"><span class="muted">核定金额</span><div>{{ fmtMoney(detailReq.settle_amount) }}</div></div>
+        </div>
+        <div v-if="detailReq.cc_users && detailReq.cc_users.length" class="cc-line">
+          <span class="muted">抄送</span>：
+          <el-tag v-for="u in detailReq.cc_users" :key="u.id" size="small" effect="plain" style="margin-right:6px">{{ u.name }}</el-tag>
         </div>
         <div v-if="detailReq.detail && Object.keys(detailReq.detail).length" class="detail-json">
           <div v-for="(v, k) in detailReq.detail" :key="k" v-show="v">
@@ -712,6 +752,7 @@ onMounted(async () => {
 .summary-bar { margin-top: 12px; padding: 10px 14px; background: var(--el-fill-color-light); border-radius: 6px; text-align: right; }
 .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 16px; margin-bottom: 14px; }
 .detail-json { background: var(--el-fill-color-light); border-radius: 6px; padding: 10px 14px; font-size: 13px; line-height: 1.8; margin-bottom: 14px; }
+.cc-line { margin-bottom: 14px; font-size: 13px; }
 .reject-box { background: var(--el-color-danger-light-9); color: var(--el-color-danger); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
 .att-list { display: flex; flex-direction: column; gap: 4px; }
 .att-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--el-border-color-lighter); font-size: 13px; }

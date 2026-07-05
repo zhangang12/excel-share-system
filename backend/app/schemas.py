@@ -1321,6 +1321,11 @@ class OaRequestStepOut(BaseModel):
     note: Optional[str] = None
 
 
+class OaCcUserOut(BaseModel):
+    id: int
+    name: str
+
+
 class OaRequestCreate(BaseModel):
     category: str
     doc_type: str
@@ -1329,6 +1334,7 @@ class OaRequestCreate(BaseModel):
     amount: Optional[float] = None
     detail: dict = Field(default_factory=dict)
     related_request_id: Optional[int] = None
+    cc_user_ids: list[int] = Field(default_factory=list)   # 🆕 抄送人（用户id）
 
 
 class OaRequestOut(BaseModel):
@@ -1353,6 +1359,7 @@ class OaRequestOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     steps: list[OaRequestStepOut] = []
+    cc_users: list[OaCcUserOut] = []   # 🆕 抄送人名单
     can_approve: bool = False   # 当前登录人是否能对"当前待处理步骤"操作
     can_withdraw: bool = False  # 当前登录人（提交人）是否能撤回
     can_mark_paid: bool = False  # 🆕 待付款状态下，财务/admin/manager 是否能标记已付款

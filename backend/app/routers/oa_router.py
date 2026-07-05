@@ -268,7 +268,7 @@ async def _fetch_request(db: AsyncSession, rid: int) -> Optional[models.OaReques
     # populate_existing：强制用本次查询结果覆盖已在 identity map 里的对象（含关系），
     # 避免同一会话里先查后改再查时，关系属性（如 actor）仍停留在改之前的旧值。
     q = (select(models.OaRequest)
-         .options(selectinload(models.OaRequest.steps))
+         .options(selectinload(models.OaRequest.steps), selectinload(models.OaRequest.cc_entries))
          .where(models.OaRequest.id == rid)
          .execution_options(populate_existing=True))
     return (await db.execute(q)).scalar_one_or_none()
@@ -282,6 +282,8 @@ def _can_view(req: models.OaRequest, current: models.User) -> bool:
     if any(s.approver_role in current.role_codes for s in req.steps):
         return True
     if req.department and req.department.lead_role and req.department.lead_role in current.role_codes:
+        return True
+    if any(c.user_id == current.id for c in req.cc_entries):   # 🆕 抄送人可查看
         return True
     return False
 
@@ -319,8 +321,24 @@ async def _req_out(db: AsyncSession, req: models.OaRequest, current: models.User
             actor_name=(s.actor.full_name or s.actor.username) if s.actor else None,
             acted_at=s.acted_at, note=s.note,
         ) for s in steps_sorted],
+        cc_users=[schemas.OaCcUserOut(
+            id=c.user_id, name=(c.user.full_name or c.user.username) if c.user else f"#{c.user_id}",
+        ) for c in req.cc_entries],
         can_approve=can_approve, can_withdraw=can_withdraw, can_mark_paid=can_mark_paid,
     )
+
+
+@router.get("/cc-candidates")
+async def list_cc_candidates(
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 抄送人可选名单：在职用户（排除 admin 隐身账号）。
+    任何登录用户提交 OA 申请时选抄送人用，所以不限角色。"""
+    res = await db.execute(
+        select(models.User).where(models.User.is_active == True).order_by(models.User.id))  # noqa: E712
+    return [{"id": u.id, "name": u.full_name or u.username}
+            for u in res.scalars().all() if not u.has_role("admin")]
 
 
 @router.post("/requests", response_model=schemas.OaRequestOut)
@@ -360,11 +378,26 @@ async def create_request(
     for s in steps_cfg:
         db.add(models.OaRequestStep(request_id=req.id, step_order=s.step_order,
                                     approver_role=s.approver_role, step_label=s.step_label, status="pending"))
+    # 🆕 抄送人：去重、排除提交人自己（本来就能看）、只保留真实在职用户
+    cc_ids: list[int] = []
+    if body.cc_user_ids:
+        uniq = [uid for uid in dict.fromkeys(body.cc_user_ids) if uid != current.id]
+        if uniq:
+            valid = (await db.execute(select(models.User.id).where(
+                models.User.id.in_(uniq), models.User.is_active == True))).scalars().all()  # noqa: E712
+            cc_ids = list(valid)
+            for uid in cc_ids:
+                db.add(models.OaRequestCc(request_id=req.id, user_id=uid))
     await db.commit()
     req = await _fetch_request(db, req.id)
     await push_message(db, to_role=steps_cfg[0].approver_role, kind="info",
                        text=f"【OA审批】{current.full_name or current.username} 提交了「{doc_label}」({req_no})待你审批",
                        biz_type="oa_request", biz_id=req.id)
+    # 🆕 抄送通知：抄送人不参与审批，仅告知有一份申请抄送给ta
+    for uid in cc_ids:
+        await push_message(db, to_user_id=uid, kind="info",
+                           text=f"【OA抄送】{current.full_name or current.username} 抄送给你一份「{doc_label}」({req_no})",
+                           biz_type="oa_request", biz_id=req.id)
     return await _req_out(db, req, current)
 
 
@@ -377,14 +410,15 @@ async def _led_department_ids(db: AsyncSession, current: models.User) -> list[in
 
 @router.get("/requests", response_model=list[schemas.OaRequestOut])
 async def list_requests(
-    scope: str = Query("mine", description="mine/pending_me/acted_by_me/dept/all"),
+    scope: str = Query("mine", description="mine/pending_me/acted_by_me/cc_me/dept/all"),
     department_id: Optional[int] = Query(None),
     doc_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(models.OaRequest).options(selectinload(models.OaRequest.steps))
+    q = select(models.OaRequest).options(
+        selectinload(models.OaRequest.steps), selectinload(models.OaRequest.cc_entries))
     StepT = models.OaRequestStep
     if scope == "pending_me":
         cond = exists().where(StepT.request_id == models.OaRequest.id,
@@ -394,6 +428,10 @@ async def list_requests(
         q = q.where(models.OaRequest.status == "pending", cond)
     elif scope == "acted_by_me":
         cond = exists().where(StepT.request_id == models.OaRequest.id, StepT.acted_by == current.id)
+        q = q.where(cond)
+    elif scope == "cc_me":   # 🆕 抄送我的：当前登录人是抄送人的申请
+        CcT = models.OaRequestCc
+        cond = exists().where(CcT.request_id == models.OaRequest.id, CcT.user_id == current.id)
         q = q.where(cond)
     elif scope == "dept":
         led_ids = await _led_department_ids(db, current)

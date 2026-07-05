@@ -757,6 +757,8 @@ class OaRequest(Base):
         back_populates="request", order_by="OaRequestStep.step_order",
         cascade="all, delete-orphan",
     )
+    # 🆕 抄送人（不参与审批，仅可查看该申请 + 提交时收到通知）
+    cc_entries: Mapped[list["OaRequestCc"]] = relationship(cascade="all, delete-orphan")
 
 
 class OaRequestStep(Base):
@@ -774,3 +776,16 @@ class OaRequestStep(Base):
 
     request: Mapped["OaRequest"] = relationship(back_populates="steps")
     actor: Mapped[Optional["User"]] = relationship(lazy="joined")
+
+
+class OaRequestCc(Base):
+    """🆕 OA 抄送人：一条=一个被抄送的用户。抄送人不参与审批，但能查看该申请、
+    并在提交时收到通知（区别于审批链的 approver_role——抄送是按「具体用户」）。"""
+    __tablename__ = "oa_request_cc"
+    __table_args__ = (UniqueConstraint("request_id", "user_id", name="uq_oa_cc"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("oa_requests.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship(lazy="joined")
