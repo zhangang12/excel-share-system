@@ -1901,7 +1901,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-table-column>
         <el-table-column label="采购数量" width="104">
           <template #default="{ row }">
-            <el-input-number v-model="row._buyqty" :min="0" :precision="2" :controls="false" style="width:100%" @change="row._checked = true" />
+            <el-input-number v-model="row._buyqty" :min="0" :controls="false" style="width:100%" @change="row._checked = true" />
           </template>
         </el-table-column>
         <el-table-column label="单价(选填)" width="104">
@@ -2078,7 +2078,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="项目编号">
-              <el-input v-model="itemForm.project_code" />
+              <el-input v-model="itemForm.project_code" placeholder="选填" />
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12" :md="8">

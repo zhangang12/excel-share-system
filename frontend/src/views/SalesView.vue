@@ -63,6 +63,16 @@ function queryCustomers(q: string, cb: (arr: { value: string }[]) => void) {
   const list = kw ? customerOptions.value.filter(n => n.toLowerCase().includes(kw)) : customerOptions.value
   cb(list.slice(0, 30).map(v => ({ value: v })))
 }
+// 🆕 设备名称联想：跟客户单位同一个做法
+const equipmentNameOptions = ref<string[]>([])
+async function loadEquipmentNames() {
+  try { equipmentNameOptions.value = await salesApi.equipmentNames() } catch { /* 联想非关键，失败忽略 */ }
+}
+function queryEquipmentNames(q: string, cb: (arr: { value: string }[]) => void) {
+  const kw = (q || '').trim().toLowerCase()
+  const list = kw ? equipmentNameOptions.value.filter(n => n.toLowerCase().includes(kw)) : equipmentNameOptions.value
+  cb(list.slice(0, 30).map(v => ({ value: v })))
+}
 async function loadSalesStaff() {
   if (!allView.value) return
   try { salesStaff.value = await salesApi.salespeople() } catch { /* 静默 */ }
@@ -168,7 +178,7 @@ async function openEditCode(row: SalesLedgerRow) {
 }
 function onPage(p: number) { page.value = p; load() }
 function onSize(s: number) { pageSize.value = s; page.value = 1; load() }   // 改每页条数 → 回第 1 页
-onMounted(() => { load(); loadSalesStaff(); loadCustomers() })
+onMounted(() => { load(); loadSalesStaff(); loadCustomers(); loadEquipmentNames() })
 
 // ===== 销售下单 =====
 const orderVisible = ref(false)
@@ -998,7 +1008,8 @@ async function openReport() {
             <el-input v-model="orderForm.code" placeholder="如 2026-057 / 2026-050C" maxlength="64" clearable :disabled="!!draftEditLid" @change="autofillReceiverByCode" />
           </el-form-item>
           <el-form-item label="设备名称" required style="flex: 1">
-            <el-input v-model="orderForm.name" placeholder="如 300L真空乳化机" />
+            <el-autocomplete v-model="orderForm.name" :fetch-suggestions="queryEquipmentNames"
+                             placeholder="如 300L真空乳化机，输入联想历史设备名" clearable style="width:100%" />
           </el-form-item>
           <el-form-item label="数量" style="flex: 0 0 150px">
             <el-input-number v-model="orderForm.qty" :min="1" :controls="false" style="width: 80px" />
@@ -1099,7 +1110,10 @@ async function openReport() {
     <el-dialog v-model="editVisible" :title="`✏️ 编辑台账 · ${editRow?.code || ''}`" width="560px" class="v3-scroll-dialog">
       <el-form label-position="top">
         <div class="frow">
-          <el-form-item label="设备名称" style="flex: 1"><el-input v-model="editForm.name" /></el-form-item>
+          <el-form-item label="设备名称" style="flex: 1">
+            <el-autocomplete v-model="editForm.name" :fetch-suggestions="queryEquipmentNames"
+                             placeholder="如 300L真空乳化机，输入联想历史设备名" clearable style="width:100%" />
+          </el-form-item>
           <el-form-item label="客户单位" style="flex: 1">
             <el-autocomplete v-model="editForm.customer" :fetch-suggestions="queryCustomers"
                              placeholder="输入简称联想历史客户全称" clearable style="width:100%" />

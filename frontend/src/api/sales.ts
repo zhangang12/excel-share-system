@@ -99,6 +99,9 @@ export const salesApi = {
   // 🆕 客户单位联想：历史去重客户名（下单/编辑台账「客户单位」autocomplete 用）
   customers: () => http.get<string[]>('/sales/customers').then((r) => r.data),
 
+  // 🆕 设备名称联想：历史去重设备名（下单/编辑台账「设备名称」autocomplete 用）
+  equipmentNames: () => http.get<string[]>('/sales/equipment-names').then((r) => r.data),
+
   createOrder: (data: SalesOrderForm) =>
     http.post<{ project_id: number; code: string; order_ids: number[]; ledger_id?: number }>('/sales/orders', data).then((r) => r.data),
 

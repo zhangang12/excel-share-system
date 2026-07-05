@@ -64,6 +64,12 @@ const STATUS_VARIANT: Record<string, 'success' | 'warn' | 'info' | 'danger' | 'm
 const STATUS_TEXT: Record<string, string> = {
   pending: '审批中', pending_payment: '待付款', approved: '已通过', rejected: '已驳回', withdrawn: '已撤回',
 }
+// 🆕 详情里 detail(JSON) 各业务字段的中文标签，没收录的兜底显示原始 key
+const DETAIL_FIELD_LABELS: Record<string, string> = {
+  destination: '目的地/对象', start_date: '开始日期', end_date: '结束日期', notes: '事由/备注',
+  transport: '交通方式', items: '物品清单', purpose: '用途',
+}
+function detailFieldLabel(k: string): string { return DETAIL_FIELD_LABELS[k] || k }
 function curStepLabel(r: OaRequest): string {
   if (r.status !== 'pending') return '—'
   return r.steps.find(s => s.step_order === r.current_step_order)?.step_label || '—'
@@ -78,7 +84,7 @@ const subSaving = ref(false)
 const subForm = reactive({
   doc_type: '', department_id: '' as number | '', title: '', amount: null as number | null,
   related_request_id: null as number | '' | null,
-  d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '',
+  d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
 })
 const subDocType = computed(() => docTypes.value.find(d => d.key === subForm.doc_type))
 const subCategory = computed(() => subDocType.value?.category || '')
@@ -86,6 +92,8 @@ const showBusinessFields = computed(() => subCategory.value === 'business')
 const showReimburseFields = computed(() => subCategory.value === 'reimbursement')
 const showPurchaseFields = computed(() => subCategory.value === 'purchase')
 const showRelatedTrip = computed(() => subForm.doc_type === 'travel_expense')
+const showTripFields = computed(() => subForm.doc_type === 'trip')   // 🆕 出差申请专属：交通方式
+const TRANSPORT_OPTIONS = ['高铁', '飞机', '火车', '私车公用', '公车']
 const myApprovedTrips = ref<OaRequest[]>([])
 async function loadMyApprovedTrips() {
   try { myApprovedTrips.value = await oaApi.listRequests({ scope: 'mine', doc_type: 'trip', status: 'approved' }) }
@@ -94,7 +102,7 @@ async function loadMyApprovedTrips() {
 function resetSubForm() {
   Object.assign(subForm, {
     doc_type: '', department_id: '', title: '', amount: null, related_request_id: null,
-    d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '',
+    d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
   })
 }
 function openSubmit() {
@@ -108,6 +116,7 @@ async function submitNew() {
   let detail: Record<string, any> = {}
   if (showBusinessFields.value) {
     detail = { destination: subForm.d_destination, start_date: subForm.d_start_date, end_date: subForm.d_end_date, notes: subForm.d_notes }
+    if (showTripFields.value) detail.transport = subForm.d_transport
   } else if (showReimburseFields.value) {
     detail = { notes: subForm.d_notes }
   } else if (showPurchaseFields.value) {
@@ -595,6 +604,13 @@ onMounted(async () => {
             <el-col :xs="24" :sm="12"><el-form-item label="目的地/对象"><el-input v-model="subForm.d_destination" /></el-form-item></el-col>
             <el-col :xs="12" :sm="6"><el-form-item label="开始日期"><el-date-picker v-model="subForm.d_start_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item></el-col>
             <el-col :xs="12" :sm="6"><el-form-item label="结束日期"><el-date-picker v-model="subForm.d_end_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item></el-col>
+            <el-col v-if="showTripFields" :xs="24" :sm="12">
+              <el-form-item label="交通方式">
+                <el-select v-model="subForm.d_transport" clearable style="width:100%" placeholder="选择交通方式">
+                  <el-option v-for="t in TRANSPORT_OPTIONS" :key="t" :label="t" :value="t" />
+                </el-select>
+              </el-form-item>
+            </el-col>
             <el-col :span="24"><el-form-item label="事由/备注"><el-input v-model="subForm.d_notes" type="textarea" :rows="2" /></el-form-item></el-col>
           </template>
 
@@ -634,7 +650,7 @@ onMounted(async () => {
         </div>
         <div v-if="detailReq.detail && Object.keys(detailReq.detail).length" class="detail-json">
           <div v-for="(v, k) in detailReq.detail" :key="k" v-show="v">
-            <span class="muted">{{ k }}</span>：{{ v }}
+            <span class="muted">{{ detailFieldLabel(k) }}</span>：{{ v }}
           </div>
         </div>
         <div v-if="detailReq.reject_reason" class="reject-box">驳回原因：{{ detailReq.reject_reason }}</div>

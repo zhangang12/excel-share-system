@@ -139,6 +139,16 @@ async def list_customers(
     return sorted({(c or "").strip() for (c,) in res.all() if (c or "").strip()})
 
 
+@router.get("/equipment-names")
+async def list_equipment_names(
+    _: models.User = Depends(require_roles("admin", "manager", "sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 下单/编辑台账「设备名称」联想：跟「客户单位」一样的做法，返回历史录入过的去重设备名。"""
+    res = await db.execute(select(models.SalesLedger.name).distinct())
+    return sorted({(n or "").strip() for (n,) in res.all() if (n or "").strip()})
+
+
 async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> list[schemas.SalesLedgerRow]:
     # 附件名批量取（合同/开票申请/发票）
     att_ids = set()
