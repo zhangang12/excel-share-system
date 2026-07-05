@@ -1469,6 +1469,29 @@ async def backfill_payment_method_v2(db: AsyncSession) -> dict:
     return {"updated": updated, "left_ambiguous": left_count}
 
 
+async def backfill_auto_reconcile_invoice_status(db: AsyncSession) -> dict:
+    """🆕 对账状态自动化规则补跑一次：现金全款/对公全款 + 已收货 + 已付清 的存量「待对账」明细，
+    直接判定为「已对账」，跟新记录此后的自动规则保持一致。必须排在 backfill_payment_method_v2
+    之后跑（付款方式先改写成新5值，这里才能按新值匹配到）。"""
+    from sqlalchemy import update as _upd
+    r = await db.execute(
+        _upd(models.PurchaseItem)
+        .where(
+            models.PurchaseItem.invoice_status == "待对账",
+            models.PurchaseItem.payment_method.in_(["现金全款", "对公全款"]),
+            models.PurchaseItem.arrival_date.isnot(None),
+            models.PurchaseItem.received_amount > 0,
+            models.PurchaseItem.paid_amount >= models.PurchaseItem.received_amount - 0.005,
+        )
+        .values(invoice_status="已对账")
+    )
+    updated = r.rowcount or 0
+    if updated:
+        await db.commit()
+        log.info("[backfill_auto_reconcile_invoice_status] 自动置已对账 %d 条", updated)
+    return {"updated": updated}
+
+
 async def backfill_oa_departments(db: AsyncSession) -> dict:
     """🆕 OA 部门字典默认值（幂等）：首次启动灌入常见部门；已存在则跳过，不覆盖管理层后续的改名/增删。
     lead_role 只给"有分组的部门"（普通员工/主管两个角色）设主管角色，让主管能看到本部门全部申请；
@@ -1817,6 +1840,10 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_payment_method_v2(db)
     except Exception as e:
         log.warning("backfill_payment_method_v2 failed: %s", e)
+    try:
+        await backfill_auto_reconcile_invoice_status(db)
+    except Exception as e:
+        log.warning("backfill_auto_reconcile_invoice_status failed: %s", e)
     try:
         await backfill_oa_departments(db)
     except Exception as e:

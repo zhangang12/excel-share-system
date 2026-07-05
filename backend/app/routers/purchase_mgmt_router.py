@@ -362,6 +362,21 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
     )
 
 
+def _maybe_auto_reconcile(item: models.PurchaseItem) -> None:
+    """🆕 对账状态自动化：现金全款/对公全款 + 已收货 + 已付清 → 自动置「已对账」，
+    不需要人工手动切换；账期/现金预付/对公预付这几种（有账期天数/预付比例要核对）仍走人工流程。
+    只从「待对账」推进一次，已经是「已对账/已开票」的不回退/不覆盖，避免打乱已经人工确认过的状态。"""
+    if item.invoice_status != "待对账":
+        return
+    if item.payment_method not in ("现金全款", "对公全款"):
+        return
+    if not item.arrival_date:
+        return
+    recv = item.received_amount or 0
+    if recv > 0 and (item.paid_amount or 0) >= recv - 0.005:
+        item.invoice_status = "已对账"
+
+
 @router.post("/items", response_model=schemas.PurchaseItemOut)
 async def create_item(
     body: schemas.PurchaseItemCreate,
@@ -919,6 +934,7 @@ async def update_item(
     if ("qty" in data or "unit_price" in data) and "received_amount" not in data:
         if item.qty and item.unit_price:
             item.received_amount = round(item.qty * item.unit_price, 4)
+    _maybe_auto_reconcile(item)
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == iid))
     return _item_out(r.scalar_one())
@@ -1015,6 +1031,7 @@ async def receive_item(
         await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
     # 🆕 采购收货 → 自动入库（带采购单价/金额），库存与财务成本据此计算
     await _auto_stock_in(db, item, current)
+    _maybe_auto_reconcile(item)
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == iid))
     return _item_out(r.scalar_one())
@@ -1411,6 +1428,7 @@ async def pay_payment_request(
                     add = round(paid_amount / len(pri_rows), 4)
                 item.paid_amount = (item.paid_amount or 0) + add
                 item.paid_date = paid_date
+                _maybe_auto_reconcile(item)
 
     await db.commit()
     return {"ok": True}
