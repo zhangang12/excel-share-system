@@ -91,10 +91,18 @@ const prStatusLabel: Record<string, string> = {
 async function loadPayReqs() {
   prLoading.value = true
   try {
-    const r = await http.get<PaymentRequestOut[]>('/finance/payment-requests', { params: { status: prStatus.value } })
+    // 🆕 一次性拉全部，状态改成横向状态栏，纯前端筛选+计数，切状态不用再等网络
+    const r = await http.get<PaymentRequestOut[]>('/finance/payment-requests', { params: { status: 'all' } })
     payReqs.value = r.data
   } finally { prLoading.value = false }
 }
+const prCounts = computed(() => {
+  const c: Record<string, number> = { all: payReqs.value.length, pending: 0, approved: 0, paid: 0, rejected: 0 }
+  for (const r of payReqs.value) c[r.status] = (c[r.status] || 0) + 1
+  return c
+})
+const filteredPayReqs = computed(() =>
+  prStatus.value === 'all' ? payReqs.value : payReqs.value.filter(r => r.status === prStatus.value))
 
 async function approvePayReq(id: number) {
   try {
@@ -362,17 +370,17 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <el-tab-pane label="💰 请款审批" name="pay_requests">
-          <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
-            <el-select v-model="prStatus" style="width:130px" @change="loadPayReqs">
-              <el-option value="pending" label="待审批" />
-              <el-option value="approved" label="已审批" />
-              <el-option value="paid" label="已付款" />
-              <el-option value="rejected" label="已拒绝" />
-              <el-option value="all" label="全部" />
-            </el-select>
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+            <el-radio-group v-model="prStatus">
+              <el-radio-button value="all">全部 ({{ prCounts.all }})</el-radio-button>
+              <el-radio-button value="pending">待审批 ({{ prCounts.pending }})</el-radio-button>
+              <el-radio-button value="approved">已审批 ({{ prCounts.approved }})</el-radio-button>
+              <el-radio-button value="paid">已付款 ({{ prCounts.paid }})</el-radio-button>
+              <el-radio-button value="rejected">已拒绝 ({{ prCounts.rejected }})</el-radio-button>
+            </el-radio-group>
             <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
           </div>
-          <el-table :data="payReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
+          <el-table :data="filteredPayReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
             <el-table-column prop="id" label="申请编号" width="80" />
             <el-table-column prop="supplier_name" label="供应商" min-width="130" />
             <el-table-column prop="requester_name" label="申请人" width="90" />
