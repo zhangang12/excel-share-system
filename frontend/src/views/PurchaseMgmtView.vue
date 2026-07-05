@@ -616,12 +616,26 @@ async function printPO(poNo?: string | null) {
     w.onload = () => { w.focus(); w.print() }
   } catch { w.close(); /* 全局拦截器已提示 */ }
 }
-// 保存成功后询问是否立即打印（带正式单号）
+// 🆕 采购单下载PDF：服务端直出真正的 PDF 文件，不依赖浏览器弹窗/window.print
+//（原来那套弹窗打印在移动端/微信浏览器经常无响应，#124 反馈的就是这个）
+async function downloadPoPdf(poNo?: string | null) {
+  if (!poNo) return
+  try {
+    const res = await http.get(`/purchase-mgmt/orders/${encodeURIComponent(poNo)}/pdf`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `采购单_${poNo}.pdf`
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    ElMessage.success('PDF 已开始下载')
+  } catch { ElMessage.error('下载PDF失败') }
+}
+// 保存成功后询问是否下载PDF（带正式单号）
 function offerPrint(poNo?: string | null) {
   if (!poNo) return
-  ElMessageBox.confirm(`采购单已保存，单号 ${poNo}。是否立即打印？（之后也可在明细列表点采购单号补打）`,
-    '保存成功', { type: 'success', confirmButtonText: '打印采购单', cancelButtonText: '暂不打印' })
-    .then(() => printPO(poNo)).catch(() => {})
+  ElMessageBox.confirm(`采购单已保存，单号 ${poNo}。是否下载 PDF？（之后也可在明细列表点「PDF」补下载）`,
+    '保存成功', { type: 'success', confirmButtonText: '下载PDF', cancelButtonText: '暂不' })
+    .then(() => downloadPoPdf(poNo)).catch(() => {})
 }
 
 // 🆕 采购历史数据导入：下载模板 / 上传导入
@@ -1499,11 +1513,16 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column label="供应商" min-width="170" fixed>
               <template #default="{ row }"><span class="sup-name">{{ row.supplier_name }}</span></template>
             </el-table-column>
-            <el-table-column prop="po_no" label="采购单号" width="136">
+            <el-table-column prop="po_no" label="采购单号" width="170">
               <template #default="{ row }">
-                <el-tooltip v-if="row.po_no" content="点击打印这张采购单" placement="top">
-                  <el-button link type="primary" class="po-no" @click="printPO(row.po_no)">{{ row.po_no }}</el-button>
-                </el-tooltip>
+                <template v-if="row.po_no">
+                  <el-tooltip content="点击打印预览" placement="top">
+                    <el-button link type="primary" class="po-no" @click="printPO(row.po_no)">{{ row.po_no }}</el-button>
+                  </el-tooltip>
+                  <el-tooltip content="下载PDF（移动端/微信推荐）" placement="top">
+                    <el-button link type="success" size="small" @click="downloadPoPdf(row.po_no)">⬇PDF</el-button>
+                  </el-tooltip>
+                </template>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>

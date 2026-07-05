@@ -309,6 +309,111 @@ async def get_order(
     return await _attach_pay_status(db, [_item_out(x) for x in rows])
 
 
+# ==================== 🆕 采购单 PDF（服务端直出，替代浏览器弹窗打印） ====================
+_PO_COMPANY = "同辉智能装备有限公司"
+_PREPAY_METHODS = ("现金预付", "对公预付")
+
+
+def _po_pay_label(method: Optional[str], ratio: Optional[float]) -> str:
+    if not method:
+        return ""
+    if method in _PREPAY_METHODS and ratio is not None:
+        return f"{method}（预付{ratio:g}%）"
+    return method
+
+
+def _render_po_pdf(po_no: str, supplier_name: str, rows: list) -> bytes:
+    """用 reportlab 把整单渲染成 A4 PDF（内置 STSong-Light CID 字体，中文无需外部字体文件）。
+    版式对齐原打印模板：抬头(需/供方/日期/付款方式/单号) + 明细表 + 合计 + 签字栏。"""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    FONT = "STSong-Light"
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("po_h1", parent=styles["Title"], fontName=FONT, fontSize=20,
+                        alignment=TA_CENTER, spaceAfter=10)
+    cell = ParagraphStyle("po_cell", parent=styles["Normal"], fontName=FONT, fontSize=8, leading=11)
+
+    def P(t):
+        return Paragraph(("" if t is None else str(t)).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), cell)
+
+    first = rows[0]
+    pay = _po_pay_label(first.payment_method, first.prepay_ratio)
+    meta = [
+        [P("需方"), P(_PO_COMPANY), P("下单日期"), P(first.delivery_date or "")],
+        [P("供方"), P(supplier_name), P("付款方式"), P(pay)],
+        [P("采购单号"), P(po_no), "", ""],
+    ]
+    meta_tbl = Table(meta, colWidths=[22 * mm, 60 * mm, 22 * mm, 60 * mm])
+    meta_tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+        ("SPAN", (1, 2), (3, 2)),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f2f2f2")),
+        ("BACKGROUND", (2, 0), (2, 1), colors.HexColor("#f2f2f2")),
+    ]))
+
+    header = ["序号", "订单编号", "名称", "规格型号", "数量", "单价", "合计金额", "备注"]
+    data = [[P(h) for h in header]]
+    total = 0.0
+    for i, x in enumerate(rows, 1):
+        amt = x.received_amount if x.received_amount is not None else ((x.qty or 0) * (x.unit_price or 0))
+        total += amt or 0
+        data.append([
+            P(i), P(x.project_code or ""), P(x.item_name or ""), P(x.spec or ""),
+            P("" if x.qty is None else f"{x.qty:g}"),
+            P("" if x.unit_price is None else f"{x.unit_price:g}"),
+            P("" if amt is None else f"{amt:,.2f}"), P(x.notes or ""),
+        ])
+    data.append([P("合计"), "", "", "", "", "", P(f"￥{total:,.2f}"), ""])
+    col_w = [10 * mm, 24 * mm, 34 * mm, 30 * mm, 13 * mm, 18 * mm, 24 * mm, 25 * mm]
+    items_tbl = Table(data, colWidths=col_w, repeatRows=1)
+    items_tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8f5ee")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("SPAN", (0, -1), (5, -1)),
+        ("ALIGN", (4, 1), (6, -1), "RIGHT"),
+    ]))
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=16 * mm, bottomMargin=16 * mm,
+                            leftMargin=16 * mm, rightMargin=16 * mm, title=f"采购单 {po_no}")
+    doc.build([
+        Paragraph("采购单", h1), meta_tbl, Spacer(1, 6 * mm), items_tbl, Spacer(1, 16 * mm),
+        Paragraph("采购（签字）：____________　　　　　供方（盖章）：____________", cell),
+    ])
+    return buf.getvalue()
+
+
+@router.get("/orders/{po_no}/pdf")
+async def download_order_pdf(
+    po_no: str,
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 采购单直接下载 PDF：服务端渲染返回真正的 PDF 文件，替代原来靠浏览器
+    弹窗 + window.print 的方式（移动端/微信浏览器经常无响应）。"""
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
+                         .order_by(models.PurchaseItem.id))
+    rows = list(r.scalars().all())
+    if not rows:
+        raise HTTPException(404, "采购单不存在")
+    sup = (await db.execute(select(models.Supplier).where(
+        models.Supplier.id == rows[0].supplier_id))).scalar_one_or_none()
+    pdf_bytes = _render_po_pdf(po_no, sup.name if sup else "", rows)
+    fname = quote(f"采购单_{po_no}.pdf")
+    return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+
+
 async def _attach_pay_status(db: AsyncSession, outs: list) -> list:
     """按 已付金额 + 关联请款单状态 计算每条采购明细的付款状态（B1=a：记录付款才算已付）。
     优先级：已付款 > 部分付款 > 已批待付 > 已请款 > 未付款。"""
@@ -1432,6 +1537,62 @@ async def pay_payment_request(
 
     await db.commit()
     return {"ok": True}
+
+
+@router.delete("/payment-requests/{prid}")
+async def delete_payment_request(
+    prid: int,
+    current: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 请款单全流程删除：待审/已批/已驳/已付 任意状态均可删。
+    已付款的先按付款时同一口径把付款从采购明细 paid_amount 冲销掉（必要时回退自动对账状态），
+    再删除请款单、分配明细与付款凭证，避免删掉后供应商账上留下「幽灵付款」。"""
+    pr = (await db.execute(select(models.PaymentRequest).where(
+        models.PaymentRequest.id == prid))).scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "请款单不存在")
+    st = pr.status
+    pri_rows = list((await db.execute(select(models.PaymentRequestItem).where(
+        models.PaymentRequestItem.request_id == prid))).scalars().all())
+
+    # 已付款：反算冲销采购明细 paid_amount（与 /pay 写回口径一致）
+    if st == "paid" and pr.paid_amount and pri_rows:
+        total_alloc = sum(p.allocated_amount for p in pri_rows)
+        for pri in pri_rows:
+            item = (await db.execute(select(models.PurchaseItem).where(
+                models.PurchaseItem.id == pri.item_id))).scalar_one_or_none()
+            if not item:
+                continue
+            if total_alloc > 0:
+                sub = round(pr.paid_amount * (pri.allocated_amount / total_alloc), 4)
+            else:
+                sub = round(pr.paid_amount / len(pri_rows), 4)
+            item.paid_amount = max(0.0, round((item.paid_amount or 0) - sub, 4))
+            # 冲销后不再付清、且此前是「自动」置的已对账 → 回退待对账（不动已开票/人工确认态）
+            if item.invoice_status == "已对账":
+                recv = item.received_amount or 0
+                if not (recv > 0 and (item.paid_amount or 0) >= recv - 0.005):
+                    item.invoice_status = "待对账"
+
+    # 删付款凭证附件（先断 FK 再删行/物理文件）
+    if pr.pay_voucher_file_id:
+        att = (await db.execute(select(models.Attachment).where(
+            models.Attachment.id == pr.pay_voucher_file_id))).scalar_one_or_none()
+        pr.pay_voucher_file_id = None
+        await db.flush()
+        if att:
+            from .attachments_router import delete_attachment_file
+            await delete_attachment_file(db, att)
+
+    # 删分配明细 + 请款单（显式删明细，不依赖 DB 级联——SQLite 默认不强制外键）
+    await db.execute(delete(models.PaymentRequestItem).where(
+        models.PaymentRequestItem.request_id == prid))
+    await db.delete(pr)
+    await db.commit()
+    await write_audit(db, user=current, action="delete", target_type="payment_request",
+                      target_id=prid, detail=f"删除请款单(原状态={st})")
+    return {"ok": True, "message": "请款单已删除"}
 
 
 # ==================== 汇总报表 ====================

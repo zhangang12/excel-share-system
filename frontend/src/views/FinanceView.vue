@@ -154,6 +154,23 @@ async function submitPay() {
   await loadPayReqs()
 }
 
+// 🆕 请款单全流程删除：任意状态可删；已付款的会额外提示（后端会冲销采购明细付款）
+async function deletePayReq(row: PaymentRequestOut) {
+  const extra = row.status === 'paid'
+    ? '\n⚠ 该请款单已付款，删除会把这笔付款从相关采购明细里冲销掉（付款金额回退）。'
+    : ''
+  try {
+    await ElMessageBox.confirm(
+      `确认删除请款单 #${row.id}（${prStatusLabel[row.status] || row.status}）？删除后不可恢复。${extra}`,
+      '删除请款单', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+  } catch { return }
+  try {
+    await http.delete(`/purchase-mgmt/payment-requests/${row.id}`)
+    ElMessage.success('请款单已删除')
+    await loadPayReqs()
+  } catch { /* handled */ }
+}
+
 function prTagType(status: string) {
   return status === 'paid' ? 'success' : status === 'approved' ? 'primary' : status === 'rejected' ? 'danger' : 'warning'
 }
@@ -411,7 +428,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column prop="created_at" label="申请时间" width="110">
               <template #default="{ row }">{{ row.created_at?.slice(0, 10) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="180">
+            <el-table-column label="操作" width="240">
               <template #default="{ row }">
                 <template v-if="row.status === 'pending'">
                   <el-button size="small" type="primary" @click="approvePayReq(row.id)">审批通过</el-button>
@@ -420,7 +437,7 @@ async function revokeInvoice(row: ViewRow) {
                 <template v-else-if="row.status === 'approved'">
                   <el-button size="small" type="success" @click="openPay(row)">记录付款</el-button>
                 </template>
-                <span v-else class="muted">—</span>
+                <el-button size="small" type="danger" link @click="deletePayReq(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
