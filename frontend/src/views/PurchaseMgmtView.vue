@@ -568,19 +568,28 @@ function printPurchaseOrder() {
 // 🆕 保存后随时补打印：按采购单号取整单明细（列表里点采购单号即可）
 async function printPO(poNo?: string | null) {
   if (!poNo) return
+  // 🆕 修复"点了没反应"：必须在 await 之前、点击的同一时刻就把窗口打开——
+  // 隔着一次网络请求(await http.get)之后再 window.open，多数浏览器会把它当成
+  // "非用户直接触发"而静默拦截弹窗（且很多情况下 window.open 并不返回 null，
+  // 原有的 if(!w) 判断也拦不住，看起来就是"点击后完全没反应"）。
+  const w = window.open('', '_blank', 'width=900,height=700')
+  if (!w) { ElMessage.warning('请允许弹窗以打印采购单'); return }
+  w.document.write('<p style="font-family:sans-serif;color:#888;padding:24px">加载中…</p>')
   try {
     const r = await http.get<PurchaseItemOut[]>(`/purchase-mgmt/orders/${encodeURIComponent(poNo)}`)
     const rows = r.data
-    if (!rows.length) { ElMessage.info('该采购单没有明细'); return }
-    openPrintWindow(renderPOHtml({
+    if (!rows.length) { w.close(); ElMessage.info('该采购单没有明细'); return }
+    const html = renderPOHtml({
       poNo, supplierName: rows[0].supplier_name, orderDate: rows[0].delivery_date || '',
       payMethod: rows[0].payment_method || '',
       lines: rows.map(x => ({
         project_code: x.project_code, item_name: x.item_name, spec: x.spec,
         qty: x.qty, unit_price: x.unit_price, amount: x.received_amount, notes: x.notes,
       })),
-    }))
-  } catch { /* handled */ }
+    })
+    w.document.open(); w.document.write(html); w.document.close()
+    w.onload = () => { w.focus(); w.print() }
+  } catch { w.close(); /* 全局拦截器已提示 */ }
 }
 // 保存成功后询问是否立即打印（带正式单号）
 function offerPrint(poNo?: string | null) {
