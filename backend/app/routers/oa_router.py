@@ -595,7 +595,10 @@ async def oa_summary(
         )
         .join(models.Department, models.Department.id == models.OaRequest.department_id)
         .where(models.OaRequest.status == "approved")
-        .group_by(models.OaRequest.department_id, models.Department.name, models.OaRequest.doc_type)
+        # Department.sort_order 必须进 GROUP BY：Postgres 严格要求 ORDER BY 的列出现在 GROUP BY 或聚合里，
+        # 否则报 GroupingError 500（SQLite 宽松不报，沙箱测不出）。sort_order 与部门 1:1，不改变分组结果。
+        .group_by(models.OaRequest.department_id, models.Department.name,
+                  models.Department.sort_order, models.OaRequest.doc_type)
         .order_by(models.Department.sort_order)
     )
     rows = (await db.execute(q)).all()
