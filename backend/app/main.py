@@ -8,6 +8,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import text
 
 from .config import settings
 from .database import Base, engine, SessionLocal
@@ -38,12 +39,29 @@ log = logging.getLogger("main")
 async def lifespan(app: FastAPI):
     import asyncio
     from .overdue import overdue_scheduler
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    await ensure_schema_columns(engine)  # 🆕 v3：给存量表补新增列（幂等）
-    async with SessionLocal() as db:
-        await seed(db)
-        await run_data_migrations(db)
+    # 🆕 生产用 --workers 4：4 个进程各自独立跑一遍启动流程。ensure_schema_columns 是
+    # "先查列是否存在、不存在再 ALTER TABLE ADD COLUMN"，seed 是"先查角色/用户是否存在、
+    # 不存在再 INSERT"——两者都不是原子操作。4 个 worker 几乎同时启动时会一起判定"不存在"，
+    # 然后一起执行 ALTER/INSERT，后面几个必然撞上 DuplicateColumn/UniqueViolation 并抛出未捕获
+    # 异常，导致该 worker 进程启动失败退出——外部表现就是 nginx 间歇性 502（只有落在挂掉的
+    # worker 上的请求出错，其余 worker 正常，所以是部分请求偶发，不是整站瘫痪）。
+    # 用 Postgres 会话级 advisory lock 把这段串行化：同一时刻只有一个 worker 在跑，
+    # 其余 worker 排队等它跑完，等到自己时该加的列/该建的角色都已存在，直接跳过，无竞态。
+    lock_conn = None
+    if engine.dialect.name == "postgresql":
+        lock_conn = await engine.connect()
+        await lock_conn.execute(text("SELECT pg_advisory_lock(872193641)"))
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        await ensure_schema_columns(engine)  # 🆕 v3：给存量表补新增列（幂等）
+        async with SessionLocal() as db:
+            await seed(db)
+            await run_data_migrations(db)
+    finally:
+        if lock_conn is not None:
+            await lock_conn.execute(text("SELECT pg_advisory_unlock(872193641)"))
+            await lock_conn.close()
     files_path = Path(settings.files_dir).resolve()
     log.info("启动完成 · DB=%s · 文件目录=%s (可写=%s)",
              settings.database_url.split("@")[-1], files_path,
