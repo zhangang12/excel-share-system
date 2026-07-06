@@ -82,15 +82,27 @@ function stateTag(s: DeptState): 'success' | 'primary' | 'info' {
 const rcvVisible = ref(false)
 const rcvRow = ref<BoardRow | null>(null)
 const rcvForm = reactive({ name: '', company: '', phone: '', addr: '' })
-function openReceiver(r: BoardRow) {
+async function openReceiver(r: BoardRow) {
   rcvRow.value = r
   rcvForm.name = r.receiver_name || ''
   rcvForm.company = r.receiver_company || ''
   rcvForm.phone = r.receiver_phone || ''
   rcvForm.addr = r.receiver_addr || ''
   rcvVisible.value = true
-  // 🆕 C4/#121：本条没填收货人、但同编号兄弟已填 → 自动带出（可再改）
-  if (!rcvForm.name && !rcvForm.company && siblingRcv.value) applySibling(true)
+  // 🆕 C4/#121：本条没填收货人 → 同编号兄弟已填的自动带出（可再改）
+  if (!rcvForm.name && !rcvForm.company) {
+    if (siblingRcv.value) { applySibling(true); return }
+    // 🆕 #142：看板里没兄弟时(兄弟可能已发货不在当前看板)，服务端跨全部项目再查一次
+    try {
+      const { data } = await http.get<{ found: boolean; name?: string; company?: string; phone?: string; addr?: string }>(
+        '/logistics/receiver-by-code', { params: { code: r.code } })
+      if (data?.found && (data.name || data.company)) {
+        rcvForm.name = data.name || ''; rcvForm.company = data.company || ''
+        rcvForm.phone = data.phone || ''; rcvForm.addr = data.addr || ''
+        ElMessage.success(`已自动带出同编号 ${codeBase(r.code)} 的收货信息`)
+      }
+    } catch { /* 自动带出非关键，失败忽略 */ }
+  }
 }
 // 同数字编号兄弟项目（去末尾字母后缀，如 2026-060B/2026-060A → 2026-060）
 function codeBase(code?: string | null) { return (code || '').replace(/[A-Za-z]+$/, '') }

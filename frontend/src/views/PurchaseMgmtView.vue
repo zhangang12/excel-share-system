@@ -2385,6 +2385,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     <el-drawer v-model="drawerVisible" :title="drawerSupplier ? `${drawerSupplier.supplier_name} — 采购明细` : ''" size="75%" direction="rtl">
       <div v-if="drawerSupplier" class="drawer-summary">
         <span>收货合计 <b class="amt">{{ fmtMoney(drawerSupplier.received_total) }}</b></span>
+        <span>已开票 <b class="amt" style="color:var(--el-color-success)">{{ fmtMoney(drawerSupplier.invoice_total) }}</b></span>
+        <span>未开票 <b class="amt" style="color:var(--el-color-warning)">{{ fmtMoney(drawerSupplier.uninvoiced) }}</b></span>
         <span>已付款 <b class="amt">{{ fmtMoney(drawerSupplier.paid_total) }}</b></span>
         <span>欠款 <b class="danger">{{ fmtMoney(drawerSupplier.outstanding) }}</b></span>
         <span class="flex-spacer" />
@@ -2664,7 +2666,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .pr-item-list { width: 100%; max-height: 220px; overflow-y: auto; }
 .pr-item-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 13px; }
 .pr-item-name { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
-.drawer-summary { display: flex; gap: 20px; padding: 12px 0 16px; font-size: 14px; border-bottom: 1px solid var(--el-border-color-lighter); margin-bottom: 12px; }
+.drawer-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; padding: 12px 0 16px; font-size: 14px; border-bottom: 1px solid var(--el-border-color-lighter); margin-bottom: 12px; }
 .monthly-collapse { margin-bottom: 14px; }
 .muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .sup-missing :deep(.el-select__wrapper) { box-shadow: 0 0 0 1px var(--el-color-danger) inset; }

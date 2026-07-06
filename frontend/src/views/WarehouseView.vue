@@ -29,7 +29,7 @@ async function loadMaterials() {
     materials.value = j.materials; lowCount.value = j.low_count
   } finally { loading.value = false }
 }
-onMounted(() => { loadMaterials(); loadMatDict(); loadCustomFields() })
+onMounted(() => { loadMaterials(); loadMatDict(); loadCustomFields(); loadBadgeCounts() })
 
 const totalStock = computed(() => materials.value.reduce((s, m) => s + m.stock, 0))
 const lowList = computed(() => materials.value.filter(m => m.low))
@@ -144,6 +144,11 @@ function openMat(m?: WhMaterial) {
   else Object.assign(matForm, { id: null, name: '', spec: '', category: '', material_grade: '', unit: '个', location: '', safety_stock: 0, init_stock: 0, custom_values: {} })
   matVisible.value = true
 }
+// 🆕 删除物料（有出入库流水的后端会拦截）
+async function deleteMat(m: WhMaterial) {
+  try { await ElMessageBox.confirm(`删除物料「${m.name}${m.spec ? '·' + m.spec : ''}」？删除后不可恢复。\n（有出入库流水的物料不能删除）`, '删除物料', { type: 'warning', confirmButtonText: '删除' }) } catch { return }
+  try { await whApi.deleteMaterial(m.id); ElMessage.success('物料已删除'); await loadMaterials() } catch { /* 拦截器已提示 */ }
+}
 const matSubmitting = ref(false)
 async function submitMat() {
   if (!matForm.name.trim()) { ElMessage.warning('请填写物料名称'); return }
@@ -173,7 +178,7 @@ async function markShipReady(row: ShipListPendingRow) {
   } catch { return }
   const r: any = await whApi.shipListReady(row.project_id)
   ElMessage.success(r?.message || '已标记备齐，已通知物流')
-  await loadShipPending()
+  await loadShipPending(); loadBadgeCounts()
 }
 
 // ===== 🆕 采购收货：仓库对采购下单的物料确认收货、补送货单号/到货日期/后填价格 =====
@@ -205,6 +210,20 @@ async function loadReceiving() {
     })
     recvItems.value = r.data
   } finally { recvLoading.value = false }
+}
+
+// 🆕 #141 tab 待办数徽标：待收货 / 待备货（红色角标，进页面就能看到有几条待处理）
+const recvPendingCount = ref(0)
+const shipPendingCount = ref(0)
+async function loadBadgeCounts() {
+  try {
+    const [recv, ship] = await Promise.all([
+      http.get<RecvItem[]>('/purchase-mgmt/receiving', { params: { received: false } }),
+      whApi.shipListPending('requested'),
+    ])
+    recvPendingCount.value = recv.data.length
+    shipPendingCount.value = ship.length
+  } catch { /* 徽标非关键，失败忽略 */ }
 }
 const recvVisible = ref(false)
 const recvSaving = ref(false)
@@ -241,7 +260,7 @@ async function submitReceive() {
     })
     ElMessage.success('已确认收货')
     recvVisible.value = false
-    await loadReceiving()
+    await loadReceiving(); loadBadgeCounts()
   } catch { /* handled */ } finally { recvSaving.value = false }
 }
 
@@ -329,16 +348,17 @@ function onTab(name: string) {
           <div style="display:flex;gap:10px;margin-bottom:10px">
             <el-input v-model="kw" placeholder="搜索物料" :prefix-icon="Search" clearable style="width:240px" @change="loadMaterials" />
           </div>
-          <el-table :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-            <el-table-column prop="name" label="名称" min-width="120" />
-            <el-table-column prop="spec" label="规格型号" min-width="120"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
-            <el-table-column prop="category" label="类别" width="100"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
-            <el-table-column prop="unit" label="单位" width="60" />
-            <el-table-column label="现存" width="90">
+          <!-- 🆕 #140 列宽用 min-width 平均分布，避免名称/规格独占空白、右侧列挤在一起 -->
+          <el-table :data="materials" stripe size="small" max-height="calc(100vh - 240px)">
+            <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
+            <el-table-column prop="spec" label="规格型号" min-width="140"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
+            <el-table-column prop="category" label="类别" min-width="110"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
+            <el-table-column prop="unit" label="单位" width="70" align="center" />
+            <el-table-column label="现存" min-width="90" align="right">
               <template #default="{ row }"><b :class="{ bad: row.low }">{{ row.stock }}</b></template>
             </el-table-column>
-            <el-table-column prop="safety_stock" label="安全库存" width="90" />
-            <el-table-column prop="location" label="库位" width="90"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
+            <el-table-column prop="safety_stock" label="安全库存" min-width="100" align="right" />
+            <el-table-column prop="location" label="库位" min-width="100"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
           </el-table>
           <EmptyHint v-if="!materials.length" text="暂无物料，去「物料主数据」新增" size="sm" />
         </el-tab-pane>
@@ -424,7 +444,7 @@ function onTab(name: string) {
             <el-table-column v-for="f in listCustomFields" :key="f.id" :label="f.label" min-width="100">
               <template #default="{ row }">{{ cfDisplay(row.custom_values, f) }}</template>
             </el-table-column>
-            <el-table-column v-if="canWrite" label="操作" width="80"><template #default="{ row }"><el-button size="small" link type="primary" @click="openMat(row)">编辑</el-button></template></el-table-column>
+            <el-table-column v-if="canWrite" label="操作" width="110" fixed="right"><template #default="{ row }"><el-button size="small" link type="primary" @click="openMat(row)">编辑</el-button><el-button size="small" link type="danger" @click="deleteMat(row)">删除</el-button></template></el-table-column>
           </el-table>
           <EmptyHint v-if="!materials.length" text="暂无物料主数据，点「新增物料」开始" size="sm" />
         </el-tab-pane>
@@ -462,7 +482,8 @@ function onTab(name: string) {
         </el-tab-pane>
 
         <!-- 🆕 采购收货 -->
-        <el-tab-pane label="采购收货" name="recv">
+        <el-tab-pane name="recv">
+          <template #label>采购收货<span v-if="recvPendingCount" class="wh-tab-badge">{{ recvPendingCount > 99 ? '99+' : recvPendingCount }}</span></template>
           <EmptyHint v-if="!canWrite" text="仅仓库角色可确认收货" :icon="Lock" />
           <template v-else>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -518,7 +539,8 @@ function onTab(name: string) {
         </el-tab-pane>
 
         <!-- 发货清单目录：设计部下发 → 仓库核对备齐 → 通知物流 -->
-        <el-tab-pane label="发货清单" name="ship">
+        <el-tab-pane name="ship">
+          <template #label>发货清单<span v-if="shipPendingCount" class="wh-tab-badge">{{ shipPendingCount > 99 ? '99+' : shipPendingCount }}</span></template>
           <EmptyHint v-if="!canWrite" text="仅仓库角色可查看发货清单目录" :icon="Lock" />
           <template v-else>
             <div class="ship-cat-head">
@@ -750,6 +772,10 @@ function onTab(name: string) {
 
 <style scoped>
 .bad { color: var(--danger); }
+/* 🆕 #141 tab 待办数红色角标 */
+.wh-tab-badge { display: inline-block; margin-left: 6px; min-width: 16px; height: 16px; line-height: 16px;
+  padding: 0 4px; border-radius: 8px; background: var(--el-color-danger); color: #fff; font-size: 11px;
+  text-align: center; vertical-align: middle; }
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }
 .frow { display: flex; gap: 12px; flex-wrap: wrap; }

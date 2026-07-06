@@ -49,6 +49,7 @@ export const whApi = {
     http.get<{ materials: WhMaterial[]; total: number; low_count: number }>('/wh/materials', { params: { kw } }).then((r) => r.data),
   createMaterial: (data: Partial<WhMaterial>) => http.post('/wh/materials', data).then((r) => r.data),
   updateMaterial: (id: number, data: Partial<WhMaterial>) => http.put(`/wh/materials/${id}`, data).then((r) => r.data),
+  deleteMaterial: (id: number) => http.delete<{ message: string }>(`/wh/materials/${id}`).then((r) => r.data),
   // 🆕 物料自定义字段
   customFields: () => http.get<WhCustomField[]>('/wh/material-custom-fields').then((r) => r.data),
   createCustomField: (data: Partial<WhCustomField>) => http.post('/wh/material-custom-fields', data).then((r) => r.data),

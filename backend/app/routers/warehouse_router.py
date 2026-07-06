@@ -139,6 +139,26 @@ async def update_material(
     return schemas.Msg(message="已保存")
 
 
+@router.delete("/materials/{mid}", response_model=schemas.Msg)
+async def delete_material(
+    mid: int,
+    current: models.User = Depends(require_roles(*WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 删除物料主数据。已有出入库流水的不允许硬删（会破坏库存勾稽），提示改用停用/先冲红。"""
+    m = (await db.execute(select(models.WhMaterial).where(models.WhMaterial.id == mid))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(404, "物料不存在")
+    cnt = (await db.execute(select(func.count(models.WhTxn.id)).where(
+        models.WhTxn.material_id == mid))).scalar() or 0
+    if cnt:
+        raise HTTPException(400, f"该物料已有 {cnt} 条出入库流水，不能删除（会破坏库存勾稽）")
+    await db.delete(m)
+    await db.commit()
+    await write_audit(db, user=current, action="delete", target_type="wh_material", target_id=mid)
+    return schemas.Msg(message="物料已删除")
+
+
 # ==================== 🆕 仓库物料自定义字段（可配置列，跟采购 R6 同一套做法）====================
 _WH_FIELD_ADMIN_ROLES = ("warehouse_lead",)   # 配置字段：仓库主管（admin/manager 由 require_roles 自动放行）
 

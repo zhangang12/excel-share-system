@@ -266,6 +266,32 @@ async def update_receiver(
     return schemas.Msg(message="收货信息已保存")
 
 
+@router.get("/receiver-by-code")
+async def receiver_by_code(
+    code: str,
+    current: models.User = Depends(require_roles("logistics", "sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #142：按「同数字编号」(忽略末尾 A/B/C 子项) 跨全部项目找已填收货信息的兄弟，
+    供物流填 2026-062B 时自动带出 2026-062A 已填的收货信息（不限当前看板已加载的行）。"""
+    import re
+    base = re.sub(r"[A-Za-z]+$", "", (code or "").strip())
+    if not base:
+        return {"found": False}
+    pr = await db.execute(select(models.Project).where(models.Project.is_deleted == False))  # noqa: E712
+    pids = [p.id for p in pr.scalars().all() if re.sub(r"[A-Za-z]+$", "", p.code or "") == base]
+    if not pids:
+        return {"found": False}
+    sr = await db.execute(select(models.Shipment).where(
+        models.Shipment.project_id.in_(pids),
+        models.Shipment.receiver_name.isnot(None)).order_by(models.Shipment.id.desc()))
+    ship = sr.scalars().first()
+    if not ship:
+        return {"found": False}
+    return {"found": True, "name": ship.receiver_name or "", "company": ship.receiver_company or "",
+            "phone": ship.receiver_phone or "", "addr": ship.receiver_addr or ""}
+
+
 @router.post("/{sid}/ship", response_model=schemas.Msg)
 async def confirm_ship(
     sid: int,

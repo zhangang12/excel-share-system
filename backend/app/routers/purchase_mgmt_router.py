@@ -501,9 +501,9 @@ async def create_item(
 
 
 async def _next_po_no(db: AsyncSession) -> str:
-    """采购单号：CG{yyyymmdd}-{当日序号3位}。同一天多张单顺序递增。"""
+    """采购单号：TH{yyyymmdd}-{当日序号3位}（TH=同辉）。同一天多张单顺序递增。"""
     from datetime import date as _date
-    prefix = f"CG{_date.today().strftime('%Y%m%d')}-"
+    prefix = f"TH{_date.today().strftime('%Y%m%d')}-"
     r = await db.execute(
         select(func.count(func.distinct(models.PurchaseItem.po_no)))
         .where(models.PurchaseItem.po_no.like(f"{prefix}%"))
