@@ -763,12 +763,17 @@ const SHEET_VIS: Record<string, () => boolean> = {
   laser: () => showLaser.value,
 }
 const sheetVisible = (key: string) => SHEET_VIS[key]?.() ?? true
-// 当前项目拥有 + 本采购员负责的来源清单（有对应 sheet_id 且有权限才可选）
-const availableSheets = computed(() => {
-  const p = listProjects.value.find(x => x.id === listOrderForm.project_id)
-  if (!p) return [] as typeof SHEET_TYPES[number][]
-  return SHEET_TYPES.filter(t => p.sheets[t.field] && sheetVisible(t.key))
-})
+// 🆕 #2 下拉可选清单类型 = 本采购员有权限看的（跟采购部项目一览的列权限一致），
+//    不再按「当前项目是否有该表」收窄——保证下拉权限与页面能看的列一致。
+const availableSheets = computed(() => SHEET_TYPES.filter(t => sheetVisible(t.key)))
+// 本采购员默认清单类型（权限内第一张）
+const myDefaultSheet = computed(() => availableSheets.value[0]?.key || 'standard')
+// 选定项目后的默认清单：优先「权限内 且 该项目有」的（有数据），否则退到权限内第一张
+function defaultSheetFor(pid: number | ''): string {
+  const p = listProjects.value.find(x => x.id === pid)
+  const withData = p ? availableSheets.value.find(t => p.sheets[t.field]) : undefined
+  return (withData || availableSheets.value[0])?.key || 'standard'
+}
 const curSheetHasQty = computed(() => SHEET_TYPES.find(t => t.key === listSheet.value)?.hasQty ?? true)
 // 🆕 品牌历史选项（allow-create + 已用过的品牌，方便下拉复选）
 const brandOptions = computed(() => {
@@ -830,7 +835,7 @@ async function openListOrder() {
     delivery_date: new Date().toISOString().slice(0, 10),
   })
   purchasableRows.value = []; purchasableFilter.value = ''; onlyGap.value = false
-  batchSupplier.value = ''; batchBrand.value = ''; batchPaymentMethod.value = ''; batchPrepayRatio.value = null; listSheet.value = 'standard'
+  batchSupplier.value = ''; batchBrand.value = ''; batchPaymentMethod.value = ''; batchPrepayRatio.value = null; listSheet.value = myDefaultSheet.value
   try {
     const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
     // 只要有任意一张「本采购员负责」的来源清单就可选（R4/A6）
@@ -847,8 +852,8 @@ async function onListProjectChange() {
   const pid = listOrderForm.project_id
   listOrderForm.project_code = listProjects.value.find(x => x.id === pid)?.code || ''
   if (!pid) { purchasableRows.value = []; return }
-  // 选项目后：把清单类型定到该项目拥有的第一张，然后加载
-  listSheet.value = availableSheets.value[0]?.key || 'standard'
+  // 选项目后：默认选中「本采购员权限内 且 该项目有」的第一张（无则权限内第一张），然后加载
+  listSheet.value = defaultSheetFor(pid)
   await loadPurchasable()
 }
 async function loadPurchasable() {
