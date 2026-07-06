@@ -37,10 +37,12 @@ const lowList = computed(() => materials.value.filter(m => m.low))
 // ===== 出入库登记 =====
 const ioVisible = ref(false)
 const ioForm = reactive({ material_id: undefined as number | undefined, direction: 'in', qty: 1,
-  unit_price: null as number | null, biz_date: new Date().toISOString().slice(0, 10), source: '', party: '' })
+  unit_price: null as number | null, biz_date: new Date().toISOString().slice(0, 10), source: '', party: '',
+  project_id: undefined as number | undefined })
 function openIo(dir: string) {
   Object.assign(ioForm, { material_id: undefined, direction: dir, qty: 1, unit_price: null,
-    biz_date: new Date().toISOString().slice(0, 10), source: '', party: '' })
+    biz_date: new Date().toISOString().slice(0, 10), source: '', party: '', project_id: undefined })
+  if (dir === 'out' && !projects.value.length) loadProjects()   // 🆕 出库要选领用项目→项目材料成本
   ioVisible.value = true
 }
 const ioAmount = computed(() => ioForm.unit_price != null ? Number((ioForm.qty * ioForm.unit_price).toFixed(2)) : null)
@@ -603,6 +605,14 @@ function onTab(name: string) {
             <el-input v-model="ioForm.source" :placeholder="ioForm.direction === 'in' ? '采购入库' : '领料出库'" />
           </el-form-item>
           <el-form-item :label="ioForm.direction === 'in' ? '供应商' : '领用方'" style="flex:1"><el-input v-model="ioForm.party" /></el-form-item>
+        </div>
+        <!-- 🆕 出库领用项目：填了才计入「项目材料成本」(项目成本=领料出库×单价) -->
+        <div class="frow" v-if="ioForm.direction === 'out'">
+          <el-form-item label="领用项目（选填，填了才计入项目材料成本）" style="flex:1">
+            <el-select v-model="ioForm.project_id" filterable clearable placeholder="选择领用到哪个项目" style="width:100%">
+              <el-option v-for="p in projects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
+            </el-select>
+          </el-form-item>
         </div>
       </el-form>
       <template #footer>

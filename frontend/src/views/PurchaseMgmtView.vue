@@ -457,11 +457,21 @@ const PO_COMPANY = '同辉智能装备有限公司'
 const orderTotal = computed(() =>
   orderForm.lines.reduce((s, l) => s + (l.received_amount ?? ((l.qty || 0) * (l.unit_price || 0))), 0))
 
+// 🆕 订单编号可选：历史项目编号供下拉选择（allow-create 仍可手输新编号）
+const projectCodeOptions = ref<string[]>([])
+async function loadProjectCodes() {
+  try {
+    const r = await http.get<{ code: string }[]>('/purchase/projects')
+    projectCodeOptions.value = Array.from(new Set(r.data.map(p => p.code).filter(Boolean)))
+  } catch { projectCodeOptions.value = [] }
+}
+
 function openNewOrder() {
   Object.assign(orderForm, {
     supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10),
     contract_no: '', project_code: '', payment_method: '', prepay_ratio: null, lines: [blankLine()],
   })
+  loadProjectCodes()
   orderDialogVisible.value = true
 }
 function addOrderLine() { orderForm.lines.push(blankLine()) }
@@ -2007,7 +2017,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :xs="12" :sm="8" :md="4">
             <el-form-item label="默认订单编号">
-              <el-input v-model="orderForm.project_code" placeholder="行内可覆盖" />
+              <el-select v-model="orderForm.project_code" filterable allow-create clearable default-first-option
+                         placeholder="选/输项目编号，行内可覆盖" style="width:100%">
+                <el-option v-for="c in projectCodeOptions" :key="c" :label="c" :value="c" />
+              </el-select>
             </el-form-item>
           </el-col>
         </el-row>
@@ -2024,8 +2037,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-table-column label="规格型号" min-width="150">
             <template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template>
           </el-table-column>
-          <el-table-column label="订单编号" width="128">
-            <template #default="{ row }"><el-input v-model="row.project_code" :placeholder="orderForm.project_code || '默认'" /></template>
+          <el-table-column label="订单编号" width="150">
+            <template #default="{ row }">
+              <el-select v-model="row.project_code" filterable allow-create clearable default-first-option
+                         :placeholder="orderForm.project_code || '默认'" style="width:100%">
+                <el-option v-for="c in projectCodeOptions" :key="c" :label="c" :value="c" />
+              </el-select>
+            </template>
           </el-table-column>
           <el-table-column label="数量" width="110">
             <template #default="{ row }">
