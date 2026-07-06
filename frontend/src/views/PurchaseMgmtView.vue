@@ -1520,7 +1520,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <template v-if="canWrite">
               <el-button type="primary" :icon="Tickets" @click="openListOrder">从清单下单</el-button>
               <el-button :icon="Plus" @click="openNewOrder">新建采购单</el-button>
-              <el-button :icon="EditPen" @click="openNewItem">单条明细</el-button>
+              <!-- 🆕 「单条明细」按用户要求隐藏（openNewItem 及弹窗保留，需要时恢复本按钮即可） -->
               <el-dropdown trigger="click">
                 <el-button :loading="importing">
                   更多<el-icon style="margin-left:4px"><ArrowDown /></el-icon>
