@@ -353,6 +353,41 @@ const selSameSupplier = computed(() =>
   selectedItems.value.length > 0 && selectedItems.value.every(i => i.supplier_id === selectedItems.value[0].supplier_id))
 function clearSelection() { itemsTableRef.value?.clearSelection() }
 
+// 🆕 #144 采购明细按采购单号折叠分组：同一采购单(≥2行)收成一个可展开的父行，
+//    单行采购单/无采购单号的散单仍平铺。父行显示汇总(共N件+收货/开票/已付合计)。
+const rowKey = (row: any) => (row._isGroup ? row._key : 'i' + row.id)
+const groupedItems = computed<any[]>(() => {
+  const groups = new Map<string, any>()
+  const out: any[] = []
+  for (const it of items.value) {
+    const po = it.po_no
+    if (!po) { out.push(it); continue }
+    let g = groups.get(po)
+    if (!g) {
+      g = {
+        _isGroup: true, _key: 'g:' + po, po_no: po,
+        supplier_name: it.supplier_name, supplier_id: it.supplier_id, delivery_date: it.delivery_date,
+        received_amount: 0, invoice_amount: 0, paid_amount: 0,
+        _codes: new Set<string>(), children: [] as PurchaseItemOut[],
+      }
+      groups.set(po, g); out.push(g)
+    }
+    g.children.push(it)
+    g.received_amount += it.received_amount || 0
+    g.invoice_amount += it.invoice_amount || 0
+    g.paid_amount += it.paid_amount || 0
+    if (it.project_code) g._codes.add(it.project_code)
+  }
+  return out.map((r) => {
+    if (!r._isGroup) return r
+    if (r.children.length === 1) return r.children[0]   // 单行采购单直接平铺
+    r._count = r.children.length
+    const codes = Array.from(r._codes) as string[]
+    r.project_code = codes.length === 0 ? null : codes.length === 1 ? codes[0] : '多个'
+    return r
+  })
+})
+
 // suppliers & statements
 const suppliers = ref<SupplierOut[]>([])
 const statementData = ref<StatementList | null>(null)
@@ -1513,13 +1548,14 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
           <el-table
             ref="itemsTableRef"
-            :data="items" stripe
+            :data="groupedItems" stripe
+            :row-key="rowKey" :tree-props="{ children: 'children' }"
             @selection-change="(v: PurchaseItemOut[]) => selectedItems = v"
             max-height="max(320px, calc(100vh - 340px))"
             :scrollbar-always-on="true"
             class="wrap-cells compact-tbl"
           >
-            <el-table-column v-if="canWrite" type="selection" width="40" fixed />
+            <el-table-column v-if="canWrite" type="selection" width="40" fixed :selectable="(row: any) => !row._isGroup" />
             <el-table-column label="供应商" min-width="170" fixed>
               <template #default="{ row }"><span class="sup-name">{{ row.supplier_name }}</span></template>
             </el-table-column>
@@ -1545,11 +1581,18 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column prop="arrival_date" label="到货日期" width="98" sortable>
               <template #default="{ row }">
-                <span v-if="row.arrival_date">{{ row.arrival_date }}</span>
-                <el-tag v-else size="small" type="info" effect="plain">待收货</el-tag>
+                <template v-if="!row._isGroup">
+                  <span v-if="row.arrival_date">{{ row.arrival_date }}</span>
+                  <el-tag v-else size="small" type="info" effect="plain">待收货</el-tag>
+                </template>
               </template>
             </el-table-column>
-            <el-table-column prop="item_name" label="名称" min-width="130" />
+            <el-table-column prop="item_name" label="名称" min-width="130">
+              <template #default="{ row }">
+                <b v-if="row._isGroup">共 {{ row._count }} 个零件</b>
+                <span v-else>{{ row.item_name }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="spec" label="规格" min-width="120">
               <template #default="{ row }">{{ row.spec || '—' }}</template>
             </el-table-column>
@@ -1576,12 +1619,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column label="付款状态" width="84" align="center">
               <template #default="{ row }">
-                <el-tag :type="payStatusTag(row.pay_status)" size="small" effect="light">{{ row.pay_status || '未付款' }}</el-tag>
+                <el-tag v-if="!row._isGroup" :type="payStatusTag(row.pay_status)" size="small" effect="light">{{ row.pay_status || '未付款' }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="对账状态" width="76">
               <template #default="{ row }">
-                <el-tag :type="statusTag(row.invoice_status)" size="small">{{ row.invoice_status }}</el-tag>
+                <el-tag v-if="!row._isGroup" :type="statusTag(row.invoice_status)" size="small">{{ row.invoice_status }}</el-tag>
               </template>
             </el-table-column>
             <!-- 🆕 R6 自定义列 -->
@@ -1593,8 +1636,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column v-if="canWrite" label="操作" width="120" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
-                <el-button size="small" link type="primary" @click="openEditItem(row)">编辑</el-button>
-                <el-button size="small" link type="danger" @click="deleteItem(row)">删除</el-button>
+                <template v-if="!row._isGroup">
+                  <el-button size="small" link type="primary" @click="openEditItem(row)">编辑</el-button>
+                  <el-button size="small" link type="danger" @click="deleteItem(row)">删除</el-button>
+                </template>
+                <span v-else class="muted small">展开看零件</span>
               </template>
             </el-table-column>
             <template #empty>
