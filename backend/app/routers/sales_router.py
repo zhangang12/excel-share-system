@@ -672,6 +672,40 @@ async def receiver_by_code(
     }
 
 
+@router.get("/receiver-by-customer")
+async def receiver_by_customer(
+    customer: str,
+    current: models.User = Depends(require_roles("sales", "sales_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈 #151：同一家客户下单时带出上次收货信息。
+    找该客户名下最近一个已填收货人的发货单，返回收货人/单位/电话/地址供自动填充。"""
+    cust = (customer or "").strip()
+    if not cust:
+        return {"found": False}
+    lr = await db.execute(
+        select(models.SalesLedger.project_id).where(models.SalesLedger.customer == cust))
+    pids = [x[0] for x in lr.all()]
+    if not pids:
+        return {"found": False}
+    sr = await db.execute(
+        select(models.Shipment).where(
+            models.Shipment.project_id.in_(pids),
+            models.Shipment.receiver_name.isnot(None),
+        ).order_by(models.Shipment.id.desc())
+    )
+    ship = sr.scalars().first()
+    if not ship:
+        return {"found": False}
+    return {
+        "found": True,
+        "name": ship.receiver_name or "",
+        "company": ship.receiver_company or "",
+        "phone": ship.receiver_phone or "",
+        "addr": ship.receiver_addr or "",
+    }
+
+
 @router.put("/ledger/{lid}/receiver", response_model=schemas.Msg)
 async def update_receiver(
     lid: int, data: schemas.SalesReceiverIn,

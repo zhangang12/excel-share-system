@@ -271,6 +271,22 @@ async function autofillReceiverByCode() {
   } catch { /* 静默 */ }
 }
 
+// 🆕 #151：选/填客户后，按同一家客户自动带出上次收货信息（已填则不覆盖）
+async function autofillReceiverByCustomer() {
+  const cust = (orderForm.customer || '').trim()
+  if (!cust || orderForm.receiver.name || orderForm.receiver.company) return
+  try {
+    const r = await salesApi.receiverByCustomer(cust)
+    if (r.found) {
+      orderForm.receiver.name = r.name || ''
+      orderForm.receiver.company = r.company || ''
+      orderForm.receiver.phone = r.phone || ''
+      orderForm.receiver.addr = r.addr || ''
+      ElMessage.success('已按同客户自动带出收货信息，可修改')
+    }
+  } catch { /* 静默 */ }
+}
+
 async function submitOrder() {
   if (!orderForm.code.trim()) { ElMessage.warning('请填写项目编号'); return }
   if (!orderForm.name.trim()) { ElMessage.warning('请填写设备名称'); return }
@@ -1022,7 +1038,8 @@ async function openReport() {
         <div class="frow">
           <el-form-item label="客户单位" style="flex: 1">
             <el-autocomplete v-model="orderForm.customer" :fetch-suggestions="queryCustomers"
-                             placeholder="输入简称联想历史客户全称" clearable style="width:100%" />
+                             placeholder="输入简称联想历史客户全称" clearable style="width:100%"
+                             @select="autofillReceiverByCustomer" @blur="autofillReceiverByCustomer" />
           </el-form-item>
           <el-form-item label="客户分类" style="flex: 1">
             <el-select v-model="orderForm.cust_type" style="width: 100%">
@@ -1092,7 +1109,7 @@ async function openReport() {
             </div>
           </div>
         </el-form-item>
-        <div class="fsec">📍 收货信息 <span class="muted" style="font-size:12px;font-weight:400">（同数字编号可自动带出上次收货信息）</span></div>
+        <div class="fsec">📍 收货信息 <span class="muted" style="font-size:12px;font-weight:400">（同客户 / 同数字编号可自动带出上次收货信息）</span></div>
         <div class="frow">
           <el-form-item label="收货人" style="flex: 1"><el-input v-model="orderForm.receiver.name" placeholder="联系人" /></el-form-item>
           <el-form-item label="收货单位" style="flex: 1"><el-input v-model="orderForm.receiver.company" placeholder="公司/单位" /></el-form-item>
@@ -1520,7 +1537,8 @@ async function openReport() {
 }
 .layout.collapsed .totals-bar { left: var(--sidebar-w-collapsed); }
 .totals-bar b { color: var(--el-text-color-primary); }
-.pager { display: flex; justify-content: flex-end; margin-top: 12px; }
+/* 🆕 #150：合计条是固定在视口底部的，给分页/末行留出净空，避免被盖住看不全 */
+.pager { display: flex; justify-content: flex-end; margin-top: 12px; padding-bottom: 66px; }
 .totals-bar .warn { color: var(--warning); }
 .fsec {
   font-size: 13px; font-weight: 600; color: var(--el-text-color-primary);

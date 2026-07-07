@@ -120,6 +120,9 @@ export const salesApi = {
     http.get<{ name: string; company: string; phone: string; addr: string; shipped: boolean }>(`/sales/ledger/${id}/receiver`).then((r) => r.data),
   receiverByCode: (code: string) =>
     http.get<{ found: boolean; name?: string; company?: string; phone?: string; addr?: string }>(`/sales/receiver-by-code`, { params: { code } }).then((r) => r.data),
+  // 🆕 #151：按客户带出上次收货信息
+  receiverByCustomer: (customer: string) =>
+    http.get<{ found: boolean; name?: string; company?: string; phone?: string; addr?: string }>(`/sales/receiver-by-customer`, { params: { customer } }).then((r) => r.data),
   updateReceiver: (id: number, data: { name: string; phone: string; addr: string }) =>
     http.put(`/sales/ledger/${id}/receiver`, data).then((r) => r.data),
 
