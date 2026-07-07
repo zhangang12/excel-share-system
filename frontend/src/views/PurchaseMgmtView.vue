@@ -2,11 +2,12 @@
 // 采购管理（含采购部）：采购部 / 采购明细 / 供应商账目 / 汇总报表
 import { ref, computed, onMounted, onBeforeUnmount, reactive, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, Search, Tickets, EditPen, Setting, Collection } from '@element-plus/icons-vue'
+import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, ArrowLeft, Search, Tickets, EditPen, Setting, Collection } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
+import LineChart from '@/components/LineChart.vue'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
@@ -153,7 +154,7 @@ interface PurchaseItemOut {
   delivery_date?: string | null; contract_no?: string | null; arrival_date?: string | null
   project_code?: string | null; delivery_note_no?: string | null
   item_name: string; spec?: string | null; brand?: string | null; qty?: number | null; unit_price?: number | null
-  received_amount: number; invoice_date?: string | null; tax_rate?: string | null
+  received_amount: number; invoice_date?: string | null; invoice_no?: string | null; tax_rate?: string | null
   invoice_amount: number; paid_amount: number; paid_date?: string | null
   payment_method?: string | null; prepay_ratio?: number | null; pay_status?: string
   custom_values?: Record<string, any>
@@ -173,9 +174,12 @@ interface StatementList {
 interface PaymentRequestOut {
   id: number; supplier_id: number; supplier_name: string; requested_amount: number
   requester_id?: number; requester_name?: string; status: string; notes?: string
+  finance_approver_id?: number | null; approver_name?: string | null
   approved_at?: string; paid_amount?: number; paid_date?: string
   payment_method?: string; reject_reason?: string; created_at: string
-  items: Array<{ item_id: number; item_name: string; allocated_amount: number }>
+  supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
+  po_nos?: string[]
+  items: Array<{ item_id: number; item_name: string; allocated_amount: number; po_no?: string | null; spec?: string | null; project_code?: string | null; received_amount?: number }>
 }
 interface PurchaseKPI { month_amount: number; quarter_amount: number; year_amount: number; total_outstanding: number; pending_requests: number }
 interface MonthlyPoint { month: string; amount: number; paid: number }
@@ -346,11 +350,21 @@ async function resetFilters() {
   await loadItems()
 }
 
+// 🆕 需求九：勾选合并父行时展开成其子明细（叶子），与直接勾选的叶子去重
+const selLeaves = computed<PurchaseItemOut[]>(() => {
+  const seen = new Set<number>(); const out: PurchaseItemOut[] = []
+  for (const r of selectedItems.value as any[]) {
+    for (const it of (r._isGroup ? (r.children || []) : [r])) {
+      if (!seen.has(it.id)) { seen.add(it.id); out.push(it) }
+    }
+  }
+  return out
+})
 // 🆕 勾选行的汇总（浮出操作条：请款金额一目了然；跨供应商时禁止请款并提示）
 const selUnpaidTotal = computed(() =>
-  selectedItems.value.reduce((s, i) => s + (i.received_amount - i.paid_amount), 0))
+  selLeaves.value.reduce((s, i) => s + (i.received_amount - i.paid_amount), 0))
 const selSameSupplier = computed(() =>
-  selectedItems.value.length > 0 && selectedItems.value.every(i => i.supplier_id === selectedItems.value[0].supplier_id))
+  selLeaves.value.length > 0 && selLeaves.value.every(i => i.supplier_id === selLeaves.value[0].supplier_id))
 function clearSelection() { itemsTableRef.value?.clearSelection() }
 
 // 🆕 #144 采购明细按采购单号折叠分组：同一采购单(≥2行)收成一个可展开的父行，
@@ -368,7 +382,8 @@ const groupedItems = computed<any[]>(() => {
         _isGroup: true, _key: 'g:' + po, po_no: po,
         supplier_name: it.supplier_name, supplier_id: it.supplier_id, delivery_date: it.delivery_date,
         received_amount: 0, invoice_amount: 0, paid_amount: 0,
-        _codes: new Set<string>(), children: [] as PurchaseItemOut[],
+        _codes: new Set<string>(), _dnotes: new Set<string>(), _arrivals: new Set<string>(),
+        children: [] as PurchaseItemOut[],
       }
       groups.set(po, g); out.push(g)
     }
@@ -377,6 +392,8 @@ const groupedItems = computed<any[]>(() => {
     g.invoice_amount += it.invoice_amount || 0
     g.paid_amount += it.paid_amount || 0
     if (it.project_code) g._codes.add(it.project_code)
+    if (it.delivery_note_no) g._dnotes.add(it.delivery_note_no)  // 🆕 需求九
+    if (it.arrival_date) g._arrivals.add(it.arrival_date)        // 🆕 需求九
   }
   return out.map((r) => {
     if (!r._isGroup) return r
@@ -384,6 +401,11 @@ const groupedItems = computed<any[]>(() => {
     r._count = r.children.length
     const codes = Array.from(r._codes) as string[]
     r.project_code = codes.length === 0 ? null : codes.length === 1 ? codes[0] : '多个'
+    // 🆕 需求九：送货单号 / 到货日期 体现在合并父行（同单同批时二级列表与父行一致）
+    const dnotes = Array.from(r._dnotes) as string[]
+    r.delivery_note_no = dnotes.length === 0 ? null : dnotes.length === 1 ? dnotes[0] : '多个'
+    const arrivals = Array.from(r._arrivals) as string[]
+    r.arrival_date = arrivals.length === 0 ? null : arrivals.length === 1 ? arrivals[0] : '多个'
     return r
   })
 })
@@ -413,17 +435,30 @@ const drawerMonthly = computed(() => {
 
 // 🆕 供应商分类——独立字典（dtype=supplier_category，见「字典设置」)，不与物料类别混用
 const categoryOptions = computed(() => matDict.value.filter(d => d.dtype === 'supplier_category' && d.enabled).map(d => d.value))
-// 🆕 供应商账目筛选（名称 / 分类）
+// 🆕 供应商账目筛选（名称）
 const stmtNameFilter = ref('')
-const stmtCatFilter = ref('')
-const filteredStatementRows = computed(() => {
+// 🆕 需求十一：供应商账目卡片式——按分类大类汇总，点卡片下钻到该大类供应商列表
+const stmtDrillCat = ref<string | null>(null)
+interface CatCard { category: string; count: number; received: number; invoice: number; uninvoiced: number; paid: number; outstanding: number }
+const categoryCards = computed<CatCard[]>(() => {
   const rows = statementData.value?.rows || []
   const kw = stmtNameFilter.value.trim().toLowerCase()
-  const cat = stmtCatFilter.value
-  return rows.filter(r =>
-    (!kw || r.supplier_name.toLowerCase().includes(kw)) &&
-    (!cat || (r.category || '') === cat)
-  )
+  const map = new Map<string, CatCard>()
+  for (const r of rows) {
+    if (kw && !r.supplier_name.toLowerCase().includes(kw)) continue
+    const cat = r.category || '未分类'
+    let c = map.get(cat)
+    if (!c) { c = { category: cat, count: 0, received: 0, invoice: 0, uninvoiced: 0, paid: 0, outstanding: 0 }; map.set(cat, c) }
+    c.count++; c.received += r.received_total; c.invoice += r.invoice_total
+    c.uninvoiced += r.uninvoiced; c.paid += r.paid_total; c.outstanding += r.outstanding
+  }
+  return Array.from(map.values()).sort((a, b) => b.outstanding - a.outstanding)
+})
+const drillRows = computed(() => {
+  if (!stmtDrillCat.value) return []
+  const rows = statementData.value?.rows || []
+  const kw = stmtNameFilter.value.trim().toLowerCase()
+  return rows.filter(r => (r.category || '未分类') === stmtDrillCat.value && (!kw || r.supplier_name.toLowerCase().includes(kw)))
 })
 // 🆕 供应商状态查询（避免模板里反复 find）+ 操作收进下拉菜单
 function supActive(supplierId: number): boolean {
@@ -446,6 +481,9 @@ const byBuyer = ref<BuyerRow[]>([])
 const byProject = ref<{ project_code: string; amount: number; count: number }[]>([])
 const topSuppliers = ref<TopSupplier[]>([])
 const projectSearch = ref('')
+// 🆕 需求十二：供应商月度采购额趋势（多折线）
+interface SupplierTrend { months: string[]; series: { supplier_id: number; supplier_name: string; points: number[]; total: number }[] }
+const supplierTrend = ref<SupplierTrend>({ months: [], series: [] })
 
 // dialogs
 const itemDialogVisible = ref(false)
@@ -1014,16 +1052,18 @@ async function loadStatements() {
 async function loadReports() {
   loading.value = true
   try {
-    const [k, t, b, ts] = await Promise.all([
+    const [k, t, b, ts, st] = await Promise.all([
       http.get<PurchaseKPI>('/purchase-mgmt/reports/overview'),
       http.get<MonthlyPoint[]>('/purchase-mgmt/reports/monthly-trend'),
       http.get<BuyerRow[]>('/purchase-mgmt/reports/by-buyer'),
       http.get<TopSupplier[]>('/purchase-mgmt/reports/top-suppliers'),
+      http.get<SupplierTrend>('/purchase-mgmt/reports/supplier-trend', { params: { months: 12, top: 5 } }),
     ])
     kpi.value = k.data
     monthlyTrend.value = t.data
     byBuyer.value = b.data
     topSuppliers.value = ts.data
+    supplierTrend.value = st.data
   } finally { loading.value = false }
 }
 
@@ -1034,6 +1074,19 @@ async function loadProjectReport() {
   )
   byProject.value = r.data
 }
+
+// 🆕 需求十二：图表数据源（折线/曲线）
+const trendChart = computed(() => ({
+  labels: monthlyTrend.value.map(m => m.month.slice(2)),
+  series: [
+    { name: '收货金额', points: monthlyTrend.value.map(m => m.amount) },
+    { name: '已付款', points: monthlyTrend.value.map(m => m.paid), color: '#16a34a' },
+  ] as { name: string; points: (number | null)[]; color?: string }[],
+}))
+const supTrendChart = computed(() => ({
+  labels: supplierTrend.value.months.map(m => m.slice(2)),
+  series: supplierTrend.value.series.map(s => ({ name: s.supplier_name, points: s.points as (number | null)[] })),
+}))
 
 onMounted(async () => {
   await Promise.all([loadSuppliers(), loadCustomFields(), loadMatDict()])
@@ -1049,7 +1102,7 @@ async function onTabChange(name: string) {
   else if (name === 'items') await loadItems()
   else if (name === 'statements') { await loadSuppliers(); await loadStatements() }
   else if (name === 'payreq') await loadPayReqs()
-  else if (name === 'reports' && isLeadOrAbove.value) { await loadReports(); await loadProjectReport() }
+  else if (name === 'reports' && (isLeadOrAbove.value || canWrite.value)) { await loadReports(); await loadProjectReport() }
 }
 
 // ===== item CRUD =====
@@ -1131,16 +1184,17 @@ async function deleteItem(row: PurchaseItemOut) {
 
 // ===== payment request =====
 function openPaymentRequest() {
-  if (!selectedItems.value.length) { ElMessage.warning('请先勾选明细行'); return }
-  const firstSid = selectedItems.value[0].supplier_id
-  if (!selectedItems.value.every(i => i.supplier_id === firstSid)) {
+  const leaves = selLeaves.value   // 🆕 需求九：合并父行已展开成子明细
+  if (!leaves.length) { ElMessage.warning('请先勾选明细行（可勾选合并行汇总请款）'); return }
+  const firstSid = leaves[0].supplier_id
+  if (!leaves.every(i => i.supplier_id === firstSid)) {
     ElMessage.error('请款单只能关联同一供应商的明细')
     return
   }
   payReqForm.supplier_id = firstSid
-  payReqForm.requested_amount = selectedItems.value.reduce((s, i) => s + (i.received_amount - i.paid_amount), 0)
+  payReqForm.requested_amount = leaves.reduce((s, i) => s + (i.received_amount - i.paid_amount), 0)
   payReqForm.notes = ''
-  payReqForm.items = selectedItems.value.map(i => ({
+  payReqForm.items = leaves.map(i => ({
     item_id: i.id,
     item_name: i.item_name,
     allocated_amount: i.received_amount - i.paid_amount,
@@ -1166,6 +1220,33 @@ async function submitPaymentRequest() {
     payReqVisible.value = false
     clearSelection()
   } catch { /* handled */ } finally { payReqSaving.value = false }
+}
+
+// 🆕 需求十三：批量维护开票号（对多个零件统一维护同一开票号，开票金额=收货金额）
+const invoiceNoDialogVisible = ref(false)
+const invoiceNoForm = reactive({ invoice_no: '', invoice_date: '' })
+const invoiceNoSaving = ref(false)
+function openBatchInvoiceNo() {
+  const leaves = selLeaves.value
+  if (!leaves.length) { ElMessage.warning('请先勾选要维护开票号的明细（可勾选合并行）'); return }
+  invoiceNoForm.invoice_no = leaves.find(i => i.invoice_no)?.invoice_no || ''
+  invoiceNoForm.invoice_date = ''
+  invoiceNoDialogVisible.value = true
+}
+async function submitBatchInvoiceNo() {
+  if (!invoiceNoForm.invoice_no.trim()) { ElMessage.warning('请填写开票号'); return }
+  const ids = selLeaves.value.map(i => i.id)
+  invoiceNoSaving.value = true
+  try {
+    const r = await http.post<{ updated: number }>('/purchase-mgmt/items/set-invoice-no', {
+      item_ids: ids, invoice_no: invoiceNoForm.invoice_no.trim(),
+      invoice_date: invoiceNoForm.invoice_date || null,
+    })
+    ElMessage.success(`已对 ${r.data.updated} 条明细维护开票号（开票金额=收货金额）`)
+    invoiceNoDialogVisible.value = false
+    clearSelection()
+    await loadItems()
+  } catch { /* handled */ } finally { invoiceNoSaving.value = false }
 }
 
 // ===== supplier CRUD =====
@@ -1293,7 +1374,7 @@ async function saveOpeningBalance() {
 
 // 🆕 供应商账目合计行（列对齐：供应商/分类/状态/期初/收货/开票/待开票/已付/欠款/明细数/操作）
 function stmtSummary() {
-  const rows = filteredStatementRows.value
+  const rows = drillRows.value
   const sum = (k: keyof SupplierStatementRow) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0)
   return ['合计', '', '',
     fmtMoney(sum('opening_balance')), fmtMoney(sum('received_total')),
@@ -1544,10 +1625,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
           <!-- 🆕 勾选后浮出操作条：金额一目了然，请款入口就近 -->
           <div v-if="selectedItems.length" class="sel-bar">
-            <span>已选 <b>{{ selectedItems.length }}</b> 条</span>
+            <span>已选 <b>{{ selLeaves.length }}</b> 条明细</span>
             <span>未付合计 <b class="amt">{{ fmtMoney(selUnpaidTotal) }}</b></span>
             <span v-if="!selSameSupplier" class="warn">跨供应商不能一起请款，请选择同一供应商的明细</span>
             <el-button size="small" type="warning" :disabled="!selSameSupplier" @click="openPaymentRequest">发起请款</el-button>
+            <el-button size="small" type="primary" plain @click="openBatchInvoiceNo">维护开票号</el-button>
             <el-button size="small" link @click="clearSelection">取消选择</el-button>
           </div>
 
@@ -1560,7 +1642,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             :scrollbar-always-on="true"
             class="wrap-cells compact-tbl"
           >
-            <el-table-column v-if="canWrite" type="selection" width="40" fixed :selectable="(row: any) => !row._isGroup" />
+            <!-- 🆕 需求九：合并父行也可勾选（汇总请款/维护开票号会自动展开成子明细） -->
+            <el-table-column v-if="canWrite" type="selection" width="40" fixed />
             <el-table-column label="供应商" min-width="170" fixed>
               <template #default="{ row }"><span class="sup-name">{{ row.supplier_name }}</span></template>
             </el-table-column>
@@ -1586,10 +1669,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column prop="arrival_date" label="到货日期" width="98" sortable>
               <template #default="{ row }">
-                <template v-if="!row._isGroup">
-                  <span v-if="row.arrival_date">{{ row.arrival_date }}</span>
-                  <el-tag v-else size="small" type="info" effect="plain">待收货</el-tag>
-                </template>
+                <span v-if="row.arrival_date">{{ row.arrival_date }}</span>
+                <el-tag v-else-if="!row._isGroup" size="small" type="info" effect="plain">待收货</el-tag>
+                <span v-else class="muted">—</span>
               </template>
             </el-table-column>
             <el-table-column prop="item_name" label="名称" min-width="130">
@@ -1615,6 +1697,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column prop="invoice_date" label="开票日期" width="96">
               <template #default="{ row }">{{ row.invoice_date || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="invoice_no" label="开票号" width="140">
+              <template #default="{ row }">{{ row._isGroup ? '' : (row.invoice_no || '—') }}</template>
             </el-table-column>
             <el-table-column prop="invoice_amount" label="开票金额" width="106" align="right" sortable>
               <template #default="{ row }">{{ row.invoice_amount ? fmtMoney(row.invoice_amount) : '—' }}</template>
@@ -1672,21 +1757,45 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-tab-pane label="📊 供应商账目" name="statements" lazy>
           <div class="filter-bar">
             <el-input v-model="stmtNameFilter" placeholder="搜索供应商名称" clearable :prefix-icon="Search" style="width:200px" />
-            <el-select v-model="stmtCatFilter" placeholder="全部分类" clearable style="width:140px">
-              <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
-            </el-select>
             <el-tooltip content="刷新" placement="top">
               <el-button :icon="Refresh" @click="loadStatements" />
             </el-tooltip>
             <span class="flex-spacer" />
             <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openNewSupplier">新增供应商</el-button>
           </div>
+
+          <!-- 🆕 需求十一：分类卡片视图（大类汇总）-->
+          <div v-if="!stmtDrillCat">
+            <div class="cat-cards">
+              <div v-for="c in categoryCards" :key="c.category" class="cat-card" @click="stmtDrillCat = c.category">
+                <div class="cat-card-head">
+                  <span class="cat-name">{{ c.category }}</span>
+                  <el-tag size="small" effect="plain">{{ c.count }} 家</el-tag>
+                </div>
+                <div class="cat-card-body">
+                  <div class="cat-metric"><span>收货合计</span><b>{{ fmtMoney(c.received) }}</b></div>
+                  <div class="cat-metric"><span>欠款余额</span><b class="danger">{{ fmtMoney(c.outstanding) }}</b></div>
+                  <div class="cat-metric"><span>待开票</span><span class="warn">{{ fmtMoney(c.uninvoiced) }}</span></div>
+                </div>
+                <div class="cat-card-foot">点击查看该分类供应商 →</div>
+              </div>
+            </div>
+            <EmptyHint v-if="!categoryCards.length" text="暂无供应商账目，点右上角「新增供应商」开始" size="sm" />
+          </div>
+
+          <!-- 🆕 需求十一：下钻——某分类的供应商列表 -->
+          <template v-else>
+          <div class="drill-head">
+            <el-button link type="primary" :icon="ArrowLeft" @click="stmtDrillCat = null">全部分类</el-button>
+            <span class="drill-cat">{{ stmtDrillCat }}</span>
+            <span class="muted small">共 {{ drillRows.length }} 家供应商</span>
+          </div>
           <el-table
-            :data="filteredStatementRows"
+            :data="drillRows"
             stripe show-summary
             :summary-method="stmtSummary"
             :default-sort="{ prop: 'outstanding', order: 'descending' }"
-            max-height="max(320px, calc(100vh - 280px))"
+            max-height="max(320px, calc(100vh - 320px))"
             :scrollbar-always-on="true"
             class="wrap-cells compact-tbl"
           >
@@ -1744,9 +1853,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </template>
             </el-table-column>
             <template #empty>
-              <EmptyHint :text="stmtNameFilter || stmtCatFilter ? '没有匹配的供应商，试试清空筛选' : '暂无供应商，点右上角「新增供应商」开始'" size="sm" />
+              <EmptyHint :text="stmtNameFilter ? '没有匹配的供应商，试试清空搜索' : '该分类暂无供应商'" size="sm" />
             </template>
           </el-table>
+          </template>
         </el-tab-pane>
 
         <!-- ==================== Tab: 请款记录（采购员跟进审批进度） ==================== -->
@@ -1806,8 +1916,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-table>
         </el-tab-pane>
 
-        <!-- ==================== Tab 3: 汇总报表 ==================== -->
-        <el-tab-pane v-if="isLeadOrAbove" label="📈 汇总报表" name="reports" lazy>
+        <!-- ==================== Tab 3: 汇总报表（需求五：采购员也可见，数据按本人隔离）==================== -->
+        <el-tab-pane v-if="isLeadOrAbove || canWrite" label="📈 汇总报表" name="reports" lazy>
           <div v-if="kpi" class="kpi-grid" style="margin-bottom:16px">
             <div class="kpi is-primary">
               <div class="kpi-v">{{ fmtMoney(kpi.month_amount) }}</div>
@@ -1831,10 +1941,26 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </div>
           </div>
 
+          <!-- 🆕 需求十二：供应商报表图表（折线/曲线图）-->
+          <el-row :gutter="16" style="margin-bottom:4px">
+            <el-col :xs="24" :md="14">
+              <div class="report-section">
+                <div class="sec-title" style="margin-top:0">月度采购趋势（收货 vs 已付 · 近12个月）</div>
+                <LineChart :labels="trendChart.labels" :series="trendChart.series" :money-fmt="fmtMoney" :height="280" />
+              </div>
+            </el-col>
+            <el-col :xs="24" :md="10">
+              <div class="report-section">
+                <div class="sec-title" style="margin-top:0">Top供应商月度采购额趋势</div>
+                <LineChart :labels="supTrendChart.labels" :series="supTrendChart.series" :money-fmt="fmtMoney" :height="280" />
+              </div>
+            </el-col>
+          </el-row>
+
           <el-row :gutter="16">
             <el-col :xs="24" :sm="24" :md="14">
               <div class="report-section">
-                <div class="sec-title" style="margin-top:0">月度趋势（近12个月）</div>
+                <div class="sec-title" style="margin-top:0">月度趋势明细（近12个月）</div>
                 <el-table :data="monthlyTrend" stripe size="small" max-height="320" show-summary :summary-method="trendSummary" class="wrap-cells">
                   <el-table-column prop="month" label="月份" width="90" />
                   <el-table-column label="收货金额" align="right">
@@ -2321,6 +2447,24 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </template>
     </el-dialog>
 
+    <!-- 🆕 需求十三：批量维护开票号 -->
+    <el-dialog v-model="invoiceNoDialogVisible" title="维护开票号" width="460px">
+      <el-alert type="info" :closable="false" style="margin-bottom:14px"
+        :title="`将对已勾选的 ${selLeaves.length} 条明细统一维护同一开票号；每条明细的开票金额将取其收货金额，并标记为「已开票」。`" />
+      <el-form label-position="top">
+        <el-form-item label="开票号" required>
+          <el-input v-model="invoiceNoForm.invoice_no" placeholder="填写发票号码" />
+        </el-form-item>
+        <el-form-item label="开票日期（选填）">
+          <el-date-picker v-model="invoiceNoForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="invoiceNoDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="invoiceNoSaving" @click="submitBatchInvoiceNo">确认维护</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ==================== 供应商弹窗 ==================== -->
     <el-dialog v-model="supplierDialogVisible" :title="editingSupplier ? '编辑供应商' : '新增供应商'" width="780px" top="5vh" class="v3-scroll-dialog" :close-on-click-modal="false" @closed="supplierFormRef?.clearValidate()">
       <el-form ref="supplierFormRef" :model="supplierForm" :rules="supplierRules" label-position="top" class="supplier-form">
@@ -2709,6 +2853,20 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 }
 .summary-bar { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 16px; background: var(--el-fill-color-light); border-radius: 6px; margin-top: 12px; font-size: 14px; }
 .report-section { margin-bottom: 16px; }
+/* 🆕 需求十一：供应商账目分类卡片 */
+.cat-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.cat-card { border: 1px solid var(--el-border-color-light); border-radius: 10px; padding: 14px 16px;
+  background: var(--el-bg-color-overlay, #fff); cursor: pointer; transition: box-shadow .15s, transform .15s, border-color .15s; }
+.cat-card:hover { box-shadow: 0 6px 20px rgba(0,0,0,.10); transform: translateY(-2px); border-color: var(--el-color-primary-light-5); }
+.cat-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cat-card-head .cat-name { font-weight: 600; font-size: 15px; color: var(--el-text-color-primary); }
+.cat-card-body { display: flex; flex-direction: column; gap: 6px; }
+.cat-metric { display: flex; align-items: baseline; justify-content: space-between; font-size: 13px; color: var(--el-text-color-secondary); }
+.cat-metric b { font-size: 15px; color: var(--el-text-color-primary); }
+.cat-card-foot { margin-top: 10px; font-size: 12px; color: var(--el-color-primary); }
+.drill-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.drill-head .drill-cat { font-weight: 600; font-size: 15px; }
+.small { font-size: 12px; }
 .code { color: var(--el-color-primary, #2563eb); }
 .sup-name { font-weight: 500; }
 .amt { color: var(--el-color-primary); }

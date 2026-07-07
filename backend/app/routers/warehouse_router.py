@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update as sa_update
+from sqlalchemy import select, func, update as sa_update, delete as sa_delete
 
 from ..database import get_db
 from .. import models, schemas
@@ -56,11 +56,13 @@ async def _stock_map(db: AsyncSession, material_ids: Optional[list[int]] = None,
 
 
 def _mat_out(m: models.WhMaterial, stock: float) -> schemas.WhMaterialOut:
+    up = m.unit_price
     return schemas.WhMaterialOut(
         id=m.id, code=m.code, name=m.name, spec=m.spec, category=m.category,
         material_grade=m.material_grade,
-        unit=m.unit, location=m.location, safety_stock=m.safety_stock or 0,
+        unit=m.unit, unit_price=up, location=m.location, safety_stock=m.safety_stock or 0,
         init_stock=m.init_stock or 0, status=m.status, stock=stock,
+        stock_value=round(stock * up, 2) if up is not None else None,  # 🆕 需求三：库存总价
         low=stock < (m.safety_stock or 0),
         custom_values=m.custom_values or {},
     )
@@ -100,6 +102,7 @@ async def create_material(
         name=data.name.strip(), spec=(data.spec or "").strip() or None,
         category=(data.category or "").strip() or None,
         material_grade=(data.material_grade or "").strip() or None, unit=data.unit or "个",
+        unit_price=data.unit_price,   # 🆕 需求三：参考单价
         location=(data.location or "").strip() or None,
         safety_stock=data.safety_stock or 0, init_stock=data.init_stock or 0,
         code=(data.code or "").strip() or None,
@@ -132,6 +135,7 @@ async def update_material(
     m.name = data.name.strip(); m.spec = (data.spec or "").strip() or None
     m.category = (data.category or "").strip() or None; m.unit = data.unit or "个"
     m.material_grade = (data.material_grade or "").strip() or None
+    m.unit_price = data.unit_price   # 🆕 需求三：参考单价
     m.location = (data.location or "").strip() or None
     m.safety_stock = data.safety_stock or 0
     m.custom_values = await _clean_wh_custom(db, data.custom_values)
@@ -366,6 +370,28 @@ async def delete_material_dict(
     return schemas.Msg(message="已删除该字典项")
 
 
+# ==================== 🆕 需求十五：一键清空（试运行数据清理）====================
+@router.post("/clear-all", response_model=schemas.Msg)
+async def clear_all_warehouse(
+    body: schemas.WhClearIn,
+    current: models.User = Depends(require_roles("warehouse_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """仓库总监/管理层一键清空：清空全部出入库流水 + 物料主数据（试运行数据清理）。
+    不动供应商/采购/项目/字典；高危操作需输入确认词「清空仓库」。"""
+    if (body.confirm or "").strip() != "清空仓库":
+        raise HTTPException(400, "请输入确认词「清空仓库」以确认此高危操作")
+    txn_cnt = (await db.execute(select(func.count(models.WhTxn.id)))).scalar() or 0
+    mat_cnt = (await db.execute(select(func.count(models.WhMaterial.id)))).scalar() or 0
+    # 先删流水（wh_txns.material_id → wh_materials，且自引用 reversal_of），再删物料主数据
+    await db.execute(sa_delete(models.WhTxn))
+    await db.execute(sa_delete(models.WhMaterial))
+    await db.commit()
+    await write_audit(db, user=current, action="wh_clear_all", target_type="warehouse",
+                      target_id=None, detail=f"清空流水 {txn_cnt} 条 + 物料 {mat_cnt} 种")
+    return schemas.Msg(message=f"已清空：出入库流水 {txn_cnt} 条、物料主数据 {mat_cnt} 种")
+
+
 # ==================== 出入库 ====================
 async def _next_ref(db: AsyncSession, direction: str, biz_date: str) -> str:
     prefix = "RK" if direction == "in" else "CK"
@@ -581,6 +607,15 @@ async def project_demand(
     stock = await _stock_map(db)
     mats = (await db.execute(select(models.WhMaterial))).scalars().all()
     mat_by_key = {(m.name, m.spec or None): m for m in mats}
+    # 🆕 需求二：本项目各物料已领用出库数量（out 且 project_id=本项目，排除冲红）
+    issued_map: dict[int, float] = defaultdict(float)
+    ir = await db.execute(
+        select(models.WhTxn.material_id, func.sum(models.WhTxn.qty))
+        .where(models.WhTxn.direction == "out", models.WhTxn.project_id == project_id,
+               models.WhTxn.is_reversal == False)  # noqa: E712
+        .group_by(models.WhTxn.material_id))
+    for mid, tot in ir.all():
+        issued_map[mid] = tot or 0
     rr = await db.execute(select(models.Record).where(
         models.Record.datasheet_id == sheet.id).order_by(models.Record.sort_order, models.Record.id))
     out = []
@@ -605,17 +640,72 @@ async def project_demand(
         pis = by_rec.get(rec.id, [])
         status = "未下单" if not pis else ("已到货" if all(p.arrival_date for p in pis) else "已下单")
         out.append(schemas.WarehouseDemandRow(
-            item_name=name, spec=spec, demand_qty=demand, stock=st,
-            suggest_purchase=suggest, purchase_status=status, in_stock=st > 0))
+            item_name=name, spec=spec, material_id=(m.id if m else None),
+            demand_qty=demand, stock=st,
+            suggest_purchase=suggest, purchase_status=status, in_stock=st > 0,
+            issued_qty=(issued_map.get(m.id, 0) if m else 0)))
     return out
+
+
+# ==================== 🆕 需求二：物料需求「一键领用出库」到项目 ====================
+@router.post("/demand/{project_id}/issue", response_model=schemas.Msg)
+async def issue_demand(
+    project_id: int,
+    body: schemas.DemandIssueIn,
+    current: models.User = Depends(require_roles(*WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """按物料需求把有货的物料一键领用出库到本项目（自动登记出库、计入项目材料成本）。
+    body.lines: [{material_id, qty}]；qty 超现存自动截断到现存，现存为 0 的跳过。"""
+    pr = await db.execute(select(models.Project).where(
+        models.Project.id == project_id, models.Project.is_deleted == False))  # noqa: E712
+    p = pr.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "项目不存在")
+    lines = [ln for ln in body.lines if ln.qty and ln.qty > 0 and ln.material_id]
+    if not lines:
+        raise HTTPException(400, "没有可领用的物料")
+    bd = date.today().isoformat()
+    mids = [ln.material_id for ln in lines]
+    stock = await _stock_map(db, mids)
+    mrows = {m.id: m for m in (await db.execute(
+        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)))).scalars().all()}
+    issued, skipped = 0, 0
+    for ln in lines:
+        m = mrows.get(ln.material_id)
+        if not m:
+            skipped += 1
+            continue
+        avail = stock.get(ln.material_id, m.init_stock or 0)
+        take = min(ln.qty, avail)
+        if take <= 0:
+            skipped += 1
+            continue
+        ref = await _next_ref(db, "out", bd)
+        up = m.unit_price
+        db.add(models.WhTxn(
+            material_id=m.id, biz_date=bd, direction="out", qty=take,
+            unit_price=up, amount=(round(take * up, 4) if up is not None else None),
+            source="领料出库", party=p.code, project_id=project_id,
+            ref_no=ref, operator_id=current.id))
+        issued += 1
+    if not issued:
+        raise HTTPException(400, "所选物料现存不足，无法领用出库")
+    await db.commit()
+    await write_audit(db, user=current, action="wh_issue_demand", target_type="project",
+                      target_id=project_id, detail=f"领用出库 {issued} 项")
+    msg = f"已领用出库 {issued} 项到 {p.code}"
+    if skipped:
+        msg += f"（{skipped} 项现存不足已跳过）"
+    return schemas.Msg(message=msg)
 
 
 @router.get("/inventory-value")
 async def inventory_value(
-    _: models.User = Depends(get_current_user),
+    _: models.User = Depends(require_roles()),   # 🆕 需求六：库存/成本仅管理层可见
     db: AsyncSession = Depends(get_db),
 ):
-    """库存金额：各物料 现存 × 入库加权平均单价，汇总总库存金额（供财务看）。"""
+    """库存金额：各物料 现存 × 入库加权平均单价，汇总总库存金额（仅管理层）。"""
     stock = await _stock_map(db)
     avg = await _avg_price_map(db)
     mats = (await db.execute(select(models.WhMaterial))).scalars().all()
@@ -635,10 +725,10 @@ async def inventory_value(
 
 @router.get("/project-cost")
 async def project_cost(
-    _: models.User = Depends(get_current_user),
+    _: models.User = Depends(require_roles()),   # 🆕 需求六：库存/成本仅管理层可见
     db: AsyncSession = Depends(get_db),
 ):
-    """项目材料成本：出库(领料)到各项目的数量 × 物料加权平均单价，按项目汇总。"""
+    """项目材料成本：出库(领料)到各项目的数量 × 物料加权平均单价，按项目汇总（仅管理层）。"""
     avg = await _avg_price_map(db)
     r = await db.execute(
         select(models.WhTxn.project_id, models.WhTxn.material_id, func.sum(models.WhTxn.qty))

@@ -20,7 +20,10 @@ interface PaymentRequestOut {
   paid_amount?: number | null; paid_date?: string | null; payment_method?: string | null
   pay_voucher_file_id?: number | null; pay_voucher_name?: string | null
   reject_reason?: string | null; created_at: string
-  items: { item_id: number; allocated_amount: number; item_name?: string }[]
+  // 🆕 需求十六：付款时可见收款账户信息 + 关联采购单
+  supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
+  po_nos?: string[]
+  items: { item_id: number; allocated_amount: number; item_name?: string; po_no?: string | null; spec?: string | null; project_code?: string | null; received_amount?: number }[]
 }
 
 interface InvoiceRow {
@@ -33,9 +36,10 @@ interface InvoiceRow {
 // 视图行：在 InvoiceRow 基础上叠加合并组的展示字段
 type ViewRow = InvoiceRow & { _isBatch: boolean; _count: number; _codes: string }
 interface AsRow {
-  id: number; code: string; name: string; problem: string; cost: number
+  id: number; kind: string; code: string; name: string; problem: string; cost: number
   mat_file_id?: number | null; mat_file_name?: string | null
 }
+const KIND_TXT: Record<string, string> = { aftersales: '售后', install: '安装' }
 
 const tab = ref('pending')
 const loading = ref(false)
@@ -128,8 +132,10 @@ async function submitReject() {
 }
 
 const payVoucherFile = ref<File | null>(null)
+const payingPr = ref<PaymentRequestOut | null>(null)   // 🆕 需求十六：付款弹窗展示的请款单
 function openPay(pr: PaymentRequestOut) {
   payTargetId.value = pr.id
+  payingPr.value = pr
   payForm.value = { paid_amount: pr.requested_amount, paid_date: new Date().toISOString().slice(0, 10), payment_method: '银行转账' }
   payVoucherFile.value = null
   payDialogVisible.value = true
@@ -361,14 +367,17 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!invoicedView.length" text="暂无已开票" />
         </el-tab-pane>
 
-        <el-tab-pane :label="`🛎️ 售后费用 (${aftersales.length})`" name="aftersales">
-          <el-table :data="aftersales" stripe show-summary :summary-method="() => ['合计', '', '', fmtMoney(asTotal), '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+        <el-tab-pane :label="`🛎️ 安装/售后费用 (${aftersales.length})`" name="aftersales">
+          <el-table :data="aftersales" stripe show-summary :summary-method="() => ['合计', '', '', '', '', fmtMoney(asTotal), '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="50" />
+            <el-table-column label="类型" width="70" align="center">
+              <template #default="{ row }"><el-tag :type="row.kind === 'install' ? 'success' : 'warning'" size="small" effect="light">{{ KIND_TXT[row.kind] || '售后' }}</el-tag></template>
+            </el-table-column>
             <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="140" />
-            <el-table-column prop="problem" label="售后问题" min-width="200" show-overflow-tooltip />
-            <el-table-column label="售后费用" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.cost) }}</template></el-table-column>
-            <el-table-column label="售后物料清单" min-width="140">
+            <el-table-column prop="problem" label="问题/说明" min-width="200" show-overflow-tooltip />
+            <el-table-column label="费用" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.cost) }}</template></el-table-column>
+            <el-table-column label="清单" min-width="140">
               <template #default="{ row }">
                 <el-button v-if="row.mat_file_id" size="small" link type="primary"
                            @click="downloadAttachment({ id: row.mat_file_id, name: row.mat_file_name || '物料清单' })">
@@ -396,6 +405,7 @@ async function revokeInvoice(row: ViewRow) {
               <el-radio-button value="rejected">已拒绝 ({{ prCounts.rejected }})</el-radio-button>
             </el-radio-group>
             <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
+            <span class="muted small">💡 内控职责分离：请款审批与付款需由不同人操作（审批人不能给自己审过的单付款）。</span>
           </div>
           <el-table :data="filteredPayReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
             <el-table-column prop="id" label="申请编号" width="80" />
@@ -416,11 +426,13 @@ async function revokeInvoice(row: ViewRow) {
               <template #default="{ row }">
                 <template v-if="row.status === 'paid'">
                   <div>{{ fmtMoney(row.paid_amount) }} · {{ row.paid_date }} · {{ row.payment_method }}</div>
+                  <div v-if="row.approver_name" class="muted small">审批：{{ row.approver_name }}</div>
                   <el-button v-if="row.pay_voucher_file_id" size="small" link type="primary"
                              @click="downloadAttachment({ id: row.pay_voucher_file_id!, name: row.pay_voucher_name || '付款凭证' })">
                     📎 付款凭证
                   </el-button>
                 </template>
+                <span v-else-if="row.status === 'approved' && row.approver_name" class="muted small">已审批（{{ row.approver_name }}），待付款</span>
                 <span v-else-if="row.reject_reason" class="muted">拒绝：{{ row.reject_reason }}</span>
                 <span v-else class="muted">—</span>
               </template>
@@ -463,8 +475,8 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!payablesLoading && !payables.length" text="暂无采购应付" />
         </el-tab-pane>
 
-        <!-- 🆕 库存 / 成本 -->
-        <el-tab-pane label="📦 库存 / 成本" name="inventory">
+        <!-- 🆕 库存 / 成本（需求六：仅管理层可见） -->
+        <el-tab-pane v-if="isManager" label="📦 库存 / 成本" name="inventory">
           <div class="summary-bar" style="margin-bottom:10px">
             <span>库存总金额 <b class="amt">{{ fmtMoney(invValue.total_value) }}</b></span>
             <span class="muted small">库存金额 = 现存 × 入库加权平均单价;项目成本 = 领料出库 × 单价</span>
@@ -506,9 +518,27 @@ async function revokeInvoice(row: ViewRow) {
       </template>
     </el-dialog>
 
-    <!-- 记录付款弹窗 -->
-    <el-dialog v-model="payDialogVisible" title="记录付款" width="480px">
-      <el-form :model="payForm" label-width="90px">
+    <!-- 记录付款弹窗（🆕 需求十六：展示收款账户信息 + 关联采购单）-->
+    <el-dialog v-model="payDialogVisible" title="记录付款" width="600px">
+      <div v-if="payingPr" class="pay-info">
+        <div class="pay-info-block">
+          <div class="pay-info-title">🏦 收款账户信息（供应商：{{ payingPr.supplier_name }}）</div>
+          <div class="pay-info-row"><span class="k">开户行</span>{{ payingPr.supplier_bank_name || '—' }}</div>
+          <div class="pay-info-row"><span class="k">银行账号</span><b>{{ payingPr.supplier_bank_account || '—' }}</b></div>
+          <div class="pay-info-row"><span class="k">税号</span>{{ payingPr.supplier_tax_no || '—' }}</div>
+          <div v-if="!payingPr.supplier_bank_account" class="muted small">该供应商未维护银行账号，请先在采购管理补全供应商档案。</div>
+        </div>
+        <div class="pay-info-block">
+          <div class="pay-info-title">📄 关联采购单 <span v-if="payingPr.po_nos?.length" class="muted small">（{{ payingPr.po_nos.join('、') }}）</span></div>
+          <el-table :data="payingPr.items" size="small" border max-height="180">
+            <el-table-column label="采购单号" width="150"><template #default="{ row }"><span class="code">{{ row.po_no || '散件' }}</span></template></el-table-column>
+            <el-table-column label="名称" min-width="120"><template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+            <el-table-column label="项目" width="100"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>
+            <el-table-column label="本次付款" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.allocated_amount) }}</template></el-table-column>
+          </el-table>
+        </div>
+      </div>
+      <el-form :model="payForm" label-width="90px" style="margin-top:12px">
         <el-form-item label="付款金额">
           <el-input-number v-model="payForm.paid_amount" :min="0" :precision="2" style="width:100%" />
         </el-form-item>
@@ -545,4 +575,11 @@ async function revokeInvoice(row: ViewRow) {
 .section-title { font-weight: 600; font-size: 14px; margin: 4px 0 8px; color: var(--el-text-color-primary); }
 .danger { color: var(--el-color-danger); }
 .amt { color: var(--el-color-primary); }
+.code { color: var(--primary, #2563eb); }
+/* 🆕 需求十六：付款弹窗的账户信息/采购单区块 */
+.pay-info { display: flex; flex-direction: column; gap: 12px; }
+.pay-info-block { background: var(--el-fill-color-light); border-radius: 8px; padding: 10px 14px; }
+.pay-info-title { font-weight: 600; font-size: 13.5px; margin-bottom: 6px; color: var(--el-text-color-primary); }
+.pay-info-row { font-size: 13px; line-height: 1.9; color: var(--el-text-color-regular); }
+.pay-info-row .k { display: inline-block; min-width: 72px; color: var(--el-text-color-secondary); }
 </style>

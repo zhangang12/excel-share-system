@@ -24,14 +24,17 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("done_at", "TIMESTAMP"),
     ],
     "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
-    "wh_materials": [("material_grade", "VARCHAR(32)"), ("custom_values", "JSON")],   # 🆕 材质（字典管理）+ 自定义字段值
+    "wh_materials": [("material_grade", "VARCHAR(32)"), ("custom_values", "JSON"),
+                     ("unit_price", "FLOAT")],   # 🆕 材质（字典管理）+ 自定义字段值 + 需求三 参考单价
     "produce_group_tasks": [("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)")],  # 🆕 派给具体人 + 本组预计完成
     "dept_orders": [
         ("design_done_flag",   "BOOLEAN DEFAULT FALSE"),  # 🆕 设计完成第一步标记
         ("electric_done_flag", "BOOLEAN DEFAULT FALSE"),  # 🆕 接线完成第一步标记
         ("ship_prep_done",     "BOOLEAN DEFAULT FALSE"),  # 🆕 #5 设计部发货准备完成标记
     ],
-    "aftersales": [("reject_reason", "TEXT")],     # 🆕 #98 售后驳回原因
+    "aftersales": [("reject_reason", "TEXT"),
+                   ("kind", "VARCHAR(16) DEFAULT 'aftersales'")],  # 🆕 #98 驳回原因 + 需求一 登记类型(售后/安装)
+    "suppliers": [("created_by", "INTEGER")],      # 🆕 需求五 建档采购员（谁建谁看）
     "user_feedback": [                             # 🆕 系统回信（处理意见回复）
         ("reply", "TEXT"),
         ("replied_at", "TIMESTAMP"),
@@ -64,6 +67,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("source_record_id", "INTEGER"),           # 🆕 来源行
         ("brand", "VARCHAR(64)"),                  # 🆕 品牌（下单时逐行选/填）
         ("custom_values", "JSON"),                 # 🆕 R6 自定义字段值（存量行为空）
+        ("invoice_no", "VARCHAR(64)"),             # 🆕 需求十三 开票号
     ],
     "payment_requests": [
         ("pay_voucher_file_id", "INTEGER"),        # 🆕 付款凭证附件

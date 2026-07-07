@@ -4,6 +4,8 @@ import { http } from './index'
 export interface WhMaterial {
   id: number; code?: string | null; name: string; spec?: string | null
   category?: string | null; material_grade?: string | null; unit: string; location?: string | null
+  unit_price?: number | null            // 🆕 需求三：参考单价
+  stock_value?: number | null           // 🆕 需求三：库存总价=现存×单价
   safety_stock: number; init_stock: number; status: string; stock: number; low: boolean
   custom_values?: Record<string, any>   // 🆕 自定义字段值
 }
@@ -60,4 +62,9 @@ export const whApi = {
   createTxn: (data: any) => http.post('/wh/txns', data).then((r) => r.data),
   reverse: (id: number) => http.post(`/wh/txns/${id}/reverse`).then((r) => r.data),
   summary: (period: string) => http.get<WhSummaryRow[]>('/wh/summary', { params: { period } }).then((r) => r.data),
+  // 🆕 需求二：物料需求一键领用出库
+  issueDemand: (projectId: number, lines: { material_id: number; qty: number }[]) =>
+    http.post<{ message: string }>(`/wh/demand/${projectId}/issue`, { lines }).then((r) => r.data),
+  // 🆕 需求十五：一键清空（试运行数据清理）
+  clearAll: (confirm: string) => http.post<{ message: string }>('/wh/clear-all', { confirm }).then((r) => r.data),
 }

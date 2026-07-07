@@ -360,6 +360,7 @@ class WhMaterial(Base):
     category: Mapped[Optional[str]] = mapped_column(String(64))          # 类别（搅拌桨/标准件…）
     material_grade: Mapped[Optional[str]] = mapped_column(String(32))    # 🆕 材质（304不锈钢/碳钢/铝合金…，字典管理）
     unit: Mapped[str] = mapped_column(String(16), default="个")
+    unit_price: Mapped[Optional[float]] = mapped_column()               # 🆕 需求三：参考单价（库存总览总价=现存×单价；物料主数据展示）
     location: Mapped[Optional[str]] = mapped_column(String(64))          # 库位（单仓仅文本）
     safety_stock: Mapped[float] = mapped_column(default=0)               # 安全库存（低于预警）
     init_stock: Mapped[float] = mapped_column(default=0)                 # 期初库存
@@ -396,6 +397,8 @@ class AfterSales(Base):
     __tablename__ = "aftersales"
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    # 🆕 需求一：登记类型 aftersales 售后 / install 安装（同一流程、同一台账，费用口径「安装/售后费用」）
+    kind: Mapped[str] = mapped_column(String(16), default="aftersales", index=True)
     problem: Mapped[str] = mapped_column(Text)
     cost: Mapped[float] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/approved/rejected
@@ -568,6 +571,8 @@ class Supplier(Base):
     credit_days: Mapped[Optional[int]] = mapped_column()
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    # 🆕 需求五：建档采购员（谁建谁看——buyer 仅见自己建的供应商，管理层/主管看全部）
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -592,6 +597,7 @@ class PurchaseItem(Base):
     unit_price: Mapped[Optional[float]] = mapped_column()
     received_amount: Mapped[float] = mapped_column(default=0)
     invoice_date: Mapped[Optional[str]] = mapped_column(String(10))
+    invoice_no: Mapped[Optional[str]] = mapped_column(String(64), index=True)  # 🆕 需求十三：开票号（多零件可统一维护同一开票号）
     tax_rate: Mapped[Optional[str]] = mapped_column(String(16))
     invoice_amount: Mapped[float] = mapped_column(default=0)
     paid_amount: Mapped[float] = mapped_column(default=0)

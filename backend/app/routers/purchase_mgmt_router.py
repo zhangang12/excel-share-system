@@ -66,6 +66,10 @@ async def list_suppliers(
         stmt = stmt.where(models.Supplier.category == category)
     if status:
         stmt = stmt.where(models.Supplier.status == status)
+    # 🆕 需求五：采购员只看自己建的供应商 + 历史无归属(created_by NULL, 遗留共享)；管理层/主管看全部
+    if _buyer_restricted(current):
+        stmt = stmt.where(
+            (models.Supplier.created_by == current.id) | (models.Supplier.created_by.is_(None)))
     if q:
         from sqlalchemy import or_
         stmt = stmt.where(
@@ -76,16 +80,28 @@ async def list_suppliers(
             )
         )
     r = await db.execute(stmt)
-    return [_sup_out(s) for s in r.scalars().all()]
+    sups = r.scalars().all()
+    names = await _uid_name_map(db, [s.created_by for s in sups if s.created_by])
+    return [_sup_out(s, names.get(s.created_by)) for s in sups]
 
 
-def _sup_out(s: models.Supplier) -> schemas.SupplierOut:
+async def _uid_name_map(db: AsyncSession, uids: list) -> dict:
+    ids = {u for u in uids if u}
+    if not ids:
+        return {}
+    r = await db.execute(select(models.User).where(models.User.id.in_(ids)))
+    return {u.id: _uname(u) for u in r.scalars().all()}
+
+
+def _sup_out(s: models.Supplier, creator_name: Optional[str] = None) -> schemas.SupplierOut:
     return schemas.SupplierOut(
         id=s.id, name=s.name, code=s.code, category=s.category,
         contact=s.contact, phone=s.phone, address=s.address,
         tax_no=s.tax_no, bank_name=s.bank_name, bank_account=s.bank_account,
         settlement_type=s.settlement_type, credit_days=s.credit_days,
-        status=s.status, notes=s.notes, created_at=s.created_at,
+        status=s.status, notes=s.notes,
+        created_by=s.created_by, created_by_name=creator_name,
+        created_at=s.created_at,
     )
 
 
@@ -95,11 +111,11 @@ async def create_supplier(
     current: models.User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    s = models.Supplier(**body.model_dump())
+    s = models.Supplier(**body.model_dump(), created_by=current.id)  # 🆕 需求五：记录建档采购员
     db.add(s)
     await db.commit()
     await db.refresh(s)
-    return _sup_out(s)
+    return _sup_out(s, _uname(current))
 
 
 @router.put("/suppliers/{sid}", response_model=schemas.SupplierOut)
@@ -117,7 +133,8 @@ async def update_supplier(
         setattr(s, k, v)
     await db.commit()
     await db.refresh(s)
-    return _sup_out(s)
+    names = await _uid_name_map(db, [s.created_by])
+    return _sup_out(s, names.get(s.created_by))
 
 
 @router.put("/suppliers/{sid}/toggle")
@@ -455,7 +472,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         arrival_date=i.arrival_date,
         item_name=i.item_name, spec=i.spec, brand=i.brand, qty=i.qty, unit_price=i.unit_price,
         received_amount=i.received_amount or 0,
-        invoice_date=i.invoice_date, tax_rate=i.tax_rate,
+        invoice_date=i.invoice_date, invoice_no=i.invoice_no, tax_rate=i.tax_rate,
         invoice_amount=i.invoice_amount or 0,
         paid_amount=i.paid_amount or 0, paid_date=i.paid_date,
         payment_method=i.payment_method, prepay_ratio=i.prepay_ratio,
@@ -1099,7 +1116,32 @@ async def list_receiving(
     if po_no:
         stmt = stmt.where(models.PurchaseItem.po_no.ilike(f"%{po_no}%"))
     r = await db.execute(stmt.limit(300))
-    return [_item_out(i) for i in r.scalars().all()]
+    outs = [_item_out(i) for i in r.scalars().all()]
+    # 🆕 需求十四：附上各明细的收货单数量
+    if outs:
+        rc = await db.execute(
+            select(models.Attachment.biz_id, func.count(models.Attachment.id))
+            .where(models.Attachment.biz_type == "receipt_doc",
+                   models.Attachment.biz_id.in_([o.id for o in outs]))
+            .group_by(models.Attachment.biz_id))
+        cnt = {bid: c for bid, c in rc.all()}
+        for o in outs:
+            o.receipt_count = cnt.get(o.id, 0)
+    return outs
+
+
+async def _finish_receive(db: AsyncSession, item: models.PurchaseItem,
+                          arrival_date: str, current: models.User) -> None:
+    """收货共同尾部：回写清单(到货日期/进度/仓库签字) → 自动入库 → 自动对账。"""
+    if item.source_sheet_id and item.source_record_id:
+        wb = {"进度": "已到货"}
+        for c in _ALL_ARRIVAL_COLS:
+            wb[c] = arrival_date
+        for c in _ALL_WH_SIGN_COLS:
+            wb[c] = (current.full_name or current.username)
+        await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
+    await _auto_stock_in(db, item, current)
+    _maybe_auto_reconcile(item)
 
 
 @router.put("/items/{iid}/receive", response_model=schemas.PurchaseItemOut)
@@ -1125,21 +1167,97 @@ async def receive_item(
         item.received_amount = body.received_amount
     elif item.qty and item.unit_price:
         item.received_amount = round(item.qty * item.unit_price, 4)
-    # 🆕 回写清单：到货日期 / 进度(已到货) / 仓库签字
-    if item.source_sheet_id and item.source_record_id:
-        # 各来源表「到货日期/仓库签字」列名不同，全写一遍只有存在的列生效
-        wb = {"进度": "已到货"}
-        for c in _ALL_ARRIVAL_COLS:
-            wb[c] = body.arrival_date
-        for c in _ALL_WH_SIGN_COLS:
-            wb[c] = (current.full_name or current.username)
-        await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
-    # 🆕 采购收货 → 自动入库（带采购单价/金额），库存与财务成本据此计算
-    await _auto_stock_in(db, item, current)
-    _maybe_auto_reconcile(item)
+    await _finish_receive(db, item, body.arrival_date, current)
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == iid))
     return _item_out(r.scalar_one())
+
+
+@router.post("/items/receive-batch", response_model=List[schemas.PurchaseItemOut])
+async def receive_batch(
+    body: schemas.BatchReceiveIn,
+    current: models.User = Depends(require_roles(*_RECEIVE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 需求四：合并零件收货——一次收多条明细。两种填价方式：
+    - 合并总价(total_amount)：按各行数量权重把总价分摊到 received_amount，单价=金额÷数量；
+    - 逐行(lines)：各行分别填 单价/收货金额。
+    公共：填送货单号 + 到货日期 → 自动入库 + 回写清单。"""
+    if not body.arrival_date:
+        raise HTTPException(400, "请填写到货日期")
+    if not body.item_ids:
+        raise HTTPException(400, "请选择要收货的明细")
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids)))
+    got = {i.id: i for i in r.scalars().all()}
+    ordered = [got[i] for i in body.item_ids if i in got]
+    if not ordered:
+        raise HTTPException(404, "明细不存在")
+    if body.total_amount is not None:
+        # 合并总价按数量权重分摊，末行兜余数保证合计精确
+        weights = [(it.qty or 0) for it in ordered]
+        wsum = sum(weights)
+        n = len(ordered)
+        allocated = 0.0
+        for idx, it in enumerate(ordered):
+            if idx == n - 1:
+                share = round(body.total_amount - allocated, 2)
+            else:
+                share = (round(body.total_amount * (weights[idx] / wsum), 2)
+                         if wsum > 0 else round(body.total_amount / n, 2))
+                allocated += share
+            it.received_amount = share
+            it.unit_price = round(share / it.qty, 4) if it.qty else None
+    else:
+        line_map = {ln.item_id: ln for ln in body.lines}
+        for it in ordered:
+            ln = line_map.get(it.id)
+            if not ln:
+                continue
+            if ln.unit_price is not None:
+                it.unit_price = ln.unit_price
+            if ln.received_amount is not None:
+                it.received_amount = ln.received_amount
+            elif it.qty and it.unit_price:
+                it.received_amount = round(it.qty * it.unit_price, 4)
+    for it in ordered:
+        it.delivery_note_no = body.delivery_note_no
+        it.arrival_date = body.arrival_date
+        await _finish_receive(db, it, body.arrival_date, current)
+    await db.commit()
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids)))
+    return [_item_out(i) for i in r.scalars().all()]
+
+
+# ==================== 🆕 需求十四：采购收货单（图片）上传 ====================
+@router.post("/items/{iid}/receipt", response_model=schemas.AttachmentOut)
+async def upload_receipt(
+    iid: int,
+    file: UploadFile = File(...),
+    current: models.User = Depends(require_roles(*_RECEIVE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """仓库收货时上传收货单（图片/PDF），按采购明细归档。"""
+    item = (await db.execute(select(models.PurchaseItem).where(
+        models.PurchaseItem.id == iid))).scalar_one_or_none()
+    if not item:
+        raise HTTPException(404, "明细不存在")
+    from .attachments_router import save_upload
+    att = await save_upload(db, file, biz_type="receipt_doc", biz_id=iid, user=current)
+    await db.commit()
+    await db.refresh(att)
+    return schemas.AttachmentOut.model_validate(att)
+
+
+@router.get("/items/{iid}/receipts", response_model=List[schemas.AttachmentOut])
+async def list_receipts(
+    iid: int,
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES, *_RECEIVE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "receipt_doc",
+        models.Attachment.biz_id == iid).order_by(models.Attachment.id.desc()))
+    return [schemas.AttachmentOut.model_validate(a) for a in r.scalars().all()]
 
 
 @router.post("/items/batch-invoice")
@@ -1171,6 +1289,34 @@ async def batch_invoice(
                 allocated += share
     await db.commit()
     return {"updated": len(items)}
+
+
+@router.post("/items/set-invoice-no")
+async def set_invoice_no(
+    body: schemas.SetInvoiceNoIn,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 需求十三：对多个零件统一维护同一开票号；每行开票金额=该行收货金额，置「已开票」。"""
+    ino = body.invoice_no.strip()
+    if not ino:
+        raise HTTPException(400, "请填写开票号")
+    if not body.item_ids:
+        raise HTTPException(400, "请至少选择一条采购明细")
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids)))
+    items = r.scalars().all()
+    if _buyer_restricted(current):
+        items = [i for i in items if i.buyer_id == current.id]
+    for item in items:
+        item.invoice_no = ino
+        item.invoice_amount = item.received_amount or 0   # 分享的开票金额=收货金额
+        item.invoice_status = "已开票"
+        if body.invoice_date:
+            item.invoice_date = body.invoice_date
+    await db.commit()
+    await write_audit(db, user=current, action="set_invoice_no", target_type="purchase_item",
+                      target_id=None, detail=f"开票号 {ino} → {len(items)} 条明细")
+    return {"updated": len(items), "invoice_no": ino}
 
 
 # ==================== 供应商账目一览 ====================
@@ -1360,18 +1506,24 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         {
             "item_id": pri.item_id,
             "item_name": pi.item_name,
+            "po_no": pi.po_no,                       # 🆕 需求十六：付款时可见采购单
+            "spec": pi.spec,
+            "project_code": pi.project_code,
+            "received_amount": pi.received_amount or 0,
             "allocated_amount": pri.allocated_amount,
         }
         for pri, pi in ri.all()
     ]
+    po_nos = sorted({r["po_no"] for r in item_rows if r["po_no"]})
     voucher_name = None
     if pr.pay_voucher_file_id:
         ar = await db.execute(select(models.Attachment.name).where(
             models.Attachment.id == pr.pay_voucher_file_id))
         voucher_name = ar.scalar_one_or_none()
+    sup = pr.supplier
     return schemas.PaymentRequestOut(
         id=pr.id, supplier_id=pr.supplier_id,
-        supplier_name=pr.supplier.name if pr.supplier else "",
+        supplier_name=sup.name if sup else "",
         requested_amount=pr.requested_amount,
         requester_id=pr.requester_id,
         requester_name=_uname(pr.requester),
@@ -1384,6 +1536,11 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         pay_voucher_file_id=pr.pay_voucher_file_id,
         pay_voucher_name=voucher_name,
         reject_reason=pr.reject_reason,
+        # 🆕 需求十六：付款时可见收款账户信息 + 关联采购单
+        supplier_bank_name=(sup.bank_name if sup else None),
+        supplier_bank_account=(sup.bank_account if sup else None),
+        supplier_tax_no=(sup.tax_no if sup else None),
+        po_nos=po_nos,
         created_at=pr.created_at,
         items=item_rows,
     )
@@ -1496,13 +1653,17 @@ async def pay_payment_request(
     current: models.User = Depends(require_roles("finance")),
     db: AsyncSession = Depends(get_db),
 ):
-    """财务付款：记录金额/日期/方式，并可上传付款凭证（付款单据）。"""
+    """财务付款：记录金额/日期/方式，并可上传付款凭证（付款单据）。
+    🆕 需求十六：审批与付款需不同人操作（内控职责分离）——审批人不能给自己审过的单付款。"""
     r = await db.execute(select(models.PaymentRequest).where(models.PaymentRequest.id == prid))
     pr = r.scalar_one_or_none()
     if not pr:
         raise HTTPException(404, "请款单不存在")
     if pr.status != "approved":
         raise HTTPException(400, "只有已审批的请款单可付款")
+    # 🆕 需求十六：请款审批与付款分成两项、不是一个人操作
+    if pr.finance_approver_id and pr.finance_approver_id == current.id:
+        raise HTTPException(400, "职责分离：请款审批与付款需由不同人操作，请由另一位财务/出纳付款")
     pr.status = "paid"
     pr.paid_amount = paid_amount
     pr.paid_date = paid_date
@@ -1597,9 +1758,17 @@ async def delete_payment_request(
 
 # ==================== 汇总报表 ====================
 
+async def _report_items(db: AsyncSession, current: models.User):
+    """🆕 需求五：汇总报表数据也按采购员隔离——受限采购员只统计自己建的采购明细。"""
+    stmt = select(models.PurchaseItem)
+    if _buyer_restricted(current):
+        stmt = stmt.where(models.PurchaseItem.buyer_id == current.id)
+    return list((await db.execute(stmt)).scalars().all())
+
+
 @router.get("/reports/overview", response_model=schemas.PurchaseKPI)
 async def report_overview(
-    current: models.User = Depends(require_roles("buyer_lead", "finance")),
+    current: models.User = Depends(require_roles("buyer", "buyer_lead", "finance")),
     db: AsyncSession = Depends(get_db),
 ):
     from datetime import date
@@ -1609,8 +1778,7 @@ async def report_overview(
     this_quarter_prefix = f"{today.year:04d}-{q_start_month:02d}"
     this_year = str(today.year)
 
-    r = await db.execute(select(models.PurchaseItem))
-    items = r.scalars().all()
+    items = await _report_items(db, current)
 
     month_amount = sum(
         i.received_amount or 0 for i in items
@@ -1625,17 +1793,24 @@ async def report_overview(
         if (i.delivery_date or "").startswith(this_year)
     )
 
+    # 🆕 需求五：受限采购员的期初/待审请款也按本人隔离（管理层/主管看全部）
+    restricted = _buyer_restricted(current)
+    my_sids = None
+    if restricted:
+        my_sids = {s.id for s in (await db.execute(select(models.Supplier).where(
+            models.Supplier.created_by == current.id))).scalars().all()}
     ob_r = await db.execute(select(models.SupplierOpeningBalance))
-    ob_total = sum(ob.outstanding_amount or 0 for ob in ob_r.scalars().all())
+    ob_total = sum(ob.outstanding_amount or 0 for ob in ob_r.scalars().all()
+                   if my_sids is None or ob.supplier_id in my_sids)
     total_received = sum(i.received_amount or 0 for i in items)
     total_paid = sum(i.paid_amount or 0 for i in items)
     total_outstanding = ob_total + total_received - total_paid
 
-    pr_r = await db.execute(
-        select(func.count(models.PaymentRequest.id)).where(
-            models.PaymentRequest.status == "pending"
-        )
-    )
+    pr_stmt = select(func.count(models.PaymentRequest.id)).where(
+        models.PaymentRequest.status == "pending")
+    if restricted:
+        pr_stmt = pr_stmt.where(models.PaymentRequest.requester_id == current.id)
+    pr_r = await db.execute(pr_stmt)
     pending_count = pr_r.scalar() or 0
 
     return schemas.PurchaseKPI(
@@ -1650,12 +1825,11 @@ async def report_overview(
 @router.get("/reports/monthly-trend", response_model=List[schemas.PurchaseMonthlyPoint])
 async def report_monthly_trend(
     months: int = Query(12),
-    current: models.User = Depends(require_roles("buyer_lead", "finance")),
+    current: models.User = Depends(require_roles("buyer", "buyer_lead", "finance")),
     db: AsyncSession = Depends(get_db),
 ):
     from datetime import date
-    r = await db.execute(select(models.PurchaseItem))
-    items = r.scalars().all()
+    items = await _report_items(db, current)
 
     by_month: dict = defaultdict(lambda: {"amount": 0.0, "paid": 0.0})
     for i in items:
@@ -1678,11 +1852,10 @@ async def report_monthly_trend(
 
 @router.get("/reports/by-buyer", response_model=List[schemas.PurchaseBuyerRow])
 async def report_by_buyer(
-    current: models.User = Depends(require_roles("buyer_lead", "finance")),
+    current: models.User = Depends(require_roles("buyer", "buyer_lead", "finance")),
     db: AsyncSession = Depends(get_db),
 ):
-    r = await db.execute(select(models.PurchaseItem))
-    items = r.scalars().all()
+    items = await _report_items(db, current)
     by_buyer: dict = defaultdict(lambda: {"name": "未知", "amount": 0.0, "count": 0})
     for i in items:
         bid = i.buyer_id or 0
@@ -1704,10 +1877,12 @@ async def report_by_buyer(
 @router.get("/reports/by-project", response_model=List[schemas.PurchaseProjectRow])
 async def report_by_project(
     q: Optional[str] = Query(None),
-    current: models.User = Depends(require_roles("buyer_lead", "finance")),
+    current: models.User = Depends(require_roles("buyer", "buyer_lead", "finance")),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(models.PurchaseItem)
+    if _buyer_restricted(current):   # 🆕 需求五：采购员只看自己
+        stmt = stmt.where(models.PurchaseItem.buyer_id == current.id)
     if q:
         stmt = stmt.where(models.PurchaseItem.project_code.ilike(f"%{q}%"))
     r = await db.execute(stmt)
@@ -1726,11 +1901,10 @@ async def report_by_project(
 @router.get("/reports/top-suppliers", response_model=List[schemas.PurchaseTopSupplier])
 async def report_top_suppliers(
     limit: int = Query(10),
-    current: models.User = Depends(require_roles("buyer_lead", "finance")),
+    current: models.User = Depends(require_roles("buyer", "buyer_lead", "finance")),
     db: AsyncSession = Depends(get_db),
 ):
-    r = await db.execute(select(models.PurchaseItem))
-    items = r.scalars().all()
+    items = await _report_items(db, current)
     by_sup: dict = defaultdict(lambda: {"name": "", "amount": 0.0, "count": 0})
     for i in items:
         by_sup[i.supplier_id]["amount"] += i.received_amount or 0
@@ -1745,3 +1919,42 @@ async def report_top_suppliers(
         )
         for sid, v in top
     ]
+
+
+@router.get("/reports/supplier-trend")
+async def report_supplier_trend(
+    months: int = Query(12, ge=1, le=36),
+    top: int = Query(5, ge=1, le=10),
+    current: models.User = Depends(require_roles("buyer", "buyer_lead", "finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 需求十二：Top-N 供应商近 N 月采购额趋势（多折线图数据源）。
+    返回 { months:[YYYY-MM...], series:[{supplier_id, supplier_name, points:[各月采购额], total}] }。
+    ——体现：谁是主力供应商、各供应商采购额随时间的走势、是否有集中/波动。"""
+    from datetime import date
+    items = await _report_items(db, current)
+    today = date.today()
+    month_keys = []
+    for delta in range(months - 1, -1, -1):
+        tm = today.year * 12 + today.month - 1 - delta
+        month_keys.append(f"{tm // 12:04d}-{tm % 12 + 1:02d}")
+    idx = {k: i for i, k in enumerate(month_keys)}
+    by_sup_month: dict = defaultdict(lambda: [0.0] * months)
+    total_by_sup: dict = defaultdict(float)
+    name_by_sup: dict = {}
+    for it in items:
+        m = (it.delivery_date or "")[:7]
+        amt = it.received_amount or 0
+        total_by_sup[it.supplier_id] += amt
+        if it.supplier:
+            name_by_sup[it.supplier_id] = it.supplier.name
+        if m in idx:
+            by_sup_month[it.supplier_id][idx[m]] += amt
+    top_sids = [sid for sid, _ in sorted(total_by_sup.items(), key=lambda x: -x[1])[:top]]
+    series = [{
+        "supplier_id": sid,
+        "supplier_name": name_by_sup.get(sid, f"#{sid}"),
+        "points": [round(x, 2) for x in by_sup_month[sid]],
+        "total": round(total_by_sup[sid], 2),
+    } for sid in top_sids if total_by_sup[sid] > 0]
+    return {"months": month_keys, "series": series}

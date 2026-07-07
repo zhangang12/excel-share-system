@@ -314,6 +314,7 @@ class NextCodeOut(BaseModel):
 class AfterSalesRow(BaseModel):
     id: int
     project_id: int
+    kind: str = "aftersales"   # 🆕 需求一：aftersales 售后 / install 安装
     code: str
     name: str
     problem: str
@@ -374,6 +375,7 @@ class WhMaterialIn(BaseModel):
     category: Optional[str] = None
     material_grade: Optional[str] = None   # 🆕 材质（字典管理，如 304不锈钢/碳钢/铝合金）
     unit: str = "个"
+    unit_price: Optional[float] = None     # 🆕 需求三：参考单价
     location: Optional[str] = None
     safety_stock: float = 0
     init_stock: float = 0
@@ -389,11 +391,13 @@ class WhMaterialOut(BaseModel):
     category: Optional[str] = None
     material_grade: Optional[str] = None
     unit: str
+    unit_price: Optional[float] = None    # 🆕 需求三：参考单价
     location: Optional[str] = None
     safety_stock: float
     init_stock: float
     status: str
     stock: float = 0          # 实时库存
+    stock_value: Optional[float] = None   # 🆕 需求三：库存总价=现存×单价
     low: bool = False         # 是否低于安全库存
     custom_values: dict = Field(default_factory=dict)   # 🆕 自定义字段值
 
@@ -927,6 +931,8 @@ class SupplierOut(BaseModel):
     credit_days: Optional[int] = None
     status: str
     notes: Optional[str] = None
+    created_by: Optional[int] = None          # 🆕 需求五：建档采购员
+    created_by_name: Optional[str] = None
     created_at: datetime
 
 
@@ -1063,11 +1069,28 @@ class OrderFromListCreate(BaseModel):
 class WarehouseDemandRow(BaseModel):
     item_name: str
     spec: Optional[str] = None
+    material_id: Optional[int] = None        # 🆕 需求二：命中的物料 id（有则可一键领用出库）
     demand_qty: Optional[float] = None      # 需求量（清单数量）
     stock: float = 0                         # 现有库存
     suggest_purchase: float = 0              # 建议采购量 = 需求 - 库存
     purchase_status: str = "未下单"          # 未下单 / 已下单 / 已到货
     in_stock: bool = False                   # 是否有货可出
+    issued_qty: float = 0                    # 🆕 需求二：已领用出库到本项目的数量
+
+
+class DemandIssueLine(BaseModel):
+    material_id: int
+    qty: float
+
+
+class DemandIssueIn(BaseModel):
+    """🆕 需求二：物料需求一键领用出库。"""
+    lines: list[DemandIssueLine] = Field(default_factory=list)
+
+
+class WhClearIn(BaseModel):
+    """🆕 需求十五：仓库一键清空确认（需输入确认词「清空仓库」）。"""
+    confirm: str = ""
 
 
 class PurchaseItemUpdate(BaseModel):
@@ -1101,6 +1124,21 @@ class PurchaseReceiveIn(BaseModel):
     received_amount: Optional[float] = None
 
 
+class BatchReceiveLine(BaseModel):
+    item_id: int
+    unit_price: Optional[float] = None
+    received_amount: Optional[float] = None
+
+
+class BatchReceiveIn(BaseModel):
+    """🆕 需求四：合并零件收货。total_amount 有值=合并总价(按数量分摊)；否则用 lines 逐行填价。"""
+    item_ids: list[int]
+    delivery_note_no: Optional[str] = None
+    arrival_date: str
+    total_amount: Optional[float] = None
+    lines: list[BatchReceiveLine] = Field(default_factory=list)
+
+
 class PurchaseItemOut(BaseModel):
     id: int
     po_no: Optional[str] = None
@@ -1120,6 +1158,7 @@ class PurchaseItemOut(BaseModel):
     invoice_date: Optional[str] = None
     tax_rate: Optional[str] = None
     invoice_amount: float = 0
+    invoice_no: Optional[str] = None   # 🆕 需求十三：开票号
     paid_amount: float = 0
     paid_date: Optional[str] = None
     payment_method: Optional[str] = None
@@ -1129,6 +1168,7 @@ class PurchaseItemOut(BaseModel):
     custom_values: dict = Field(default_factory=dict)   # 🆕 R6 自定义字段值
     buyer_id: Optional[int] = None
     buyer_name: Optional[str] = None
+    receipt_count: int = 0   # 🆕 需求十四：已上传收货单数量
     notes: Optional[str] = None
     created_at: datetime
 
@@ -1145,6 +1185,13 @@ class BatchInvoiceIn(BaseModel):
     item_ids: list[int]
     invoice_date: Optional[str] = None
     invoice_amount: Optional[float] = None  # 仅单条时有效
+
+
+class SetInvoiceNoIn(BaseModel):
+    """🆕 需求十三：对多个零件统一维护同一开票号；开票金额=各行收货金额。"""
+    item_ids: list[int]
+    invoice_no: str = Field(min_length=1, max_length=64)
+    invoice_date: Optional[str] = None
 
 
 # ---------- 期初余额 ----------
@@ -1215,6 +1262,11 @@ class PaymentRequestOut(BaseModel):
     pay_voucher_file_id: Optional[int] = None
     pay_voucher_name: Optional[str] = None
     reject_reason: Optional[str] = None
+    # 🆕 需求十六：付款时可见的收款账户信息（供应商）+ 关联采购单号
+    supplier_bank_name: Optional[str] = None
+    supplier_bank_account: Optional[str] = None
+    supplier_tax_no: Optional[str] = None
+    po_nos: list[str] = Field(default_factory=list)
     created_at: datetime
     items: list[dict] = Field(default_factory=list)
 

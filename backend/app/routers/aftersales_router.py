@@ -15,7 +15,7 @@ from .. import models, schemas
 from ..deps import get_current_user, require_roles
 from ..notify import push_message
 from ..utils import write_audit
-from .attachments_router import save_upload
+from .attachments_router import save_upload, delete_attachment_file
 
 router = APIRouter(prefix="/api/aftersales", tags=["售后部"])
 
@@ -39,7 +39,7 @@ async def _rows(db: AsyncSession, items: list[models.AfterSales]) -> list[schema
     for a in items:
         p = a.project
         out.append(schemas.AfterSalesRow(
-            id=a.id, project_id=a.project_id,
+            id=a.id, project_id=a.project_id, kind=a.kind or "aftersales",
             code=p.code if p else "", name=p.name if p else "",
             problem=a.problem, cost=a.cost or 0, status=a.status,
             mat_file_id=a.mat_file_id, mat_file_name=names.get(a.mat_file_id),
@@ -86,35 +86,41 @@ async def project_options(
 @router.post("", response_model=schemas.Msg)
 async def create_aftersales(
     project_id: int = Form(...),
-    problem: str = Form(...),
+    problem: str = Form(""),
     cost: float = Form(...),
+    kind: str = Form("aftersales"),   # 🆕 需求一：aftersales 售后 / install 安装
     file: UploadFile = File(...),
     current: models.User = Depends(require_roles("as_worker")),
     db: AsyncSession = Depends(get_db),
 ):
-    """售后员工登记：项目+问题+费用+物料清单（四项必填）→ 待审批，推售后主管。"""
-    if not problem.strip():
+    """售后/安装登记：项目+问题(安装可空)+费用+物料清单/安装清单 → 待审批，推售后主管。"""
+    kind = kind if kind in ("aftersales", "install") else "aftersales"
+    label = "安装" if kind == "install" else "售后"
+    if kind != "install" and not problem.strip():
         raise HTTPException(400, "请填写售后问题")
     if cost <= 0:
-        raise HTTPException(400, "请填写售后费用")
+        raise HTTPException(400, f"请填写{label}费用")
     r = await db.execute(select(models.Project).where(
         models.Project.id == project_id, models.Project.is_deleted == False))  # noqa: E712
     p = r.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "项目不存在")
-    a = models.AfterSales(project_id=project_id, problem=problem.strip(),
+    a = models.AfterSales(project_id=project_id, kind=kind,
+                          problem=problem.strip() or ("安装登记" if kind == "install" else ""),
                           cost=cost, status="pending", created_by=current.id)
     db.add(a)
     await db.flush()
-    att = await save_upload(db, file, biz_type="aftersales_mat", biz_id=a.id,
+    biz = "install_mat" if kind == "install" else "aftersales_mat"
+    att = await save_upload(db, file, biz_type=biz, biz_id=a.id,
                             project_id=project_id, user=current)
     a.mat_file_id = att.id
     await db.commit()
+    summary = (problem.strip()[:20] + "…") if problem.strip() else "安装登记"
     await push_message(db, to_role="as_lead", kind="info",
-                       text=f"【售后待审批】{p.code} {p.name}：{problem[:20]}… 费用 ¥{cost:,.0f}",
+                       text=f"【{label}待审批】{p.code} {p.name}：{summary} 费用 ¥{cost:,.0f}",
                        biz_type="aftersales", biz_id=a.id)
     await write_audit(db, user=current, action="create", target_type="aftersales", target_id=a.id)
-    return schemas.Msg(message="已登记，等待售后主管审批")
+    return schemas.Msg(message=f"已登记，等待售后主管审批")
 
 
 @router.post("/{aid}/approve", response_model=schemas.Msg)
@@ -134,17 +140,18 @@ async def approve(
     a.appr_at = datetime.now(timezone.utc)
     await db.commit()
     p = a.project
+    label = "安装" if (a.kind or "aftersales") == "install" else "售后"
     mat = ""
     if a.mat_file_id:
         rr = await db.execute(select(models.Attachment).where(models.Attachment.id == a.mat_file_id))
         m = rr.scalar_one_or_none()
         if m:
-            mat = f"，物料清单：{m.name}"
+            mat = f"，{'安装' if label == '安装' else '物料'}清单：{m.name}"
     await push_message(db, to_role="finance", kind="info",
-                       text=f"【售后费用同步】{p.code} {p.name} 售后费用 ¥{a.cost:,.0f} 已审批{mat}，问题：{a.problem[:20]}…",
+                       text=f"【{label}费用同步】{p.code} {p.name} {label}费用 ¥{a.cost:,.0f} 已审批{mat}",
                        biz_type="aftersales", biz_id=a.id)
     await write_audit(db, user=current, action="approve", target_type="aftersales", target_id=aid)
-    return schemas.Msg(message="已通过，售后费用/问题/物料清单已同步财务部")
+    return schemas.Msg(message=f"已通过，{label}费用/清单已同步财务部")
 
 
 @router.post("/{aid}/reject", response_model=schemas.Msg)
@@ -221,20 +228,22 @@ async def delete_aftersale(
     a = r.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "记录不存在")
+    # a.project 用 joined 关系，即使项目已软删/已被硬删也能取到（软删）或为 None（硬删）
     p_code = a.project.code if a.project else f"#{a.project_id}"
-    # 删除关联附件
+    label = "安装" if (a.kind or "aftersales") == "install" else "售后"
+    # 🆕 需求八：先把 mat_file_id 置 NULL 并 flush 解除外键引用，再删附件——
+    # 否则 Postgres 下"删附件时 aftersales 仍引用它"会触发外键约束(关联的数据不存在或被引用)，
+    # 令关联已软删项目/孤立附件的脏记录在 UI 上删不掉（SQLite 不校验外键，沙箱测不出，故本改动在真库同源）。
+    att = None
     if a.mat_file_id:
-        att_r = await db.execute(select(models.Attachment).where(models.Attachment.id == a.mat_file_id))
-        att = att_r.scalar_one_or_none()
-        if att:
-            import os
-            try:
-                os.remove(att.path)
-            except OSError:
-                pass
-            await db.delete(att)
+        att = (await db.execute(select(models.Attachment).where(
+            models.Attachment.id == a.mat_file_id))).scalar_one_or_none()
+        a.mat_file_id = None
+        await db.flush()
+    if att is not None:
+        await delete_attachment_file(db, att)
     await db.delete(a)
     await db.commit()
     await write_audit(db, user=current, action="delete", target_type="aftersales", target_id=aid,
-                      detail=f"{p_code} 售后记录已删除")
-    return schemas.Msg(message=f"{p_code} 售后记录已删除")
+                      detail=f"{p_code} {label}记录已删除")
+    return schemas.Msg(message=f"{p_code} {label}记录已删除")

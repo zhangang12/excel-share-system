@@ -2,7 +2,7 @@
 // 🆕 v3 M07 仓库组：总览/出入库/收发存/流水/物料主数据/发货清单 六 tab
 import { ref, onMounted, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Lock, View, Download, Printer, Setting } from '@element-plus/icons-vue'
+import { Plus, Search, Lock, View, Download, Printer, Setting, Delete } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow, type WhCustomField } from '@/api/warehouse'
@@ -15,6 +15,25 @@ import { fmtDate, fmtMoney } from '@/utils/format'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('warehouse', 'warehouse_lead', 'admin', 'manager'))
+// 🆕 需求十五：仓库总监/管理层可一键清空
+const canClear = computed(() => auth.hasRole('warehouse_lead', 'admin', 'manager'))
+async function clearAll() {
+  let word = ''
+  try {
+    const res = await ElMessageBox.prompt(
+      '⚠ 高危操作：将清空全部「出入库流水」+「物料主数据」（试运行数据清理，不影响采购/供应商/项目/字典）。此操作不可恢复！\n请输入「清空仓库」以确认：',
+      '一键清空仓库', {
+        inputPattern: /^清空仓库$/, inputErrorMessage: '请输入「清空仓库」',
+        confirmButtonText: '确认清空', confirmButtonClass: 'el-button--danger', type: 'warning',
+      })
+    word = res.value
+  } catch { return }
+  try {
+    const r = await whApi.clearAll(word)
+    ElMessage.success(r.message || '已清空')
+    await Promise.all([loadMaterials(), loadTxns(), loadBadgeCounts()])
+  } catch { /* 拦截器已提示 */ }
+}
 
 const tab = ref('ov')
 const loading = ref(false)
@@ -32,6 +51,7 @@ async function loadMaterials() {
 onMounted(() => { loadMaterials(); loadMatDict(); loadCustomFields(); loadBadgeCounts() })
 
 const totalStock = computed(() => materials.value.reduce((s, m) => s + m.stock, 0))
+const totalValue = computed(() => materials.value.reduce((s, m) => s + (m.stock_value || 0), 0))  // 🆕 需求三：库存总价
 const lowList = computed(() => materials.value.filter(m => m.low))
 
 // ===== 出入库登记 =====
@@ -80,7 +100,7 @@ async function loadSummary() { summary.value = await whApi.summary(period.value)
 
 // ===== 物料主数据 =====
 const matVisible = ref(false)
-const matForm = reactive<any>({ id: null, name: '', spec: '', category: '', unit: '个', location: '', safety_stock: 0, init_stock: 0, custom_values: {} })
+const matForm = reactive<any>({ id: null, name: '', spec: '', category: '', unit: '个', unit_price: null, location: '', safety_stock: 0, init_stock: 0, custom_values: {} })
 
 // ===== 🆕 物料自定义字段（可配置列，跟采购 R6 同一套做法） =====
 const canConfigFields = computed(() => auth.hasRole('warehouse_lead', 'admin', 'manager'))
@@ -141,7 +161,7 @@ const matUnitOptions = computed(() => matDict.value.filter(d => d.dtype === 'uni
 const matGradeOptions = computed(() => matDict.value.filter(d => d.dtype === 'material_grade').map(d => d.value))
 function openMat(m?: WhMaterial) {
   if (m) Object.assign(matForm, { ...m, custom_values: { ...(m.custom_values || {}) } })
-  else Object.assign(matForm, { id: null, name: '', spec: '', category: '', material_grade: '', unit: '个', location: '', safety_stock: 0, init_stock: 0, custom_values: {} })
+  else Object.assign(matForm, { id: null, name: '', spec: '', category: '', material_grade: '', unit: '个', unit_price: null, location: '', safety_stock: 0, init_stock: 0, custom_values: {} })
   matVisible.value = true
 }
 // 🆕 删除物料（有出入库流水的后端会拦截）
@@ -187,6 +207,7 @@ interface RecvItem {
   project_code?: string | null; item_name: string; spec?: string | null
   qty?: number | null; unit_price?: number | null; received_amount: number
   delivery_note_no?: string | null; arrival_date?: string | null
+  receipt_count?: number   // 🆕 需求十四：已上传收货单数量
 }
 const recvItems = ref<RecvItem[]>([])
 const recvLoading = ref(false)
@@ -241,12 +262,25 @@ function openReceive(it: RecvItem) {
     unit_price: it.unit_price ?? null,
     received_amount: it.received_amount || null,
   })
+  recvReceiptFile.value = null
   recvVisible.value = true
 }
 function onRecvCalc() {
   if (recvForm.qty != null && recvForm.unit_price != null) {
     recvForm.received_amount = Number((recvForm.qty * recvForm.unit_price).toFixed(2))
   }
+}
+// 🆕 需求十四：单条收货时可上传收货单（图片/PDF）
+const recvReceiptFile = ref<File | null>(null)
+function pickRecvReceipt() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.jpg,.jpeg,.png,.pdf,.webp'
+  input.onchange = () => { recvReceiptFile.value = input.files?.[0] || null }
+  input.click()
+}
+async function uploadReceipt(itemId: number, file: File) {
+  const fd = new FormData(); fd.append('file', file)
+  await http.post(`/purchase-mgmt/items/${itemId}/receipt`, fd)
 }
 async function submitReceive() {
   if (!recvForm.arrival_date) { ElMessage.warning('请填写到货日期'); return }
@@ -258,16 +292,84 @@ async function submitReceive() {
       unit_price: recvForm.unit_price,
       received_amount: recvForm.received_amount,
     })
+    if (recvReceiptFile.value) await uploadReceipt(recvForm.id, recvReceiptFile.value)
     ElMessage.success('已确认收货')
     recvVisible.value = false
     await loadReceiving(); loadBadgeCounts()
   } catch { /* handled */ } finally { recvSaving.value = false }
 }
 
+// 🆕 查看某明细的收货单（预览最新一张）
+async function viewReceipts(item: RecvItem) {
+  try {
+    const list = (await http.get<{ id: number; name: string }[]>(`/purchase-mgmt/items/${item.id}/receipts`)).data
+    if (!list.length) { ElMessage.info('暂无收货单'); return }
+    previewRef.value?.open({ id: list[0].id, name: list[0].name })
+  } catch { ElMessage.error('打开收货单失败') }
+}
+
+// ===== 🆕 需求四：合并零件收货（勾选多条 → 只填合并总价 或 逐行单价）=====
+const recvSelected = ref<RecvItem[]>([])
+function onRecvSelect(rows: RecvItem[]) { recvSelected.value = rows }
+const batchRecvVisible = ref(false)
+const batchRecvSaving = ref(false)
+const batchRecvMode = ref<'total' | 'lines'>('total')
+const batchRecvForm = reactive({ delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null as number | null })
+const batchRecvLines = ref<{ item_id: number; item_name: string; spec?: string | null; qty: number | null; unit_price: number | null; received_amount: number | null }[]>([])
+const batchReceiptFile = ref<File | null>(null)
+function pickBatchReceipt() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.jpg,.jpeg,.png,.pdf,.webp'
+  input.onchange = () => { batchReceiptFile.value = input.files?.[0] || null }
+  input.click()
+}
+const batchTotalQty = computed(() => batchRecvLines.value.reduce((s, l) => s + (l.qty || 0), 0))
+function splitShare(line: { qty: number | null }): number {
+  if (batchRecvForm.total_amount == null) return 0
+  const tq = batchTotalQty.value
+  if (tq > 0) return Number((batchRecvForm.total_amount * (line.qty || 0) / tq).toFixed(2))
+  return Number((batchRecvForm.total_amount / (batchRecvLines.value.length || 1)).toFixed(2))
+}
+function openBatchReceive() {
+  if (recvSelected.value.length < 1) { ElMessage.info('请先在列表勾选要合并收货的明细'); return }
+  batchRecvMode.value = 'total'
+  Object.assign(batchRecvForm, { delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null })
+  batchReceiptFile.value = null
+  batchRecvLines.value = recvSelected.value.map(i => ({
+    item_id: i.id, item_name: i.item_name, spec: i.spec, qty: i.qty ?? null,
+    unit_price: i.unit_price ?? null, received_amount: i.received_amount || null,
+  }))
+  batchRecvVisible.value = true
+}
+async function submitBatchReceive() {
+  if (!batchRecvForm.arrival_date) { ElMessage.warning('请填写到货日期'); return }
+  if (batchRecvMode.value === 'total' && (batchRecvForm.total_amount == null || batchRecvForm.total_amount < 0)) {
+    ElMessage.warning('请填写合并总价'); return
+  }
+  batchRecvSaving.value = true
+  try {
+    const body: any = {
+      item_ids: batchRecvLines.value.map(l => l.item_id),
+      delivery_note_no: batchRecvForm.delivery_note_no || null,
+      arrival_date: batchRecvForm.arrival_date,
+    }
+    if (batchRecvMode.value === 'total') body.total_amount = batchRecvForm.total_amount
+    else body.lines = batchRecvLines.value.map(l => ({ item_id: l.item_id, unit_price: l.unit_price, received_amount: l.received_amount }))
+    await http.post('/purchase-mgmt/items/receive-batch', body)
+    if (batchReceiptFile.value) {
+      for (const l of batchRecvLines.value) await uploadReceipt(l.item_id, batchReceiptFile.value)
+    }
+    ElMessage.success(`已合并收货 ${batchRecvLines.value.length} 条`)
+    batchRecvVisible.value = false
+    await loadReceiving(); loadBadgeCounts()
+  } catch { /* handled */ } finally { batchRecvSaving.value = false }
+}
+
 // ===== 🆕 项目物料需求（清单→仓库）=====
 interface DemandRow {
-  item_name: string; spec?: string | null; demand_qty?: number | null
-  stock: number; suggest_purchase: number; purchase_status: string; in_stock: boolean
+  item_name: string; spec?: string | null; material_id?: number | null
+  demand_qty?: number | null; stock: number; suggest_purchase: number
+  purchase_status: string; in_stock: boolean; issued_qty: number
 }
 const demandProj = ref<number | undefined>()
 const demandRows = ref<DemandRow[]>([])
@@ -279,6 +381,41 @@ async function loadDemand() {
   finally { demandLoading.value = false }
 }
 watch(demandProj, () => loadDemand())
+
+// 🆕 需求二：物料需求「领用出库」——按需求把有货物料自动登记出库到项目（计入项目材料成本）
+function demandRemain(r: DemandRow) { return Math.max(0, (r.demand_qty || 0) - (r.issued_qty || 0)) }
+async function issueOne(row: DemandRow) {
+  if (!row.material_id) { ElMessage.warning('该物料尚未在仓库建档，无法出库'); return }
+  const def = Math.min(demandRemain(row) || row.stock, row.stock)
+  let qty = def
+  try {
+    const res = await ElMessageBox.prompt(
+      `领用「${row.item_name}${row.spec ? '·' + row.spec : ''}」出库数量（现存 ${row.stock}，未领需求 ${demandRemain(row)}）：`,
+      '领用出库', { inputValue: String(def), inputPattern: /^\d+(\.\d+)?$/, inputErrorMessage: '请输入数字', confirmButtonText: '出库' })
+    qty = Number(res.value)
+  } catch { return }
+  if (!qty || qty <= 0) return
+  try {
+    const r = await whApi.issueDemand(demandProj.value!, [{ material_id: row.material_id, qty }])
+    ElMessage.success(r.message || '已出库')
+    await Promise.all([loadDemand(), loadMaterials()])
+  } catch { /* 拦截器已提示 */ }
+}
+async function issueAll() {
+  const lines = demandRows.value
+    .filter(r => r.material_id && r.stock > 0 && demandRemain(r) > 0)
+    .map(r => ({ material_id: r.material_id!, qty: Math.min(demandRemain(r), r.stock) }))
+  if (!lines.length) { ElMessage.info('没有可领用出库的物料（需有货且仍有未领用需求）'); return }
+  try {
+    await ElMessageBox.confirm(`将按需求把 ${lines.length} 种有货物料领用出库到本项目？会自动登记出库并计入项目材料成本。`,
+      '一键领用出库', { type: 'warning', confirmButtonText: '领用出库' })
+  } catch { return }
+  try {
+    const r = await whApi.issueDemand(demandProj.value!, lines)
+    ElMessage.success(r.message || '已出库')
+    await Promise.all([loadDemand(), loadMaterials()])
+  } catch { /* 拦截器已提示 */ }
+}
 
 // ===== 项目列表（物料需求 tab 与发货清单目录共用）=====
 const projects = ref<{ id: number; code: string; name: string }[]>([])
@@ -341,6 +478,7 @@ function onTab(name: string) {
           <div class="kpi-grid">
             <div class="kpi"><div class="kpi-v">{{ materials.length }}</div><div class="kpi-l">物料种类</div></div>
             <div class="kpi"><div class="kpi-v">{{ totalStock }}</div><div class="kpi-l">库存总量</div></div>
+            <div class="kpi"><div class="kpi-v">{{ fmtMoney(totalValue) }}</div><div class="kpi-l">库存总价</div></div>
             <div class="kpi" :class="lowCount ? 'is-bad' : ''"><div class="kpi-v">{{ lowCount }}</div><div class="kpi-l">低于安全库存</div></div>
           </div>
           <el-alert v-if="lowList.length" type="warning" :closable="false" style="margin:10px 0"
@@ -356,6 +494,12 @@ function onTab(name: string) {
             <el-table-column prop="unit" label="单位" width="70" align="center" />
             <el-table-column label="现存" min-width="90" align="right">
               <template #default="{ row }"><b :class="{ bad: row.low }">{{ row.stock }}</b></template>
+            </el-table-column>
+            <el-table-column label="单价" min-width="90" align="right">
+              <template #default="{ row }">{{ row.unit_price != null ? fmtMoney(row.unit_price) : '—' }}</template>
+            </el-table-column>
+            <el-table-column label="总价" min-width="100" align="right">
+              <template #default="{ row }"><b>{{ row.stock_value != null ? fmtMoney(row.stock_value) : '—' }}</b></template>
             </el-table-column>
             <el-table-column prop="safety_stock" label="安全库存" min-width="100" align="right" />
             <el-table-column prop="location" label="库位" min-width="100"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
@@ -432,12 +576,14 @@ function onTab(name: string) {
         <el-tab-pane label="物料主数据" name="mat">
           <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openMat()" style="margin-bottom:10px">新增物料</el-button>
           <el-button v-if="canConfigFields" :icon="Setting" @click="openFieldManager" style="margin-bottom:10px;margin-left:8px">字段设置</el-button>
+          <el-button v-if="canClear" type="danger" plain :icon="Delete" @click="clearAll" style="margin-bottom:10px;margin-left:8px">一键清空</el-button>
           <el-table :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="name" label="名称" min-width="120" />
             <el-table-column prop="spec" label="规格型号" min-width="120"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="category" label="类别" width="100"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
             <el-table-column prop="material_grade" label="材质" width="100"><template #default="{ row }">{{ row.material_grade || '—' }}</template></el-table-column>
             <el-table-column prop="unit" label="单位" width="60" />
+            <el-table-column label="单价" width="90" align="right"><template #default="{ row }">{{ row.unit_price != null ? fmtMoney(row.unit_price) : '—' }}</template></el-table-column>
             <el-table-column prop="safety_stock" label="安全库存" width="90" />
             <el-table-column prop="init_stock" label="期初库存" width="90" />
             <el-table-column prop="location" label="库位" width="90"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
@@ -455,7 +601,8 @@ function onTab(name: string) {
             <el-select v-model="demandProj" filterable clearable placeholder="选择项目" style="width:300px">
               <el-option v-for="p in projects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
             </el-select>
-            <span class="muted small">读项目「标准件清单」,逐行看 需求量 / 现有库存 / 建议采购量。有货的可直接出库,缺的走采购。</span>
+            <el-button v-if="canWrite && demandProj" type="warning" :icon="Plus" @click="issueAll">一键领用出库</el-button>
+            <span class="muted small">读项目「标准件清单」,逐行看 需求量 / 现有库存 / 建议采购量。有货的可直接领用出库(自动登记出库),缺的走采购。</span>
           </div>
           <el-table v-if="demandProj" :data="demandRows" v-loading="demandLoading" stripe size="small"
                     max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
@@ -474,6 +621,15 @@ function onTab(name: string) {
             <el-table-column label="采购状态" width="100" align="center">
               <template #default="{ row }">
                 <StatusPill :text="row.purchase_status" :variant="row.purchase_status === '已到货' ? 'success' : row.purchase_status === '已下单' ? 'primary' : 'muted'" />
+              </template>
+            </el-table-column>
+            <el-table-column label="已领用" width="90" align="right">
+              <template #default="{ row }">{{ row.issued_qty || 0 }}</template>
+            </el-table-column>
+            <el-table-column v-if="canWrite" label="操作" width="110" align="center" fixed="right">
+              <template #default="{ row }">
+                <el-button v-if="row.material_id && row.stock > 0" size="small" type="warning" plain @click="issueOne(row)">领用出库</el-button>
+                <span v-else class="muted small">—</span>
               </template>
             </el-table-column>
           </el-table>
@@ -496,10 +652,12 @@ function onTab(name: string) {
               </el-select>
               <el-input v-model="recvPo" placeholder="采购单号" clearable style="width:150px" @change="loadReceiving" />
               <el-button :icon="Search" @click="loadReceiving">查询</el-button>
-              <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。</span>
+              <el-button v-if="recvSelected.length" type="primary" @click="openBatchReceive">合并收货 ({{ recvSelected.length }})</el-button>
+              <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。合并零件可勾选多条「合并收货」只填总价。</span>
             </div>
-            <el-table :data="recvItems" v-loading="recvLoading" stripe size="small"
+            <el-table :data="recvItems" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
+              <el-table-column type="selection" width="40" />
               <el-table-column prop="po_no" label="采购单号" width="128">
                 <template #default="{ row }"><span class="code">{{ row.po_no || '—' }}</span></template>
               </el-table-column>
@@ -525,6 +683,12 @@ function onTab(name: string) {
               </el-table-column>
               <el-table-column label="到货日期" width="110">
                 <template #default="{ row }">{{ row.arrival_date || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="收货单" width="82" align="center">
+                <template #default="{ row }">
+                  <el-button v-if="row.receipt_count" size="small" link type="primary" @click="viewReceipts(row)">📎 {{ row.receipt_count }}</el-button>
+                  <span v-else class="muted small">—</span>
+                </template>
               </el-table-column>
               <el-table-column label="操作" width="96" align="center" fixed="right">
                 <template #default="{ row }">
@@ -671,6 +835,9 @@ function onTab(name: string) {
           </el-form-item>
         </div>
         <div class="frow">
+          <el-form-item label="单价(元)" style="flex:1">
+            <el-input-number v-model="matForm.unit_price" :min="0" :controls="false" placeholder="参考单价" style="width:100%" />
+          </el-form-item>
           <el-form-item label="库位" style="flex:1"><el-input v-model="matForm.location" /></el-form-item>
         </div>
         <div class="frow">
@@ -758,10 +925,68 @@ function onTab(name: string) {
             <el-input-number v-model="recvForm.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" />
           </el-form-item>
         </div>
+        <!-- 🆕 需求十四：上传收货单（图片/PDF） -->
+        <el-form-item label="收货单（图片/PDF，选填）">
+          <el-button size="small" :icon="Download" @click="pickRecvReceipt">选择收货单</el-button>
+          <span v-if="recvReceiptFile" class="muted small" style="margin-left:8px">{{ recvReceiptFile.name }}</span>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="recvVisible = false">取消</el-button>
         <el-button type="primary" :loading="recvSaving" @click="submitReceive">确认收货</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 🆕 需求四：合并零件收货（只填合并总价 或 逐行单价）+ 需求十四 收货单 -->
+    <el-dialog v-model="batchRecvVisible" title="合并零件收货" width="720px">
+      <el-form label-position="top">
+        <div class="frow">
+          <el-form-item label="送货单号">
+            <el-input v-model="batchRecvForm.delivery_note_no" placeholder="整批共用一个送货单号" />
+          </el-form-item>
+          <el-form-item label="到货日期" required>
+            <el-date-picker v-model="batchRecvForm.arrival_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+          </el-form-item>
+        </div>
+        <el-form-item label="填价方式">
+          <el-radio-group v-model="batchRecvMode">
+            <el-radio-button value="total">只填合并总价（按数量分摊）</el-radio-button>
+            <el-radio-button value="lines">逐行填单价</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="batchRecvMode === 'total'" label="合并总价(元)">
+          <el-input-number v-model="batchRecvForm.total_amount" :min="0" :precision="2" :controls="false" style="width:220px" />
+          <span class="muted small" style="margin-left:10px">按各行数量占比自动分摊到收货金额</span>
+        </el-form-item>
+      </el-form>
+      <el-table :data="batchRecvLines" size="small" border max-height="34vh">
+        <el-table-column label="名称" min-width="130">
+          <template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template>
+        </el-table-column>
+        <el-table-column label="数量" width="80" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
+        <template v-if="batchRecvMode === 'total'">
+          <el-table-column label="分摊收货金额" width="140" align="right">
+            <template #default="{ row }"><b>{{ fmtMoney(splitShare(row)) }}</b></template>
+          </el-table-column>
+        </template>
+        <template v-else>
+          <el-table-column label="单价" width="130" align="right">
+            <template #default="{ row }"><el-input-number v-model="row.unit_price" :min="0" :precision="4" :controls="false" style="width:110px" /></template>
+          </el-table-column>
+          <el-table-column label="收货金额" width="140" align="right">
+            <template #default="{ row }"><el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:120px" /></template>
+          </el-table-column>
+        </template>
+      </el-table>
+      <el-form label-position="top" style="margin-top:12px">
+        <el-form-item label="收货单（图片/PDF，选填，整批共用）">
+          <el-button size="small" :icon="Download" @click="pickBatchReceipt">选择收货单</el-button>
+          <span v-if="batchReceiptFile" class="muted small" style="margin-left:8px">{{ batchReceiptFile.name }}</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchRecvVisible = false">取消</el-button>
+        <el-button type="primary" :loading="batchRecvSaving" @click="submitBatchReceive">确认合并收货（{{ batchRecvLines.length }} 条）</el-button>
       </template>
     </el-dialog>
 
