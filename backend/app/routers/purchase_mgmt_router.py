@@ -321,6 +321,9 @@ async def get_order(
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
                          .order_by(models.PurchaseItem.id))
     rows = list(r.scalars().all())
+    # 🆕 #146 需求五：受限采购员只看自己建的采购单明细
+    if _buyer_restricted(current):
+        rows = [x for x in rows if x.buyer_id == current.id]
     if not rows:
         raise HTTPException(404, "采购单不存在")
     return await _attach_pay_status(db, [_item_out(x) for x in rows])
@@ -421,10 +424,16 @@ async def download_order_pdf(
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
                          .order_by(models.PurchaseItem.id))
     rows = list(r.scalars().all())
+    # 🆕 #146 需求五：受限采购员只能下载自己建的采购单
+    if _buyer_restricted(current):
+        rows = [x for x in rows if x.buyer_id == current.id]
     if not rows:
         raise HTTPException(404, "采购单不存在")
+    # 🆕 #146/#148 兜底：一单不该混供应商(存量迁移已拆),若仍有混合只渲染首供应商那部分,避免抬头串台
+    sid0 = rows[0].supplier_id
+    rows = [x for x in rows if x.supplier_id == sid0]
     sup = (await db.execute(select(models.Supplier).where(
-        models.Supplier.id == rows[0].supplier_id))).scalar_one_or_none()
+        models.Supplier.id == sid0))).scalar_one_or_none()
     pdf_bytes = _render_po_pdf(po_no, sup.name if sup else "", rows)
     fname = quote(f"采购单_{po_no}.pdf")
     return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf",
@@ -518,15 +527,23 @@ async def create_item(
 
 
 async def _next_po_no(db: AsyncSession) -> str:
-    """采购单号：TH{yyyymmdd}-{当日序号3位}（TH=同辉）。同一天多张单顺序递增。"""
+    """采购单号：TH{yyyymmdd}-{当日序号3位}（TH=同辉）。同一天多张单顺序递增。
+
+    🆕 #147/#148 修复：序号取「当日现有最大后缀 + 1」，而非 COUNT(DISTINCT)——
+    否则删单留下空档后 COUNT 会算出一个已存在的号,新单并进老单里串供应商。MAX+1 永不重用已删号。"""
     from datetime import date as _date
     prefix = f"TH{_date.today().strftime('%Y%m%d')}-"
     r = await db.execute(
-        select(func.count(func.distinct(models.PurchaseItem.po_no)))
-        .where(models.PurchaseItem.po_no.like(f"{prefix}%"))
+        select(models.PurchaseItem.po_no)
+        .where(models.PurchaseItem.po_no.like(f"{prefix}%")).distinct()
     )
-    n = (r.scalar() or 0) + 1
-    return f"{prefix}{n:03d}"
+    mx = 0
+    for (po,) in r.all():
+        try:
+            mx = max(mx, int(str(po).rsplit("-", 1)[-1]))
+        except (ValueError, IndexError):
+            pass
+    return f"{prefix}{mx + 1:03d}"
 
 
 @router.post("/orders", response_model=List[schemas.PurchaseItemOut])

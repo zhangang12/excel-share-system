@@ -5,6 +5,7 @@
 """
 import json
 import logging
+import re
 from sqlalchemy import select, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine
 
@@ -1742,6 +1743,56 @@ async def backfill_v2_template_for_058_plus(db: AsyncSession) -> dict:
             "skipped_data": skipped_data}
 
 
+async def split_mixed_supplier_po(db: AsyncSession) -> int:
+    """存量修复(#147/#148)：把「一个采购单号混了多个 (供应商/采购员/下单日期)」的自动采购单拆开。
+
+    历史 `_next_po_no` 用 COUNT(DISTINCT) 算序号,删单留下空档后会算出一个已存在的号,
+    新生成的单就并进老单里,导致同一 po_no 串了多个供应商(账目/PDF 抬头全乱)。
+    - 只处理自动生成的 `TH{yyyymmdd}-NNN` 号;历史导入的自定义单号不动。
+    - 按 (供应商, 采购员, 下单日期) 分组,一次正常生成=一个组;>1 组即为被误并,拆开。
+    - 第一组(最早)保留原号,其余组各分一个「当日最大后缀+1」的新号,永不与现有号冲突。
+    - 幂等:拆完每个 po_no 只剩一个组,再次运行不动任何行。
+    """
+    from collections import defaultdict
+    r = await db.execute(
+        select(models.PurchaseItem)
+        .where(models.PurchaseItem.po_no.isnot(None))
+        .order_by(models.PurchaseItem.id))
+    items = list(r.scalars().all())
+    by_po: dict[str, list] = defaultdict(list)
+    for it in items:
+        by_po[it.po_no].append(it)
+    po_re = re.compile(r"^(TH\d{8}-)(\d+)$")
+    max_seq: dict[str, int] = defaultdict(int)   # 每个日期前缀现有最大后缀
+    for po in by_po:
+        m = po_re.match(po or "")
+        if m:
+            max_seq[m.group(1)] = max(max_seq[m.group(1)], int(m.group(2)))
+    fixed_groups = 0
+    for po, its in list(by_po.items()):
+        m = po_re.match(po or "")
+        if not m:
+            continue   # 非自动号(历史导入)不动
+        prefix = m.group(1)
+        groups: dict[tuple, list] = defaultdict(list)
+        for it in its:
+            groups[(it.supplier_id, it.buyer_id, it.delivery_date)].append(it)
+        if len(groups) <= 1:
+            continue
+        for idx, (_key, gitems) in enumerate(groups.items()):
+            if idx == 0:
+                continue   # 第一组(最早)保留原号
+            max_seq[prefix] += 1
+            new_po = f"{prefix}{max_seq[prefix]:03d}"
+            for it in gitems:
+                it.po_no = new_po
+            fixed_groups += 1
+    if fixed_groups:
+        await db.commit()
+        log.info("[split_mixed_supplier_po] 拆分 %d 个被误并的采购单组", fixed_groups)
+    return fixed_groups
+
+
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
     try:
@@ -1880,3 +1931,7 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_oa_doc_types(db)
     except Exception as e:
         log.warning("backfill_oa_doc_types failed: %s", e)
+    try:
+        await split_mixed_supplier_po(db)
+    except Exception as e:
+        log.warning("split_mixed_supplier_po failed: %s", e)
