@@ -12,7 +12,7 @@ from datetime import datetime, timezone, date as _date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, exists
+from sqlalchemy import select, func, exists, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -408,6 +408,22 @@ async def create_request(
     )
     db.add(req)
     await db.flush()
+    # 🆕 #149：报销费用明细——服务端按明细重算报销金额 + 把逐行发票附件挂到本申请（仅本人上传的未归属发票）
+    if category == "reimbursement":
+        eitems = (req.detail or {}).get("expense_items") or []
+        if isinstance(eitems, list) and eitems:
+            req.amount = round(sum(float(x.get("amount") or 0)
+                                   for x in eitems if isinstance(x, dict)), 2)
+            inv_ids = [x.get("invoice_file_id") for x in eitems
+                       if isinstance(x, dict) and x.get("invoice_file_id")]
+            if inv_ids:
+                await db.execute(
+                    sa_update(models.Attachment)
+                    .where(models.Attachment.id.in_(inv_ids),
+                           models.Attachment.biz_type == "oa_request",
+                           models.Attachment.biz_id.is_(None),
+                           models.Attachment.uploaded_by == current.id)
+                    .values(biz_id=req.id))
     for s in steps_cfg:
         db.add(models.OaRequestStep(request_id=req.id, step_order=s.step_order,
                                     approver_role=s.approver_role, step_label=s.step_label, status="pending"))

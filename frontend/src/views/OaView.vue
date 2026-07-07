@@ -81,12 +81,34 @@ function fmtMoney(n?: number | null): string {
 // ===== 新建申请 =====
 const subVisible = ref(false)
 const subSaving = ref(false)
+interface ExpenseItem { category: string; note: string; amount: number | null; invoice_file_id: number | null; invoice_file_name: string }
 const subForm = reactive({
   doc_type: '', department_id: '' as number | '', title: '', amount: null as number | null,
   related_request_id: null as number | '' | null,
   d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
+  expense_items: [] as ExpenseItem[],   // 🆕 #149 报销费用明细
   cc_user_ids: [] as number[],   // 🆕 抄送人
 })
+// 🆕 #149：报销费用明细
+const EXPENSE_CATS = ['交通费', '住宿费', '餐饮费', '办公用品', '业务招待', '通讯费', '其他']
+const expenseTotal = computed(() => subForm.expense_items.reduce((s, r) => s + (Number(r.amount) || 0), 0))
+function addExpenseRow() { subForm.expense_items.push({ category: '', note: '', amount: null, invoice_file_id: null, invoice_file_name: '' }) }
+function delExpenseRow(i: number) { subForm.expense_items.splice(i, 1) }
+function uploadExpenseInvoice(row: ExpenseItem) {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.ofd'
+  input.onchange = async () => {
+    const f = input.files?.[0]; if (!f) return
+    const fd = new FormData()
+    fd.append('file', f); fd.append('biz_type', 'oa_request'); fd.append('kind', 'expense_invoice')
+    try {
+      const r = await http.post<{ id: number; name: string }>('/attachments', fd)
+      row.invoice_file_id = r.data.id; row.invoice_file_name = r.data.name
+      ElMessage.success('发票已上传')
+    } catch { /* 全局拦截器已提示 */ }
+  }
+  input.click()
+}
 const subDocType = computed(() => docTypes.value.find(d => d.key === subForm.doc_type))
 const subCategory = computed(() => subDocType.value?.category || '')
 const showBusinessFields = computed(() => subCategory.value === 'business')
@@ -109,6 +131,7 @@ function resetSubForm() {
   Object.assign(subForm, {
     doc_type: '', department_id: '', title: '', amount: null, related_request_id: null,
     d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
+    expense_items: [],
     cc_user_ids: [],
   })
 }
@@ -126,7 +149,16 @@ async function submitNew() {
     detail = { destination: subForm.d_destination, start_date: subForm.d_start_date, end_date: subForm.d_end_date, notes: subForm.d_notes }
     if (showTripFields.value) detail.transport = subForm.d_transport
   } else if (showReimburseFields.value) {
-    detail = { notes: subForm.d_notes }
+    // 🆕 #149：报销费用明细（逐行金额 + 发票），报销金额=各行合计
+    const items = subForm.expense_items.filter(r => (Number(r.amount) || 0) > 0 || r.invoice_file_id)
+    if (!items.length) { ElMessage.warning('请至少添加一条费用明细'); return }
+    detail = {
+      notes: subForm.d_notes,
+      expense_items: items.map(r => ({
+        category: r.category || '', note: r.note || '', amount: Number(r.amount) || 0,
+        invoice_file_id: r.invoice_file_id, invoice_file_name: r.invoice_file_name || '',
+      })),
+    }
   } else if (showPurchaseFields.value) {
     detail = { items: subForm.d_items, purpose: subForm.d_purpose }
   }
@@ -134,7 +166,8 @@ async function submitNew() {
   try {
     const r = await oaApi.createRequest({
       category: subCategory.value, doc_type: subForm.doc_type, department_id: subForm.department_id as number,
-      title: subForm.title || undefined, amount: subForm.amount,
+      title: subForm.title || undefined,
+      amount: showReimburseFields.value ? expenseTotal.value : subForm.amount,
       detail, related_request_id: showRelatedTrip.value && subForm.related_request_id ? (subForm.related_request_id as number) : null,
       cc_user_ids: subForm.cc_user_ids,
     })
@@ -650,8 +683,8 @@ onMounted(async () => {
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12"><el-form-item label="标题"><el-input v-model="subForm.title" placeholder="留空则用单据类型名" /></el-form-item></el-col>
-          <el-col :xs="24" :sm="12">
-            <el-form-item :label="showReimburseFields ? '报销金额' : showPurchaseFields ? '预估采购金额' : '预估金额（选填）'">
+          <el-col :xs="24" :sm="12" v-if="!showReimburseFields">
+            <el-form-item :label="showPurchaseFields ? '预估采购金额' : '预估金额（选填）'">
               <el-input-number v-model="subForm.amount" :min="0" :precision="2" :controls="false" style="width:100%" />
             </el-form-item>
           </el-col>
@@ -678,7 +711,45 @@ onMounted(async () => {
                 </el-select>
               </el-form-item>
             </el-col>
-            <el-col :span="24"><el-form-item label="费用说明"><el-input v-model="subForm.d_notes" type="textarea" :rows="3" /></el-form-item></el-col>
+            <!-- 🆕 #149：费用明细（逐行费用 + 发票），报销金额自动合计 -->
+            <el-col :span="24">
+              <el-form-item label="费用明细">
+                <div style="width:100%">
+                  <el-table :data="subForm.expense_items" size="small" border>
+                    <el-table-column label="费用类型" width="130">
+                      <template #default="{ row }">
+                        <el-select v-model="row.category" filterable allow-create default-first-option placeholder="选/填类型" size="small" style="width:100%">
+                          <el-option v-for="c in EXPENSE_CATS" :key="c" :label="c" :value="c" />
+                        </el-select>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="说明" min-width="140">
+                      <template #default="{ row }"><el-input v-model="row.note" size="small" placeholder="用途/说明" /></template>
+                    </el-table-column>
+                    <el-table-column label="金额(元)" width="120">
+                      <template #default="{ row }"><el-input-number v-model="row.amount" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template>
+                    </el-table-column>
+                    <el-table-column label="发票" width="120" align="center">
+                      <template #default="{ row }">
+                        <el-button v-if="!row.invoice_file_id" size="small" link type="primary" @click="uploadExpenseInvoice(row)">上传</el-button>
+                        <el-tooltip v-else :content="row.invoice_file_name" placement="top">
+                          <el-button size="small" link type="success" @click="uploadExpenseInvoice(row)">📎 已传·换</el-button>
+                        </el-tooltip>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="56" align="center">
+                      <template #default="{ $index }"><el-button size="small" link type="danger" @click="delExpenseRow($index)">删</el-button></template>
+                    </el-table-column>
+                    <template #empty><span class="muted" style="font-size:12px">还没有费用明细，点下方「添加一行」</span></template>
+                  </el-table>
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+                    <el-button size="small" :icon="Plus" @click="addExpenseRow">添加一行</el-button>
+                    <span>报销合计 <b style="color:var(--el-color-primary)">{{ fmtMoney(expenseTotal) }}</b></span>
+                  </div>
+                </div>
+              </el-form-item>
+            </el-col>
+            <el-col :span="24"><el-form-item label="费用说明"><el-input v-model="subForm.d_notes" type="textarea" :rows="2" placeholder="整单说明（选填）" /></el-form-item></el-col>
           </template>
 
           <template v-if="showPurchaseFields">
@@ -718,9 +789,24 @@ onMounted(async () => {
           <el-tag v-for="u in detailReq.cc_users" :key="u.id" size="small" effect="plain" style="margin-right:6px">{{ u.name }}</el-tag>
         </div>
         <div v-if="detailReq.detail && Object.keys(detailReq.detail).length" class="detail-json">
-          <div v-for="(v, k) in detailReq.detail" :key="k" v-show="v">
+          <div v-for="(v, k) in detailReq.detail" :key="k" v-show="v && k !== 'expense_items'">
             <span class="muted">{{ detailFieldLabel(k) }}</span>：{{ v }}
           </div>
+        </div>
+        <!-- 🆕 #149：报销费用明细 + 逐行发票下载 -->
+        <div v-if="detailReq.detail && detailReq.detail.expense_items && detailReq.detail.expense_items.length" style="margin:6px 0 12px">
+          <div class="form-section-title" style="margin-top:0">费用明细</div>
+          <el-table :data="detailReq.detail.expense_items" size="small" border>
+            <el-table-column label="费用类型" width="96"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
+            <el-table-column label="说明" min-width="110"><template #default="{ row }">{{ row.note || '—' }}</template></el-table-column>
+            <el-table-column label="金额" width="96" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+            <el-table-column label="发票" width="80" align="center">
+              <template #default="{ row }">
+                <el-button v-if="row.invoice_file_id" size="small" link type="primary" @click="downloadAttachment({ id: row.invoice_file_id, name: row.invoice_file_name || '发票' })">下载</el-button>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+          </el-table>
         </div>
         <div v-if="detailReq.reject_reason" class="reject-box">驳回原因：{{ detailReq.reject_reason }}</div>
 
