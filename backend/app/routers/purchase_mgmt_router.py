@@ -1616,7 +1616,17 @@ async def list_payment_requests(
     if supplier_id:
         stmt = stmt.where(models.PaymentRequest.supplier_id == supplier_id)
     if _buyer_restricted(current):
-        stmt = stmt.where(models.PaymentRequest.requester_id == current.id)
+        # 需求四：请款记录按「下单采购员」隔离——请款单本身无 buyer_id，
+        # 经 PaymentRequestItem → PurchaseItem.buyer_id 反查，关联明细里有本人下的单即可见。
+        mine = (
+            select(models.PaymentRequestItem.request_id)
+            .join(
+                models.PurchaseItem,
+                models.PaymentRequestItem.item_id == models.PurchaseItem.id,
+            )
+            .where(models.PurchaseItem.buyer_id == current.id)
+        )
+        stmt = stmt.where(models.PaymentRequest.id.in_(mine))
     r = await db.execute(stmt)
     return [await _pr_out(db, pr.id) for pr in r.scalars().all()]
 
@@ -1826,7 +1836,16 @@ async def report_overview(
     pr_stmt = select(func.count(models.PaymentRequest.id)).where(
         models.PaymentRequest.status == "pending")
     if restricted:
-        pr_stmt = pr_stmt.where(models.PaymentRequest.requester_id == current.id)
+        # 需求四：与请款列表口径一致——按关联采购明细的下单采购员隔离
+        mine = (
+            select(models.PaymentRequestItem.request_id)
+            .join(
+                models.PurchaseItem,
+                models.PaymentRequestItem.item_id == models.PurchaseItem.id,
+            )
+            .where(models.PurchaseItem.buyer_id == current.id)
+        )
+        pr_stmt = pr_stmt.where(models.PaymentRequest.id.in_(mine))
     pr_r = await db.execute(pr_stmt)
     pending_count = pr_r.scalar() or 0
 

@@ -383,6 +383,7 @@ const groupedItems = computed<any[]>(() => {
         supplier_name: it.supplier_name, supplier_id: it.supplier_id, delivery_date: it.delivery_date,
         received_amount: 0, invoice_amount: 0, paid_amount: 0,
         _codes: new Set<string>(), _dnotes: new Set<string>(), _arrivals: new Set<string>(),
+        _invnos: new Set<string>(), _invdates: new Set<string>(),
         children: [] as PurchaseItemOut[],
       }
       groups.set(po, g); out.push(g)
@@ -394,6 +395,8 @@ const groupedItems = computed<any[]>(() => {
     if (it.project_code) g._codes.add(it.project_code)
     if (it.delivery_note_no) g._dnotes.add(it.delivery_note_no)  // 🆕 需求九
     if (it.arrival_date) g._arrivals.add(it.arrival_date)        // 🆕 需求九
+    if (it.invoice_no) g._invnos.add(it.invoice_no)              // 🆕 需求三：开票号上主汇总单
+    if (it.invoice_date) g._invdates.add(it.invoice_date)        // 🆕 需求三：开票日期上主汇总单
   }
   return out.map((r) => {
     if (!r._isGroup) return r
@@ -406,6 +409,11 @@ const groupedItems = computed<any[]>(() => {
     r.delivery_note_no = dnotes.length === 0 ? null : dnotes.length === 1 ? dnotes[0] : '多个'
     const arrivals = Array.from(r._arrivals) as string[]
     r.arrival_date = arrivals.length === 0 ? null : arrivals.length === 1 ? arrivals[0] : '多个'
+    // 🆕 需求三：开票号 / 开票日期体现在合并父行
+    const invnos = Array.from(r._invnos) as string[]
+    r.invoice_no = invnos.length === 0 ? null : invnos.length === 1 ? invnos[0] : '多个'
+    const invdates = Array.from(r._invdates) as string[]
+    r.invoice_date = invdates.length === 0 ? null : invdates.length === 1 ? invdates[0] : '多个'
     return r
   })
 })
@@ -1699,7 +1707,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <template #default="{ row }">{{ row.invoice_date || '—' }}</template>
             </el-table-column>
             <el-table-column prop="invoice_no" label="开票号" width="140">
-              <template #default="{ row }">{{ row._isGroup ? '' : (row.invoice_no || '—') }}</template>
+              <template #default="{ row }">{{ row.invoice_no || '—' }}</template>
             </el-table-column>
             <el-table-column prop="invoice_amount" label="开票金额" width="106" align="right" sortable>
               <template #default="{ row }">{{ row.invoice_amount ? fmtMoney(row.invoice_amount) : '—' }}</template>

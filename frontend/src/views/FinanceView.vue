@@ -100,13 +100,27 @@ async function loadPayReqs() {
     payReqs.value = r.data
   } finally { prLoading.value = false }
 }
+// 🆕 需求一：请款审批与付款拆成两个 tab。
+//   请款审批 tab 只管审批环节（待审批/已审批/已拒绝，不含已付款）；付款 tab 管已审批待付+已付款。
+const approvalReqs = computed(() => payReqs.value.filter(r => r.status !== 'paid'))
 const prCounts = computed(() => {
-  const c: Record<string, number> = { all: payReqs.value.length, pending: 0, approved: 0, paid: 0, rejected: 0 }
-  for (const r of payReqs.value) c[r.status] = (c[r.status] || 0) + 1
+  const c: Record<string, number> = { all: approvalReqs.value.length, pending: 0, approved: 0, rejected: 0 }
+  for (const r of approvalReqs.value) c[r.status] = (c[r.status] || 0) + 1
   return c
 })
 const filteredPayReqs = computed(() =>
-  prStatus.value === 'all' ? payReqs.value : payReqs.value.filter(r => r.status === prStatus.value))
+  prStatus.value === 'all' ? approvalReqs.value : approvalReqs.value.filter(r => r.status === prStatus.value))
+
+// 付款 tab：只关心已审批(待付款)/已付款
+const paymentTab = ref('approved')
+const paymentReqs = computed(() => payReqs.value.filter(r => r.status === 'approved' || r.status === 'paid'))
+const paymentCounts = computed(() => ({
+  all: paymentReqs.value.length,
+  approved: paymentReqs.value.filter(r => r.status === 'approved').length,
+  paid: paymentReqs.value.filter(r => r.status === 'paid').length,
+}))
+const filteredPaymentReqs = computed(() =>
+  paymentTab.value === 'all' ? paymentReqs.value : paymentReqs.value.filter(r => r.status === paymentTab.value))
 
 async function approvePayReq(id: number) {
   try {
@@ -395,17 +409,16 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!aftersales.length" text="暂无已审批售后费用（售后部审批后自动同步）" />
         </el-tab-pane>
 
-        <el-tab-pane label="💰 请款审批" name="pay_requests">
+        <el-tab-pane :label="`💰 请款审批 (${prCounts.pending})`" name="pay_requests">
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
             <el-radio-group v-model="prStatus">
               <el-radio-button value="all">全部 ({{ prCounts.all }})</el-radio-button>
               <el-radio-button value="pending">待审批 ({{ prCounts.pending }})</el-radio-button>
               <el-radio-button value="approved">已审批 ({{ prCounts.approved }})</el-radio-button>
-              <el-radio-button value="paid">已付款 ({{ prCounts.paid }})</el-radio-button>
               <el-radio-button value="rejected">已拒绝 ({{ prCounts.rejected }})</el-radio-button>
             </el-radio-group>
             <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
-            <span class="muted small">💡 内控职责分离：请款审批与付款需由不同人操作（审批人不能给自己审过的单付款）。</span>
+            <span class="muted small">💡 内控职责分离：审批通过后到「付款」tab 付款，审批人不能给自己审过的单付款。</span>
           </div>
           <el-table :data="filteredPayReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
             <el-table-column prop="id" label="申请编号" width="80" />
@@ -440,27 +453,77 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column prop="created_at" label="申请时间" width="110">
               <template #default="{ row }">{{ row.created_at?.slice(0, 10) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="240">
+            <el-table-column label="操作" width="200">
               <template #default="{ row }">
                 <template v-if="row.status === 'pending'">
                   <el-button size="small" type="primary" @click="approvePayReq(row.id)">审批通过</el-button>
                   <el-button size="small" type="danger" link @click="openReject(row.id)">拒绝</el-button>
                 </template>
-                <template v-else-if="row.status === 'approved'">
-                  <el-button size="small" type="success" @click="openPay(row)">记录付款</el-button>
-                </template>
                 <el-button size="small" type="danger" link @click="deletePayReq(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
-          <EmptyHint v-if="!payReqs.length" text="暂无请款申请" />
+          <EmptyHint v-if="!approvalReqs.length" text="暂无请款申请" />
+        </el-tab-pane>
+
+        <!-- 🆕 需求一：付款 tab（已审批待付 / 已付款）-->
+        <el-tab-pane :label="`💳 付款 (${paymentCounts.approved})`" name="pay_payment">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+            <el-radio-group v-model="paymentTab">
+              <el-radio-button value="all">全部 ({{ paymentCounts.all }})</el-radio-button>
+              <el-radio-button value="approved">待付款 ({{ paymentCounts.approved }})</el-radio-button>
+              <el-radio-button value="paid">已付款 ({{ paymentCounts.paid }})</el-radio-button>
+            </el-radio-group>
+            <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
+            <span class="muted small">💡 仅对已审批通过的请款单付款；审批人不能给自己审过的单付款（后端校验）。</span>
+          </div>
+          <el-table :data="filteredPaymentReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
+            <el-table-column prop="id" label="申请编号" width="80" />
+            <el-table-column prop="supplier_name" label="供应商" min-width="130" />
+            <el-table-column prop="requester_name" label="申请人" width="90" />
+            <el-table-column label="申请金额" width="120" align="right">
+              <template #default="{ row }">{{ fmtMoney(row.requested_amount) }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="prTagType(row.status)" size="small">{{ prStatusLabel[row.status] || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="采购单" min-width="130" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.po_nos?.length ? row.po_nos.join('、') : '—' }}</template>
+            </el-table-column>
+            <el-table-column label="付款信息" min-width="170">
+              <template #default="{ row }">
+                <template v-if="row.status === 'paid'">
+                  <div>{{ fmtMoney(row.paid_amount) }} · {{ row.paid_date }} · {{ row.payment_method }}</div>
+                  <div v-if="row.approver_name" class="muted small">审批：{{ row.approver_name }}</div>
+                  <el-button v-if="row.pay_voucher_file_id" size="small" link type="primary"
+                             @click="downloadAttachment({ id: row.pay_voucher_file_id!, name: row.pay_voucher_name || '付款凭证' })">
+                    📎 付款凭证
+                  </el-button>
+                </template>
+                <span v-else-if="row.approver_name" class="muted small">已审批（{{ row.approver_name }}），待付款</span>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="申请时间" width="110">
+              <template #default="{ row }">{{ row.created_at?.slice(0, 10) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="200">
+              <template #default="{ row }">
+                <el-button v-if="row.status === 'approved'" size="small" type="success" @click="openPay(row)">记录付款</el-button>
+                <el-button size="small" type="danger" link @click="deletePayReq(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <EmptyHint v-if="!paymentReqs.length" text="暂无待付款 / 已付款记录" />
         </el-tab-pane>
 
         <!-- 🆕 采购应付 -->
         <el-tab-pane label="📄 采购应付" name="payables">
           <div class="summary-bar" style="margin-bottom:10px">
             <span>应付合计 <b class="danger">{{ fmtMoney(payablesTotal) }}</b></span>
-            <span class="muted small">已收货未付款 = 对供应商的应付;从「请款审批」页付款</span>
+            <span class="muted small">已收货未付款 = 对供应商的应付;审批走「请款审批」，付款走「付款」页</span>
           </div>
           <el-table :data="payables" v-loading="payablesLoading" stripe size="small"
                     max-height="calc(100vh - 300px)" :scrollbar-always-on="true" class="wrap-cells">

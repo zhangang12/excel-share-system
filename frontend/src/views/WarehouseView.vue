@@ -219,6 +219,48 @@ const recvSupplierOptions = computed(() => {
   for (const i of recvItems.value) m.set(i.supplier_id, i.supplier_name)
   return Array.from(m, ([id, name]) => ({ id, name }))
 })
+
+// 🆕 需求二：采购收货列表也按采购单号(po_no)合并——同一采购单(≥2行)收成一个可展开的主汇总父行，
+//   收货/送货单号、到货日期在父行上体现并在父行统一维护（合并收货写整批各行）。单行/无采购单号散单平铺。
+const recvRowKey = (row: any) => (row._isGroup ? row._key : 'i' + row.id)
+const groupedRecv = computed<any[]>(() => {
+  const groups = new Map<string, any>()
+  const out: any[] = []
+  for (const it of recvItems.value) {
+    const po = it.po_no
+    if (!po) { out.push(it); continue }
+    let g = groups.get(po)
+    if (!g) {
+      g = {
+        _isGroup: true, _key: 'g:' + po, po_no: po,
+        supplier_name: it.supplier_name, supplier_id: it.supplier_id,
+        qty: 0, received_amount: 0, receipt_count: 0,
+        _codes: new Set<string>(), _dnotes: new Set<string>(), _arrivals: new Set<string>(),
+        children: [] as RecvItem[],
+      }
+      groups.set(po, g); out.push(g)
+    }
+    g.children.push(it)
+    g.qty += it.qty || 0
+    g.received_amount += it.received_amount || 0
+    g.receipt_count += it.receipt_count || 0
+    if (it.project_code) g._codes.add(it.project_code)
+    if (it.delivery_note_no) g._dnotes.add(it.delivery_note_no)
+    if (it.arrival_date) g._arrivals.add(it.arrival_date)
+  }
+  return out.map((r) => {
+    if (!r._isGroup) return r
+    if (r.children.length === 1) return r.children[0]   // 单行采购单直接平铺
+    r._count = r.children.length
+    const codes = Array.from(r._codes) as string[]
+    r.project_code = codes.length === 0 ? null : codes.length === 1 ? codes[0] : '多个'
+    const dnotes = Array.from(r._dnotes) as string[]
+    r.delivery_note_no = dnotes.length === 0 ? null : dnotes.length === 1 ? dnotes[0] : '多个'
+    const arrivals = Array.from(r._arrivals) as string[]
+    r.arrival_date = arrivals.length === 0 ? null : arrivals.length === 1 ? arrivals[0] : '多个'
+    return r
+  })
+})
 async function loadReceiving() {
   recvLoading.value = true
   try {
@@ -336,6 +378,21 @@ function openBatchReceive() {
   Object.assign(batchRecvForm, { delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null })
   batchReceiptFile.value = null
   batchRecvLines.value = recvSelected.value.map(i => ({
+    item_id: i.id, item_name: i.item_name, spec: i.spec, qty: i.qty ?? null,
+    unit_price: i.unit_price ?? null, received_amount: i.received_amount || null,
+  }))
+  batchRecvVisible.value = true
+}
+// 🆕 需求二：主汇总父行「合并收货」——直接对该采购单下所有零件行整批收货/维护送货单号
+function openBatchReceiveGroup(row: any) {
+  const children = (row.children || []) as RecvItem[]
+  if (!children.length) return
+  batchRecvMode.value = 'total'
+  const dnote = row.delivery_note_no && row.delivery_note_no !== '多个' ? row.delivery_note_no : ''
+  const adate = row.arrival_date && row.arrival_date !== '多个' ? row.arrival_date : new Date().toISOString().slice(0, 10)
+  Object.assign(batchRecvForm, { delivery_note_no: dnote, arrival_date: adate, total_amount: null })
+  batchReceiptFile.value = null
+  batchRecvLines.value = children.map(i => ({
     item_id: i.id, item_name: i.item_name, spec: i.spec, qty: i.qty ?? null,
     unit_price: i.unit_price ?? null, received_amount: i.received_amount || null,
   }))
@@ -655,26 +712,33 @@ function onTab(name: string) {
               <el-button v-if="recvSelected.length" type="primary" @click="openBatchReceive">合并收货 ({{ recvSelected.length }})</el-button>
               <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。合并零件可勾选多条「合并收货」只填总价。</span>
             </div>
-            <el-table :data="recvItems" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
+            <el-table :data="groupedRecv" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
+                      :row-key="recvRowKey" :tree-props="{ children: 'children' }" default-expand-all
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
-              <el-table-column type="selection" width="40" />
-              <el-table-column prop="po_no" label="采购单号" width="128">
-                <template #default="{ row }"><span class="code">{{ row.po_no || '—' }}</span></template>
+              <el-table-column type="selection" width="40" :selectable="(row: any) => !row._isGroup" />
+              <el-table-column prop="po_no" label="采购单号" width="150">
+                <template #default="{ row }">
+                  <el-tag v-if="row._isGroup" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row._count }}</el-tag>
+                  <span class="code">{{ row.po_no || '—' }}</span>
+                </template>
               </el-table-column>
               <el-table-column prop="supplier_name" label="供应商" min-width="130" />
               <el-table-column prop="project_code" label="订单编号" width="110">
                 <template #default="{ row }">{{ row.project_code || '—' }}</template>
               </el-table-column>
-              <el-table-column prop="item_name" label="名称" min-width="120" />
+              <el-table-column prop="item_name" label="名称" min-width="120">
+                <template #default="{ row }">{{ row._isGroup ? `共 ${row._count} 项零件` : row.item_name }}</template>
+              </el-table-column>
               <el-table-column prop="spec" label="规格型号" min-width="120">
-                <template #default="{ row }">{{ row.spec || '—' }}</template>
+                <template #default="{ row }">{{ row._isGroup ? '' : (row.spec || '—') }}</template>
               </el-table-column>
               <el-table-column label="数量" width="72" align="right">
                 <template #default="{ row }">{{ row.qty ?? '—' }}</template>
               </el-table-column>
               <el-table-column label="单价" width="92" align="right">
                 <template #default="{ row }">
-                  <span v-if="row.unit_price != null">{{ row.unit_price }}</span>
+                  <span v-if="row._isGroup"></span>
+                  <span v-else-if="row.unit_price != null">{{ row.unit_price }}</span>
                   <el-tag v-else size="small" type="warning" effect="plain">后填</el-tag>
                 </template>
               </el-table-column>
@@ -686,13 +750,17 @@ function onTab(name: string) {
               </el-table-column>
               <el-table-column label="收货单" width="82" align="center">
                 <template #default="{ row }">
-                  <el-button v-if="row.receipt_count" size="small" link type="primary" @click="viewReceipts(row)">📎 {{ row.receipt_count }}</el-button>
+                  <span v-if="row._isGroup" class="muted small">{{ row.receipt_count ? `📎 ${row.receipt_count}` : '—' }}</span>
+                  <el-button v-else-if="row.receipt_count" size="small" link type="primary" @click="viewReceipts(row)">📎 {{ row.receipt_count }}</el-button>
                   <span v-else class="muted small">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="96" align="center" fixed="right">
+              <el-table-column label="操作" width="112" align="center" fixed="right">
                 <template #default="{ row }">
-                  <el-button size="small" :type="recvReceived ? 'default' : 'primary'" plain @click="openReceive(row)">
+                  <el-button v-if="row._isGroup" size="small" :type="recvReceived ? 'default' : 'primary'" plain @click="openBatchReceiveGroup(row)">
+                    {{ recvReceived ? '合并修改' : '合并收货' }}
+                  </el-button>
+                  <el-button v-else size="small" :type="recvReceived ? 'default' : 'primary'" plain @click="openReceive(row)">
                     {{ recvReceived ? '修改' : '收货' }}
                   </el-button>
                 </template>
