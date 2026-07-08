@@ -1474,6 +1474,9 @@ async def set_invoice_no(
     items = r.scalars().all()
     if _buyer_restricted(current):
         items = [i for i in items if i.buyer_id == current.id]
+    # #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（前端也拦，这里兜底）
+    if len({i.supplier_id for i in items}) > 1:
+        raise HTTPException(400, "跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商）")
     for item in items:
         item.invoice_no = ino
         item.invoice_amount = item.received_amount or 0   # 分享的开票金额=收货金额

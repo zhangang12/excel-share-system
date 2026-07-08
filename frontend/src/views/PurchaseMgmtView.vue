@@ -1321,6 +1321,8 @@ const invoiceNoSaving = ref(false)
 function openBatchInvoiceNo() {
   const leaves = selLeaves.value
   if (!leaves.length) { ElMessage.warning('请先勾选要维护开票号的明细（可勾选合并行）'); return }
+  // #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（与请款一致）
+  if (!selSameSupplier.value) { ElMessage.error('跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商），请只勾选同一供应商的明细'); return }
   // #154：仅当所勾选明细已是同一个开票号时才预填(编辑场景)，否则一律留空，避免残留上次输入
   const nos = new Set(leaves.map(i => i.invoice_no).filter(Boolean))
   invoiceNoForm.invoice_no = nos.size === 1 ? String([...nos][0]) : ''
@@ -1804,9 +1806,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <div v-if="selectedItems.length" class="sel-bar">
             <span>已选 <b>{{ selLeaves.length }}</b> 条明细</span>
             <span>未付合计 <b class="amt">{{ fmtMoney(selUnpaidTotal) }}</b></span>
-            <span v-if="!selSameSupplier" class="warn">跨供应商不能一起请款，请选择同一供应商的明细</span>
+            <span v-if="!selSameSupplier" class="warn">跨供应商不能一起请款/维护开票号，请选择同一供应商的明细</span>
             <el-button size="small" type="warning" :disabled="!selSameSupplier" @click="openPaymentRequest">发起请款</el-button>
-            <el-button size="small" type="primary" plain @click="openBatchInvoiceNo">维护开票号</el-button>
+            <el-button size="small" type="primary" plain :disabled="!selSameSupplier" @click="openBatchInvoiceNo">维护开票号</el-button>
             <el-button size="small" link @click="clearSelection">取消选择</el-button>
           </div>
 
