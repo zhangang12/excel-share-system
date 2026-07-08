@@ -45,9 +45,12 @@ def _uname(u: Optional[models.User]) -> Optional[str]:
 
 
 def _buyer_restricted(current: models.User) -> bool:
-    """buyer 只看自己的（不含 buyer_lead / finance / admin / manager）"""
-    return current.has_role("buyer") and not current.has_role(
-        "buyer_lead", "finance", "admin", "manager"
+    """下单采购员(buyer 家族)只看自己下的单——判定依据只是"是不是采购下单角色"，
+    与是否**兼任** finance / logistics / sales 无关（兼任财务不解除采购的行级隔离；
+    这是反复出问题的坑：王芹=buyer/finance/logistics 曾因带 finance 而被判为看全部）。
+    只有 采购主管 / admin / manager 看全部；纯 finance(不带 buyer)不受此限、可看全部对账。"""
+    return current.has_role("buyer", "buyer_standard", "buyer_outsource") and not current.has_role(
+        "buyer_lead", "admin", "manager"
     )
 
 
