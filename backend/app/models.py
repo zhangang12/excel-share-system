@@ -69,6 +69,10 @@ class User(Base):
         codes = {r.code for r in self.roles} if self.roles else set()
         if self.role and self.role.code:
             codes.add(self.role.code)
+        # 🆕 财务主管 ⊇ 财务：finance_lead 自动拥有 finance 的一切能力（菜单/请款审批/付款/售后费用等）
+        #   一处实现，所有 has_role/require_roles("finance")、菜单矩阵、前端 hasRole 全部生效。
+        if "finance_lead" in codes:
+            codes.add("finance")
         return codes
 
     @property

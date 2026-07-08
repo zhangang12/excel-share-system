@@ -43,14 +43,16 @@ async def push_message(
     if to_role:
         # 多角色：锚点 role_id 命中 或 user_roles 关联命中任一即推送
         # （否则「该角色仅为副角色」的用户收不到按角色的待办/提醒推送）
-        rid = (await db.execute(
-            select(models.Role.id).where(models.Role.code == to_role))).scalar_one_or_none()
-        if rid is not None:
-            sub = select(models.UserRole.user_id).where(models.UserRole.role_id == rid)
+        # 🆕 财务主管 ⊇ 财务：推给 finance 时也扇出给 finance_lead
+        target_codes = [to_role] + (["finance_lead"] if to_role == "finance" else [])
+        rids = [r[0] for r in (await db.execute(
+            select(models.Role.id).where(models.Role.code.in_(target_codes)))).all()]
+        if rids:
+            sub = select(models.UserRole.user_id).where(models.UserRole.role_id.in_(rids))
             res = await db.execute(
                 select(models.User.id).where(
                     models.User.is_active == True,  # noqa: E712
-                    or_(models.User.role_id == rid, models.User.id.in_(sub)),
+                    or_(models.User.role_id.in_(rids), models.User.id.in_(sub)),
                 )
             )
             user_ids.extend(r[0] for r in res.all())

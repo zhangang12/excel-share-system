@@ -1575,8 +1575,12 @@ function isCleared(row: any): boolean {
   const r = row.received_amount || 0
   return r > 0 && (row.invoice_amount || 0) >= r - 0.005 && (row.paid_amount || 0) >= r - 0.005
 }
-function reconcileText(row: any): string { return isCleared(row) ? '已清' : row.invoice_status }
-function reconcileTag(row: any) { return isCleared(row) ? 'success' : statusTag(row.invoice_status) }
+// 对账状态只表达对账口径：待对账 / 已对账 / 已清；「已开票」不算对账状态，归为「已对账」（用户要求去掉已开票）
+function reconcileText(row: any): string {
+  if (isCleared(row)) return '已清'
+  return row.invoice_status === '已开票' ? '已对账' : row.invoice_status
+}
+function reconcileTag(row: any) { return isCleared(row) ? 'success' : statusTag(reconcileText(row)) }
 
 function prStatusTag(s: string) {
   if (s === 'paid') return 'success'
@@ -1771,7 +1775,6 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-select v-model="filterInvoiceStatus" placeholder="对账状态" clearable style="width:110px" @change="onFilterChange">
               <el-option label="待对账" value="待对账" />
               <el-option label="已对账" value="已对账" />
-              <el-option label="已开票" value="已开票" />
             </el-select>
             <el-select v-model="filterCategory" placeholder="供应商分类" clearable style="width:120px" @change="onFilterChange">
               <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
@@ -2633,7 +2636,6 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 <el-select v-model="itemForm.invoice_status" style="width:100%">
                   <el-option label="待对账" value="待对账" />
                   <el-option label="已对账" value="已对账" />
-                  <el-option label="已开票" value="已开票" />
                 </el-select>
               </el-form-item>
             </el-col>

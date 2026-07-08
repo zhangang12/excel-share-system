@@ -27,7 +27,7 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         role_code=u.role.code if u.role else None,
         role_name=u.role.name if u.role else None,
         role_ids=[r.id for r in roles],
-        role_codes=[r.code for r in roles],
+        role_codes=sorted(u.role_codes),   # 🆕 用 property(含 finance_lead⊇finance 隐含)，前端 hasRole 才一致
         role_names=[r.name for r in roles],
         is_active=u.is_active,
         password_must_change=u.password_must_change,

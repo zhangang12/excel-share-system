@@ -295,7 +295,11 @@ async def items_summary(
     if month:
         stmt = stmt.where(models.PurchaseItem.delivery_date.startswith(month))
     if invoice_status:
-        stmt = stmt.where(models.PurchaseItem.invoice_status == invoice_status)
+        # 用户要求「对账状态去掉已开票」：已开票并入已对账 → 筛选「已对账」也含存量「已开票」
+        if invoice_status == "已对账":
+            stmt = stmt.where(models.PurchaseItem.invoice_status.in_(["已对账", "已开票"]))
+        else:
+            stmt = stmt.where(models.PurchaseItem.invoice_status == invoice_status)
     stmt = _apply_sheet_type_filter(stmt, sheet_type)
     r = await db.execute(stmt)
     items = r.scalars().all()
@@ -338,7 +342,11 @@ async def list_items(
     if month:
         stmt = stmt.where(models.PurchaseItem.delivery_date.startswith(month))
     if invoice_status:
-        stmt = stmt.where(models.PurchaseItem.invoice_status == invoice_status)
+        # 用户要求「对账状态去掉已开票」：已开票并入已对账 → 筛选「已对账」也含存量「已开票」
+        if invoice_status == "已对账":
+            stmt = stmt.where(models.PurchaseItem.invoice_status.in_(["已对账", "已开票"]))
+        else:
+            stmt = stmt.where(models.PurchaseItem.invoice_status == invoice_status)
     stmt = _apply_sheet_type_filter(stmt, sheet_type)
     if category:
         # 🆕 按供应商分类筛选（明细本身无分类，取供应商分类）

@@ -70,6 +70,7 @@ ROLE_MENUS: dict[str, list[str]] = {
     "warehouse_lead":   ["catalog", "list", "warehouse"],
     "logistics":        ["catalog", "list", "logistics"],
     "finance":          ["catalog", "list", "finance", "purchase_mgmt"],
+    "finance_lead":     ["catalog", "list", "finance", "purchase_mgmt"],  # 🆕 财务主管(⊇财务)
     "as_worker":        ["aftersales"],                       # 仅售后部（无项目目录）
     "as_lead":          ["aftersales"],
 }
