@@ -432,17 +432,30 @@ const drawerLoading = ref(false)
 
 // 🆕 按月「合计开票」汇总：按到货日期分月，看某月 收货合计 / 已开票 / 未开票
 const drawerMonthly = computed(() => {
-  const map = new Map<string, { month: string; received: number; invoiced: number; uninvoiced: number; count: number }>()
+  const map = new Map<string, { month: string; received: number; invoiced: number; uninvoiced: number; paid: number; count: number }>()
   for (const it of drawerItems.value) {
     const m = (it.arrival_date || '').slice(0, 7) || '未收货'
     let g = map.get(m)
-    if (!g) { g = { month: m, received: 0, invoiced: 0, uninvoiced: 0, count: 0 }; map.set(m, g) }
+    if (!g) { g = { month: m, received: 0, invoiced: 0, uninvoiced: 0, paid: 0, count: 0 }; map.set(m, g) }
     g.received += it.received_amount || 0
     if (it.invoice_status === '已开票') g.invoiced += (it.invoice_amount || it.received_amount || 0)
     else g.uninvoiced += it.received_amount || 0
+    g.paid += it.paid_amount || 0    // #166
     g.count++
   }
   return Array.from(map.values()).sort((a, b) => (a.month < b.month ? 1 : -1))
+})
+// #166：供应商明细抽屉加报表——月度 收货/开票/已付 趋势图（复用 LineChart）
+const drawerTrendChart = computed(() => {
+  const asc = [...drawerMonthly.value].filter(m => m.month !== '未收货').sort((a, b) => (a.month < b.month ? -1 : 1))
+  return {
+    labels: asc.map(m => m.month.slice(2)),
+    series: [
+      { name: '收货', points: asc.map(m => m.received) },
+      { name: '已开票', points: asc.map(m => m.invoiced), color: '#f59e0b' },
+      { name: '已付', points: asc.map(m => m.paid), color: '#16a34a' },
+    ] as { name: string; points: (number | null)[]; color?: string }[],
+  }
 })
 
 // 🆕 供应商分类——独立字典（dtype=supplier_category，见「字典设置」)，不与物料类别混用
@@ -2971,23 +2984,32 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                    @click="exportSupplierStatement(drawerSupplier.supplier_id, drawerSupplier.supplier_name)">导出对账单</el-button>
       </div>
 
+      <!-- 🆕 #166：月度收货/开票/付款 趋势报表 -->
+      <div v-if="drawerTrendChart.labels.length" class="report-section" style="margin-bottom:12px">
+        <div class="sec-title" style="margin-top:0">月度趋势（收货 / 已开票 / 已付）</div>
+        <LineChart :labels="drawerTrendChart.labels" :series="drawerTrendChart.series" :money-fmt="fmtMoney" :height="220" />
+      </div>
+
       <!-- 🆕 按月合计开票：按到货日期分月，未开票/已开票一目了然 -->
       <el-collapse v-if="drawerMonthly.length" class="monthly-collapse">
-        <el-collapse-item :title="`按月合计开票汇总（${drawerMonthly.length} 个月）`" name="m">
+        <el-collapse-item :title="`按月收货/开票/付款汇总（${drawerMonthly.length} 个月）`" name="m">
           <el-table :data="drawerMonthly" size="small" stripe class="wrap-cells">
             <el-table-column label="月份（按到货日期）" min-width="140">
               <template #default="{ row }"><b>{{ row.month }}</b></template>
             </el-table-column>
-            <el-table-column label="收货合计" width="130" align="right">
+            <el-table-column label="收货合计" width="120" align="right">
               <template #default="{ row }">{{ fmtMoney(row.received) }}</template>
             </el-table-column>
-            <el-table-column label="已开票" width="130" align="right">
+            <el-table-column label="已开票" width="120" align="right">
               <template #default="{ row }"><span class="amt">{{ fmtMoney(row.invoiced) }}</span></template>
             </el-table-column>
-            <el-table-column label="未开票" width="130" align="right">
+            <el-table-column label="未开票" width="120" align="right">
               <template #default="{ row }"><span class="warn">{{ fmtMoney(row.uninvoiced) }}</span></template>
             </el-table-column>
-            <el-table-column label="明细数" width="80" align="center">
+            <el-table-column label="已付款" width="120" align="right">
+              <template #default="{ row }"><span style="color:#16a34a">{{ fmtMoney(row.paid) }}</span></template>
+            </el-table-column>
+            <el-table-column label="明细数" width="72" align="center">
               <template #default="{ row }">{{ row.count }}</template>
             </el-table-column>
           </el-table>
