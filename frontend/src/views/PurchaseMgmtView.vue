@@ -761,7 +761,7 @@ function importItems() {
 // 🆕 从清单下单：项目标准件清单 → 筛选 → 选供应商 → 生成采购单
 interface PurchasableRow {
   sheet_id: number; record_id: number; item_name: string; spec?: string | null
-  brand?: string | null; material?: string | null
+  brand?: string | null; material?: string | null; drawing?: string | null
   qty?: number | null; stock: number; suggest_purchase: number
   notes?: string | null; status: string
   sheet_key?: string | null; project_id?: number | null   // 🆕 跨项目待下单聚合
@@ -772,14 +772,20 @@ interface PurchasableRow {
   _prepay_ratio: number | null   // 🆕 逐行预付比例(%)，仅现金预付/对公预付时有意义
 }
 // 🆕 ① 清单类型描述符：驱动列的显示名/显隐（治"每类清单列名不一样"）。前后端一致。
-const SHEET_META: Record<string, { label: string; nameLabel: string; specLabel: string; hasBrand: boolean; hasQty: boolean; hasMaterial: boolean }> = {
-  standard:  { label: '标准件', nameLabel: '名称',     specLabel: '规格型号', hasBrand: true,  hasQty: true,  hasMaterial: false },
-  elec_po:   { label: '电工',   nameLabel: '名称',     specLabel: '规格型号', hasBrand: true,  hasQty: true,  hasMaterial: false },
-  material:  { label: '不锈钢', nameLabel: '材料类别', specLabel: '规格型号', hasBrand: false, hasQty: true,  hasMaterial: true  },
-  outsource: { label: '外协',   nameLabel: '名称',     specLabel: '图纸名称', hasBrand: false, hasQty: false, hasMaterial: false },
-  laser:     { label: '激光',   nameLabel: '名称',     specLabel: '图纸名称', hasBrand: false, hasQty: false, hasMaterial: false },
+const SHEET_META: Record<string, { label: string; nameLabel: string; specLabel: string; hasBrand: boolean; hasQty: boolean; hasMaterial: boolean; hasDrawing: boolean }> = {
+  standard:  { label: '标准件', nameLabel: '名称',     specLabel: '规格型号', hasBrand: true,  hasQty: true,  hasMaterial: false, hasDrawing: false },
+  elec_po:   { label: '电工',   nameLabel: '名称',     specLabel: '规格型号', hasBrand: true,  hasQty: true,  hasMaterial: false, hasDrawing: false },
+  material:  { label: '不锈钢', nameLabel: '材料类别', specLabel: '规格型号', hasBrand: false, hasQty: true,  hasMaterial: true,  hasDrawing: true  },
+  outsource: { label: '外协',   nameLabel: '名称',     specLabel: '图纸名称', hasBrand: false, hasQty: false, hasMaterial: false, hasDrawing: false },
+  laser:     { label: '激光',   nameLabel: '名称',     specLabel: '图纸名称', hasBrand: false, hasQty: false, hasMaterial: false, hasDrawing: false },
 }
 const sheetMeta = (k?: string | null) => SHEET_META[k || ''] || SHEET_META.standard
+// #159/#160：不锈钢有独立"图纸名称"列——下单时折进 spec 一起带上采购单（图纸名称 · 规格型号）
+function foldDrawingSpec(r: { drawing?: string | null; spec?: string | null }): string | null {
+  const d = (r.drawing || '').trim(), s = (r.spec || '').trim()
+  if (d && s) return `${d} · ${s}`
+  return d || s || null
+}
 const listOrderVisible = ref(false)
 const listOrderSaving = ref(false)
 const purchasableLoading = ref(false)
@@ -989,7 +995,7 @@ async function submitListOrder() {
         project_code: listOrderForm.project_code || null,
         lines: rows.map(r => ({
           source_sheet_id: r.sheet_id, source_record_id: r.record_id,
-          item_name: r.item_name, spec: r.spec, brand: r._brand || null,
+          item_name: r.item_name, spec: foldDrawingSpec(r), brand: r._brand || null,
           payment_method: r._payment_method || null,
           prepay_ratio: isPrepayMethod(r._payment_method) ? r._prepay_ratio : null,
           qty: r._buyqty ?? r.suggest_purchase ?? r.qty, unit_price: r._price,
@@ -1048,7 +1054,18 @@ async function submitKitFromList() {
   } catch { /* handled */ } finally { listOrderSaving.value = false }
 }
 
-// ==================== 🆕 ③ 待下单常驻工作区（二级 tab 按清单类型 · 跨项目未下单）====================
+// ==================== 🆕 ③ 待下单常驻工作区（二级 tab 按清单类型）====================
+// 性能：按项目加载（选一个项目→只查该项目的清单），查询量与项目总数无关，避免数据多时卡死。
+const pendingProj = ref<number | ''>('')
+const pendingProjects = ref<{ id: number; code: string; name: string }[]>([])
+async function loadPendingProjects() {
+  try {
+    const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
+    pendingProjects.value = r.data
+      .filter((p: any) => SHEET_TYPES.some(t => p[t.field] && sheetVisible(t.key)))
+      .map((p: any) => ({ id: p.project_id, code: p.code, name: p.name }))
+  } catch { pendingProjects.value = [] }
+}
 const pendingActiveSheet = ref<string>('')
 const pendingCache = ref<Record<string, PurchasableRow[]>>({})
 const pendingLoading = ref(false)
@@ -1071,10 +1088,12 @@ function mkPendingRow(x: any): PurchasableRow {
   }
 }
 async function loadPending() {
+  if (!pendingProj.value) { pendingCache.value = {}; return }   // 必须先选项目
   pendingLoading.value = true
   try {
-    // 性能修复：一次拉全（后端库存只算一次+批量查询），不再并发发 5 个请求逐张清单 N+1
-    const r = await http.get<Record<string, any[]>>('/purchase-mgmt/purchasable-pending-all')
+    // 性能：只查选中项目的清单（库存只算一次+批量查询），与项目总数无关
+    const r = await http.get<Record<string, any[]>>('/purchase-mgmt/purchasable-pending-all',
+      { params: { project_id: pendingProj.value } })
     const cache: Record<string, PurchasableRow[]> = {}
     for (const t of availableSheets.value) cache[t.key] = (r.data[t.key] || []).map(mkPendingRow)
     pendingCache.value = cache
@@ -1126,7 +1145,7 @@ async function submitPendingOrder() {
         project_code: rows[0].project_code || null,
         lines: rows.map(r => ({
           source_sheet_id: r.sheet_id, source_record_id: r.record_id,
-          item_name: r.item_name, spec: r.spec, brand: r._brand || null,
+          item_name: r.item_name, spec: foldDrawingSpec(r), brand: r._brand || null,
           payment_method: r._payment_method || null,
           prepay_ratio: isPrepayMethod(r._payment_method) ? r._prepay_ratio : null,
           qty: r._buyqty ?? r.suggest_purchase ?? r.qty, unit_price: r._price,
@@ -1293,7 +1312,7 @@ onMounted(async () => {
 
 async function onTabChange(name: string) {
   if (name === 'purchase') await loadPurchaseRows()
-  else if (name === 'pending') { await loadSuppliers(); await loadPending() }
+  else if (name === 'pending') { await loadSuppliers(); await loadPendingProjects() }
   else if (name === 'items') await loadItems()
   else if (name === 'statements') { await loadSuppliers(); await loadStatements() }
   else if (name === 'payreq') await loadPayReqs()
@@ -1796,13 +1815,18 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <EmptyHint v-if="!canWrite" text="仅采购角色可从清单下单" :icon="Lock" />
           <template v-else>
             <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+              <el-select v-model="pendingProj" filterable clearable placeholder="选择项目（先选项目再看待下单）" style="width:320px" @change="() => { pendingActiveSheet = ''; loadPending() }">
+                <el-option v-for="p in pendingProjects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
+              </el-select>
               <el-radio-group v-model="pendingMode" size="small">
                 <el-radio-button value="normal">普通下单</el-radio-button>
                 <el-radio-button value="kit">打包成套</el-radio-button>
               </el-radio-group>
-              <el-button :icon="Refresh" size="small" @click="loadPending" :loading="pendingLoading">刷新</el-button>
-              <span class="muted small">按清单类型分二级 tab（只显示你负责的），列出所有进行中项目里**未下单**的零件。勾选后「生成采购单」（按供应商×项目自动拆单）或「打包成套」（同一项目一组零件打成一套）。</span>
+              <el-button :icon="Refresh" size="small" @click="loadPending" :loading="pendingLoading" :disabled="!pendingProj">刷新</el-button>
+              <span class="muted small">先选项目 → 按清单类型分二级 tab（只显示你负责的）看该项目**未下单**的零件。勾选后「生成采购单」（按供应商拆单）或「打包成套」。</span>
             </div>
+            <EmptyHint v-if="!pendingProj" text="请先在上方选择一个项目" size="sm" />
+            <template v-else>
             <el-tabs v-model="pendingActiveSheet" @tab-change="onPendingSheetTab" type="card" class="pending-subtabs">
               <el-tab-pane v-for="t in availableSheets" :key="t.key" :name="t.key">
                 <template #label>{{ sheetMeta(t.key).label }}<span v-if="pendingCounts[t.key]">（{{ pendingCounts[t.key] }}）</span></template>
@@ -1884,6 +1908,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 <el-button v-else type="primary" :loading="pendingLoading" :disabled="!pendingSel.length" @click="submitPendingOrder">生成采购单（{{ pendingSel.length }} 行）</el-button>
               </span>
             </div>
+            </template>
           </template>
         </el-tab-pane>
 

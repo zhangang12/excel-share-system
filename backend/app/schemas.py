@@ -1038,6 +1038,7 @@ class PurchasableRow(BaseModel):
     spec: Optional[str] = None
     brand: Optional[str] = None          # 🆕 清单里带出的品牌（下单时可改）
     material: Optional[str] = None       # 🆕 材质（不锈钢下料单专有列，单独成列不再塞备注）
+    drawing: Optional[str] = None        # 🆕 #159/#160 图纸名称（不锈钢下料单专有；下单折进 spec 带上采购单）
     qty: Optional[float] = None          # 清单需求量
     stock: float = 0                      # 现有库存（按名称+规格匹配物料）
     suggest_purchase: float = 0           # 建议采购量 = 需求 - 库存

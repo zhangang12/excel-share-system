@@ -889,7 +889,7 @@ async def _purchasable_rows(db: AsyncSession, ds: models.Datasheet, conf: tuple,
         suggest = round(max(0.0, (qty or 0) - stock), 4) if qty is not None else 0
         out.append(schemas.PurchasableRow(
             sheet_id=ds.id, record_id=rec.id, item_name=name, spec=spec, brand=gv(brand_col),
-            material=gv("材质"), qty=qty, stock=stock, suggest_purchase=suggest,
+            material=gv("材质"), drawing=gv("图纸名称"), qty=qty, stock=stock, suggest_purchase=suggest,
             notes=gv("备注"), status=status,
             sheet_key=sheet_key, project_id=project_id,
             project_code=project_code, project_name=project_name))
@@ -936,20 +936,24 @@ async def purchasable_pending(
 
 @router.get("/purchasable-pending-all", response_model=Dict[str, List[schemas.PurchasableRow]])
 async def purchasable_pending_all(
+    project_id: Optional[int] = Query(None),
     current: models.User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 待下单工作区数据源（一次拉全，修性能）：返回 {清单类型: 未下单行[]}。
-    原来前端并发发 5 个 /purchasable-pending，每个都全表算库存 + 逐张清单 N+1 查询 → 转圈圈。
-    这里**库存只算一次 + Fields/PurchaseItem/Record 全部批量一次查完**，只受 R4 权限约束。"""
+    """🆕 待下单工作区数据源：返回 {清单类型: 未下单行[]}。
+    **性能**：`project_id` 必传——只处理该项目的清单（查询量与项目总数无关）。库存只算一次 +
+    Fields/PurchaseItem/Record 批量一次查完。受 R4 权限约束。
+    （不传 project_id 时会跨全部项目聚合，数据多时很慢，前端已改为按项目加载，仅保留兼容。）"""
     allowed = _allowed_sheet_keys(current)
     types = [k for k in _PURCHASABLE_SHEETS if (allowed is None or k in allowed)]
     result: dict = {t: [] for t in types}
     if not types:
         return result
-    pr = await db.execute(
-        select(models.Project.id, models.Project.code, models.Project.name)
-        .where(models.Project.is_deleted == False))  # noqa: E712
+    pq = (select(models.Project.id, models.Project.code, models.Project.name)
+          .where(models.Project.is_deleted == False))  # noqa: E712
+    if project_id:
+        pq = pq.where(models.Project.id == project_id)
+    pr = await db.execute(pq)
     projects = {pid: (code, name) for pid, code, name in pr.all()}
     if not projects:
         return result
