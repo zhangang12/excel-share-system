@@ -180,15 +180,18 @@ async function copyText(t?: string | null) {
   try { await navigator.clipboard.writeText(String(t)); ElMessage.success('已复制') }
   catch { ElMessage.warning('复制失败，请手动选择复制') }
 }
-// #161/#168：财务查看/下载关联采购单 PDF（finance 有权限，见后端 _PURCHASE_ROLES）
+// #161/#168/#171：财务预览关联采购单 PDF（新标签内联打开，可预览也可从中下载；finance 有权限）
 async function downloadPoPdf(poNo?: string | null) {
   if (!poNo) return
   try {
     const res = await http.get(`/purchase-mgmt/orders/${encodeURIComponent(poNo)}/pdf`, { responseType: 'blob' })
-    const url = URL.createObjectURL(res.data as Blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = `采购单_${poNo}.pdf`; a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 2000)
+    const url = URL.createObjectURL(new Blob([res.data as BlobPart], { type: 'application/pdf' }))
+    const w = window.open(url, '_blank')   // #171 预览：新标签打开 PDF
+    if (!w) {   // 弹窗被拦截则退回下载
+      const a = document.createElement('a')
+      a.href = url; a.download = `采购单_${poNo}.pdf`; a.click()
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
   } catch { ElMessage.error('打开采购单失败') }
 }
 
