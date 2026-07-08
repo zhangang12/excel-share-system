@@ -1215,8 +1215,10 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
 
 <style scoped>
 .bad { color: var(--danger); }
-/* 采购收货 待收货/已收货 切换：字体放大、加粗、加内边距（用户要求更醒目）*/
-.recv-toggle :deep(.el-radio-button__inner) { font-size: 15px; font-weight: 600; padding: 11px 22px; }
+/* 采购收货 待收货/已收货 切换：字体更大、按钮更大更醒目（用户要求）*/
+.recv-toggle :deep(.el-radio-button__inner) {
+  font-size: 18px; font-weight: 700; padding: 15px 34px; line-height: 1.2; min-width: 150px;
+}
 /* 🆕 #141 tab 待办数红色角标 */
 .wh-tab-badge { display: inline-block; margin-left: 6px; min-width: 16px; height: 16px; line-height: 16px;
   padding: 0 4px; border-radius: 8px; background: var(--el-color-danger); color: #fff; font-size: 11px;
