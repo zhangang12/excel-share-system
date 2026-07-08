@@ -1044,7 +1044,7 @@ async function submitKitFromList() {
       kit_total: kitSet.kit_total,
       parts: sel.map(r => ({
         source_record_id: r.record_id, name: r.item_name,
-        spec: r.spec || null, qty: r._buyqty ?? r.qty ?? null,
+        spec: foldDrawingSpec(r), qty: r._buyqty ?? r.qty ?? null,
       })),
     })
     ElMessage.success(`成套采购单已生成（${kitSet.kit_qty} 套 · ${sel.length} 项零件），已回写清单`)
@@ -1181,7 +1181,7 @@ async function submitPendingKit() {
       kit_name: pendingKitSet.kit_name.trim(),
       kit_qty: pendingKitSet.kit_qty,
       kit_total: pendingKitSet.kit_total,
-      parts: sel.map(r => ({ source_record_id: r.record_id, name: r.item_name, spec: r.spec || null, qty: r._buyqty ?? r.qty ?? null })),
+      parts: sel.map(r => ({ source_record_id: r.record_id, name: r.item_name, spec: foldDrawingSpec(r), qty: r._buyqty ?? r.qty ?? null })),
     })
     ElMessage.success(`成套采购单已生成（${pendingKitSet.kit_qty} 套 · ${sel.length} 项零件），已回写清单`)
     onPendingSheetTab()
@@ -1867,6 +1867,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </el-table-column>
               <el-table-column label="项目号" width="110" fixed><template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template></el-table-column>
               <el-table-column :label="pendingMeta.nameLabel" min-width="150" prop="item_name" fixed show-overflow-tooltip />
+              <el-table-column v-if="pendingMeta.hasDrawing" label="图纸名称" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ row.drawing || '—' }}</template></el-table-column>
               <el-table-column :label="pendingMeta.specLabel" min-width="130" show-overflow-tooltip><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
               <el-table-column v-if="pendingMeta.hasMaterial" label="材质" width="90"><template #default="{ row }">{{ row.material || '—' }}</template></el-table-column>
               <el-table-column v-if="pendingMeta.hasBrand && pendingMode !== 'kit'" label="品牌" width="118">
@@ -2460,6 +2461,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <template #default="{ row }"><el-checkbox v-model="row._checked" /></template>
         </el-table-column>
         <el-table-column label="名称" min-width="150" prop="item_name" fixed show-overflow-tooltip />
+        <el-table-column v-if="sheetMeta(listSheet).hasDrawing" label="图纸名称" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ row.drawing || '—' }}</template></el-table-column>
         <el-table-column label="规格型号" min-width="130" show-overflow-tooltip><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
         <el-table-column v-if="listOrderMode !== 'kit'" label="品牌" width="118">
           <template #default="{ row }">
