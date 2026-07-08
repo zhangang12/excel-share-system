@@ -451,9 +451,9 @@ const drawerTrendChart = computed(() => {
   return {
     labels: asc.map(m => m.month.slice(2)),
     series: [
-      { name: '收货', points: asc.map(m => m.received) },
-      { name: '已开票', points: asc.map(m => m.invoiced), color: '#f59e0b' },
-      { name: '已付', points: asc.map(m => m.paid), color: '#16a34a' },
+      { name: '收货', points: asc.map(m => m.received), color: '#2a78d6' },
+      { name: '已开票', points: asc.map(m => m.invoiced), color: '#eda100' },
+      { name: '已付', points: asc.map(m => m.paid), color: '#008300' },
     ] as { name: string; points: (number | null)[]; color?: string }[],
   }
 })
