@@ -71,6 +71,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("custom_values", "JSON"),                 # 🆕 R6 自定义字段值（存量行为空）
         ("invoice_no", "VARCHAR(64)"),             # 🆕 需求十三 开票号
         ("invoice_date", "VARCHAR(10)"),           # 🆕 开票日期（模型原始列，补登记防存量库缺列）
+        ("is_kit", "BOOLEAN DEFAULT FALSE"),       # 🆕 成套采购：是否成套明细
+        ("kit_parts", "JSON"),                     # 🆕 成套采购：套内零件清单(BOM,描述性)
     ],
     "payment_requests": [
         ("pay_voucher_file_id", "INTEGER"),        # 🆕 付款凭证附件

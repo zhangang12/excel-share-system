@@ -1179,8 +1179,33 @@ class PurchaseItemOut(BaseModel):
     buyer_id: Optional[int] = None
     buyer_name: Optional[str] = None
     receipt_count: int = 0   # 🆕 需求十四：已上传收货单数量
+    is_kit: bool = False                       # 🆕 成套采购：是否成套明细
+    kit_parts: Optional[list] = None           # 🆕 成套采购：套内零件清单[{name,spec,qty}]
     notes: Optional[str] = None
     created_at: datetime
+
+
+class KitPart(BaseModel):
+    """🆕 成套采购：套内一个零件（描述性，不参与交易）。"""
+    name: str
+    spec: Optional[str] = None
+    qty: Optional[float] = None   # 每套数量
+
+
+class KitOrderCreate(BaseModel):
+    """🆕 按套下单：同一供应商一组零件打包成一套，建一条成套采购明细。
+    套单价 = kit_total / kit_qty；received_amount(套总价) = kit_total。"""
+    supplier_id: int
+    project_code: Optional[str] = None
+    delivery_date: Optional[str] = None
+    contract_no: Optional[str] = None
+    payment_method: Optional[str] = None
+    prepay_ratio: Optional[float] = None
+    kit_name: str = Field(min_length=1, max_length=128)   # 套名称（手填）
+    kit_qty: float = Field(gt=0)                           # 套数
+    kit_total: float = Field(ge=0)                         # 套总价
+    parts: list[KitPart] = Field(default_factory=list)     # 套内零件清单
+    notes: Optional[str] = None
 
 
 class PurchaseItemSummary(BaseModel):

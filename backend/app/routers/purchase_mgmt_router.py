@@ -406,9 +406,11 @@ def _render_po_pdf(po_no: str, supplier_name: str, rows: list) -> bytes:
     for i, x in enumerate(rows, 1):
         amt = x.received_amount if x.received_amount is not None else ((x.qty or 0) * (x.unit_price or 0))
         total += amt or 0
+        # 🆕 成套：数量显示「N 套」，单价即套单价
+        qty_txt = "" if x.qty is None else (f"{x.qty:g} 套" if getattr(x, "is_kit", False) else f"{x.qty:g}")
         data.append([
             P(i), P(x.project_code or ""), P(x.item_name or ""), P(x.spec or ""),
-            P("" if x.qty is None else f"{x.qty:g}"),
+            P(qty_txt),
             P("" if x.unit_price is None else f"{x.unit_price:g}"),
             P("" if amt is None else f"{amt:,.2f}"), P(x.notes or ""),
         ])
@@ -423,11 +425,37 @@ def _render_po_pdf(po_no: str, supplier_name: str, rows: list) -> bytes:
         ("ALIGN", (4, 1), (6, -1), "RIGHT"),
     ]))
 
+    # 🆕 成套：把各成套行的「套内零件清单」附在明细表下方，供供应商核对
+    kit_flow = []
+    kb = ParagraphStyle("po_kit", parent=cell, fontName=FONT, fontSize=9, spaceBefore=4, spaceAfter=2)
+    for x in rows:
+        if not getattr(x, "is_kit", False):
+            continue
+        parts = x.kit_parts or []
+        if not parts:
+            continue
+        kit_flow.append(Spacer(1, 5 * mm))
+        kit_flow.append(Paragraph(f"套内零件清单（{x.item_name or ''}，每套）", kb))
+        pdata = [[P("序号"), P("名称"), P("规格型号"), P("每套数量")]]
+        for j, p in enumerate(parts, 1):
+            pq = p.get("qty")
+            pdata.append([P(j), P(p.get("name") or ""), P(p.get("spec") or ""),
+                          P("" if pq in (None, "") else f"{pq:g}")])
+        ptbl = Table(pdata, colWidths=[12 * mm, 60 * mm, 60 * mm, 24 * mm], repeatRows=1)
+        ptbl.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#888888")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef3f8")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+        ]))
+        kit_flow.append(ptbl)
+
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=16 * mm, bottomMargin=16 * mm,
                             leftMargin=16 * mm, rightMargin=16 * mm, title=f"采购单 {po_no}")
     doc.build([
-        Paragraph("采购单", h1), meta_tbl, Spacer(1, 6 * mm), items_tbl, Spacer(1, 16 * mm),
+        Paragraph("采购单", h1), meta_tbl, Spacer(1, 6 * mm), items_tbl, *kit_flow,
+        Spacer(1, 16 * mm),
         Paragraph("采购（签字）：____________　　　　　供方（盖章）：____________", cell),
     ])
     return buf.getvalue()
@@ -509,6 +537,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         custom_values=i.custom_values or {},
         buyer_id=i.buyer_id,
         buyer_name=_uname(i.buyer),
+        is_kit=bool(i.is_kit), kit_parts=i.kit_parts,
         notes=i.notes, created_at=i.created_at,
     )
 
@@ -606,6 +635,41 @@ async def create_purchase_order(
         .order_by(models.PurchaseItem.id)
     )
     return [_item_out(x) for x in r.scalars().all()]
+
+
+@router.post("/orders/kit", response_model=schemas.PurchaseItemOut)
+async def create_kit_order(
+    body: schemas.KitOrderCreate,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 按套下单：同一供应商一组零件打包成「一套」，建**一条**成套采购明细。
+    - item_name=套名, qty=套数, unit_price=套单价(=套总价/套数), received_amount=套总价, is_kit=True
+    - kit_parts=套内零件清单(描述性)。整套后续按一个总走收货/入库/开票/请款/付款(全复用单条明细流程)。
+    """
+    qty = body.kit_qty
+    unit_price = round(body.kit_total / qty, 4) if qty else 0
+    parts = [p.model_dump() for p in body.parts if (p.name or "").strip()]
+    po_no = await _next_po_no(db)
+    item = models.PurchaseItem(
+        po_no=po_no,
+        supplier_id=body.supplier_id,
+        delivery_date=body.delivery_date,
+        contract_no=body.contract_no,
+        project_code=body.project_code,
+        item_name=body.kit_name.strip(),
+        spec=f"成套（{len(parts)}项零件）" if parts else "成套",
+        qty=qty, unit_price=unit_price,
+        received_amount=round(body.kit_total, 2),
+        payment_method=body.payment_method, prepay_ratio=body.prepay_ratio,
+        is_kit=True, kit_parts=parts,
+        notes=body.notes,
+        buyer_id=current.id,
+    )
+    db.add(item)
+    await db.commit()
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == item.id))
+    return _item_out(r.scalar_one())
 
 
 # ==================== 清单 → 采购下单 / 回写清单 ====================

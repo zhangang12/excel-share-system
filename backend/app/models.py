@@ -611,6 +611,10 @@ class PurchaseItem(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text)
     # 🆕 R6：自定义字段值 {str(field_id): value}；存量行为空 dict，不受新增字段影响
     custom_values: Mapped[Optional[dict]] = mapped_column(PortableJSON(), default=dict)
+    # 🆕 成套采购(按套)：一条明细=一套。item_name=套名, qty=套数, unit_price=套单价, received_amount=套总价；
+    #   kit_parts=套内零件清单[{name,spec,qty}](描述性,供PDF/展示,不参与交易)。整套作一个库存单位入库/领料。
+    is_kit: Mapped[bool] = mapped_column(default=False, index=True)
+    kit_parts: Mapped[Optional[list]] = mapped_column(PortableJSON())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
