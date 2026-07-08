@@ -1185,26 +1185,28 @@ class PurchaseItemOut(BaseModel):
     created_at: datetime
 
 
-class KitPart(BaseModel):
-    """🆕 成套采购：套内一个零件（描述性，不参与交易）。"""
+class KitFromListPart(BaseModel):
+    """🆕 成套采购：套内一个零件（来自清单勾选行，描述性，不参与交易）。"""
+    source_record_id: Optional[int] = None   # 来源清单行（用于回写"已下单"）
     name: str
     spec: Optional[str] = None
-    qty: Optional[float] = None   # 每套数量
+    qty: Optional[float] = None               # 每套数量
 
 
-class KitOrderCreate(BaseModel):
-    """🆕 按套下单：同一供应商一组零件打包成一套，建一条成套采购明细。
+class KitFromListCreate(BaseModel):
+    """🆕 按套下单（从清单打包成套）：从清单勾选一组零件(同一供应商)打包成「一套」，
+    建**一条**成套采购明细，并回写这些清单行的订购日期/采购负责人(与从清单下单一致)。
     套单价 = kit_total / kit_qty；received_amount(套总价) = kit_total。"""
     supplier_id: int
     project_code: Optional[str] = None
     delivery_date: Optional[str] = None
-    contract_no: Optional[str] = None
     payment_method: Optional[str] = None
     prepay_ratio: Optional[float] = None
-    kit_name: str = Field(min_length=1, max_length=128)   # 套名称（手填）
-    kit_qty: float = Field(gt=0)                           # 套数
-    kit_total: float = Field(ge=0)                         # 套总价
-    parts: list[KitPart] = Field(default_factory=list)     # 套内零件清单
+    source_sheet_id: Optional[int] = None                  # 来源清单（同一张）
+    kit_name: str = Field(min_length=1, max_length=128)    # 套名称（手填）
+    kit_qty: float = Field(gt=0)                            # 套数
+    kit_total: float = Field(ge=0)                          # 套总价
+    parts: list[KitFromListPart] = Field(default_factory=list)   # 套内零件（清单勾选行）
     notes: Optional[str] = None
 
 

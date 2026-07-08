@@ -637,41 +637,6 @@ async def create_purchase_order(
     return [_item_out(x) for x in r.scalars().all()]
 
 
-@router.post("/orders/kit", response_model=schemas.PurchaseItemOut)
-async def create_kit_order(
-    body: schemas.KitOrderCreate,
-    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
-    db: AsyncSession = Depends(get_db),
-):
-    """🆕 按套下单：同一供应商一组零件打包成「一套」，建**一条**成套采购明细。
-    - item_name=套名, qty=套数, unit_price=套单价(=套总价/套数), received_amount=套总价, is_kit=True
-    - kit_parts=套内零件清单(描述性)。整套后续按一个总走收货/入库/开票/请款/付款(全复用单条明细流程)。
-    """
-    qty = body.kit_qty
-    unit_price = round(body.kit_total / qty, 4) if qty else 0
-    parts = [p.model_dump() for p in body.parts if (p.name or "").strip()]
-    po_no = await _next_po_no(db)
-    item = models.PurchaseItem(
-        po_no=po_no,
-        supplier_id=body.supplier_id,
-        delivery_date=body.delivery_date,
-        contract_no=body.contract_no,
-        project_code=body.project_code,
-        item_name=body.kit_name.strip(),
-        spec=f"成套（{len(parts)}项零件）" if parts else "成套",
-        qty=qty, unit_price=unit_price,
-        received_amount=round(body.kit_total, 2),
-        payment_method=body.payment_method, prepay_ratio=body.prepay_ratio,
-        is_kit=True, kit_parts=parts,
-        notes=body.notes,
-        buyer_id=current.id,
-    )
-    db.add(item)
-    await db.commit()
-    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == item.id))
-    return _item_out(r.scalar_one())
-
-
 # ==================== 清单 → 采购下单 / 回写清单 ====================
 _STD_SHEET = "标准件清单"
 
@@ -937,6 +902,58 @@ async def create_order_from_list(
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
                          .order_by(models.PurchaseItem.id))
     return [_item_out(x) for x in r.scalars().all()]
+
+
+@router.post("/orders/kit-from-list", response_model=schemas.PurchaseItemOut)
+async def create_kit_order_from_list(
+    body: schemas.KitFromListCreate,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 按套下单（从清单下单的扩展版）：从清单勾选一组零件(同一供应商)打包成「一套」，
+    建**一条**成套采购明细(is_kit)，并回写这些清单行的订购日期/采购负责人(与从清单下单完全一致)。
+    - item_name=套名, qty=套数, unit_price=套单价(=套总价/套数), received_amount=套总价
+    - kit_parts=套内零件清单(勾选行的 名称/规格/每套数量, 描述性)；整套后续按一个总走收货/入库/开票/请款/付款。
+    """
+    parts_in = [p for p in body.parts if (p.name or "").strip()]
+    if not parts_in:
+        raise HTTPException(400, "请至少勾选一行清单零件")
+    # 🆕 R4/A6：采购员只能对自己负责清单下单（镜像从清单下单）
+    allowed = _allowed_sheet_keys(current)
+    if allowed is not None and body.source_sheet_id:
+        name2key = {conf[0]: k for k, conf in _PURCHASABLE_SHEETS.items()}
+        ds = (await db.execute(select(models.Datasheet).where(
+            models.Datasheet.id == body.source_sheet_id))).scalar_one_or_none()
+        key = name2key.get(ds.name) if ds else None
+        if key and key not in allowed:
+            raise HTTPException(403, f"你没有「{ds.name}」的采购权限")
+    qty = body.kit_qty
+    unit_price = round(body.kit_total / qty, 4) if qty else 0
+    kit_parts = [{"name": p.name.strip(), "spec": p.spec, "qty": p.qty} for p in parts_in]
+    po_no = await _next_po_no(db)
+    item = models.PurchaseItem(
+        po_no=po_no, source_sheet_id=body.source_sheet_id,
+        supplier_id=body.supplier_id, delivery_date=body.delivery_date,
+        project_code=body.project_code,
+        item_name=body.kit_name.strip(), spec=f"成套（{len(kit_parts)}项零件）",
+        qty=qty, unit_price=unit_price, received_amount=round(body.kit_total, 2),
+        payment_method=body.payment_method, prepay_ratio=body.prepay_ratio,
+        is_kit=True, kit_parts=kit_parts, notes=body.notes, buyer_id=current.id,
+    )
+    db.add(item)
+    # 回写各来源清单行（与从清单下单一致：采购负责人 + 下单日期）
+    today = _date.today().isoformat()
+    uname = current.full_name or current.username
+    if body.source_sheet_id:
+        for p in parts_in:
+            if p.source_record_id:
+                wb = {"采购负责人": uname}
+                for c in _ALL_ORDER_DATE_COLS:
+                    wb[c] = (body.delivery_date or today)
+                await _writeback_sheet_row(db, body.source_sheet_id, p.source_record_id, wb)
+    await db.commit()
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == item.id))
+    return _item_out(r.scalar_one())
 
 
 async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: models.User) -> None:

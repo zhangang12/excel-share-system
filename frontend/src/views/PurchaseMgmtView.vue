@@ -594,63 +594,6 @@ async function saveOrder() {
   } catch { /* handled */ } finally { orderSaving.value = false }
 }
 
-// 🆕 成套采购「按套下单」：同一供应商一组零件打包成一套，建一条成套明细
-interface KitPart { name: string; spec: string; qty: number | null }
-function blankKitPart(): KitPart { return { name: '', spec: '', qty: null } }
-const kitVisible = ref(false)
-const kitSaving = ref(false)
-const kitForm = reactive({
-  supplier_id: '' as number | '',
-  delivery_date: '', project_code: '', payment_method: '', prepay_ratio: null as number | null,
-  kit_name: '', kit_qty: 1 as number | null, kit_total: null as number | null,
-  notes: '',
-  parts: [blankKitPart()] as KitPart[],
-})
-const kitUnitPrice = computed(() => {
-  const q = kitForm.kit_qty || 0, t = kitForm.kit_total || 0
-  return q > 0 ? Number((t / q).toFixed(4)) : 0
-})
-function openKitOrder() {
-  Object.assign(kitForm, {
-    supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10),
-    project_code: '', payment_method: '', prepay_ratio: null,
-    kit_name: '', kit_qty: 1, kit_total: null, notes: '', parts: [blankKitPart()],
-  })
-  loadProjectCodes()
-  kitVisible.value = true
-}
-function addKitPart() { kitForm.parts.push(blankKitPart()) }
-function removeKitPart(idx: number) {
-  kitForm.parts.splice(idx, 1)
-  if (!kitForm.parts.length) kitForm.parts.push(blankKitPart())
-}
-async function saveKitOrder() {
-  if (!kitForm.supplier_id) { ElMessage.error('请选择供应商'); return }
-  if (!kitForm.kit_name.trim()) { ElMessage.error('请填写套名称'); return }
-  if (!kitForm.kit_qty || kitForm.kit_qty <= 0) { ElMessage.error('请填写套数(>0)'); return }
-  if (kitForm.kit_total == null || kitForm.kit_total < 0) { ElMessage.error('请填写套总价'); return }
-  const parts = kitForm.parts.filter(p => p.name.trim())
-  if (!parts.length) { ElMessage.error('请至少填写一行套内零件（名称必填）'); return }
-  kitSaving.value = true
-  try {
-    const resp = await http.post<PurchaseItemOut>('/purchase-mgmt/orders/kit', {
-      supplier_id: kitForm.supplier_id,
-      delivery_date: kitForm.delivery_date || null,
-      project_code: kitForm.project_code || null,
-      payment_method: kitForm.payment_method || null,
-      prepay_ratio: isPrepayMethod(kitForm.payment_method) ? kitForm.prepay_ratio : null,
-      kit_name: kitForm.kit_name.trim(),
-      kit_qty: kitForm.kit_qty,
-      kit_total: kitForm.kit_total,
-      notes: kitForm.notes || null,
-      parts: parts.map(p => ({ name: p.name.trim(), spec: p.spec || null, qty: p.qty })),
-    })
-    ElMessage.success(`成套采购单已保存（${kitForm.kit_qty} 套 · ${parts.length} 项零件）`)
-    kitVisible.value = false
-    await loadItems()
-    offerPrint(resp.data?.po_no)
-  } catch { /* handled */ } finally { kitSaving.value = false }
-}
 
 // ===== 打印采购单（保存前预览打印 / 保存后按单号补打印共用一套模板）=====
 interface POLine {
@@ -827,6 +770,17 @@ interface PurchasableRow {
 const listOrderVisible = ref(false)
 const listOrderSaving = ref(false)
 const purchasableLoading = ref(false)
+// 🆕 成套采购「按套下单」= 从清单下单的成套模式：勾选一组清单零件 → 打包成一套(一条成套明细)
+const listOrderMode = ref<'normal' | 'kit'>('normal')
+const kitSet = reactive({
+  supplier_id: '' as number | '', kit_name: '',
+  kit_qty: 1 as number | null, kit_total: null as number | null,
+  payment_method: '', prepay_ratio: null as number | null,
+})
+const kitSetUnitPrice = computed(() => {
+  const q = kitSet.kit_qty || 0, t = kitSet.kit_total || 0
+  return q > 0 ? Number((t / q).toFixed(4)) : 0
+})
 // 🆕 R1：5 张来源清单（key ↔ 中文名 ↔ 项目字段名，用于判断项目是否有该表）
 const SHEET_TYPES = [
   { key: 'standard', label: '标准件清单', field: 'standard_sheet_id', hasQty: true },
@@ -922,7 +876,11 @@ const someFilteredChecked = computed(() =>
 function toggleAllPurchasable(v: any) {
   filteredPurchasable.value.forEach(r => { r._checked = !!v })
 }
-async function openListOrder() {
+async function openListOrder(mode?: unknown) {
+  listOrderMode.value = mode === 'kit' ? 'kit' : 'normal'
+  if (listOrderMode.value === 'kit') {
+    Object.assign(kitSet, { supplier_id: '', kit_name: '', kit_qty: 1, kit_total: null, payment_method: '', prepay_ratio: null })
+  }
   Object.assign(listOrderForm, {
     project_id: '', project_code: '',
     delivery_date: new Date().toISOString().slice(0, 10),
@@ -1034,6 +992,47 @@ async function submitListOrder() {
 }
 function listStatusTag(s: string): 'info' | 'warning' | 'success' {
   return s === '已到货' ? 'success' : s === '已下单' ? 'warning' : 'info'
+}
+
+// 🆕 按套下单（从清单打包成套）：把勾选的清单行打包成「一套」= 一条成套明细，并回写清单
+async function submitKitFromList() {
+  const sel = purchasableRows.value.filter(r => r._checked)
+  if (!sel.length) { ElMessage.error('请勾选要打包成套的清单零件'); return }
+  if (!kitSet.supplier_id) { ElMessage.error('请选择供应商（一套=同一供应商）'); return }
+  if (!kitSet.kit_name.trim()) { ElMessage.error('请填写套名称'); return }
+  if (!kitSet.kit_qty || kitSet.kit_qty <= 0) { ElMessage.error('请填写套数(>0)'); return }
+  if (kitSet.kit_total == null || kitSet.kit_total < 0) { ElMessage.error('请填写套总价'); return }
+  // 勾选行被筛选隐藏时先确认（与从清单下单一致）
+  const hidden = sel.filter(r => !filteredPurchasable.value.includes(r))
+  if (hidden.length) {
+    try {
+      await ElMessageBox.confirm(
+        `有 ${hidden.length} 行已勾选的零件当前被筛选隐藏，也会一并打包进这套。确认继续？`,
+        '提示', { type: 'warning', confirmButtonText: '继续', cancelButtonText: '返回检查' })
+    } catch { return }
+  }
+  listOrderSaving.value = true
+  try {
+    const resp = await http.post<PurchaseItemOut>('/purchase-mgmt/orders/kit-from-list', {
+      supplier_id: kitSet.supplier_id,
+      delivery_date: listOrderForm.delivery_date || null,
+      project_code: listOrderForm.project_code || null,
+      payment_method: kitSet.payment_method || null,
+      prepay_ratio: isPrepayMethod(kitSet.payment_method) ? kitSet.prepay_ratio : null,
+      source_sheet_id: sel[0]?.sheet_id ?? null,
+      kit_name: kitSet.kit_name.trim(),
+      kit_qty: kitSet.kit_qty,
+      kit_total: kitSet.kit_total,
+      parts: sel.map(r => ({
+        source_record_id: r.record_id, name: r.item_name,
+        spec: r.spec || null, qty: r._buyqty ?? r.qty ?? null,
+      })),
+    })
+    ElMessage.success(`成套采购单已生成（${kitSet.kit_qty} 套 · ${sel.length} 项零件），已回写清单`)
+    listOrderVisible.value = false
+    await loadItems()
+    offerPrint(resp.data?.po_no)
+  } catch { /* handled */ } finally { listOrderSaving.value = false }
 }
 
 const supplierDialogVisible = ref(false)
@@ -1666,7 +1665,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <template v-if="canWrite">
               <el-button type="primary" :icon="Tickets" @click="openListOrder">从清单下单</el-button>
               <el-button :icon="Plus" @click="openNewOrder">新建采购单</el-button>
-              <el-button :icon="Box" @click="openKitOrder">按套下单</el-button>
+              <el-button :icon="Box" @click="openListOrder('kit')">按套下单</el-button>
               <!-- 🆕 「单条明细」按用户要求隐藏（openNewItem 及弹窗保留，需要时恢复本按钮即可） -->
               <el-dropdown trigger="click">
                 <el-button :loading="importing">
@@ -2078,8 +2077,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-card>
 
     <!-- ==================== 从清单下单弹窗（清单→按供应商拆单）==================== -->
-    <el-dialog v-model="listOrderVisible" title="从清单下单" width="min(1580px, 98vw)" top="3vh" class="compact-dialog-scroll compact-tbl" :close-on-click-modal="false">
-      <el-alert type="info" :closable="false" style="margin-bottom:14px"
+    <el-dialog v-model="listOrderVisible" :title="listOrderMode === 'kit' ? '按套下单（从清单打包成套）' : '从清单下单'" width="min(1580px, 98vw)" top="3vh" class="compact-dialog-scroll compact-tbl" :close-on-click-modal="false">
+      <el-alert v-if="listOrderMode === 'kit'" type="success" :closable="false" style="margin-bottom:14px"
+        title="按套下单：选项目 + 清单 → 勾选一组零件 → 填「套名称/套数/套总价/供应商」→ 打包成一套（一条成套明细）。勾中的零件成为套内清单并回写清单为「已下单」；整套按一个总走收货/入库/开票/请款/付款，作一个库存单位入库、按套领料。一套=同一供应商。" />
+      <el-alert v-else type="info" :closable="false" style="margin-bottom:14px"
         title="选项目 + 清单类型（标准件/电工/不锈钢/外协/激光）→ 逐行选「供应商」「品牌」（可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的下单日期/采购负责人。外协/激光无数量，采购数量手填。" />
       <el-form :model="listOrderForm" label-position="top" class="order-form listorder-head-form">
         <el-row :gutter="14">
@@ -2106,27 +2107,64 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
         </el-row>
       </el-form>
+
+      <!-- 🆕 成套模式：套级信息(供应商/套名/套数/套总价/付款)——一套一个总 -->
+      <el-form v-if="listOrderMode === 'kit'" :model="kitSet" label-position="top" class="order-form" style="background:var(--el-fill-color-light);padding:10px 12px;border-radius:8px;margin-bottom:6px">
+        <el-row :gutter="14">
+          <el-col :xs="24" :sm="8" :md="6">
+            <el-form-item label="供应商 *（一套同一家）">
+              <el-select v-model="kitSet.supplier_id" filterable placeholder="选择供应商" style="width:100%">
+                <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :sm="8" :md="6">
+            <el-form-item label="套名称 *"><el-input v-model="kitSet.kit_name" placeholder="如：100L均质机外协件一套" /></el-form-item>
+          </el-col>
+          <el-col :xs="8" :sm="4" :md="3">
+            <el-form-item label="套数 *"><el-input-number v-model="kitSet.kit_qty" :min="0" :precision="2" :controls="false" style="width:100%" /></el-form-item>
+          </el-col>
+          <el-col :xs="8" :sm="4" :md="4">
+            <el-form-item label="套总价 *"><el-input-number v-model="kitSet.kit_total" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="整套总金额" /></el-form-item>
+          </el-col>
+          <el-col :xs="8" :sm="6" :md="5">
+            <el-form-item label="套单价（自动）"><el-input :value="fmtMoney(kitSetUnitPrice)" disabled /></el-form-item>
+          </el-col>
+          <el-col :xs="12" :sm="8" :md="6">
+            <el-form-item label="付款方式">
+              <el-select v-model="kitSet.payment_method" clearable placeholder="选填" style="width:100%">
+                <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col v-if="isPrepayMethod(kitSet.payment_method)" :xs="12" :sm="8" :md="6">
+            <el-form-item label="预付比例(%)"><el-input-number v-model="kitSet.prepay_ratio" :min="0" :max="100" :controls="false" style="width:100%" /></el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
       <div class="order-lines-head listorder-toolbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <el-input v-model="purchasableFilter" placeholder="筛选名称/规格" clearable :prefix-icon="Search" style="width:150px" />
           <el-switch v-if="curSheetHasQty" v-model="onlyGap" active-text="只看有缺口" style="--el-switch-on-color: var(--el-color-danger)" />
-          <!-- 🆕 批量填：逐行选太麻烦时，勾好行后一键填供应商/品牌/付款方式 -->
-          <el-divider direction="vertical" />
-          <el-select v-model="batchSupplier" filterable clearable placeholder="批量供应商" style="width:136px">
-            <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
-          </el-select>
-          <el-button size="small" @click="applyBatchSupplier">填给勾选行</el-button>
-          <el-select v-model="batchBrand" filterable allow-create clearable default-first-option placeholder="批量品牌" style="width:116px">
-            <el-option v-for="b in brandOptions" :key="b" :label="b" :value="b" />
-          </el-select>
-          <el-button size="small" @click="applyBatchBrand">填给勾选行</el-button>
-          <el-select v-model="batchPaymentMethod" clearable filterable placeholder="批量付款方式" style="width:110px">
-            <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
-          </el-select>
-          <el-button size="small" @click="applyBatchPaymentMethod">填给勾选行</el-button>
-          <el-input-number v-if="isPrepayMethod(batchPaymentMethod)" v-model="batchPrepayRatio"
-            :min="0" :max="100" placeholder="预付%" controls-position="right" style="width:100px" />
-          <el-button v-if="isPrepayMethod(batchPaymentMethod)" size="small" @click="applyBatchPrepayRatio">填给勾选行</el-button>
+          <!-- 🆕 批量填：逐行选太麻烦时，勾好行后一键填供应商/品牌/付款方式（成套模式无需，隐藏）-->
+          <template v-if="listOrderMode !== 'kit'">
+            <el-divider direction="vertical" />
+            <el-select v-model="batchSupplier" filterable clearable placeholder="批量供应商" style="width:136px">
+              <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
+            </el-select>
+            <el-button size="small" @click="applyBatchSupplier">填给勾选行</el-button>
+            <el-select v-model="batchBrand" filterable allow-create clearable default-first-option placeholder="批量品牌" style="width:116px">
+              <el-option v-for="b in brandOptions" :key="b" :label="b" :value="b" />
+            </el-select>
+            <el-button size="small" @click="applyBatchBrand">填给勾选行</el-button>
+            <el-select v-model="batchPaymentMethod" clearable filterable placeholder="批量付款方式" style="width:110px">
+              <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
+            </el-select>
+            <el-button size="small" @click="applyBatchPaymentMethod">填给勾选行</el-button>
+            <el-input-number v-if="isPrepayMethod(batchPaymentMethod)" v-model="batchPrepayRatio"
+              :min="0" :max="100" placeholder="预付%" controls-position="right" style="width:100px" />
+            <el-button v-if="isPrepayMethod(batchPaymentMethod)" size="small" @click="applyBatchPrepayRatio">填给勾选行</el-button>
+          </template>
         </div>
         <span class="muted">已勾选 <b>{{ listSelCount }}</b> / {{ purchasableRows.length }} 行</span>
       </div>
@@ -2142,7 +2180,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-table-column>
         <el-table-column label="名称" min-width="150" prop="item_name" fixed show-overflow-tooltip />
         <el-table-column label="规格型号" min-width="130" show-overflow-tooltip><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
-        <el-table-column label="品牌" width="118">
+        <el-table-column v-if="listOrderMode !== 'kit'" label="品牌" width="118">
           <template #default="{ row }">
             <el-select v-model="row._brand" filterable allow-create clearable default-first-option
                        placeholder="选/填" size="small" style="width:100%" @change="row._checked = true">
@@ -2157,17 +2195,17 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-table-column v-if="curSheetHasQty" label="建议采购" width="80" align="right">
           <template #default="{ row }"><b :class="row.suggest_purchase > 0 ? 'sugg-buy' : 'sugg-none'">{{ row.suggest_purchase }}</b></template>
         </el-table-column>
-        <el-table-column label="采购数量" width="104">
+        <el-table-column :label="listOrderMode === 'kit' ? '每套数量' : '采购数量'" width="104">
           <template #default="{ row }">
             <el-input-number v-model="row._buyqty" :min="0" :controls="false" style="width:100%" @change="row._checked = true" />
           </template>
         </el-table-column>
-        <el-table-column label="单价(选填)" width="104">
+        <el-table-column v-if="listOrderMode !== 'kit'" label="单价(选填)" width="104">
           <template #default="{ row }">
             <el-input-number v-model="row._price" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="后填留空" @change="row._checked = true" />
           </template>
         </el-table-column>
-        <el-table-column label="供应商 *" width="150">
+        <el-table-column v-if="listOrderMode !== 'kit'" label="供应商 *" width="150">
           <template #default="{ row }">
             <el-select v-model="row._supplier_id" filterable clearable placeholder="必选" size="small"
                        :class="{ 'sup-missing': row._checked && !row._supplier_id }" style="width:100%" @change="row._checked = true">
@@ -2175,7 +2213,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="付款方式" width="100">
+        <el-table-column v-if="listOrderMode !== 'kit'" label="付款方式" width="100">
           <template #default="{ row }">
             <el-select v-model="row._payment_method" clearable filterable
                        placeholder="选择" size="small" style="width:100%" @change="row._checked = true">
@@ -2183,7 +2221,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="预付%" width="84">
+        <el-table-column v-if="listOrderMode !== 'kit'" label="预付%" width="84">
           <template #default="{ row }">
             <el-input-number v-if="isPrepayMethod(row._payment_method)" v-model="row._prepay_ratio"
               :min="0" :max="100" size="small" controls-position="right" style="width:100%" />
@@ -2197,103 +2235,18 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </el-table>
       <template #footer>
         <div class="listorder-footer">
-          <span class="muted lo-hint"><b>每行必须选供应商</b>，生成时按供应商自动拆成多张采购单。<span v-if="curSheetHasQty">建议采购 = 需求量 − 现有库存，数量已默认填好可改。</span><span v-else>本清单无数量，采购数量请手填。</span></span>
+          <span v-if="listOrderMode === 'kit'" class="muted lo-hint">勾选的 <b>{{ listSelCount }}</b> 项零件打包成 <b>{{ kitSet.kit_qty || 0 }}</b> 套，作一条成套明细（一个总）；上方填好套名/套数/套总价/供应商。已勾选行会回写清单为「已下单」。</span>
+          <span v-else class="muted lo-hint"><b>每行必须选供应商</b>，生成时按供应商自动拆成多张采购单。<span v-if="curSheetHasQty">建议采购 = 需求量 − 现有库存，数量已默认填好可改。</span><span v-else>本清单无数量，采购数量请手填。</span></span>
           <span class="lo-actions">
             <el-button @click="listOrderVisible = false">取消</el-button>
-            <el-button type="primary" :loading="listOrderSaving" :disabled="!listSelCount" @click="submitListOrder">
+            <el-button v-if="listOrderMode === 'kit'" type="primary" :loading="listOrderSaving" :disabled="!listSelCount" @click="submitKitFromList">
+              打包成套下单（{{ listSelCount }} 项）
+            </el-button>
+            <el-button v-else type="primary" :loading="listOrderSaving" :disabled="!listSelCount" @click="submitListOrder">
               生成采购单（{{ listSelCount }} 行）
             </el-button>
           </span>
         </div>
-      </template>
-    </el-dialog>
-
-    <!-- ==================== 🆕 按套下单弹窗（成套采购：一组零件打包成一套）==================== -->
-    <el-dialog v-model="kitVisible" title="按套下单（成套采购）" width="min(1080px, 98vw)" top="4vh" class="compact-dialog-scroll compact-tbl" :close-on-click-modal="false">
-      <el-alert type="info" :closable="false" style="margin-bottom:14px"
-        title="把同一供应商的一组零件打包成「一套」：只维护套数与套总价一个总。收货/入库/开票/请款/付款都按套走；整套作为一个库存单位入库、按套领料。套内零件清单仅用于打印给供应商核对，不单独算库存/单价。" />
-      <el-form :model="kitForm" label-position="top">
-        <el-row :gutter="20">
-          <el-col :xs="24" :sm="12" :md="6">
-            <el-form-item label="供应商 *">
-              <el-select v-model="kitForm.supplier_id" filterable placeholder="选择供应商" style="width:100%">
-                <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :sm="12" :md="6">
-            <el-form-item label="套名称 *">
-              <el-input v-model="kitForm.kit_name" placeholder="如：100L均质机外协件一套" />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="12" :sm="6" :md="3">
-            <el-form-item label="套数 *">
-              <el-input-number v-model="kitForm.kit_qty" :min="0" :precision="2" :controls="false" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="12" :sm="6" :md="4">
-            <el-form-item label="套总价 *">
-              <el-input-number v-model="kitForm.kit_total" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="整套总金额" />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :sm="12" :md="5">
-            <el-form-item label="套单价（自动）">
-              <el-input :value="fmtMoney(kitUnitPrice)" disabled />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="12" :sm="8" :md="6">
-            <el-form-item label="下单日期"><el-date-picker v-model="kitForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
-          </el-col>
-          <el-col :xs="12" :sm="8" :md="6">
-            <el-form-item label="订单编号">
-              <el-select v-model="kitForm.project_code" filterable allow-create clearable default-first-option placeholder="选/输项目编号；无项目可填 固定资产 等" style="width:100%">
-                <el-option-group label="非项目（无编号时选/输）">
-                  <el-option v-for="c in NON_PROJECT_CODES" :key="'knp-'+c" :label="c" :value="c" />
-                </el-option-group>
-                <el-option-group label="项目编号">
-                  <el-option v-for="c in projectCodeOptions" :key="c" :label="c" :value="c" />
-                </el-option-group>
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :xs="12" :sm="8" :md="6">
-            <el-form-item label="付款方式">
-              <el-select v-model="kitForm.payment_method" clearable placeholder="选填" style="width:100%">
-                <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col v-if="isPrepayMethod(kitForm.payment_method)" :xs="12" :sm="8" :md="6">
-            <el-form-item label="预付比例(%)"><el-input-number v-model="kitForm.prepay_ratio" :min="0" :max="100" :controls="false" style="width:100%" /></el-form-item>
-          </el-col>
-        </el-row>
-
-        <div class="order-lines-head">
-          <span class="order-lines-title">套内零件清单（{{ kitForm.parts.length }} 项 · 每套配比）</span>
-          <el-button size="small" :icon="Plus" @click="addKitPart">添加零件</el-button>
-        </div>
-        <el-table :data="kitForm.parts" size="small" border :scrollbar-always-on="true" max-height="max(200px, 34vh)">
-          <el-table-column type="index" label="#" width="44" align="center" />
-          <el-table-column label="零件名称 *" min-width="200">
-            <template #default="{ row }"><el-input v-model="row.name" placeholder="零件名称" /></template>
-          </el-table-column>
-          <el-table-column label="规格型号/图纸" min-width="200">
-            <template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/图纸名" /></template>
-          </el-table-column>
-          <el-table-column label="每套数量" width="130">
-            <template #default="{ row }"><el-input-number v-model="row.qty" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="选填" /></template>
-          </el-table-column>
-          <el-table-column label="操作" width="70" align="center">
-            <template #default="{ $index }"><el-button size="small" link type="danger" :icon="Delete" @click="removeKitPart($index)" /></template>
-          </el-table-column>
-        </el-table>
-        <el-form-item label="备注" style="margin-top:12px">
-          <el-input v-model="kitForm.notes" type="textarea" :rows="2" placeholder="选填" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="kitVisible = false">取消</el-button>
-        <el-button type="primary" :loading="kitSaving" @click="saveKitOrder">保存成套采购单</el-button>
       </template>
     </el-dialog>
 
