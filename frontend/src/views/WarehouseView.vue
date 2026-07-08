@@ -15,6 +15,7 @@ import { fmtDate, fmtMoney } from '@/utils/format'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('warehouse', 'warehouse_lead', 'admin', 'manager'))
+const isManager = computed(() => auth.hasRole('admin', 'manager'))   // #5：单价/总价仅管理层可见
 // 🆕 需求十五：仓库总监/管理层可一键清空
 const canClear = computed(() => auth.hasRole('warehouse_lead', 'admin', 'manager'))
 async function clearAll() {
@@ -358,7 +359,7 @@ const recvSelected = ref<RecvItem[]>([])
 function onRecvSelect(rows: RecvItem[]) { recvSelected.value = rows }
 const batchRecvVisible = ref(false)
 const batchRecvSaving = ref(false)
-const batchRecvMode = ref<'total' | 'lines'>('total')
+const batchRecvMode = ref<'total' | 'lines'>('lines')   // #1：去掉「合并总价按数量分摊」，只逐行填价
 const batchRecvForm = reactive({ delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null as number | null })
 const batchRecvLines = ref<{ item_id: number; item_name: string; spec?: string | null; qty: number | null; unit_price: number | null; received_amount: number | null }[]>([])
 const batchReceiptFile = ref<File | null>(null)
@@ -377,7 +378,7 @@ function splitShare(line: { qty: number | null }): number {
 }
 function openBatchReceive() {
   if (recvSelected.value.length < 1) { ElMessage.info('请先在列表勾选要合并收货的明细'); return }
-  batchRecvMode.value = 'total'
+  batchRecvMode.value = 'lines'
   Object.assign(batchRecvForm, { delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null })
   batchReceiptFile.value = null
   batchRecvLines.value = recvSelected.value.map(i => ({
@@ -390,7 +391,7 @@ function openBatchReceive() {
 function openBatchReceiveGroup(row: any) {
   const children = (row.children || []) as RecvItem[]
   if (!children.length) return
-  batchRecvMode.value = 'total'
+  batchRecvMode.value = 'lines'
   const dnote = row.delivery_note_no && row.delivery_note_no !== '多个' ? row.delivery_note_no : ''
   const adate = row.arrival_date && row.arrival_date !== '多个' ? row.arrival_date : new Date().toISOString().slice(0, 10)
   Object.assign(batchRecvForm, { delivery_note_no: dnote, arrival_date: adate, total_amount: null })
@@ -403,9 +404,6 @@ function openBatchReceiveGroup(row: any) {
 }
 async function submitBatchReceive() {
   if (!batchRecvForm.arrival_date) { ElMessage.warning('请填写到货日期'); return }
-  if (batchRecvMode.value === 'total' && (batchRecvForm.total_amount == null || batchRecvForm.total_amount < 0)) {
-    ElMessage.warning('请填写合并总价'); return
-  }
   batchRecvSaving.value = true
   try {
     const body: any = {
@@ -413,8 +411,7 @@ async function submitBatchReceive() {
       delivery_note_no: batchRecvForm.delivery_note_no || null,
       arrival_date: batchRecvForm.arrival_date,
     }
-    if (batchRecvMode.value === 'total') body.total_amount = batchRecvForm.total_amount
-    else body.lines = batchRecvLines.value.map(l => ({ item_id: l.item_id, unit_price: l.unit_price, received_amount: l.received_amount }))
+    body.lines = batchRecvLines.value.map(l => ({ item_id: l.item_id, unit_price: l.unit_price, received_amount: l.received_amount }))
     await http.post('/purchase-mgmt/items/receive-batch', body)
     if (batchReceiptFile.value) {
       for (const l of batchRecvLines.value) await uploadReceipt(l.item_id, batchReceiptFile.value)
@@ -561,8 +558,17 @@ async function loadPurchReqs() {
 function blankPreqLine(): PreqLine { return { item_name: '', spec: '', qty: null, project_code: '', notes: '' } }
 const preqVisible = ref(false)
 const preqSaving = ref(false)
-const preqForm = reactive({ notes: '', lines: [blankPreqLine()] as PreqLine[] })
-function openPurchReq() { preqForm.notes = ''; preqForm.lines = [blankPreqLine()]; preqVisible.value = true }
+const preqForm = reactive({ buyer_id: '' as number | '', notes: '', lines: [blankPreqLine()] as PreqLine[] })
+const preqBuyers = ref<{ id: number; name: string }[]>([])
+async function loadPreqBuyers() {
+  try { preqBuyers.value = (await http.get<{ id: number; name: string }[]>('/purchase-mgmt/buyers')).data }
+  catch { preqBuyers.value = [] }
+}
+function openPurchReq() {
+  preqForm.buyer_id = ''; preqForm.notes = ''; preqForm.lines = [blankPreqLine()]
+  if (!preqBuyers.value.length) loadPreqBuyers()
+  preqVisible.value = true
+}
 function addPreqLine() { preqForm.lines.push(blankPreqLine()) }
 function removePreqLine(i: number) { preqForm.lines.splice(i, 1); if (!preqForm.lines.length) preqForm.lines.push(blankPreqLine()) }
 async function submitPurchReq() {
@@ -571,10 +577,11 @@ async function submitPurchReq() {
   preqSaving.value = true
   try {
     await http.post('/purchase-mgmt/purchase-requests', {
+      buyer_id: preqForm.buyer_id || null,
       notes: preqForm.notes || null,
       lines: lines.map(l => ({ item_name: l.item_name.trim(), spec: l.spec || null, qty: l.qty, project_code: l.project_code || null, notes: l.notes || null })),
     })
-    ElMessage.success('采购申请已提交，采购部会收到通知')
+    ElMessage.success(preqForm.buyer_id ? '采购申请已提交，已通知该采购员' : '采购申请已提交，采购部会收到通知')
     preqVisible.value = false
     await loadPurchReqs()
   } catch { /* handled */ } finally { preqSaving.value = false }
@@ -604,7 +611,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <div class="kpi-grid">
             <div class="kpi"><div class="kpi-v">{{ materials.length }}</div><div class="kpi-l">物料种类</div></div>
             <div class="kpi"><div class="kpi-v">{{ totalStock }}</div><div class="kpi-l">库存总量</div></div>
-            <div class="kpi"><div class="kpi-v">{{ fmtMoney(totalValue) }}</div><div class="kpi-l">库存总价</div></div>
+            <div v-if="isManager" class="kpi"><div class="kpi-v">{{ fmtMoney(totalValue) }}</div><div class="kpi-l">库存总价</div></div>
             <div class="kpi" :class="lowCount ? 'is-bad' : ''"><div class="kpi-v">{{ lowCount }}</div><div class="kpi-l">低于安全库存</div></div>
           </div>
           <el-alert v-if="lowList.length" type="warning" :closable="false" style="margin:10px 0"
@@ -621,10 +628,10 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-table-column label="现存" min-width="90" align="right">
               <template #default="{ row }"><b :class="{ bad: row.low }">{{ row.stock }}</b></template>
             </el-table-column>
-            <el-table-column label="单价" min-width="90" align="right">
+            <el-table-column v-if="isManager" label="单价" min-width="90" align="right">
               <template #default="{ row }">{{ row.unit_price != null ? fmtMoney(row.unit_price) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="总价" min-width="100" align="right">
+            <el-table-column v-if="isManager" label="总价" min-width="100" align="right">
               <template #default="{ row }"><b>{{ row.stock_value != null ? fmtMoney(row.stock_value) : '—' }}</b></template>
             </el-table-column>
             <el-table-column prop="safety_stock" label="安全库存" min-width="100" align="right" />
@@ -963,7 +970,14 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
 
     <!-- 🆕 #167 提采购申请弹窗 -->
     <el-dialog v-model="preqVisible" title="提采购申请" width="min(880px, 96vw)" top="5vh">
-      <el-alert type="info" :closable="false" style="margin-bottom:12px" title="列出要采购的物料（名称必填，规格/数量/项目/备注选填）→ 提交后采购部收到通知并处理。" />
+      <el-alert type="info" :closable="false" style="margin-bottom:12px" title="列出要采购的物料（名称必填，规格/数量/项目/备注选填）→ 指定采购员后提交，该采购员会收到通知。" />
+      <el-form label-position="top" style="margin-bottom:6px">
+        <el-form-item label="指定采购员（推送给他；不选则通知全体采购员）">
+          <el-select v-model="preqForm.buyer_id" filterable clearable placeholder="选择采购员" style="width:320px">
+            <el-option v-for="b in preqBuyers" :key="b.id" :label="b.name" :value="b.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
       <div class="order-lines-head">
         <span class="order-lines-title">采购物料（{{ preqForm.lines.length }} 行）</span>
         <el-button size="small" :icon="Plus" @click="addPreqLine">添加一行</el-button>
@@ -1166,35 +1180,19 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-date-picker v-model="batchRecvForm.arrival_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
           </el-form-item>
         </div>
-        <el-form-item label="填价方式">
-          <el-radio-group v-model="batchRecvMode">
-            <el-radio-button value="total">只填合并总价（按数量分摊）</el-radio-button>
-            <el-radio-button value="lines">逐行填单价</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item v-if="batchRecvMode === 'total'" label="合并总价(元)">
-          <el-input-number v-model="batchRecvForm.total_amount" :min="0" :precision="2" :controls="false" style="width:220px" />
-          <span class="muted small" style="margin-left:10px">按各行数量占比自动分摊到收货金额</span>
-        </el-form-item>
+        <div class="muted small" style="margin:2px 0 8px">逐行填单价/收货金额（单价可留空，货到再补）。</div>
       </el-form>
       <el-table :data="batchRecvLines" size="small" border max-height="34vh">
         <el-table-column label="名称" min-width="130">
           <template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template>
         </el-table-column>
         <el-table-column label="数量" width="80" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
-        <template v-if="batchRecvMode === 'total'">
-          <el-table-column label="分摊收货金额" width="140" align="right">
-            <template #default="{ row }"><b>{{ fmtMoney(splitShare(row)) }}</b></template>
-          </el-table-column>
-        </template>
-        <template v-else>
-          <el-table-column label="单价" width="130" align="right">
-            <template #default="{ row }"><el-input-number v-model="row.unit_price" :min="0" :precision="4" :controls="false" style="width:110px" /></template>
-          </el-table-column>
-          <el-table-column label="收货金额" width="140" align="right">
-            <template #default="{ row }"><el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:120px" /></template>
-          </el-table-column>
-        </template>
+        <el-table-column label="单价" width="130" align="right">
+          <template #default="{ row }"><el-input-number v-model="row.unit_price" :min="0" :precision="4" :controls="false" style="width:110px" /></template>
+        </el-table-column>
+        <el-table-column label="收货金额" width="140" align="right">
+          <template #default="{ row }"><el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:120px" /></template>
+        </el-table-column>
       </el-table>
       <el-form label-position="top" style="margin-top:12px">
         <el-form-item label="收货单（图片/PDF，选填，整批共用）">

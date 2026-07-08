@@ -77,6 +77,9 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "payment_requests": [
         ("pay_voucher_file_id", "INTEGER"),        # 🆕 付款凭证附件
     ],
+    "purchase_requests": [
+        ("buyer_id", "INTEGER"),                   # 🆕 #2 采购申请指定采购员（存量表补列）
+    ],
     "wh_txns": [                                   # 🆕 库存金额/成本 + 采购收货自动入库来源
         ("unit_price", "FLOAT"),
         ("amount", "FLOAT"),

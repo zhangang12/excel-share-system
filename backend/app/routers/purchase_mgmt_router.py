@@ -70,22 +70,11 @@ async def list_suppliers(
         stmt = stmt.where(models.Supplier.category == category)
     if status:
         stmt = stmt.where(models.Supplier.status == status)
-    # 🆕 需求五：采购员只看自己建的供应商 + 历史无归属(created_by NULL, 遗留共享) + 本人下过单的供应商；
-    #   管理层/主管看全部。
-    # #152 修正：owned_only=True(「采购明细」供应商筛选下拉)时,「自己填的供应商」= 出现在本人采购明细里的
-    #   供应商(按 buyer_id 反查),**不看 created_by**——否则用了遗留共享(NULL)或别人建的供应商下单后,
-    #   筛选框里反而找不到自己下过单的供应商(生产 bug:建的采购明细单自己看不到供应商)。
+    # 需求六(收紧)：采购员**只看自己新增的供应商**(created_by==本人)——别人建的、历史无归属(NULL)的
+    #   都对采购员隐藏;管理层/采购主管看全部。下单选供应商 与 采购明细筛选下拉 口径一致(owned_only 不再区分)。
+    #   注：老无归属供应商仅管理层可见;若采购员要用,需管理层把它归属给该采购员或该采购员重新新增。
     if _buyer_restricted(current):
-        my_item_sids = select(models.PurchaseItem.supplier_id).where(
-            models.PurchaseItem.buyer_id == current.id).distinct()
-        if owned_only:
-            stmt = stmt.where(models.Supplier.id.in_(my_item_sids))
-        else:
-            # 默认列表(下单选供应商等)：本人建 + 遗留共享 + 本人下过单的,保证用过的供应商始终可见/可选
-            stmt = stmt.where(
-                (models.Supplier.created_by == current.id)
-                | (models.Supplier.created_by.is_(None))
-                | (models.Supplier.id.in_(my_item_sids)))
+        stmt = stmt.where(models.Supplier.created_by == current.id)
     if q:
         from sqlalchemy import or_
         stmt = stmt.where(
@@ -1469,6 +1458,39 @@ async def batch_invoice(
     return {"updated": len(items)}
 
 
+@router.post("/items/set-group-summary")
+async def set_group_summary(
+    body: schemas.GroupSummaryIn,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #4 合并父行整单维护(不分摊)：开票金额/已付款作为整单总额记在**首行**(其余对应字段置0，
+    保证合并父行/账目的汇总合计=所填总额)；对账状态套用到**所有**子行。空字段不改。仅本人明细(受限时)。"""
+    if not body.item_ids:
+        raise HTTPException(400, "请选择合并单的明细")
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids)))
+    got = {i.id: i for i in r.scalars().all()}
+    items = [got[i] for i in body.item_ids if i in got]
+    if _buyer_restricted(current):
+        items = [i for i in items if i.buyer_id == current.id]
+    if not items:
+        raise HTTPException(404, "明细不存在或无权限")
+    if len({i.supplier_id for i in items}) > 1:
+        raise HTTPException(400, "跨供应商不能一起维护")
+    for idx, it in enumerate(items):
+        if body.invoice_amount is not None:
+            it.invoice_amount = round(body.invoice_amount, 2) if idx == 0 else 0
+        if body.paid_amount is not None:
+            it.paid_amount = round(body.paid_amount, 2) if idx == 0 else 0
+            it.paid_date = body.paid_date if idx == 0 else it.paid_date
+        if body.invoice_status:
+            it.invoice_status = body.invoice_status
+    await db.commit()
+    await write_audit(db, user=current, action="set_group_summary", target_type="purchase_item",
+                      target_id=None, detail=f"整单维护 {len(items)} 条")
+    return {"updated": len(items)}
+
+
 @router.post("/items/set-invoice-no")
 async def set_invoice_no(
     body: schemas.SetInvoiceNoIn,
@@ -1520,24 +1542,20 @@ async def supplier_statements(
     # 其他采购员的收货/开票/已付金额会经该行汇总泄漏(原代码只用 my_sids 决定"哪几行出现"，
     # 加总却用了全量 items，导致列表合计 > 下钻明细合计，自相矛盾)。
     restricted = _buyer_restricted(current)
-    my_sids: Optional[set] = set() if restricted else None
+    # 需求六：受限采购员账目**只列本人新增的供应商**(created_by==本人),别人建/无归属的都不显示;
+    #   每行金额仍只按本人明细(buyer_id==本人)汇总,不泄漏他人金额。
+    my_sids: Optional[set] = None
+    if restricted:
+        my_sids = {s.id for s in all_suppliers if s.created_by == current.id}
     grp: dict = defaultdict(lambda: {"received": 0.0, "invoice": 0.0, "paid": 0.0, "count": 0})
     for i in items:
         if restricted and i.buyer_id != current.id:
             continue
-        if restricted:
-            my_sids.add(i.supplier_id)
         g = grp[i.supplier_id]
         g["received"] += i.received_amount or 0
         g["invoice"] += i.invoice_amount or 0
         g["paid"] += i.paid_amount or 0
         g["count"] += 1
-    # #162：受限采购员的账目也要列出「本人建的供应商」(哪怕还没下过单,零单据显零额)，
-    #   否则新建的供应商在账目里看不到、没法管理。金额仍只按本人明细汇总(上面已保证)。
-    if restricted:
-        for s in all_suppliers:
-            if s.created_by == current.id:
-                my_sids.add(s.id)
 
     rows = []
     total_opening = total_received = total_paid = total_outstanding = 0.0
@@ -2196,12 +2214,30 @@ _PREQ_VIEW = ("warehouse", "warehouse_lead", "buyer", "buyer_lead", "buyer_stand
 def _preq_out(pr: models.PurchaseRequest) -> schemas.PurchaseRequestOut:
     return schemas.PurchaseRequestOut(
         id=pr.id, requester_id=pr.requester_id, requester_name=_uname(pr.requester),
+        buyer_id=pr.buyer_id, buyer_name=_uname(pr.buyer),
         status=pr.status, notes=pr.notes, handler_name=_uname(pr.handler),
         handled_at=pr.handled_at, reject_reason=pr.reject_reason, created_at=pr.created_at,
         lines=[schemas.PurchaseRequestLineOut(
             id=l.id, item_name=l.item_name, spec=l.spec, qty=l.qty,
             project_code=l.project_code, notes=l.notes) for l in pr.lines],
     )
+
+
+@router.get("/buyers")
+async def list_buyers(
+    current: models.User = Depends(require_roles(*_PREQ_VIEW)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #2 采购员下拉（仓库提采购申请时指定推给谁）。取有采购下单角色的在职用户。"""
+    r = await db.execute(
+        select(models.User).where(models.User.is_active == True)  # noqa: E712
+        .order_by(models.User.full_name))
+    codes = {"buyer", "buyer_lead", "buyer_standard", "buyer_outsource"}
+    out = []
+    for u in r.scalars().all():
+        if u.role_codes & codes:
+            out.append({"id": u.id, "name": _uname(u)})
+    return out
 
 
 def _preq_warehouse_only(u: models.User) -> bool:
@@ -2219,7 +2255,8 @@ async def create_purchase_request(
     lines = [l for l in body.lines if (l.item_name or "").strip()]
     if not lines:
         raise HTTPException(400, "请至少填写一行要采购的物料")
-    pr = models.PurchaseRequest(requester_id=current.id, status="pending", notes=body.notes)
+    pr = models.PurchaseRequest(requester_id=current.id, buyer_id=body.buyer_id,
+                                status="pending", notes=body.notes)
     db.add(pr)
     await db.flush()
     for l in lines:
@@ -2227,16 +2264,19 @@ async def create_purchase_request(
             request_id=pr.id, item_name=l.item_name.strip(), spec=l.spec,
             qty=l.qty, project_code=l.project_code, notes=l.notes))
     await db.commit()
-    # 通知采购员/采购主管
+    # #2：推送给指定的采购员；没指定则退回推给全体采购员/主管
     try:
-        br = await db.execute(
-            select(models.User).join(models.Role, models.User.role_id == models.Role.id)
-            .where(models.Role.code.in_(("buyer", "buyer_lead")), models.User.is_active == True))  # noqa: E712
-        for u in br.scalars().all():
-            db.add(models.Message(
-                to_user_id=u.id, kind="info",
-                text=f"仓库采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理",
-                biz_type="purchase_request", biz_id=pr.id))
+        text = f"仓库采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理"
+        if body.buyer_id:
+            db.add(models.Message(to_user_id=body.buyer_id, kind="info", text=text,
+                                  biz_type="purchase_request", biz_id=pr.id))
+        else:
+            br = await db.execute(
+                select(models.User).join(models.Role, models.User.role_id == models.Role.id)
+                .where(models.Role.code.in_(("buyer", "buyer_lead")), models.User.is_active == True))  # noqa: E712
+            for u in br.scalars().all():
+                db.add(models.Message(to_user_id=u.id, kind="info", text=text,
+                                      biz_type="purchase_request", biz_id=pr.id))
         await db.commit()
     except Exception:
         pass

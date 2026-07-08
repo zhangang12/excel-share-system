@@ -1227,6 +1227,7 @@ class PurchaseRequestLineIn(BaseModel):
 
 
 class PurchaseRequestCreate(BaseModel):
+    buyer_id: Optional[int] = None   # 🆕 #2 指定采购员（推送给他）
     notes: Optional[str] = None
     lines: list[PurchaseRequestLineIn] = Field(default_factory=list)
 
@@ -1239,6 +1240,8 @@ class PurchaseRequestOut(BaseModel):
     id: int
     requester_id: Optional[int] = None
     requester_name: Optional[str] = None
+    buyer_id: Optional[int] = None            # 🆕 #2 指定采购员
+    buyer_name: Optional[str] = None
     status: str = "pending"       # pending/done/rejected
     notes: Optional[str] = None
     handler_name: Optional[str] = None
@@ -1260,6 +1263,16 @@ class BatchInvoiceIn(BaseModel):
     item_ids: list[int]
     invoice_date: Optional[str] = None
     invoice_amount: Optional[float] = None  # 仅单条时有效
+
+
+class GroupSummaryIn(BaseModel):
+    """🆕 #4 合并父行整单维护（不分摊）：开票金额/已付款作为整单总额记在首行(其余置0,保持汇总合计正确)，
+    对账状态套用到所有子行。空字段不改。"""
+    item_ids: list[int]
+    invoice_amount: Optional[float] = None
+    paid_amount: Optional[float] = None
+    paid_date: Optional[str] = None
+    invoice_status: Optional[str] = None    # 待对账/已对账
 
 
 class SetInvoiceNoIn(BaseModel):

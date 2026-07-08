@@ -1345,6 +1345,37 @@ async function submitBatchInvoiceNo() {
   } catch { /* handled */ } finally { invoiceNoSaving.value = false }
 }
 
+// 🆕 #4 合并父行「整单维护」：开票金额/已付款作为整单总额(不分摊,记在首行)，对账状态套所有子行
+const groupSumVisible = ref(false)
+const groupSumSaving = ref(false)
+const groupSumRow = ref<any>(null)
+const groupSumForm = reactive({ invoice_amount: null as number | null, paid_amount: null as number | null, paid_date: '', invoice_status: '' })
+function openGroupSummary(row: any) {
+  groupSumRow.value = row
+  groupSumForm.invoice_amount = row.invoice_amount || null
+  groupSumForm.paid_amount = row.paid_amount || null
+  groupSumForm.paid_date = ''
+  groupSumForm.invoice_status = ''
+  groupSumVisible.value = true
+}
+async function submitGroupSummary() {
+  const row = groupSumRow.value
+  if (!row?.children?.length) return
+  groupSumSaving.value = true
+  try {
+    const r = await http.post<{ updated: number }>('/purchase-mgmt/items/set-group-summary', {
+      item_ids: row.children.map((c: any) => c.id),
+      invoice_amount: groupSumForm.invoice_amount,
+      paid_amount: groupSumForm.paid_amount,
+      paid_date: groupSumForm.paid_date || null,
+      invoice_status: groupSumForm.invoice_status || null,
+    })
+    ElMessage.success(`整单维护完成（${r.data.updated} 条零件）`)
+    groupSumVisible.value = false
+    await loadItems()
+  } catch { /* handled */ } finally { groupSumSaving.value = false }
+}
+
 // ===== supplier CRUD =====
 function openNewSupplier() {
   editingSupplier.value = null
@@ -1493,7 +1524,7 @@ async function loadPayReqs() {
 
 // 🆕 #167 采购申请处理（仓库提 → 采购部处理/驳回）
 interface IncomingReq { id: number; status: string; notes?: string | null; created_at: string
-  requester_name?: string | null; handler_name?: string | null; reject_reason?: string | null
+  requester_name?: string | null; buyer_name?: string | null; handler_name?: string | null; reject_reason?: string | null
   lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[] }
 const PREQ_STATUS: Record<string, string> = { pending: '待处理', done: '已处理', rejected: '已驳回' }
 const incomingReqs = ref<IncomingReq[]>([])
@@ -1745,6 +1776,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column label="申请编号" width="90"><template #default="{ row }">#{{ row.id }}</template></el-table-column>
             <el-table-column label="申请人" width="90"><template #default="{ row }">{{ row.requester_name || '—' }}</template></el-table-column>
+            <el-table-column label="指定采购员" width="100"><template #default="{ row }"><b v-if="row.buyer_name">{{ row.buyer_name }}</b><span v-else class="muted small">未指定</span></template></el-table-column>
             <el-table-column label="物料" min-width="220"><template #default="{ row }">{{ row.lines.map((l: any) => l.item_name).slice(0, 3).join('、') }}{{ row.lines.length > 3 ? ` 等${row.lines.length}项` : '' }}</template></el-table-column>
             <el-table-column label="状态" width="90" align="center"><template #default="{ row }"><el-tag :type="preqStatusTag(row.status)" size="small">{{ PREQ_STATUS[row.status] || row.status }}</el-tag></template></el-table-column>
             <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
@@ -1935,7 +1967,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                   <el-button size="small" link type="primary" @click="openEditItem(row)">编辑</el-button>
                   <el-button size="small" link type="danger" @click="deleteItem(row)">删除</el-button>
                 </template>
-                <span v-else class="muted small">展开看零件</span>
+                <el-button v-else size="small" link type="primary" @click="openGroupSummary(row)">整单维护</el-button>
               </template>
             </el-table-column>
             <template #empty>
@@ -2691,6 +2723,33 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <template #footer>
         <el-button @click="invoiceNoDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="invoiceNoSaving" @click="submitBatchInvoiceNo">确认维护</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ==================== 🆕 #4 合并父行「整单维护」==================== -->
+    <el-dialog v-model="groupSumVisible" title="整单维护（合并单）" width="480px">
+      <el-alert type="info" :closable="false" style="margin-bottom:14px"
+        :title="`对采购单「${groupSumRow?.po_no || ''}」整单维护：开票金额/已付款按整单总额维护(不拆分到各零件，记在汇总)，对账状态套用到全部 ${groupSumRow?._count || 0} 项零件。留空的字段不改。`" />
+      <el-form label-position="top">
+        <el-form-item :label="`开票金额（整单总额，当前 ${fmtMoney(groupSumRow?.invoice_amount || 0)}）`">
+          <el-input-number v-model="groupSumForm.invoice_amount" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="留空不改" />
+        </el-form-item>
+        <el-form-item :label="`已付款（整单总额，当前 ${fmtMoney(groupSumRow?.paid_amount || 0)}）`">
+          <el-input-number v-model="groupSumForm.paid_amount" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="留空不改" />
+        </el-form-item>
+        <el-form-item label="付款日期（选填）">
+          <el-date-picker v-model="groupSumForm.paid_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="对账状态（套用到全部子零件）">
+          <el-select v-model="groupSumForm.invoice_status" clearable placeholder="留空不改" style="width:100%">
+            <el-option label="待对账" value="待对账" />
+            <el-option label="已对账" value="已对账" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="groupSumVisible = false">取消</el-button>
+        <el-button type="primary" :loading="groupSumSaving" @click="submitGroupSummary">确认维护</el-button>
       </template>
     </el-dialog>
 
