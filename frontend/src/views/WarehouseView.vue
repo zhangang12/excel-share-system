@@ -2,7 +2,7 @@
 // 🆕 v3 M07 仓库组：总览/出入库/收发存/流水/物料主数据/发货清单 六 tab
 import { ref, onMounted, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Lock, View, Download, Printer, Setting, Delete } from '@element-plus/icons-vue'
+import { Plus, Search, Lock, View, Download, Printer, Setting, Delete, ArrowLeft } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow, type WhCustomField } from '@/api/warehouse'
@@ -439,6 +439,26 @@ async function loadDemand() {
 }
 watch(demandProj, () => loadDemand())
 
+// 🆕 #157：物料需求总览——不用下拉选项目，直接列出有清单的项目 + 待出库/已出库条数
+interface DemandOverviewRow {
+  project_id: number; code: string; name: string
+  total_lines: number; pending_out: number; issued_out: number
+}
+const demandOverview = ref<DemandOverviewRow[]>([])
+const demandOverviewLoading = ref(false)
+async function loadDemandOverview() {
+  demandOverviewLoading.value = true
+  try { demandOverview.value = (await http.get<DemandOverviewRow[]>('/wh/demand-overview')).data }
+  finally { demandOverviewLoading.value = false }
+}
+const demandProjLabel = computed(() => {
+  const p = demandOverview.value.find(x => x.project_id === demandProj.value)
+    || projects.value.find(x => x.id === demandProj.value)
+  return p ? `${p.code} · ${p.name}` : ''
+})
+function openDemandProject(pid: number) { demandProj.value = pid }
+function backToDemandOverview() { demandProj.value = undefined; loadDemandOverview() }
+
 // 🆕 需求二：物料需求「领用出库」——按需求把有货物料自动登记出库到项目（计入项目材料成本）
 function demandRemain(r: DemandRow) { return Math.max(0, (r.demand_qty || 0) - (r.issued_qty || 0)) }
 async function issueOne(row: DemandRow) {
@@ -511,7 +531,10 @@ function onTab(name: string) {
   if (name === 'txn' && !txns.value.length) loadTxns()
   if (name === 'sum') loadSummary()
   if (name === 'recv') loadReceiving()
-  if (name === 'demand' && !projects.value.length) loadProjects()
+  if (name === 'demand') {
+    if (!projects.value.length) loadProjects()
+    if (!demandProj.value) loadDemandOverview()   // #157：进 tab 直接看项目总览
+  }
   if (name === 'ship') {
     if (!projects.value.length) loadProjects()
     loadShipPending()
@@ -654,14 +677,39 @@ function onTab(name: string) {
 
         <!-- 🆕 项目物料需求（清单→仓库）-->
         <el-tab-pane label="物料需求" name="demand">
+          <!-- #157：默认直接列出有清单的项目 + 待出库/已出库条数，不用先从下拉选项目 -->
+          <template v-if="!demandProj">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+              <b>项目物料需求总览</b>
+              <el-button :icon="Search" size="small" @click="loadDemandOverview">刷新</el-button>
+              <span class="muted small">列出有「标准件清单」的项目；点「查看」进入逐行需求并领用出库。待出库=有货且未领完的物料行数，已出库=已领用过的行数。</span>
+            </div>
+            <el-table :data="demandOverview" v-loading="demandOverviewLoading" stripe size="small"
+                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
+              <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+              <el-table-column prop="name" label="项目名称" min-width="200" show-overflow-tooltip />
+              <el-table-column label="物料行数" width="100" align="right"><template #default="{ row }">{{ row.total_lines }}</template></el-table-column>
+              <el-table-column label="待出库" width="110" align="center">
+                <template #default="{ row }"><StatusPill :text="`待出库 ${row.pending_out}`" :variant="row.pending_out > 0 ? 'warn' : 'muted'" /></template>
+              </el-table-column>
+              <el-table-column label="已出库" width="110" align="center">
+                <template #default="{ row }"><StatusPill :text="`已出库 ${row.issued_out}`" :variant="row.issued_out > 0 ? 'success' : 'muted'" /></template>
+              </el-table-column>
+              <el-table-column label="操作" width="100" align="center" fixed="right">
+                <template #default="{ row }"><el-button size="small" type="primary" plain @click="openDemandProject(row.project_id)">查看</el-button></template>
+              </el-table-column>
+              <template #empty><EmptyHint text="暂无带标准件清单的项目" size="sm" /></template>
+            </el-table>
+          </template>
+
+          <template v-else>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-            <el-select v-model="demandProj" filterable clearable placeholder="选择项目" style="width:300px">
-              <el-option v-for="p in projects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
-            </el-select>
-            <el-button v-if="canWrite && demandProj" type="warning" :icon="Plus" @click="issueAll">一键领用出库</el-button>
+            <el-button :icon="ArrowLeft" size="small" @click="backToDemandOverview">返回项目列表</el-button>
+            <b class="code">{{ demandProjLabel }}</b>
+            <el-button v-if="canWrite" type="warning" :icon="Plus" size="small" @click="issueAll">一键领用出库</el-button>
             <span class="muted small">读项目「标准件清单」,逐行看 需求量 / 现有库存 / 建议采购量。有货的可直接领用出库(自动登记出库),缺的走采购。</span>
           </div>
-          <el-table v-if="demandProj" :data="demandRows" v-loading="demandLoading" stripe size="small"
+          <el-table :data="demandRows" v-loading="demandLoading" stripe size="small"
                     max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
             <el-table-column prop="item_name" label="名称" min-width="150" />
             <el-table-column prop="spec" label="规格型号" min-width="150"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
@@ -690,8 +738,8 @@ function onTab(name: string) {
               </template>
             </el-table-column>
           </el-table>
-          <EmptyHint v-if="demandProj && !demandLoading && !demandRows.length" text="该项目暂无标准件清单或清单为空" size="sm" />
-          <EmptyHint v-if="!demandProj" text="选择项目查看物料需求" size="sm" />
+          <EmptyHint v-if="!demandLoading && !demandRows.length" text="该项目暂无标准件清单或清单为空" size="sm" />
+          </template>
         </el-tab-pane>
 
         <!-- 🆕 采购收货 -->

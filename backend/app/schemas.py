@@ -1078,6 +1078,16 @@ class WarehouseDemandRow(BaseModel):
     issued_qty: float = 0                    # 🆕 需求二：已领用出库到本项目的数量
 
 
+class WarehouseDemandOverviewRow(BaseModel):
+    # 🆕 #157：物料需求总览一行（一个项目）
+    project_id: int
+    code: str
+    name: str
+    total_lines: int = 0      # 清单物料行数
+    pending_out: int = 0      # 待出库：有货且仍有未领需求的行数
+    issued_out: int = 0       # 已出库：已领用过的行数
+
+
 class DemandIssueLine(BaseModel):
     material_id: int
     qty: float

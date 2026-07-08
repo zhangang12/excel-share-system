@@ -586,13 +586,9 @@ def _dnum(v):
         return None
 
 
-@router.get("/demand/{project_id}", response_model=List[schemas.WarehouseDemandRow])
-async def project_demand(
-    project_id: int,
-    _: models.User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """项目物料需求（读「标准件清单」）：逐行显示 需求量 / 现有库存 / 建议采购量 / 采购状态。"""
+async def _demand_rows(db: AsyncSession, project_id: int, *, stock=None, mats=None):
+    """项目物料需求逐行（供 /demand 与 /demand-overview 复用）。
+    stock/mats 可由调用方预先算好传入，避免 overview 逐项目重复扫全表。"""
     r = await db.execute(select(models.Datasheet).where(
         models.Datasheet.project_id == project_id, models.Datasheet.name == "标准件清单"))
     sheet = r.scalar_one_or_none()
@@ -604,8 +600,10 @@ async def project_demand(
     by_rec: dict = {}
     for pi in lr.scalars().all():
         by_rec.setdefault(pi.source_record_id, []).append(pi)
-    stock = await _stock_map(db)
-    mats = (await db.execute(select(models.WhMaterial))).scalars().all()
+    if stock is None:
+        stock = await _stock_map(db)
+    if mats is None:
+        mats = (await db.execute(select(models.WhMaterial))).scalars().all()
     mat_by_key = {(m.name, m.spec or None): m for m in mats}
     # 🆕 需求二：本项目各物料已领用出库数量（out 且 project_id=本项目，排除冲红）
     issued_map: dict[int, float] = defaultdict(float)
@@ -644,6 +642,50 @@ async def project_demand(
             demand_qty=demand, stock=st,
             suggest_purchase=suggest, purchase_status=status, in_stock=st > 0,
             issued_qty=(issued_map.get(m.id, 0) if m else 0)))
+    return out
+
+
+@router.get("/demand/{project_id}", response_model=List[schemas.WarehouseDemandRow])
+async def project_demand(
+    project_id: int,
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """项目物料需求（读「标准件清单」）：逐行显示 需求量 / 现有库存 / 建议采购量 / 采购状态。"""
+    return await _demand_rows(db, project_id)
+
+
+@router.get("/demand-overview", response_model=List[schemas.WarehouseDemandOverviewRow])
+async def demand_overview(
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #157：物料需求总览——直接列出「有标准件清单」的项目 + 待出库/已出库条数，
+    免去先从下拉选项目。待出库=有货且仍有未领需求的物料行数；已出库=已领用过的物料行数。"""
+    # 只取"有标准件清单"的项目，避免把无需求的项目也列出来
+    sr = await db.execute(
+        select(models.Datasheet.project_id).where(models.Datasheet.name == "标准件清单").distinct())
+    sheet_pids = [p for (p,) in sr.all() if p is not None]
+    if not sheet_pids:
+        return []
+    pr = await db.execute(
+        select(models.Project).where(
+            models.Project.id.in_(sheet_pids), models.Project.is_deleted == False)  # noqa: E712
+        .order_by(models.Project.code.desc()))
+    projects = pr.scalars().all()
+    # 预算全局 stock / mats，避免逐项目重复扫全表
+    stock = await _stock_map(db)
+    mats = (await db.execute(select(models.WhMaterial))).scalars().all()
+    out = []
+    for p in projects:
+        rows = await _demand_rows(db, p.id, stock=stock, mats=mats)
+        if not rows:
+            continue
+        pending = sum(1 for r in rows if r.in_stock and (r.demand_qty or 0) - (r.issued_qty or 0) > 0)
+        issued = sum(1 for r in rows if (r.issued_qty or 0) > 0)
+        out.append(schemas.WarehouseDemandOverviewRow(
+            project_id=p.id, code=p.code, name=p.name,
+            total_lines=len(rows), pending_out=pending, issued_out=issued))
     return out
 
 

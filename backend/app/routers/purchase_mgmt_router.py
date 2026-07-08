@@ -67,15 +67,22 @@ async def list_suppliers(
         stmt = stmt.where(models.Supplier.category == category)
     if status:
         stmt = stmt.where(models.Supplier.status == status)
-    # 🆕 需求五：采购员只看自己建的供应商 + 历史无归属(created_by NULL, 遗留共享)；管理层/主管看全部
-    # #152：owned_only=True 时(用于「采购明细」供应商筛选下拉)只保留本人创建的,连遗留共享(NULL)也排除,
-    #        避免筛选框列出一堆本人从没打过交道的老供应商。下单选供应商仍用默认(含遗留共享),老供应商可选。
+    # 🆕 需求五：采购员只看自己建的供应商 + 历史无归属(created_by NULL, 遗留共享) + 本人下过单的供应商；
+    #   管理层/主管看全部。
+    # #152 修正：owned_only=True(「采购明细」供应商筛选下拉)时,「自己填的供应商」= 出现在本人采购明细里的
+    #   供应商(按 buyer_id 反查),**不看 created_by**——否则用了遗留共享(NULL)或别人建的供应商下单后,
+    #   筛选框里反而找不到自己下过单的供应商(生产 bug:建的采购明细单自己看不到供应商)。
     if _buyer_restricted(current):
+        my_item_sids = select(models.PurchaseItem.supplier_id).where(
+            models.PurchaseItem.buyer_id == current.id).distinct()
         if owned_only:
-            stmt = stmt.where(models.Supplier.created_by == current.id)
+            stmt = stmt.where(models.Supplier.id.in_(my_item_sids))
         else:
+            # 默认列表(下单选供应商等)：本人建 + 遗留共享 + 本人下过单的,保证用过的供应商始终可见/可选
             stmt = stmt.where(
-                (models.Supplier.created_by == current.id) | (models.Supplier.created_by.is_(None)))
+                (models.Supplier.created_by == current.id)
+                | (models.Supplier.created_by.is_(None))
+                | (models.Supplier.id.in_(my_item_sids)))
     if q:
         from sqlalchemy import or_
         stmt = stmt.where(
