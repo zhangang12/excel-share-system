@@ -1,7 +1,7 @@
 """🆕 采购管理模块：供应商档案 / 采购明细 / 账目一览 / 请款流程 / 汇总报表 / 历史导入"""
 from datetime import datetime, timezone, date as _date, datetime as _dt
 from io import BytesIO
-from typing import Optional, List
+from typing import Optional, List, Dict
 from collections import defaultdict
 from urllib.parse import quote
 
@@ -841,18 +841,25 @@ async def _build_stock_by_key(db: AsyncSession) -> dict:
 async def _purchasable_rows(db: AsyncSession, ds: models.Datasheet, conf: tuple, sheet_key: str,
                             stock_by_key: dict, *, only_pending: bool = False,
                             project_id: Optional[int] = None, project_code: Optional[str] = None,
-                            project_name: Optional[str] = None) -> list:
-    """某数据表的可采购行（归一化 5 类清单异构列 → 统一 PurchasableRow）。供单项目/跨项目端点复用。"""
+                            project_name: Optional[str] = None,
+                            name2id: Optional[dict] = None, by_rec: Optional[dict] = None,
+                            records: Optional[list] = None) -> list:
+    """某数据表的可采购行（归一化 5 类清单异构列 → 统一 PurchasableRow）。供单项目/跨项目端点复用。
+    name2id/by_rec/records 由跨项目聚合端点批量预取传入，避免逐张清单 N+1 查询。"""
     item_col, spec_col, qty_col, brand_col = conf[1:5]
-    name2id = await _sheet_fieldmap(db, ds.id)
-    lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == ds.id))
-    by_rec: dict = {}
-    for pi in lr.scalars().all():
-        by_rec.setdefault(pi.source_record_id, []).append(pi)
-    rr = await db.execute(select(models.Record).where(
-        models.Record.datasheet_id == ds.id).order_by(models.Record.sort_order, models.Record.id))
+    if name2id is None:
+        name2id = await _sheet_fieldmap(db, ds.id)
+    if by_rec is None:
+        lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == ds.id))
+        by_rec = {}
+        for pi in lr.scalars().all():
+            by_rec.setdefault(pi.source_record_id, []).append(pi)
+    if records is None:
+        rr = await db.execute(select(models.Record).where(
+            models.Record.datasheet_id == ds.id).order_by(models.Record.sort_order, models.Record.id))
+        records = list(rr.scalars().all())
     out = []
-    for rec in rr.scalars().all():
+    for rec in records:
         v = rec.values or {}
 
         def gv(col):
@@ -925,6 +932,67 @@ async def purchasable_pending(
             project_name=(p.name if p else None))
         out.extend(rows)
     return out
+
+
+@router.get("/purchasable-pending-all", response_model=Dict[str, List[schemas.PurchasableRow]])
+async def purchasable_pending_all(
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 待下单工作区数据源（一次拉全，修性能）：返回 {清单类型: 未下单行[]}。
+    原来前端并发发 5 个 /purchasable-pending，每个都全表算库存 + 逐张清单 N+1 查询 → 转圈圈。
+    这里**库存只算一次 + Fields/PurchaseItem/Record 全部批量一次查完**，只受 R4 权限约束。"""
+    allowed = _allowed_sheet_keys(current)
+    types = [k for k in _PURCHASABLE_SHEETS if (allowed is None or k in allowed)]
+    result: dict = {t: [] for t in types}
+    if not types:
+        return result
+    pr = await db.execute(
+        select(models.Project.id, models.Project.code, models.Project.name)
+        .where(models.Project.is_deleted == False))  # noqa: E712
+    projects = {pid: (code, name) for pid, code, name in pr.all()}
+    if not projects:
+        return result
+    name2key = {_PURCHASABLE_SHEETS[k][0]: k for k in types}
+    dr = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.name.in_(list(name2key.keys())),
+        models.Datasheet.project_id.in_(list(projects.keys()))))
+    sheets = [ds for ds in dr.scalars().all() if projects.get(ds.project_id)]
+    if not sheets:
+        return result
+    ds_ids = [ds.id for ds in sheets]
+    stock_by_key = await _build_stock_by_key(db)
+    # 批量：字段名→id（按 ds 分组）
+    fr = await db.execute(select(models.Field).where(models.Field.datasheet_id.in_(ds_ids)))
+    fields_by_ds: dict = defaultdict(dict)
+    for f in fr.scalars().all():
+        fields_by_ds[f.datasheet_id][f.name] = str(f.id)
+    # 批量：采购明细（判断下单状态）按 (ds, record) 分组
+    pir = await db.execute(select(models.PurchaseItem).where(
+        models.PurchaseItem.source_sheet_id.in_(ds_ids)))
+    pi_by_ds_rec: dict = defaultdict(lambda: defaultdict(list))
+    for pi in pir.scalars().all():
+        pi_by_ds_rec[pi.source_sheet_id][pi.source_record_id].append(pi)
+    # 批量：记录行按 ds 分组（保持排序）
+    rr = await db.execute(select(models.Record).where(
+        models.Record.datasheet_id.in_(ds_ids)).order_by(
+        models.Record.sort_order, models.Record.id))
+    recs_by_ds: dict = defaultdict(list)
+    for rec in rr.scalars().all():
+        recs_by_ds[rec.datasheet_id].append(rec)
+    for ds in sheets:
+        key = name2key.get(ds.name)
+        if not key:
+            continue
+        code, pname = projects[ds.project_id]
+        rows = await _purchasable_rows(
+            db, ds, _PURCHASABLE_SHEETS[key], key, stock_by_key, only_pending=True,
+            project_id=ds.project_id, project_code=code, project_name=pname,
+            name2id=fields_by_ds.get(ds.id, {}),
+            by_rec=pi_by_ds_rec.get(ds.id, {}),
+            records=recs_by_ds.get(ds.id, []))
+        result[key].extend(rows)
+    return result
 
 
 @router.post("/orders/from-list", response_model=List[schemas.PurchaseItemOut])

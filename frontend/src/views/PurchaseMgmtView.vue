@@ -1070,21 +1070,19 @@ function mkPendingRow(x: any): PurchasableRow {
     _supplier_id: '' as number | '', _brand: x.brand || '', _payment_method: '', _prepay_ratio: null,
   }
 }
-async function loadPendingSheet(sheet: string) {
-  try {
-    const r = await http.get<any[]>('/purchase-mgmt/purchasable-pending', { params: { sheet } })
-    pendingCache.value[sheet] = r.data.map(mkPendingRow)
-  } catch { pendingCache.value[sheet] = [] }
-}
 async function loadPending() {
   pendingLoading.value = true
   try {
-    await Promise.all(availableSheets.value.map(t => loadPendingSheet(t.key)))
+    // 性能修复：一次拉全（后端库存只算一次+批量查询），不再并发发 5 个请求逐张清单 N+1
+    const r = await http.get<Record<string, any[]>>('/purchase-mgmt/purchasable-pending-all')
+    const cache: Record<string, PurchasableRow[]> = {}
+    for (const t of availableSheets.value) cache[t.key] = (r.data[t.key] || []).map(mkPendingRow)
+    pendingCache.value = cache
     if (!pendingActiveSheet.value || !availableSheets.value.some(t => t.key === pendingActiveSheet.value)) {
-      const firstWithData = availableSheets.value.find(t => (pendingCache.value[t.key] || []).length)
+      const firstWithData = availableSheets.value.find(t => (cache[t.key] || []).length)
       pendingActiveSheet.value = (firstWithData || availableSheets.value[0])?.key || 'standard'
     }
-  } finally { pendingLoading.value = false }
+  } catch { pendingCache.value = {} } finally { pendingLoading.value = false }
 }
 const pendingCounts = computed<Record<string, number>>(() => {
   const c: Record<string, number> = {}
