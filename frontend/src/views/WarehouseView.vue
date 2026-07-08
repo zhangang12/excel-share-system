@@ -539,6 +539,49 @@ function onTab(name: string) {
     if (!projects.value.length) loadProjects()
     loadShipPending()
   }
+  if (name === 'preq') loadPurchReqs()
+}
+
+// 🆕 #167 仓库采购申请：仓库列出要买什么 → 提交到采购部
+interface PreqLine { item_name: string; spec: string; qty: number | null; project_code: string; notes: string }
+interface PreqRow { id: number; status: string; notes?: string | null; created_at: string
+  handler_name?: string | null; reject_reason?: string | null
+  lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[] }
+const PREQ_STATUS: Record<string, string> = { pending: '待处理', done: '已处理', rejected: '已驳回' }
+const preqList = ref<PreqRow[]>([])
+const preqLoading = ref(false)
+async function loadPurchReqs() {
+  preqLoading.value = true
+  try { preqList.value = (await http.get<PreqRow[]>('/purchase-mgmt/purchase-requests')).data }
+  finally { preqLoading.value = false }
+}
+function blankPreqLine(): PreqLine { return { item_name: '', spec: '', qty: null, project_code: '', notes: '' } }
+const preqVisible = ref(false)
+const preqSaving = ref(false)
+const preqForm = reactive({ notes: '', lines: [blankPreqLine()] as PreqLine[] })
+function openPurchReq() { preqForm.notes = ''; preqForm.lines = [blankPreqLine()]; preqVisible.value = true }
+function addPreqLine() { preqForm.lines.push(blankPreqLine()) }
+function removePreqLine(i: number) { preqForm.lines.splice(i, 1); if (!preqForm.lines.length) preqForm.lines.push(blankPreqLine()) }
+async function submitPurchReq() {
+  const lines = preqForm.lines.filter(l => l.item_name.trim())
+  if (!lines.length) { ElMessage.error('请至少填写一行要采购的物料（名称必填）'); return }
+  preqSaving.value = true
+  try {
+    await http.post('/purchase-mgmt/purchase-requests', {
+      notes: preqForm.notes || null,
+      lines: lines.map(l => ({ item_name: l.item_name.trim(), spec: l.spec || null, qty: l.qty, project_code: l.project_code || null, notes: l.notes || null })),
+    })
+    ElMessage.success('采购申请已提交，采购部会收到通知')
+    preqVisible.value = false
+    await loadPurchReqs()
+  } catch { /* handled */ } finally { preqSaving.value = false }
+}
+async function deletePurchReq(row: PreqRow) {
+  try { await ElMessageBox.confirm(`删除采购申请 #${row.id}？`, '提示', { type: 'warning' }) } catch { return }
+  try { await http.delete(`/purchase-mgmt/purchase-requests/${row.id}`); ElMessage.success('已删除'); await loadPurchReqs() } catch { /* handled */ }
+}
+function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
+  return s === 'done' ? 'success' : s === 'rejected' ? 'danger' : 'warn'
 }
 </script>
 
@@ -879,8 +922,64 @@ function onTab(name: string) {
             </el-table>
           </template>
         </el-tab-pane>
+
+        <!-- 🆕 #167 采购申请：仓库列出要买什么 → 提交到采购部 -->
+        <el-tab-pane label="采购申请" name="preq">
+          <EmptyHint v-if="!canWrite" text="仅仓库角色可提采购申请" :icon="Lock" />
+          <template v-else>
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+              <el-button type="primary" :icon="Plus" @click="openPurchReq">提采购申请</el-button>
+              <el-button :icon="Search" size="small" @click="loadPurchReqs">刷新</el-button>
+              <span class="muted small">仓库发现要买的东西（缺料/耗材/工具等）在这里提申请，采购部会收到通知并处理。</span>
+            </div>
+            <el-table :data="preqList" v-loading="preqLoading" stripe size="small" max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
+              <el-table-column type="expand" width="36">
+                <template #default="{ row }">
+                  <el-table :data="row.lines" size="small" border style="margin:6px 12px">
+                    <el-table-column type="index" label="#" width="44" />
+                    <el-table-column label="名称" prop="item_name" min-width="140" />
+                    <el-table-column label="规格" min-width="120"><template #default="{ row: l }">{{ l.spec || '—' }}</template></el-table-column>
+                    <el-table-column label="数量" width="90" align="right"><template #default="{ row: l }">{{ l.qty ?? '—' }}</template></el-table-column>
+                    <el-table-column label="项目" width="110"><template #default="{ row: l }">{{ l.project_code || '—' }}</template></el-table-column>
+                    <el-table-column label="备注" min-width="120"><template #default="{ row: l }">{{ l.notes || '—' }}</template></el-table-column>
+                  </el-table>
+                </template>
+              </el-table-column>
+              <el-table-column label="申请编号" width="90"><template #default="{ row }">#{{ row.id }}</template></el-table-column>
+              <el-table-column label="物料" min-width="200"><template #default="{ row }">{{ row.lines.map((l: any) => l.item_name).slice(0, 3).join('、') }}{{ row.lines.length > 3 ? ` 等${row.lines.length}项` : '' }}</template></el-table-column>
+              <el-table-column label="状态" width="100" align="center"><template #default="{ row }"><StatusPill :text="PREQ_STATUS[row.status] || row.status" :variant="preqStatusVariant(row.status)" /></template></el-table-column>
+              <el-table-column label="处理" min-width="140"><template #default="{ row }"><span v-if="row.status === 'done'" class="muted small">{{ row.handler_name }} 已处理</span><span v-else-if="row.status === 'rejected'" class="danger small">驳回：{{ row.reject_reason || '—' }}</span><span v-else class="muted small">等待采购部处理</span></template></el-table-column>
+              <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
+              <el-table-column label="操作" width="70" align="center"><template #default="{ row }"><el-button v-if="row.status !== 'done'" size="small" link type="danger" @click="deletePurchReq(row)">删除</el-button></template></el-table-column>
+              <template #empty><EmptyHint text="暂无采购申请，点「提采购申请」开始" size="sm" /></template>
+            </el-table>
+          </template>
+        </el-tab-pane>
       </el-tabs>
     </el-card>
+
+    <!-- 🆕 #167 提采购申请弹窗 -->
+    <el-dialog v-model="preqVisible" title="提采购申请" width="min(880px, 96vw)" top="5vh">
+      <el-alert type="info" :closable="false" style="margin-bottom:12px" title="列出要采购的物料（名称必填，规格/数量/项目/备注选填）→ 提交后采购部收到通知并处理。" />
+      <div class="order-lines-head">
+        <span class="order-lines-title">采购物料（{{ preqForm.lines.length }} 行）</span>
+        <el-button size="small" :icon="Plus" @click="addPreqLine">添加一行</el-button>
+      </div>
+      <el-table :data="preqForm.lines" size="small" border max-height="46vh">
+        <el-table-column type="index" label="#" width="44" align="center" />
+        <el-table-column label="名称 *" min-width="160"><template #default="{ row }"><el-input v-model="row.item_name" placeholder="物料名称" /></template></el-table-column>
+        <el-table-column label="规格型号" min-width="140"><template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template></el-table-column>
+        <el-table-column label="数量" width="110"><template #default="{ row }"><el-input-number v-model="row.qty" :min="0" :controls="false" style="width:100%" /></template></el-table-column>
+        <el-table-column label="项目编号" width="120"><template #default="{ row }"><el-input v-model="row.project_code" placeholder="选填" /></template></el-table-column>
+        <el-table-column label="备注" min-width="120"><template #default="{ row }"><el-input v-model="row.notes" placeholder="选填" /></template></el-table-column>
+        <el-table-column label="操作" width="60" align="center"><template #default="{ $index }"><el-button size="small" link type="danger" :icon="Delete" @click="removePreqLine($index)" /></template></el-table-column>
+      </el-table>
+      <el-input v-model="preqForm.notes" type="textarea" :rows="2" placeholder="整单备注（选填）" style="margin-top:12px" />
+      <template #footer>
+        <el-button @click="preqVisible = false">取消</el-button>
+        <el-button type="primary" :loading="preqSaving" @click="submitPurchReq">提交申请</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 出入库弹窗 -->
     <el-dialog v-model="ioVisible" :title="ioForm.direction === 'in' ? '📥 入库登记' : '📤 出库登记'" width="480px">

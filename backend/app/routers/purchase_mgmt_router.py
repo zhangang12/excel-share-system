@@ -2172,3 +2172,137 @@ async def report_supplier_trend(
         "total": round(total_by_sup[sid], 2),
     } for sid in top_sids if total_by_sup[sid] > 0]
     return {"months": month_keys, "series": series}
+
+
+# ==================== 🆕 #167 仓库采购申请（仓库发起 → 采购部处理）====================
+_PREQ_WAREHOUSE = ("warehouse", "warehouse_lead")
+_PREQ_VIEW = ("warehouse", "warehouse_lead", "buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
+
+
+def _preq_out(pr: models.PurchaseRequest) -> schemas.PurchaseRequestOut:
+    return schemas.PurchaseRequestOut(
+        id=pr.id, requester_id=pr.requester_id, requester_name=_uname(pr.requester),
+        status=pr.status, notes=pr.notes, handler_name=_uname(pr.handler),
+        handled_at=pr.handled_at, reject_reason=pr.reject_reason, created_at=pr.created_at,
+        lines=[schemas.PurchaseRequestLineOut(
+            id=l.id, item_name=l.item_name, spec=l.spec, qty=l.qty,
+            project_code=l.project_code, notes=l.notes) for l in pr.lines],
+    )
+
+
+def _preq_warehouse_only(u: models.User) -> bool:
+    return u.has_role(*_PREQ_WAREHOUSE) and not u.has_role(
+        "buyer", "buyer_lead", "buyer_standard", "buyer_outsource", "admin", "manager")
+
+
+@router.post("/purchase-requests", response_model=schemas.PurchaseRequestOut)
+async def create_purchase_request(
+    body: schemas.PurchaseRequestCreate,
+    current: models.User = Depends(require_roles(*_PREQ_WAREHOUSE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """仓库发起采购申请（列出要买什么）→ 待采购部处理，推送采购主管/采购员。"""
+    lines = [l for l in body.lines if (l.item_name or "").strip()]
+    if not lines:
+        raise HTTPException(400, "请至少填写一行要采购的物料")
+    pr = models.PurchaseRequest(requester_id=current.id, status="pending", notes=body.notes)
+    db.add(pr)
+    await db.flush()
+    for l in lines:
+        db.add(models.PurchaseRequestLine(
+            request_id=pr.id, item_name=l.item_name.strip(), spec=l.spec,
+            qty=l.qty, project_code=l.project_code, notes=l.notes))
+    await db.commit()
+    # 通知采购员/采购主管
+    try:
+        br = await db.execute(
+            select(models.User).join(models.Role, models.User.role_id == models.Role.id)
+            .where(models.Role.code.in_(("buyer", "buyer_lead")), models.User.is_active == True))  # noqa: E712
+        for u in br.scalars().all():
+            db.add(models.Message(
+                to_user_id=u.id, kind="info",
+                text=f"仓库采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理",
+                biz_type="purchase_request", biz_id=pr.id))
+        await db.commit()
+    except Exception:
+        pass
+    r = await db.execute(select(models.PurchaseRequest).where(models.PurchaseRequest.id == pr.id))
+    return _preq_out(r.scalar_one())
+
+
+@router.get("/purchase-requests", response_model=List[schemas.PurchaseRequestOut])
+async def list_purchase_requests(
+    status: Optional[str] = Query(None),
+    current: models.User = Depends(require_roles(*_PREQ_VIEW)),
+    db: AsyncSession = Depends(get_db),
+):
+    """采购申请列表：仓库(非采购)只看自己提的；采购员/主管看全部。"""
+    stmt = select(models.PurchaseRequest).order_by(models.PurchaseRequest.created_at.desc())
+    if status:
+        stmt = stmt.where(models.PurchaseRequest.status == status)
+    if _preq_warehouse_only(current):
+        stmt = stmt.where(models.PurchaseRequest.requester_id == current.id)
+    r = await db.execute(stmt)
+    return [_preq_out(pr) for pr in r.scalars().all()]
+
+
+@router.put("/purchase-requests/{prid}/handle")
+async def handle_purchase_request(
+    prid: int,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """采购员/主管把申请标记为「已处理」(已按此下单)。"""
+    r = await db.execute(select(models.PurchaseRequest).where(models.PurchaseRequest.id == prid))
+    pr = r.scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "申请不存在")
+    pr.status = "done"
+    pr.handled_by = current.id
+    pr.handled_at = datetime.now(timezone.utc)
+    if pr.requester_id:
+        db.add(models.Message(to_user_id=pr.requester_id, kind="info",
+                              text=f"你的采购申请 #{pr.id} 已被采购部处理", biz_type="purchase_request", biz_id=pr.id))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.put("/purchase-requests/{prid}/reject")
+async def reject_purchase_request(
+    prid: int,
+    body: schemas.PaymentRejectIn,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(models.PurchaseRequest).where(models.PurchaseRequest.id == prid))
+    pr = r.scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "申请不存在")
+    pr.status = "rejected"
+    pr.handled_by = current.id
+    pr.handled_at = datetime.now(timezone.utc)
+    pr.reject_reason = (body.reason or "").strip() or None
+    if pr.requester_id:
+        db.add(models.Message(to_user_id=pr.requester_id, kind="warn",
+                              text=f"你的采购申请 #{pr.id} 被采购部驳回：{pr.reject_reason or '无原因'}",
+                              biz_type="purchase_request", biz_id=pr.id))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/purchase-requests/{prid}")
+async def delete_purchase_request(
+    prid: int,
+    current: models.User = Depends(require_roles(*_PREQ_VIEW)),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除采购申请：仅本人(申请人)或管理层可删。"""
+    r = await db.execute(select(models.PurchaseRequest).where(models.PurchaseRequest.id == prid))
+    pr = r.scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "申请不存在")
+    if pr.requester_id != current.id and not current.has_role("admin", "manager"):
+        raise HTTPException(403, "只能删除自己提交的采购申请")
+    await db.delete(pr)
+    await db.commit()
+    return {"ok": True}

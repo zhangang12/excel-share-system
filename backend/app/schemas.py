@@ -1217,6 +1217,37 @@ class KitFromListCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class PurchaseRequestLineIn(BaseModel):
+    """🆕 #167 采购申请明细行。"""
+    item_name: str = Field(min_length=1, max_length=128)
+    spec: Optional[str] = None
+    qty: Optional[float] = None
+    project_code: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PurchaseRequestCreate(BaseModel):
+    notes: Optional[str] = None
+    lines: list[PurchaseRequestLineIn] = Field(default_factory=list)
+
+
+class PurchaseRequestLineOut(PurchaseRequestLineIn):
+    id: int
+
+
+class PurchaseRequestOut(BaseModel):
+    id: int
+    requester_id: Optional[int] = None
+    requester_name: Optional[str] = None
+    status: str = "pending"       # pending/done/rejected
+    notes: Optional[str] = None
+    handler_name: Optional[str] = None
+    handled_at: Optional[datetime] = None
+    reject_reason: Optional[str] = None
+    created_at: datetime
+    lines: list[PurchaseRequestLineOut] = Field(default_factory=list)
+
+
 class PurchaseItemSummary(BaseModel):
     received_total: float = 0
     uninvoiced: float = 0

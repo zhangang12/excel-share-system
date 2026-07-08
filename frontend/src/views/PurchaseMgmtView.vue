@@ -1182,6 +1182,7 @@ onMounted(async () => {
   await Promise.all([loadSuppliers(), loadCustomFields(), loadMatDict()])
   if (showPurchaseTab.value) {
     await loadPurchaseRows()
+    loadIncomingReqs()   // #167：加载采购申请以显示角标
   } else {
     await loadItems()
   }
@@ -1192,6 +1193,7 @@ async function onTabChange(name: string) {
   else if (name === 'items') await loadItems()
   else if (name === 'statements') { await loadSuppliers(); await loadStatements() }
   else if (name === 'payreq') await loadPayReqs()
+  else if (name === 'preq') await loadIncomingReqs()
   else if (name === 'reports' && (isLeadOrAbove.value || canWrite.value)) { await loadReports(); await loadProjectReport() }
 }
 
@@ -1486,6 +1488,36 @@ async function loadPayReqs() {
     payReqs.value = (await http.get<PaymentRequestOut[]>('/purchase-mgmt/payment-requests')).data
   } finally { prLoading.value = false }
 }
+
+// 🆕 #167 采购申请处理（仓库提 → 采购部处理/驳回）
+interface IncomingReq { id: number; status: string; notes?: string | null; created_at: string
+  requester_name?: string | null; handler_name?: string | null; reject_reason?: string | null
+  lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[] }
+const PREQ_STATUS: Record<string, string> = { pending: '待处理', done: '已处理', rejected: '已驳回' }
+const incomingReqs = ref<IncomingReq[]>([])
+const incomingLoading = ref(false)
+async function loadIncomingReqs() {
+  incomingLoading.value = true
+  try { incomingReqs.value = (await http.get<IncomingReq[]>('/purchase-mgmt/purchase-requests')).data }
+  finally { incomingLoading.value = false }
+}
+const incomingPending = computed(() => incomingReqs.value.filter(r => r.status === 'pending').length)
+async function handleIncoming(row: IncomingReq) {
+  try { await ElMessageBox.confirm(`把采购申请 #${row.id} 标记为「已处理」（已按此下单）？`, '处理确认', { type: 'info' }) } catch { return }
+  await http.put(`/purchase-mgmt/purchase-requests/${row.id}/handle`)
+  ElMessage.success('已标记处理')
+  await loadIncomingReqs()
+}
+async function rejectIncoming(row: IncomingReq) {
+  let reason = ''
+  try { reason = (await ElMessageBox.prompt('驳回原因', `驳回采购申请 #${row.id}`, { inputPlaceholder: '填写驳回原因' })).value } catch { return }
+  await http.put(`/purchase-mgmt/purchase-requests/${row.id}/reject`, { reason })
+  ElMessage.success('已驳回')
+  await loadIncomingReqs()
+}
+function preqStatusTag(s: string): 'warning' | 'success' | 'danger' | 'info' {
+  return s === 'done' ? 'success' : s === 'rejected' ? 'danger' : 'warning'
+}
 const prCounts = computed(() => {
   const c: Record<string, number> = { '': payReqs.value.length, pending: 0, approved: 0, paid: 0, rejected: 0 }
   for (const r of payReqs.value) c[r.status] = (c[r.status] || 0) + 1
@@ -1682,6 +1714,45 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </template>
             </el-table-column>
             <template #empty><EmptyHint text="暂无项目" size="sm" /></template>
+          </el-table>
+        </el-tab-pane>
+
+        <!-- ==================== 🆕 #167 采购申请（仓库提 → 采购部处理）==================== -->
+        <el-tab-pane v-if="showPurchaseTab" name="preq" lazy>
+          <template #label>📥 采购申请<span v-if="incomingPending">（{{ incomingPending }}）</span></template>
+          <div class="filter-bar">
+            <el-button :icon="Refresh" size="small" @click="loadIncomingReqs">刷新</el-button>
+            <span class="muted small">仓库提交的采购申请汇到这里。核对后「已处理」（表示已按此下单）或「驳回」；仓库会收到通知。</span>
+          </div>
+          <el-table :data="incomingReqs" v-loading="incomingLoading" stripe size="small" max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="wrap-cells">
+            <el-table-column type="expand" width="36">
+              <template #default="{ row }">
+                <el-table :data="row.lines" size="small" border style="margin:6px 12px">
+                  <el-table-column type="index" label="#" width="44" />
+                  <el-table-column label="名称" prop="item_name" min-width="140" />
+                  <el-table-column label="规格" min-width="120"><template #default="{ row: l }">{{ l.spec || '—' }}</template></el-table-column>
+                  <el-table-column label="数量" width="90" align="right"><template #default="{ row: l }">{{ l.qty ?? '—' }}</template></el-table-column>
+                  <el-table-column label="项目" width="110"><template #default="{ row: l }">{{ l.project_code || '—' }}</template></el-table-column>
+                  <el-table-column label="备注" min-width="120"><template #default="{ row: l }">{{ l.notes || '—' }}</template></el-table-column>
+                </el-table>
+              </template>
+            </el-table-column>
+            <el-table-column label="申请编号" width="90"><template #default="{ row }">#{{ row.id }}</template></el-table-column>
+            <el-table-column label="申请人" width="90"><template #default="{ row }">{{ row.requester_name || '—' }}</template></el-table-column>
+            <el-table-column label="物料" min-width="220"><template #default="{ row }">{{ row.lines.map((l: any) => l.item_name).slice(0, 3).join('、') }}{{ row.lines.length > 3 ? ` 等${row.lines.length}项` : '' }}</template></el-table-column>
+            <el-table-column label="状态" width="90" align="center"><template #default="{ row }"><el-tag :type="preqStatusTag(row.status)" size="small">{{ PREQ_STATUS[row.status] || row.status }}</el-tag></template></el-table-column>
+            <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
+            <el-table-column label="操作" width="160" fixed="right">
+              <template #default="{ row }">
+                <template v-if="row.status === 'pending' && canWrite">
+                  <el-button size="small" type="primary" @click="handleIncoming(row)">已处理</el-button>
+                  <el-button size="small" type="danger" link @click="rejectIncoming(row)">驳回</el-button>
+                </template>
+                <span v-else-if="row.status === 'done'" class="muted small">{{ row.handler_name }} 已处理</span>
+                <span v-else-if="row.status === 'rejected'" class="danger small" :title="row.reject_reason || ''">已驳回</span>
+              </template>
+            </el-table-column>
+            <template #empty><EmptyHint text="暂无采购申请（仓库在仓库页「采购申请」tab 提交）" size="sm" /></template>
           </el-table>
         </el-tab-pane>
 

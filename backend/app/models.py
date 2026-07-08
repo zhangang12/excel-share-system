@@ -713,6 +713,37 @@ class PaymentRequestItem(Base):
     allocated_amount: Mapped[float] = mapped_column(default=0)
 
 
+class PurchaseRequest(Base):
+    """🆕 #167 仓库采购申请：仓库发起「需要采购什么」→ 流到采购部处理/下单。"""
+    __tablename__ = "purchase_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    requester_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/done/rejected
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    handled_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    handled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    requester: Mapped[Optional["User"]] = relationship(foreign_keys=[requester_id], lazy="joined")
+    handler: Mapped[Optional["User"]] = relationship(foreign_keys=[handled_by], lazy="joined")
+    lines: Mapped[list["PurchaseRequestLine"]] = relationship(
+        lazy="selectin", cascade="all, delete-orphan")
+
+
+class PurchaseRequestLine(Base):
+    """采购申请明细行（描述性：要买什么）。"""
+    __tablename__ = "purchase_request_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_requests.id", ondelete="CASCADE"), index=True)
+    item_name: Mapped[str] = mapped_column(String(128))
+    spec: Mapped[Optional[str]] = mapped_column(String(128))
+    qty: Mapped[Optional[float]] = mapped_column()
+    project_code: Mapped[Optional[str]] = mapped_column(String(64))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+
 # ==================== 🆕 OA 审批 ====================
 class Department(Base):
     """OA 部门字典（与角色分组独立、手动维护）。lead_role 设置后，持有该角色的人
