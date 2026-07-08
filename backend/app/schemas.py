@@ -313,7 +313,7 @@ class NextCodeOut(BaseModel):
 # ---------- 🆕 售后部 ----------
 class AfterSalesRow(BaseModel):
     id: int
-    project_id: int
+    project_id: Optional[int] = None   # #158：以往项目只填名称时为空
     kind: str = "aftersales"   # 🆕 需求一：aftersales 售后 / install 安装
     code: str
     name: str

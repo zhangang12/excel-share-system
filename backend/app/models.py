@@ -396,7 +396,9 @@ class WhTxn(Base):
 class AfterSales(Base):
     __tablename__ = "aftersales"
     id: Mapped[int] = mapped_column(primary_key=True)
-    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    # #158：以往项目(系统里没有的)允许只填名称→project_id 置空、project_name 存历史项目名
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), index=True)
+    project_name: Mapped[Optional[str]] = mapped_column(String(128))  # #158 历史项目名(project_id 为空时用)
     # 🆕 需求一：登记类型 aftersales 售后 / install 安装（同一流程、同一台账，费用口径「安装/售后费用」）
     kind: Mapped[str] = mapped_column(String(16), default="aftersales", index=True)
     problem: Mapped[str] = mapped_column(Text)
@@ -409,7 +411,7 @@ class AfterSales(Base):
     appr_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     reject_reason: Mapped[Optional[str]] = mapped_column(Text)  # 🆕 #98 售后驳回原因
 
-    project: Mapped["Project"] = relationship(lazy="joined")
+    project: Mapped[Optional["Project"]] = relationship(lazy="joined")
 
 
 # ---------- 🆕 生产问题反馈流（装配组→生产主管→设计师；§十四） ----------

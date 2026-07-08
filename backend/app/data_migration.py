@@ -34,7 +34,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("ship_prep_done",     "BOOLEAN DEFAULT FALSE"),  # 🆕 #5 设计部发货准备完成标记
     ],
     "aftersales": [("reject_reason", "TEXT"),
-                   ("kind", "VARCHAR(16) DEFAULT 'aftersales'")],  # 🆕 #98 驳回原因 + 需求一 登记类型(售后/安装)
+                   ("kind", "VARCHAR(16) DEFAULT 'aftersales'"),
+                   ("project_name", "VARCHAR(128)")],  # 🆕 #98 驳回原因 + 需求一 登记类型 + #158 历史项目名
     "suppliers": [("created_by", "INTEGER")],      # 🆕 需求五 建档采购员（谁建谁看）
     "user_feedback": [                             # 🆕 系统回信（处理意见回复）
         ("reply", "TEXT"),
@@ -89,6 +90,11 @@ _WIDEN_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "material_dict": [("dtype", "VARCHAR(32)")],
 }
 
+# #158：存量 PG 库把这些列的 NOT NULL 去掉（SQLite 无需，create_all 已按模型建为可空）。幂等。
+_DROP_NOTNULL: dict[str, list[str]] = {
+    "aftersales": ["project_id"],   # 以往项目允许只填名称，project_id 置空
+}
+
 
 async def ensure_schema_columns(engine: AsyncEngine) -> int:
     """启动时在 create_all 之后、seed 之前运行：给存量表补新增列/放宽列类型。幂等。"""
@@ -121,6 +127,15 @@ async def ensure_schema_columns(engine: AsyncEngine) -> int:
                         continue
                     await conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {col} TYPE {new_type}"))
                     log.info("[ensure_schema_columns] %s.%s 类型已放宽为 %s", table, col, new_type)
+            for table, cols in _DROP_NOTNULL.items():
+                existing = await conn.run_sync(_existing_cols, table)
+                if not existing:
+                    continue
+                for col in cols:
+                    if col not in existing:
+                        continue
+                    await conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {col} DROP NOT NULL"))
+                    log.info("[ensure_schema_columns] %s.%s 已去除 NOT NULL", table, col)
     return added
 
 

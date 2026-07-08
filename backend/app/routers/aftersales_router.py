@@ -40,7 +40,9 @@ async def _rows(db: AsyncSession, items: list[models.AfterSales]) -> list[schema
         p = a.project
         out.append(schemas.AfterSalesRow(
             id=a.id, project_id=a.project_id, kind=a.kind or "aftersales",
-            code=p.code if p else "", name=p.name if p else "",
+            # #158：以往项目只填了名称(project_id 为空)时，用 project_name 展示
+            code=p.code if p else ("历史" if a.project_name else ""),
+            name=p.name if p else (a.project_name or ""),
             problem=a.problem, cost=a.cost or 0, status=a.status,
             mat_file_id=a.mat_file_id, mat_file_name=names.get(a.mat_file_id),
             created_by_name=unames.get(a.created_by), created_at=a.created_at,
@@ -85,7 +87,8 @@ async def project_options(
 
 @router.post("", response_model=schemas.Msg)
 async def create_aftersales(
-    project_id: int = Form(...),
+    project_id: Optional[int] = Form(None),
+    project_name: Optional[str] = Form(None),   # #158：以往项目(系统里没有的)只填名称
     problem: str = Form(""),
     cost: float = Form(...),
     kind: str = Form("aftersales"),   # 🆕 需求一：aftersales 售后 / install 安装
@@ -93,31 +96,39 @@ async def create_aftersales(
     current: models.User = Depends(require_roles("as_worker")),
     db: AsyncSession = Depends(get_db),
 ):
-    """售后/安装登记：项目+问题(安装可空)+费用+物料清单/安装清单 → 待审批，推售后主管。"""
+    """售后/安装登记：项目+问题(安装可空)+费用+物料清单/安装清单 → 待审批，推售后主管。
+    项目二选一：project_id(系统里的项目) 或 project_name(以往项目，系统里没有，只填名称)。"""
     kind = kind if kind in ("aftersales", "install") else "aftersales"
     label = "安装" if kind == "install" else "售后"
     if kind != "install" and not problem.strip():
         raise HTTPException(400, "请填写售后问题")
     if cost <= 0:
         raise HTTPException(400, f"请填写{label}费用")
-    r = await db.execute(select(models.Project).where(
-        models.Project.id == project_id, models.Project.is_deleted == False))  # noqa: E712
-    p = r.scalar_one_or_none()
-    if not p:
-        raise HTTPException(404, "项目不存在")
-    a = models.AfterSales(project_id=project_id, kind=kind,
+    p = None
+    hist_name = (project_name or "").strip()
+    if project_id:
+        r = await db.execute(select(models.Project).where(
+            models.Project.id == project_id, models.Project.is_deleted == False))  # noqa: E712
+        p = r.scalar_one_or_none()
+        if not p:
+            raise HTTPException(404, "项目不存在")
+        hist_name = None            # 命中系统项目就不存历史名，避免两边不一致
+    elif not hist_name:
+        raise HTTPException(400, "请选择项目或填写以往项目名称")
+    a = models.AfterSales(project_id=(p.id if p else None), project_name=hist_name, kind=kind,
                           problem=problem.strip() or ("安装登记" if kind == "install" else ""),
                           cost=cost, status="pending", created_by=current.id)
     db.add(a)
     await db.flush()
     biz = "install_mat" if kind == "install" else "aftersales_mat"
     att = await save_upload(db, file, biz_type=biz, biz_id=a.id,
-                            project_id=project_id, user=current)
+                            project_id=(p.id if p else None), user=current)
     a.mat_file_id = att.id
     await db.commit()
     summary = (problem.strip()[:20] + "…") if problem.strip() else "安装登记"
+    disp = f"{p.code} {p.name}" if p else f"[以往]{hist_name}"
     await push_message(db, to_role="as_lead", kind="info",
-                       text=f"【{label}待审批】{p.code} {p.name}：{summary} 费用 ¥{cost:,.0f}",
+                       text=f"【{label}待审批】{disp}：{summary} 费用 ¥{cost:,.0f}",
                        biz_type="aftersales", biz_id=a.id)
     await write_audit(db, user=current, action="create", target_type="aftersales", target_id=a.id)
     return schemas.Msg(message=f"已登记，等待售后主管审批")
@@ -140,6 +151,7 @@ async def approve(
     a.appr_at = datetime.now(timezone.utc)
     await db.commit()
     p = a.project
+    disp = f"{p.code} {p.name}" if p else f"[以往]{a.project_name or ''}"  # #158 历史项目无 project
     label = "安装" if (a.kind or "aftersales") == "install" else "售后"
     mat = ""
     if a.mat_file_id:
@@ -148,7 +160,7 @@ async def approve(
         if m:
             mat = f"，{'安装' if label == '安装' else '物料'}清单：{m.name}"
     await push_message(db, to_role="finance", kind="info",
-                       text=f"【{label}费用同步】{p.code} {p.name} {label}费用 ¥{a.cost:,.0f} 已审批{mat}",
+                       text=f"【{label}费用同步】{disp} {label}费用 ¥{a.cost:,.0f} 已审批{mat}",
                        biz_type="aftersales", biz_id=a.id)
     await write_audit(db, user=current, action="approve", target_type="aftersales", target_id=aid)
     return schemas.Msg(message=f"已通过，{label}费用/清单已同步财务部")
@@ -172,8 +184,8 @@ async def reject(
     a.appr_at = datetime.now(timezone.utc)
     a.reject_reason = (reason or "").strip() or None  # 🆕 #98
     # 🆕 #97/#98 通知登记人(含原因)——commit 前捕获关系值避免 greenlet 失效
-    p_code = a.project.code if a.project else f"#{a.project_id}"
-    p_name = a.project.name if a.project else ""
+    p_code = a.project.code if a.project else ("[以往]" if a.project_name else f"#{a.project_id}")
+    p_name = a.project.name if a.project else (a.project_name or "")
     creator_id, problem, rr = a.created_by, a.problem, a.reject_reason
     await db.commit()
     if creator_id:
@@ -198,8 +210,8 @@ async def finance_void(
         raise HTTPException(404, "记录不存在")
     if a.status != "approved":
         raise HTTPException(400, "只能作废已审批的售后费用记录")
-    p_code = a.project.code if a.project else f"#{a.project_id}"
-    p_name = a.project.name if a.project else ""
+    p_code = a.project.code if a.project else ("[以往]" if a.project_name else f"#{a.project_id}")
+    p_name = a.project.name if a.project else (a.project_name or "")
     problem = a.problem
     creator_id = a.created_by
     a.status = "pending"
@@ -229,7 +241,7 @@ async def delete_aftersale(
     if not a:
         raise HTTPException(404, "记录不存在")
     # a.project 用 joined 关系，即使项目已软删/已被硬删也能取到（软删）或为 None（硬删）
-    p_code = a.project.code if a.project else f"#{a.project_id}"
+    p_code = a.project.code if a.project else ("[以往]" if a.project_name else f"#{a.project_id}")
     label = "安装" if (a.kind or "aftersales") == "install" else "售后"
     # 🆕 需求八：先把 mat_file_id 置 NULL 并 flush 解除外键引用，再删附件——
     # 否则 Postgres 下"删附件时 aftersales 仍引用它"会触发外键约束(关联的数据不存在或被引用)，

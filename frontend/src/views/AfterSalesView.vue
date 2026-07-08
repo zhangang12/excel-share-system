@@ -45,25 +45,28 @@ const STATUS_VARIANT: Record<string, 'warn' | 'success' | 'danger' | 'muted'> = 
 
 // 登记（售后 / 安装 复用同一弹窗，kind 区分）
 const regVisible = ref(false)
-const regForm = reactive({ project_id: undefined as number | undefined, problem: '', cost: 0, file: null as File | null, kind: 'aftersales' })
+// #158：projectVal 可能是 number(系统项目 id) 或 string(以往项目名，allow-create 手输)
+const regForm = reactive({ projectVal: undefined as number | string | undefined, problem: '', cost: 0, file: null as File | null, kind: 'aftersales' })
 const isInstall = computed(() => regForm.kind === 'install')
 const projOptions = ref<{ id: number; code: string; name: string }[]>([])
 const submitting = ref(false)
 async function openReg(kind: 'aftersales' | 'install' = 'aftersales') {
   projOptions.value = (await http.get<{ id: number; code: string; name: string }[]>('/aftersales/projects')).data
-  regForm.project_id = undefined; regForm.problem = ''; regForm.cost = 0; regForm.file = null; regForm.kind = kind
+  regForm.projectVal = undefined; regForm.problem = ''; regForm.cost = 0; regForm.file = null; regForm.kind = kind
   regVisible.value = true
 }
 async function submitReg() {
   const label = isInstall.value ? '安装' : '售后'
-  if (!regForm.project_id) { ElMessage.warning('请选择项目'); return }
+  if (regForm.projectVal === undefined || regForm.projectVal === '') { ElMessage.warning('请选择项目或填写以往项目名称'); return }
   if (!isInstall.value && !regForm.problem.trim()) { ElMessage.warning('请填写售后问题'); return }
   if (!regForm.cost) { ElMessage.warning(`请填写${label}费用`); return }
   if (!regForm.file) { ElMessage.warning(isInstall.value ? '请上传安装清单' : '请上传售后物料清单'); return }
   submitting.value = true
   try {
     const fd = new FormData()
-    fd.append('project_id', String(regForm.project_id))
+    // 数字=系统里的项目 id；字符串=以往项目名(系统里没有)
+    if (typeof regForm.projectVal === 'number') fd.append('project_id', String(regForm.projectVal))
+    else fd.append('project_name', String(regForm.projectVal).trim())
     fd.append('problem', regForm.problem)
     fd.append('cost', String(regForm.cost))
     fd.append('kind', regForm.kind)
@@ -199,7 +202,8 @@ async function approve(r: Row, ok: boolean) {
                   : '选项目 + 填问题 + 填费用 + 上传物料清单，提交后待审批，售后主管通过后自动同步财务部'" />
       <el-form label-position="top">
         <el-form-item label="项目" required>
-          <el-select v-model="regForm.project_id" filterable placeholder="选择项目" style="width: 100%">
+          <el-select v-model="regForm.projectVal" filterable allow-create default-first-option
+                     placeholder="选择项目；以往项目(系统里没有)可直接输入名称" style="width: 100%">
             <el-option v-for="p in projOptions" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
           </el-select>
         </el-form-item>
