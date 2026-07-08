@@ -2,7 +2,7 @@
 // 采购管理（含采购部）：采购部 / 采购明细 / 供应商账目 / 汇总报表
 import { ref, computed, onMounted, onBeforeUnmount, reactive, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, ArrowLeft, Search, Tickets, EditPen, Setting, Collection, Box } from '@element-plus/icons-vue'
+import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, ArrowLeft, Search, Tickets, EditPen, Setting, Collection, Box, Lock } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
@@ -335,6 +335,8 @@ const filterProjectCode = ref('')
 const filterMonth = ref('')
 const filterInvoiceStatus = ref('')
 const filterCategory = ref('')   // 🆕 按供应商分类筛选
+const itemSheetType = ref('')    // 🆕 ④ 采购明细按清单类型分 tab('' = 全部, 'loose' = 散单)
+function onItemSheetTab() { page.value = 1; loadItems() }
 
 // 🆕 服务端分页（总条数用 summary.count，随筛选联动）
 const page = ref(1)
@@ -759,14 +761,25 @@ function importItems() {
 // 🆕 从清单下单：项目标准件清单 → 筛选 → 选供应商 → 生成采购单
 interface PurchasableRow {
   sheet_id: number; record_id: number; item_name: string; spec?: string | null
-  brand?: string | null
+  brand?: string | null; material?: string | null
   qty?: number | null; stock: number; suggest_purchase: number
   notes?: string | null; status: string
+  sheet_key?: string | null; project_id?: number | null   // 🆕 跨项目待下单聚合
+  project_code?: string | null; project_name?: string | null
   _checked: boolean; _price: number | null; _buyqty: number | null
   _supplier_id: number | ''; _brand: string   // 🆕 逐行选供应商/品牌
   _payment_method: string   // 🆕 逐行付款方式（不同批次可能不一样，不跟供应商绑死）
   _prepay_ratio: number | null   // 🆕 逐行预付比例(%)，仅现金预付/对公预付时有意义
 }
+// 🆕 ① 清单类型描述符：驱动列的显示名/显隐（治"每类清单列名不一样"）。前后端一致。
+const SHEET_META: Record<string, { label: string; nameLabel: string; specLabel: string; hasBrand: boolean; hasQty: boolean; hasMaterial: boolean }> = {
+  standard:  { label: '标准件', nameLabel: '名称',     specLabel: '规格型号', hasBrand: true,  hasQty: true,  hasMaterial: false },
+  elec_po:   { label: '电工',   nameLabel: '名称',     specLabel: '规格型号', hasBrand: true,  hasQty: true,  hasMaterial: false },
+  material:  { label: '不锈钢', nameLabel: '材料类别', specLabel: '规格型号', hasBrand: false, hasQty: true,  hasMaterial: true  },
+  outsource: { label: '外协',   nameLabel: '名称',     specLabel: '图纸名称', hasBrand: false, hasQty: false, hasMaterial: false },
+  laser:     { label: '激光',   nameLabel: '名称',     specLabel: '图纸名称', hasBrand: false, hasQty: false, hasMaterial: false },
+}
+const sheetMeta = (k?: string | null) => SHEET_META[k || ''] || SHEET_META.standard
 const listOrderVisible = ref(false)
 const listOrderSaving = ref(false)
 const purchasableLoading = ref(false)
@@ -1035,6 +1048,131 @@ async function submitKitFromList() {
   } catch { /* handled */ } finally { listOrderSaving.value = false }
 }
 
+// ==================== 🆕 ③ 待下单常驻工作区（二级 tab 按清单类型 · 跨项目未下单）====================
+const pendingActiveSheet = ref<string>('')
+const pendingCache = ref<Record<string, PurchasableRow[]>>({})
+const pendingLoading = ref(false)
+const pendingMode = ref<'normal' | 'kit'>('normal')
+const pendingKitSet = reactive({
+  supplier_id: '' as number | '', kit_name: '',
+  kit_qty: 1 as number | null, kit_total: null as number | null,
+  payment_method: '', prepay_ratio: null as number | null,
+})
+const pendingKitUnitPrice = computed(() => {
+  const q = pendingKitSet.kit_qty || 0, t = pendingKitSet.kit_total || 0
+  return q > 0 ? Number((t / q).toFixed(4)) : 0
+})
+function mkPendingRow(x: any): PurchasableRow {
+  return {
+    ...x,
+    _checked: false, _price: null,
+    _buyqty: (x.suggest_purchase || 0) > 0 ? x.suggest_purchase : (x.qty ?? null),
+    _supplier_id: '' as number | '', _brand: x.brand || '', _payment_method: '', _prepay_ratio: null,
+  }
+}
+async function loadPendingSheet(sheet: string) {
+  try {
+    const r = await http.get<any[]>('/purchase-mgmt/purchasable-pending', { params: { sheet } })
+    pendingCache.value[sheet] = r.data.map(mkPendingRow)
+  } catch { pendingCache.value[sheet] = [] }
+}
+async function loadPending() {
+  pendingLoading.value = true
+  try {
+    await Promise.all(availableSheets.value.map(t => loadPendingSheet(t.key)))
+    if (!pendingActiveSheet.value || !availableSheets.value.some(t => t.key === pendingActiveSheet.value)) {
+      const firstWithData = availableSheets.value.find(t => (pendingCache.value[t.key] || []).length)
+      pendingActiveSheet.value = (firstWithData || availableSheets.value[0])?.key || 'standard'
+    }
+  } finally { pendingLoading.value = false }
+}
+const pendingCounts = computed<Record<string, number>>(() => {
+  const c: Record<string, number> = {}
+  for (const t of availableSheets.value) c[t.key] = (pendingCache.value[t.key] || []).length
+  return c
+})
+const pendingTotal = computed(() => Object.values(pendingCounts.value).reduce((a, b) => a + b, 0))
+const pendingRows = computed<PurchasableRow[]>(() => pendingCache.value[pendingActiveSheet.value] || [])
+const pendingSel = computed(() => pendingRows.value.filter(r => r._checked))
+const pendingMeta = computed(() => sheetMeta(pendingActiveSheet.value))
+function onPendingSheetTab() { pendingMode.value = 'normal'; Object.assign(pendingKitSet, { supplier_id: '', kit_name: '', kit_qty: 1, kit_total: null, payment_method: '', prepay_ratio: null }) }
+const pendingAllChecked = computed(() => pendingRows.value.length > 0 && pendingRows.value.every(r => r._checked))
+const pendingSomeChecked = computed(() => pendingRows.value.some(r => r._checked) && !pendingAllChecked.value)
+function togglePendingAll(v: any) { pendingRows.value.forEach(r => { r._checked = !!v }) }
+
+// 生成采购单：按(供应商, 项目)分组，一组一张采购单（跨项目、跨行都支持）
+async function submitPendingOrder() {
+  const sel = pendingSel.value
+  if (!sel.length) { ElMessage.error('请勾选要下单的清单行'); return }
+  const badQty = sel.filter(r => !((r._buyqty ?? 0) > 0))
+  if (badQty.length) { ElMessage.error(`有 ${badQty.length} 行采购数量未填或为0`); return }
+  const noSup = sel.filter(r => !r._supplier_id)
+  if (noSup.length) { ElMessage.error(`有 ${noSup.length} 行未选供应商，请逐行选好`); return }
+  const groups = new Map<string, PurchasableRow[]>()
+  for (const r of sel) {
+    const k = `${r._supplier_id}__${r.project_code || ''}`
+    if (!groups.has(k)) groups.set(k, [])
+    groups.get(k)!.push(r)
+  }
+  try {
+    await ElMessageBox.confirm(`将按「供应商×项目」拆成 ${groups.size} 张采购单，共 ${sel.length} 行。确认生成？`,
+      '生成采购单', { type: 'info', confirmButtonText: '生成', cancelButtonText: '取消' })
+  } catch { return }
+  pendingLoading.value = true
+  try {
+    let firstPo: string | undefined
+    for (const rows of groups.values()) {
+      const resp = await http.post<PurchaseItemOut[]>('/purchase-mgmt/orders/from-list', {
+        supplier_id: rows[0]._supplier_id,
+        delivery_date: new Date().toISOString().slice(0, 10),
+        project_code: rows[0].project_code || null,
+        lines: rows.map(r => ({
+          source_sheet_id: r.sheet_id, source_record_id: r.record_id,
+          item_name: r.item_name, spec: r.spec, brand: r._brand || null,
+          payment_method: r._payment_method || null,
+          prepay_ratio: isPrepayMethod(r._payment_method) ? r._prepay_ratio : null,
+          qty: r._buyqty ?? r.suggest_purchase ?? r.qty, unit_price: r._price,
+        })),
+      })
+      if (!firstPo) firstPo = resp.data[0]?.po_no || undefined
+    }
+    ElMessage.success(`已生成 ${groups.size} 张采购单（共 ${sel.length} 行），已回写清单`)
+    await Promise.all([loadPending(), loadItems()])
+    if (groups.size === 1) offerPrint(firstPo)
+  } catch { /* handled */ } finally { pendingLoading.value = false }
+}
+
+// 打包成套：勾选行须同一项目（一套=一台设备一个项目），套级供应商/套名/套数/套总价
+async function submitPendingKit() {
+  const sel = pendingSel.value
+  if (!sel.length) { ElMessage.error('请勾选要打包成套的清单零件'); return }
+  const projs = new Set(sel.map(r => r.project_code || ''))
+  if (projs.size > 1) { ElMessage.error('打包成套需同一项目的零件（一套=一台设备），请只勾选一个项目'); return }
+  if (!pendingKitSet.supplier_id) { ElMessage.error('请选择供应商（一套=同一供应商）'); return }
+  if (!pendingKitSet.kit_name.trim()) { ElMessage.error('请填写套名称'); return }
+  if (!pendingKitSet.kit_qty || pendingKitSet.kit_qty <= 0) { ElMessage.error('请填写套数(>0)'); return }
+  if (pendingKitSet.kit_total == null || pendingKitSet.kit_total < 0) { ElMessage.error('请填写套总价'); return }
+  pendingLoading.value = true
+  try {
+    const resp = await http.post<PurchaseItemOut>('/purchase-mgmt/orders/kit-from-list', {
+      supplier_id: pendingKitSet.supplier_id,
+      delivery_date: new Date().toISOString().slice(0, 10),
+      project_code: sel[0].project_code || null,
+      payment_method: pendingKitSet.payment_method || null,
+      prepay_ratio: isPrepayMethod(pendingKitSet.payment_method) ? pendingKitSet.prepay_ratio : null,
+      source_sheet_id: sel[0]?.sheet_id ?? null,
+      kit_name: pendingKitSet.kit_name.trim(),
+      kit_qty: pendingKitSet.kit_qty,
+      kit_total: pendingKitSet.kit_total,
+      parts: sel.map(r => ({ source_record_id: r.record_id, name: r.item_name, spec: r.spec || null, qty: r._buyqty ?? r.qty ?? null })),
+    })
+    ElMessage.success(`成套采购单已生成（${pendingKitSet.kit_qty} 套 · ${sel.length} 项零件），已回写清单`)
+    onPendingSheetTab()
+    await Promise.all([loadPending(), loadItems()])
+    offerPrint(resp.data?.po_no)
+  } catch { /* handled */ } finally { pendingLoading.value = false }
+}
+
 const supplierDialogVisible = ref(false)
 const editingSupplier = ref<SupplierOut | null>(null)
 const supplierSaving = ref(false)
@@ -1088,6 +1226,7 @@ async function loadItems() {
     if (filterMonth.value) fparams.month = filterMonth.value
     if (filterInvoiceStatus.value) fparams.invoice_status = filterInvoiceStatus.value
     if (filterCategory.value) fparams.category = filterCategory.value
+    if (itemSheetType.value) fparams.sheet_type = itemSheetType.value
     const [ir, sr] = await Promise.all([
       http.get<PurchaseItemOut[]>('/purchase-mgmt/items', {
         params: { ...fparams, page: String(page.value), page_size: String(pageSize.value) } }),
@@ -1156,6 +1295,7 @@ onMounted(async () => {
 
 async function onTabChange(name: string) {
   if (name === 'purchase') await loadPurchaseRows()
+  else if (name === 'pending') { await loadSuppliers(); await loadPending() }
   else if (name === 'items') await loadItems()
   else if (name === 'statements') { await loadSuppliers(); await loadStatements() }
   else if (name === 'payreq') await loadPayReqs()
@@ -1639,6 +1779,103 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-table>
         </el-tab-pane>
 
+        <!-- ==================== 🆕 待下单工作区（二级 tab 按清单类型 · 跨项目未下单）==================== -->
+        <el-tab-pane v-if="showPurchaseTab" name="pending" lazy>
+          <template #label>📝 待下单<span v-if="pendingTotal">（{{ pendingTotal }}）</span></template>
+          <EmptyHint v-if="!canWrite" text="仅采购角色可从清单下单" :icon="Lock" />
+          <template v-else>
+            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+              <el-radio-group v-model="pendingMode" size="small">
+                <el-radio-button value="normal">普通下单</el-radio-button>
+                <el-radio-button value="kit">打包成套</el-radio-button>
+              </el-radio-group>
+              <el-button :icon="Refresh" size="small" @click="loadPending" :loading="pendingLoading">刷新</el-button>
+              <span class="muted small">按清单类型分二级 tab（只显示你负责的），列出所有进行中项目里**未下单**的零件。勾选后「生成采购单」（按供应商×项目自动拆单）或「打包成套」（同一项目一组零件打成一套）。</span>
+            </div>
+            <el-tabs v-model="pendingActiveSheet" @tab-change="onPendingSheetTab" type="card" class="pending-subtabs">
+              <el-tab-pane v-for="t in availableSheets" :key="t.key" :name="t.key">
+                <template #label>{{ sheetMeta(t.key).label }}<span v-if="pendingCounts[t.key]">（{{ pendingCounts[t.key] }}）</span></template>
+              </el-tab-pane>
+            </el-tabs>
+
+            <!-- 成套模式：套级信息 -->
+            <el-form v-if="pendingMode === 'kit'" :model="pendingKitSet" label-position="top" class="order-form" style="background:var(--el-fill-color-light);padding:10px 12px;border-radius:8px;margin:6px 0">
+              <el-row :gutter="14">
+                <el-col :xs="24" :sm="8" :md="6">
+                  <el-form-item label="供应商 *（一套同一家）">
+                    <el-select v-model="pendingKitSet.supplier_id" filterable placeholder="选择供应商" style="width:100%">
+                      <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="8" :md="6"><el-form-item label="套名称 *"><el-input v-model="pendingKitSet.kit_name" placeholder="如：100L均质机外协件一套" /></el-form-item></el-col>
+                <el-col :xs="8" :sm="4" :md="3"><el-form-item label="套数 *"><el-input-number v-model="pendingKitSet.kit_qty" :min="0" :precision="2" :controls="false" style="width:100%" /></el-form-item></el-col>
+                <el-col :xs="8" :sm="4" :md="4"><el-form-item label="套总价 *"><el-input-number v-model="pendingKitSet.kit_total" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="整套总金额" /></el-form-item></el-col>
+                <el-col :xs="8" :sm="6" :md="5"><el-form-item label="套单价（自动）"><el-input :value="fmtMoney(pendingKitUnitPrice)" disabled /></el-form-item></el-col>
+                <el-col :xs="12" :sm="8" :md="6">
+                  <el-form-item label="付款方式">
+                    <el-select v-model="pendingKitSet.payment_method" clearable placeholder="选填" style="width:100%">
+                      <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col v-if="isPrepayMethod(pendingKitSet.payment_method)" :xs="12" :sm="8" :md="6"><el-form-item label="预付比例(%)"><el-input-number v-model="pendingKitSet.prepay_ratio" :min="0" :max="100" :controls="false" style="width:100%" /></el-form-item></el-col>
+              </el-row>
+            </el-form>
+
+            <el-table :data="pendingRows" v-loading="pendingLoading" size="small" border stripe
+                      :empty-text="pendingLoading ? '加载中…' : '该类型暂无未下单零件'"
+                      max-height="calc(100vh - 380px)" class="wrap-cells">
+              <el-table-column width="46" align="center" fixed>
+                <template #header><el-checkbox :model-value="pendingAllChecked" :indeterminate="pendingSomeChecked" @change="togglePendingAll" /></template>
+                <template #default="{ row }"><el-checkbox v-model="row._checked" /></template>
+              </el-table-column>
+              <el-table-column label="项目号" width="110" fixed><template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template></el-table-column>
+              <el-table-column :label="pendingMeta.nameLabel" min-width="150" prop="item_name" fixed show-overflow-tooltip />
+              <el-table-column :label="pendingMeta.specLabel" min-width="130" show-overflow-tooltip><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
+              <el-table-column v-if="pendingMeta.hasMaterial" label="材质" width="90"><template #default="{ row }">{{ row.material || '—' }}</template></el-table-column>
+              <el-table-column v-if="pendingMeta.hasBrand && pendingMode !== 'kit'" label="品牌" width="118">
+                <template #default="{ row }">
+                  <el-select v-model="row._brand" filterable allow-create clearable default-first-option placeholder="选/填" size="small" style="width:100%" @change="row._checked = true">
+                    <el-option v-for="b in brandOptions" :key="b" :label="b" :value="b" />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="pendingMeta.hasQty" label="需求量" width="70" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
+              <el-table-column v-if="pendingMeta.hasQty" label="现有库存" width="78" align="right"><template #default="{ row }"><span :class="{ 'stock-has': row.stock > 0 }">{{ row.stock }}</span></template></el-table-column>
+              <el-table-column v-if="pendingMeta.hasQty" label="建议采购" width="80" align="right"><template #default="{ row }"><b :class="row.suggest_purchase > 0 ? 'sugg-buy' : 'sugg-none'">{{ row.suggest_purchase }}</b></template></el-table-column>
+              <el-table-column :label="pendingMode === 'kit' ? '每套数量' : '采购数量'" width="104">
+                <template #default="{ row }"><el-input-number v-model="row._buyqty" :min="0" :controls="false" style="width:100%" @change="row._checked = true" /></template>
+              </el-table-column>
+              <el-table-column v-if="pendingMode !== 'kit'" label="单价(选填)" width="104">
+                <template #default="{ row }"><el-input-number v-model="row._price" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="后填留空" @change="row._checked = true" /></template>
+              </el-table-column>
+              <el-table-column v-if="pendingMode !== 'kit'" label="供应商 *" width="150">
+                <template #default="{ row }">
+                  <el-select v-model="row._supplier_id" filterable clearable placeholder="必选" size="small" :class="{ 'sup-missing': row._checked && !row._supplier_id }" style="width:100%" @change="row._checked = true">
+                    <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="pendingMode !== 'kit'" label="付款方式" width="100">
+                <template #default="{ row }">
+                  <el-select v-model="row._payment_method" clearable filterable placeholder="选择" size="small" style="width:100%" @change="row._checked = true">
+                    <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="80" align="center"><template #default="{ row }"><el-tag size="small" :type="listStatusTag(row.status)">{{ row.status }}</el-tag></template></el-table-column>
+            </el-table>
+            <div class="listorder-footer" style="margin-top:10px">
+              <span class="muted small">已勾选 <b>{{ pendingSel.length }}</b> 项<span v-if="pendingMode === 'kit'">，打包成 <b>{{ pendingKitSet.kit_qty || 0 }}</b> 套（须同一项目）</span></span>
+              <span>
+                <el-button v-if="pendingMode === 'kit'" type="primary" :loading="pendingLoading" :disabled="!pendingSel.length" @click="submitPendingKit">打包成套下单（{{ pendingSel.length }} 项）</el-button>
+                <el-button v-else type="primary" :loading="pendingLoading" :disabled="!pendingSel.length" @click="submitPendingOrder">生成采购单（{{ pendingSel.length }} 行）</el-button>
+              </span>
+            </div>
+          </template>
+        </el-tab-pane>
+
         <!-- ==================== Tab 1: 采购明细 ==================== -->
         <el-tab-pane label="📦 采购明细" name="items" lazy>
           <div class="filter-bar">
@@ -1693,6 +1930,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-button size="small" link @click="clearSelection">取消选择</el-button>
           </div>
 
+          <!-- 🆕 ④ 按清单类型分二级 tab（列标签随类型变；散单=无来源清单）-->
+          <el-tabs v-model="itemSheetType" @tab-change="onItemSheetTab" class="pending-subtabs" style="margin-bottom:6px">
+            <el-tab-pane label="全部" name="" />
+            <el-tab-pane v-for="t in availableSheets" :key="t.key" :label="sheetMeta(t.key).label" :name="t.key" />
+            <el-tab-pane label="散单" name="loose" />
+          </el-tabs>
+
           <el-table
             ref="itemsTableRef"
             :data="groupedItems" stripe
@@ -1734,7 +1978,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column prop="item_name" label="名称" min-width="130">
+            <el-table-column prop="item_name" :label="itemSheetType && itemSheetType !== 'loose' ? sheetMeta(itemSheetType).nameLabel : '名称'" min-width="130">
               <template #default="{ row }">
                 <b v-if="row._isGroup">共 {{ row._count }} 个零件</b>
                 <template v-else>
@@ -1756,7 +2000,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 </template>
               </template>
             </el-table-column>
-            <el-table-column prop="spec" label="规格" min-width="120">
+            <el-table-column prop="spec" :label="itemSheetType && itemSheetType !== 'loose' ? sheetMeta(itemSheetType).specLabel : '规格'" min-width="120">
               <template #default="{ row }">{{ row.spec || '—' }}</template>
             </el-table-column>
             <el-table-column prop="brand" label="品牌" width="88">

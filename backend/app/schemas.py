@@ -1037,11 +1037,17 @@ class PurchasableRow(BaseModel):
     item_name: str
     spec: Optional[str] = None
     brand: Optional[str] = None          # 🆕 清单里带出的品牌（下单时可改）
+    material: Optional[str] = None       # 🆕 材质（不锈钢下料单专有列，单独成列不再塞备注）
     qty: Optional[float] = None          # 清单需求量
     stock: float = 0                      # 现有库存（按名称+规格匹配物料）
     suggest_purchase: float = 0           # 建议采购量 = 需求 - 库存
     notes: Optional[str] = None
     status: str = "未下单"          # 未下单 / 已下单 / 已到货
+    # 🆕 跨项目待下单聚合用（单项目 purchasable 不填）
+    sheet_key: Optional[str] = None      # 清单类型 key(standard/elec_po/...)
+    project_id: Optional[int] = None
+    project_code: Optional[str] = None
+    project_name: Optional[str] = None
 
 
 class OrderFromListLine(BaseModel):

@@ -261,6 +261,19 @@ async def get_opening_balance(
 
 # ==================== 采购明细 ====================
 
+def _apply_sheet_type_filter(stmt, sheet_type: Optional[str]):
+    """🆕 ④ 采购明细按清单类型过滤：source_sheet_id 的来源表名匹配该类型；'loose'=散单(无来源)。"""
+    if not sheet_type:
+        return stmt
+    if sheet_type == "loose":
+        return stmt.where(models.PurchaseItem.source_sheet_id.is_(None))
+    conf = _PURCHASABLE_SHEETS.get(sheet_type)
+    if not conf:
+        return stmt
+    sub = select(models.Datasheet.id).where(models.Datasheet.name == conf[0])
+    return stmt.where(models.PurchaseItem.source_sheet_id.in_(sub))
+
+
 # 注意：summary 路由须在 /{iid} 之前，避免 "summary" 被解析为 id 参数
 @router.get("/items/summary", response_model=schemas.PurchaseItemSummary)
 async def items_summary(
@@ -268,6 +281,7 @@ async def items_summary(
     project_code: Optional[str] = Query(None),
     month: Optional[str] = Query(None),
     invoice_status: Optional[str] = Query(None),
+    sheet_type: Optional[str] = Query(None),
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -282,6 +296,7 @@ async def items_summary(
         stmt = stmt.where(models.PurchaseItem.delivery_date.startswith(month))
     if invoice_status:
         stmt = stmt.where(models.PurchaseItem.invoice_status == invoice_status)
+    stmt = _apply_sheet_type_filter(stmt, sheet_type)
     r = await db.execute(stmt)
     items = r.scalars().all()
     received = sum(i.received_amount or 0 for i in items)
@@ -303,6 +318,7 @@ async def list_items(
     month: Optional[str] = Query(None),
     invoice_status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    sheet_type: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=10, le=500),
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
@@ -323,6 +339,7 @@ async def list_items(
         stmt = stmt.where(models.PurchaseItem.delivery_date.startswith(month))
     if invoice_status:
         stmt = stmt.where(models.PurchaseItem.invoice_status == invoice_status)
+    stmt = _apply_sheet_type_filter(stmt, sheet_type)
     if category:
         # 🆕 按供应商分类筛选（明细本身无分类，取供应商分类）
         stmt = stmt.where(models.PurchaseItem.supplier_id.in_(
@@ -795,30 +812,43 @@ async def purchasable(
     allowed = _allowed_sheet_keys(current)
     if allowed is not None and sheet not in allowed:
         raise HTTPException(403, "你没有该清单的采购权限")
-    sheet_name, item_col, spec_col, qty_col, brand_col = conf[:5]
     r = await db.execute(select(models.Datasheet).where(
-        models.Datasheet.project_id == project_id, models.Datasheet.name == sheet_name))
+        models.Datasheet.project_id == project_id, models.Datasheet.name == conf[0]))
     ds = r.scalar_one_or_none()
     if not ds:
         return []
-    name2id = await _sheet_fieldmap(db, ds.id)
-    lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == ds.id))
-    by_rec: dict = {}
-    for pi in lr.scalars().all():
-        by_rec.setdefault(pi.source_record_id, []).append(pi)
-    # 🆕 现有库存：按 名称+规格 匹配物料主数据，汇总实时库存
+    stock_by_key = await _build_stock_by_key(db)
+    return await _purchasable_rows(db, ds, conf, sheet, stock_by_key)
+
+
+def _stock_key(nm, sp):
+    return ((nm or "").strip(), (sp or "").strip())
+
+
+async def _build_stock_by_key(db: AsyncSession) -> dict:
+    """按 名称+规格 汇总实时库存（供 purchasable 类端点复用；跨项目聚合时只算一次）。"""
     from .warehouse_router import _stock_map
-
-    def _k(nm, sp):
-        return ((nm or "").strip(), (sp or "").strip())
-
     mr = await db.execute(select(models.WhMaterial))
     mats = list(mr.scalars().all())
     stock_by_id = await _stock_map(db) if mats else {}
     stock_by_key: dict = {}
     for m in mats:
-        stock_by_key[_k(m.name, m.spec)] = stock_by_key.get(_k(m.name, m.spec), 0) + \
-            stock_by_id.get(m.id, m.init_stock or 0)
+        k = _stock_key(m.name, m.spec)
+        stock_by_key[k] = stock_by_key.get(k, 0) + stock_by_id.get(m.id, m.init_stock or 0)
+    return stock_by_key
+
+
+async def _purchasable_rows(db: AsyncSession, ds: models.Datasheet, conf: tuple, sheet_key: str,
+                            stock_by_key: dict, *, only_pending: bool = False,
+                            project_id: Optional[int] = None, project_code: Optional[str] = None,
+                            project_name: Optional[str] = None) -> list:
+    """某数据表的可采购行（归一化 5 类清单异构列 → 统一 PurchasableRow）。供单项目/跨项目端点复用。"""
+    item_col, spec_col, qty_col, brand_col = conf[1:5]
+    name2id = await _sheet_fieldmap(db, ds.id)
+    lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == ds.id))
+    by_rec: dict = {}
+    for pi in lr.scalars().all():
+        by_rec.setdefault(pi.source_record_id, []).append(pi)
     rr = await db.execute(select(models.Record).where(
         models.Record.datasheet_id == ds.id).order_by(models.Record.sort_order, models.Record.id))
     out = []
@@ -844,16 +874,56 @@ async def purchasable(
             status = "已到货"
         else:
             status = "已下单"
-        brand = gv(brand_col)
-        extra = "，".join(f"{c}:{gv(c)}" for c in ("材质",) if gv(c))
+        if only_pending and status != "未下单":
+            continue
         spec = gv(spec_col)
         qty = _num(gv(qty_col)) if qty_col else None
-        stock = round(stock_by_key.get(_k(name, spec), 0), 4)
+        stock = round(stock_by_key.get(_stock_key(name, spec), 0), 4)
         suggest = round(max(0.0, (qty or 0) - stock), 4) if qty is not None else 0
         out.append(schemas.PurchasableRow(
-            sheet_id=ds.id, record_id=rec.id, item_name=name, spec=spec, brand=brand,
-            qty=qty, stock=stock, suggest_purchase=suggest,
-            notes=(extra or gv("备注")), status=status))
+            sheet_id=ds.id, record_id=rec.id, item_name=name, spec=spec, brand=gv(brand_col),
+            material=gv("材质"), qty=qty, stock=stock, suggest_purchase=suggest,
+            notes=gv("备注"), status=status,
+            sheet_key=sheet_key, project_id=project_id,
+            project_code=project_code, project_name=project_name))
+    return out
+
+
+@router.get("/purchasable-pending", response_model=List[schemas.PurchasableRow])
+async def purchasable_pending(
+    sheet: str = Query(..., description="清单类型: standard/elec_po/material/outsource/laser"),
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 跨项目「待下单」：某清单类型下、所有进行中项目里**未下单**的可采购行（带项目号）。
+    「待下单」工作区二级 tab 的数据源；受 R4 分工权限约束（采购员只看自己负责的清单类型）。"""
+    conf = _PURCHASABLE_SHEETS.get(sheet)
+    if not conf:
+        raise HTTPException(400, "未知清单类型")
+    allowed = _allowed_sheet_keys(current)
+    if allowed is not None and sheet not in allowed:
+        raise HTTPException(403, "你没有该清单的采购权限")
+    # 进行中项目 + 该类型清单
+    pr = await db.execute(
+        select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
+        .order_by(models.Project.code.desc()))
+    projects = {p.id: p for p in pr.scalars().all()}
+    if not projects:
+        return []
+    dr = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.name == conf[0], models.Datasheet.project_id.in_(list(projects.keys()))))
+    sheets = list(dr.scalars().all())
+    if not sheets:
+        return []
+    stock_by_key = await _build_stock_by_key(db)
+    out: list = []
+    for ds in sheets:
+        p = projects.get(ds.project_id)
+        rows = await _purchasable_rows(
+            db, ds, conf, sheet, stock_by_key, only_pending=True,
+            project_id=ds.project_id, project_code=(p.code if p else None),
+            project_name=(p.name if p else None))
+        out.extend(rows)
     return out
 
 
