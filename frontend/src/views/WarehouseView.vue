@@ -277,14 +277,17 @@ async function loadReceiving() {
 
 // 🆕 #141 tab 待办数徽标：待收货 / 待备货（红色角标，进页面就能看到有几条待处理）
 const recvPendingCount = ref(0)
+const recvDoneCount = ref(0)   // 已收货条数
 const shipPendingCount = ref(0)
 async function loadBadgeCounts() {
   try {
-    const [recv, ship] = await Promise.all([
+    const [recv, done, ship] = await Promise.all([
       http.get<RecvItem[]>('/purchase-mgmt/receiving', { params: { received: false } }),
+      http.get<RecvItem[]>('/purchase-mgmt/receiving', { params: { received: true } }),
       whApi.shipListPending('requested'),
     ])
     recvPendingCount.value = recv.data.length
+    recvDoneCount.value = done.data.length
     shipPendingCount.value = ship.length
   } catch { /* 徽标非关键，失败忽略 */ }
 }
@@ -791,9 +794,9 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <EmptyHint v-if="!canWrite" text="仅仓库角色可确认收货" :icon="Lock" />
           <template v-else>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-              <el-radio-group v-model="recvReceived" @change="loadReceiving" size="small">
-                <el-radio-button :value="false">待收货</el-radio-button>
-                <el-radio-button :value="true">已收货</el-radio-button>
+              <el-radio-group v-model="recvReceived" @change="loadReceiving" size="large" class="recv-toggle">
+                <el-radio-button :value="false">待收货（{{ recvPendingCount }}）</el-radio-button>
+                <el-radio-button :value="true">已收货（{{ recvDoneCount }}）</el-radio-button>
               </el-radio-group>
               <el-select v-model="recvSupplier" placeholder="全部供应商" clearable style="width:180px" @change="loadReceiving">
                 <el-option v-for="s in recvSupplierOptions" :key="s.id" :label="s.name" :value="s.id" />
@@ -1212,6 +1215,8 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
 
 <style scoped>
 .bad { color: var(--danger); }
+/* 采购收货 待收货/已收货 切换：字体放大、加粗、加内边距（用户要求更醒目）*/
+.recv-toggle :deep(.el-radio-button__inner) { font-size: 15px; font-weight: 600; padding: 11px 22px; }
 /* 🆕 #141 tab 待办数红色角标 */
 .wh-tab-badge { display: inline-block; margin-left: 6px; min-width: 16px; height: 16px; line-height: 16px;
   padding: 0 4px; border-radius: 8px; background: var(--el-color-danger); color: #fff; font-size: 11px;
