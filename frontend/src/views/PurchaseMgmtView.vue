@@ -1583,15 +1583,21 @@ function stmtSummary() {
 // 🆕 请款记录页签：采购员能看到自己请款单的审批状态/驳回原因（后端已按角色过滤：普通采购员只看自己的）
 const payReqs = ref<PaymentRequestOut[]>([])
 const prLoading = ref(false)
-const prStatusFilter = ref('')
+const prStatusFilter = ref('')   // #165：改成显示条(客户端筛选),'' = 全部
 async function loadPayReqs() {
   prLoading.value = true
   try {
-    const params: Record<string, string> = {}
-    if (prStatusFilter.value) params.status = prStatusFilter.value
-    payReqs.value = (await http.get<PaymentRequestOut[]>('/purchase-mgmt/payment-requests', { params })).data
+    // #165：一次拉全，状态改成横向显示条+计数，客户端筛选
+    payReqs.value = (await http.get<PaymentRequestOut[]>('/purchase-mgmt/payment-requests')).data
   } finally { prLoading.value = false }
 }
+const prCounts = computed(() => {
+  const c: Record<string, number> = { '': payReqs.value.length, pending: 0, approved: 0, paid: 0, rejected: 0 }
+  for (const r of payReqs.value) c[r.status] = (c[r.status] || 0) + 1
+  return c
+})
+const filteredPayReqs = computed(() =>
+  prStatusFilter.value ? payReqs.value.filter(r => r.status === prStatusFilter.value) : payReqs.value)
 
 // 🆕 报表小表合计
 function trendSummary() {
@@ -1635,6 +1641,13 @@ function statusTag(s: string) {
   if (s === '已对账') return 'warning'
   return 'info'
 }
+// #163/#169：钱和票都对上（开票金额≥收货 且 已付≥收货）→ 对账状态显示「已清」
+function isCleared(row: any): boolean {
+  const r = row.received_amount || 0
+  return r > 0 && (row.invoice_amount || 0) >= r - 0.005 && (row.paid_amount || 0) >= r - 0.005
+}
+function reconcileText(row: any): string { return isCleared(row) ? '已清' : row.invoice_status }
+function reconcileTag(row: any) { return isCleared(row) ? 'success' : statusTag(row.invoice_status) }
 
 function prStatusTag(s: string) {
   if (s === 'paid') return 'success'
@@ -2032,7 +2045,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column label="对账状态" width="76">
               <template #default="{ row }">
-                <el-tag v-if="!row._isGroup" :type="statusTag(row.invoice_status)" size="small">{{ row.invoice_status }}</el-tag>
+                <el-tag v-if="!row._isGroup" :type="reconcileTag(row)" size="small">{{ reconcileText(row) }}</el-tag>
               </template>
             </el-table-column>
             <!-- 🆕 R6 自定义列 -->
@@ -2155,18 +2168,19 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <!-- ==================== Tab: 请款记录（采购员跟进审批进度） ==================== -->
         <el-tab-pane v-if="showPurchaseTab" label="💳 请款记录" name="payreq" lazy>
           <div class="filter-bar">
-            <el-select v-model="prStatusFilter" placeholder="全部状态" clearable style="width:130px" @change="loadPayReqs">
-              <el-option label="待审" value="pending" />
-              <el-option label="已批" value="approved" />
-              <el-option label="已驳" value="rejected" />
-              <el-option label="已付" value="paid" />
-            </el-select>
+            <el-radio-group v-model="prStatusFilter" size="small">
+              <el-radio-button value="">全部 ({{ prCounts[''] }})</el-radio-button>
+              <el-radio-button value="pending">待审 ({{ prCounts.pending }})</el-radio-button>
+              <el-radio-button value="approved">已批 ({{ prCounts.approved }})</el-radio-button>
+              <el-radio-button value="paid">已付 ({{ prCounts.paid }})</el-radio-button>
+              <el-radio-button value="rejected">已驳 ({{ prCounts.rejected }})</el-radio-button>
+            </el-radio-group>
             <el-tooltip content="刷新" placement="top">
               <el-button :icon="Refresh" @click="loadPayReqs" />
             </el-tooltip>
             <span class="muted">发起请款后在这里跟进财务审批进度，被驳回会显示原因；点行首箭头看关联明细</span>
           </div>
-          <el-table :data="payReqs" stripe v-loading="prLoading"
+          <el-table :data="filteredPayReqs" stripe v-loading="prLoading"
                     max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="wrap-cells compact-tbl">
             <el-table-column type="expand" width="36">
               <template #default="{ row }">
@@ -3003,7 +3017,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-table-column>
         <el-table-column label="对账状态" width="80" fixed="right">
           <template #default="{ row }">
-            <el-tag :type="statusTag(row.invoice_status)" size="small">{{ row.invoice_status }}</el-tag>
+            <el-tag :type="reconcileTag(row)" size="small">{{ reconcileText(row) }}</el-tag>
           </template>
         </el-table-column>
       </el-table>

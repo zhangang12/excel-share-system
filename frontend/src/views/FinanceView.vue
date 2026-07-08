@@ -174,6 +174,24 @@ async function submitPay() {
   await loadPayReqs()
 }
 
+// #164：复制收款账户信息
+async function copyText(t?: string | null) {
+  if (!t) return
+  try { await navigator.clipboard.writeText(String(t)); ElMessage.success('已复制') }
+  catch { ElMessage.warning('复制失败，请手动选择复制') }
+}
+// #161/#168：财务查看/下载关联采购单 PDF（finance 有权限，见后端 _PURCHASE_ROLES）
+async function downloadPoPdf(poNo?: string | null) {
+  if (!poNo) return
+  try {
+    const res = await http.get(`/purchase-mgmt/orders/${encodeURIComponent(poNo)}/pdf`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `采购单_${poNo}.pdf`; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+  } catch { ElMessage.error('打开采购单失败') }
+}
+
 // 🆕 请款单全流程删除：任意状态可删；已付款的会额外提示（后端会冲销采购明细付款）
 async function deletePayReq(row: PaymentRequestOut) {
   const extra = row.status === 'paid'
@@ -489,8 +507,13 @@ async function revokeInvoice(row: ViewRow) {
                 <el-tag :type="prTagType(row.status)" size="small">{{ prStatusLabel[row.status] || row.status }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="采购单" min-width="130" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.po_nos?.length ? row.po_nos.join('、') : '—' }}</template>
+            <el-table-column label="采购单" min-width="130">
+              <template #default="{ row }">
+                <template v-if="row.po_nos?.length">
+                  <el-button v-for="po in row.po_nos" :key="po" size="small" link type="primary" @click="downloadPoPdf(po)">📄 {{ po }}</el-button>
+                </template>
+                <span v-else>—</span>
+              </template>
             </el-table-column>
             <el-table-column label="付款信息" min-width="170">
               <template #default="{ row }">
@@ -586,13 +609,17 @@ async function revokeInvoice(row: ViewRow) {
       <div v-if="payingPr" class="pay-info">
         <div class="pay-info-block">
           <div class="pay-info-title">🏦 收款账户信息（供应商：{{ payingPr.supplier_name }}）</div>
-          <div class="pay-info-row"><span class="k">开户行</span>{{ payingPr.supplier_bank_name || '—' }}</div>
-          <div class="pay-info-row"><span class="k">银行账号</span><b>{{ payingPr.supplier_bank_account || '—' }}</b></div>
-          <div class="pay-info-row"><span class="k">税号</span>{{ payingPr.supplier_tax_no || '—' }}</div>
+          <div class="pay-info-row"><span class="k">开户行</span>{{ payingPr.supplier_bank_name || '—' }}<el-button v-if="payingPr.supplier_bank_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_name)">复制</el-button></div>
+          <div class="pay-info-row"><span class="k">银行账号</span><b>{{ payingPr.supplier_bank_account || '—' }}</b><el-button v-if="payingPr.supplier_bank_account" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_account)">复制</el-button></div>
+          <div class="pay-info-row"><span class="k">税号</span>{{ payingPr.supplier_tax_no || '—' }}<el-button v-if="payingPr.supplier_tax_no" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_tax_no)">复制</el-button></div>
           <div v-if="!payingPr.supplier_bank_account" class="muted small">该供应商未维护银行账号，请先在采购管理补全供应商档案。</div>
         </div>
         <div class="pay-info-block">
-          <div class="pay-info-title">📄 关联采购单 <span v-if="payingPr.po_nos?.length" class="muted small">（{{ payingPr.po_nos.join('、') }}）</span></div>
+          <div class="pay-info-title">📄 关联采购单
+            <template v-if="payingPr.po_nos?.length">
+              <el-button v-for="po in payingPr.po_nos" :key="po" size="small" link type="primary" @click="downloadPoPdf(po)">📄 {{ po }}</el-button>
+            </template>
+          </div>
           <el-table :data="payingPr.items" size="small" border max-height="180">
             <el-table-column label="采购单号" width="150"><template #default="{ row }"><span class="code">{{ row.po_no || '散件' }}</span></template></el-table-column>
             <el-table-column label="名称" min-width="120"><template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>

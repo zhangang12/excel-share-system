@@ -1616,6 +1616,12 @@ async def supplier_statements(
         g["invoice"] += i.invoice_amount or 0
         g["paid"] += i.paid_amount or 0
         g["count"] += 1
+    # #162：受限采购员的账目也要列出「本人建的供应商」(哪怕还没下过单,零单据显零额)，
+    #   否则新建的供应商在账目里看不到、没法管理。金额仍只按本人明细汇总(上面已保证)。
+    if restricted:
+        for s in all_suppliers:
+            if s.created_by == current.id:
+                my_sids.add(s.id)
 
     rows = []
     total_opening = total_received = total_paid = total_outstanding = 0.0
