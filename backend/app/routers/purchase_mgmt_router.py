@@ -58,6 +58,7 @@ async def list_suppliers(
     category: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
+    owned_only: bool = Query(False),
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -67,9 +68,14 @@ async def list_suppliers(
     if status:
         stmt = stmt.where(models.Supplier.status == status)
     # 🆕 需求五：采购员只看自己建的供应商 + 历史无归属(created_by NULL, 遗留共享)；管理层/主管看全部
+    # #152：owned_only=True 时(用于「采购明细」供应商筛选下拉)只保留本人创建的,连遗留共享(NULL)也排除,
+    #        避免筛选框列出一堆本人从没打过交道的老供应商。下单选供应商仍用默认(含遗留共享),老供应商可选。
     if _buyer_restricted(current):
-        stmt = stmt.where(
-            (models.Supplier.created_by == current.id) | (models.Supplier.created_by.is_(None)))
+        if owned_only:
+            stmt = stmt.where(models.Supplier.created_by == current.id)
+        else:
+            stmt = stmt.where(
+                (models.Supplier.created_by == current.id) | (models.Supplier.created_by.is_(None)))
     if q:
         from sqlalchemy import or_
         stmt = stmt.where(
@@ -223,6 +229,13 @@ async def get_opening_balance(
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
+    # 越权修复：受限采购员只能查看自己可见供应商(本人建 或 遗留共享)的期初欠款，
+    # 不能凭 sid 直取他人供应商的期初金额（/suppliers 列表本按 created_by 过滤，这里补上同样边界）。
+    if _buyer_restricted(current):
+        sup_r = await db.execute(select(models.Supplier.created_by).where(models.Supplier.id == sid))
+        creator = sup_r.scalar_one_or_none()
+        if creator not in (None, current.id):
+            raise HTTPException(403, "无权查看该供应商期初欠款")
     r = await db.execute(
         select(models.SupplierOpeningBalance).where(
             models.SupplierOpeningBalance.supplier_id == sid
@@ -1271,6 +1284,12 @@ async def list_receipts(
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES, *_RECEIVE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
+    # 越权修复：受限采购员只能看自己明细的收货单附件（仓库角色不受限，需正常收货）
+    if _buyer_restricted(current):
+        it = (await db.execute(select(models.PurchaseItem.buyer_id).where(
+            models.PurchaseItem.id == iid))).scalar_one_or_none()
+        if it != current.id:
+            raise HTTPException(403, "无权查看该明细的收货单")
     r = await db.execute(select(models.Attachment).where(
         models.Attachment.biz_type == "receipt_doc",
         models.Attachment.biz_id == iid).order_by(models.Attachment.id.desc()))
@@ -1287,6 +1306,9 @@ async def batch_invoice(
         select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids))
     )
     items = r.scalars().all()
+    # 越权修复：受限采购员只能对本人明细批量开票（与 /items/set-invoice-no 一致，防篡改他人开票状态/金额）
+    if _buyer_restricted(current):
+        items = [i for i in items if i.buyer_id == current.id]
     # 🆕 #100 对账后合计开票：合计开票金额按各明细「收货金额」比例分摊到 invoice_amount，
     #     收货额全为 0 时均摊；末条兜余数，保证分摊合计精确等于填入的合计开票金额。
     amt = body.invoice_amount
@@ -1352,18 +1374,22 @@ async def supplier_statements(
     item_r = await db.execute(select(models.PurchaseItem))
     items = item_r.scalars().all()
 
+    # 越权修复：受限采购员的每行金额与合计只能按本人明细汇总——否则同一(共享)供应商上
+    # 其他采购员的收货/开票/已付金额会经该行汇总泄漏(原代码只用 my_sids 决定"哪几行出现"，
+    # 加总却用了全量 items，导致列表合计 > 下钻明细合计，自相矛盾)。
+    restricted = _buyer_restricted(current)
+    my_sids: Optional[set] = set() if restricted else None
     grp: dict = defaultdict(lambda: {"received": 0.0, "invoice": 0.0, "paid": 0.0, "count": 0})
     for i in items:
+        if restricted and i.buyer_id != current.id:
+            continue
+        if restricted:
+            my_sids.add(i.supplier_id)
         g = grp[i.supplier_id]
         g["received"] += i.received_amount or 0
         g["invoice"] += i.invoice_amount or 0
         g["paid"] += i.paid_amount or 0
         g["count"] += 1
-
-    if _buyer_restricted(current):
-        my_sids = {i.supplier_id for i in items if i.buyer_id == current.id}
-    else:
-        my_sids = None
 
     rows = []
     total_opening = total_received = total_paid = total_outstanding = 0.0
@@ -1422,10 +1448,18 @@ async def export_supplier_statement(
     sup = sr.scalar_one_or_none()
     if not sup:
         raise HTTPException(404, "供应商不存在")
-    ir = await db.execute(select(models.PurchaseItem).where(
+    # 越权修复：受限采购员导出对账单只能包含本人明细，且不得导出自己从未经手的供应商
+    # （原代码零过滤，任意 sid 都能拉到含其他采购员单据的整表 Excel）。与 /statements/{sid}/detail 一致。
+    istmt = select(models.PurchaseItem).where(
         models.PurchaseItem.supplier_id == sid).order_by(
-        models.PurchaseItem.delivery_date.asc().nullsfirst(), models.PurchaseItem.id.asc()))
-    items = await _attach_pay_status(db, [_item_out(i) for i in ir.scalars().all()])
+        models.PurchaseItem.delivery_date.asc().nullsfirst(), models.PurchaseItem.id.asc())
+    if _buyer_restricted(current):
+        istmt = istmt.where(models.PurchaseItem.buyer_id == current.id)
+    ir = await db.execute(istmt)
+    rows0 = ir.scalars().all()
+    if _buyer_restricted(current) and not rows0:
+        raise HTTPException(403, "无权导出该供应商对账单（您没有该供应商的采购明细）")
+    items = await _attach_pay_status(db, [_item_out(i) for i in rows0])
     obr = await db.execute(select(models.SupplierOpeningBalance).where(
         models.SupplierOpeningBalance.supplier_id == sid))
     ob = obr.scalar_one_or_none()
@@ -1569,6 +1603,16 @@ async def create_payment_request(
     current: models.User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
+    # 越权修复：受限采购员只能对本人下单的采购明细发起请款，防止引用他人明细
+    if _buyer_restricted(current) and body.items:
+        ids = [it.item_id for it in body.items]
+        owned = set((await db.execute(
+            select(models.PurchaseItem.id).where(
+                models.PurchaseItem.id.in_(ids),
+                models.PurchaseItem.buyer_id == current.id,
+            ))).scalars().all())
+        if set(ids) - owned:
+            raise HTTPException(403, "请款单只能包含本人下单的采购明细")
     pr = models.PaymentRequest(
         supplier_id=body.supplier_id,
         requested_amount=body.requested_amount,

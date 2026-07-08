@@ -420,6 +420,7 @@ const groupedItems = computed<any[]>(() => {
 
 // suppliers & statements
 const suppliers = ref<SupplierOut[]>([])
+const filterSuppliers = ref<SupplierOut[]>([])   // #152：采购明细供应商筛选下拉(只本人)
 const statementData = ref<StatementList | null>(null)
 const drawerVisible = ref(false)
 const drawerSupplier = ref<SupplierStatementRow | null>(null)
@@ -443,30 +444,15 @@ const drawerMonthly = computed(() => {
 
 // 🆕 供应商分类——独立字典（dtype=supplier_category，见「字典设置」)，不与物料类别混用
 const categoryOptions = computed(() => matDict.value.filter(d => d.dtype === 'supplier_category' && d.enabled).map(d => d.value))
-// 🆕 供应商账目筛选（名称）
+// 🆕 供应商账目筛选（名称 + 分类）——#153 改回原来的平铺列表（去掉需求十一的分类卡片下钻）
 const stmtNameFilter = ref('')
-// 🆕 需求十一：供应商账目卡片式——按分类大类汇总，点卡片下钻到该大类供应商列表
-const stmtDrillCat = ref<string | null>(null)
-interface CatCard { category: string; count: number; received: number; invoice: number; uninvoiced: number; paid: number; outstanding: number }
-const categoryCards = computed<CatCard[]>(() => {
+const stmtCatFilter = ref('')
+const filteredStatementRows = computed(() => {
   const rows = statementData.value?.rows || []
   const kw = stmtNameFilter.value.trim().toLowerCase()
-  const map = new Map<string, CatCard>()
-  for (const r of rows) {
-    if (kw && !r.supplier_name.toLowerCase().includes(kw)) continue
-    const cat = r.category || '未分类'
-    let c = map.get(cat)
-    if (!c) { c = { category: cat, count: 0, received: 0, invoice: 0, uninvoiced: 0, paid: 0, outstanding: 0 }; map.set(cat, c) }
-    c.count++; c.received += r.received_total; c.invoice += r.invoice_total
-    c.uninvoiced += r.uninvoiced; c.paid += r.paid_total; c.outstanding += r.outstanding
-  }
-  return Array.from(map.values()).sort((a, b) => b.outstanding - a.outstanding)
-})
-const drillRows = computed(() => {
-  if (!stmtDrillCat.value) return []
-  const rows = statementData.value?.rows || []
-  const kw = stmtNameFilter.value.trim().toLowerCase()
-  return rows.filter(r => (r.category || '未分类') === stmtDrillCat.value && (!kw || r.supplier_name.toLowerCase().includes(kw)))
+  return rows.filter(r =>
+    (!kw || r.supplier_name.toLowerCase().includes(kw)) &&
+    (!stmtCatFilter.value || (r.category || '') === stmtCatFilter.value))
 })
 // 🆕 供应商状态查询（避免模板里反复 find）+ 操作收进下拉菜单
 function supActive(supplierId: number): boolean {
@@ -539,6 +525,8 @@ const orderTotal = computed(() =>
   orderForm.lines.reduce((s, l) => s + (l.received_amount ?? ((l.qty || 0) * (l.unit_price || 0))), 0))
 
 // 🆕 订单编号可选：历史项目编号供下拉选择（allow-create 仍可手输新编号）
+// #156：没有项目编号的采购（固定资产/耗材等）给几个常用非项目选项，也可手输
+const NON_PROJECT_CODES = ['固定资产', '耗材', '办公用品', '劳保用品', '外购工具']
 const projectCodeOptions = ref<string[]>([])
 async function loadProjectCodes() {
   try {
@@ -1028,6 +1016,9 @@ const openingBalanceForm = reactive({ balance_date: '', outstanding_amount: 0, n
 async function loadSuppliers() {
   const r = await http.get<SupplierOut[]>('/purchase-mgmt/suppliers')
   suppliers.value = r.data
+  // #152：采购明细「供应商」筛选下拉只列本人的供应商(受限采购员排除遗留共享;管理层仍是全部)
+  const rf = await http.get<SupplierOut[]>('/purchase-mgmt/suppliers', { params: { owned_only: true } })
+  filterSuppliers.value = rf.data
 }
 
 async function loadItems() {
@@ -1237,7 +1228,9 @@ const invoiceNoSaving = ref(false)
 function openBatchInvoiceNo() {
   const leaves = selLeaves.value
   if (!leaves.length) { ElMessage.warning('请先勾选要维护开票号的明细（可勾选合并行）'); return }
-  invoiceNoForm.invoice_no = leaves.find(i => i.invoice_no)?.invoice_no || ''
+  // #154：仅当所勾选明细已是同一个开票号时才预填(编辑场景)，否则一律留空，避免残留上次输入
+  const nos = new Set(leaves.map(i => i.invoice_no).filter(Boolean))
+  invoiceNoForm.invoice_no = nos.size === 1 ? String([...nos][0]) : ''
   invoiceNoForm.invoice_date = ''
   invoiceNoDialogVisible.value = true
 }
@@ -1382,7 +1375,7 @@ async function saveOpeningBalance() {
 
 // 🆕 供应商账目合计行（列对齐：供应商/分类/状态/期初/收货/开票/待开票/已付/欠款/明细数/操作）
 function stmtSummary() {
-  const rows = drillRows.value
+  const rows = filteredStatementRows.value
   const sum = (k: keyof SupplierStatementRow) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0)
   return ['合计', '', '',
     fmtMoney(sum('opening_balance')), fmtMoney(sum('received_total')),
@@ -1592,7 +1585,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-tab-pane label="📦 采购明细" name="items" lazy>
           <div class="filter-bar">
             <el-select v-model="filterSupplierId" placeholder="全部供应商" clearable filterable style="width:160px" @change="onFilterChange">
-              <el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id" />
+              <el-option v-for="s in filterSuppliers" :key="s.id" :label="s.name" :value="s.id" />
             </el-select>
             <el-input v-model="filterProjectCode" placeholder="项目编号" clearable :prefix-icon="Search"
                       style="width:140px" @change="onFilterChange" />
@@ -1700,19 +1693,19 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column label="单价" width="96" align="right">
               <template #default="{ row }">{{ row.unit_price != null ? fmtMoney(row.unit_price) : '—' }}</template>
             </el-table-column>
-            <el-table-column prop="received_amount" label="收货金额" width="110" align="right" sortable>
+            <el-table-column prop="received_amount" label="收货金额" width="116" align="right" sortable>
               <template #default="{ row }"><b>{{ fmtMoney(row.received_amount) }}</b></template>
             </el-table-column>
-            <el-table-column prop="invoice_date" label="开票日期" width="96">
+            <el-table-column prop="invoice_date" label="开票日期" width="104">
               <template #default="{ row }">{{ row.invoice_date || '—' }}</template>
             </el-table-column>
-            <el-table-column prop="invoice_no" label="开票号" width="140">
+            <el-table-column prop="invoice_no" label="开票号" width="150">
               <template #default="{ row }">{{ row.invoice_no || '—' }}</template>
             </el-table-column>
-            <el-table-column prop="invoice_amount" label="开票金额" width="106" align="right" sortable>
+            <el-table-column prop="invoice_amount" label="开票金额" width="116" align="right" sortable>
               <template #default="{ row }">{{ row.invoice_amount ? fmtMoney(row.invoice_amount) : '—' }}</template>
             </el-table-column>
-            <el-table-column prop="paid_amount" label="已付款" width="102" align="right" sortable>
+            <el-table-column prop="paid_amount" label="已付款" width="116" align="right" sortable>
               <template #default="{ row }">{{ row.paid_amount ? fmtMoney(row.paid_amount) : '—' }}</template>
             </el-table-column>
             <el-table-column label="付款状态" width="84" align="center">
@@ -1765,45 +1758,21 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-tab-pane label="📊 供应商账目" name="statements" lazy>
           <div class="filter-bar">
             <el-input v-model="stmtNameFilter" placeholder="搜索供应商名称" clearable :prefix-icon="Search" style="width:200px" />
+            <el-select v-model="stmtCatFilter" placeholder="全部分类" clearable style="width:140px">
+              <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
+            </el-select>
             <el-tooltip content="刷新" placement="top">
               <el-button :icon="Refresh" @click="loadStatements" />
             </el-tooltip>
             <span class="flex-spacer" />
             <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openNewSupplier">新增供应商</el-button>
           </div>
-
-          <!-- 🆕 需求十一：分类卡片视图（大类汇总）-->
-          <div v-if="!stmtDrillCat">
-            <div class="cat-cards">
-              <div v-for="c in categoryCards" :key="c.category" class="cat-card" @click="stmtDrillCat = c.category">
-                <div class="cat-card-head">
-                  <span class="cat-name">{{ c.category }}</span>
-                  <el-tag size="small" effect="plain">{{ c.count }} 家</el-tag>
-                </div>
-                <div class="cat-card-body">
-                  <div class="cat-metric"><span>收货合计</span><b>{{ fmtMoney(c.received) }}</b></div>
-                  <div class="cat-metric"><span>欠款余额</span><b class="danger">{{ fmtMoney(c.outstanding) }}</b></div>
-                  <div class="cat-metric"><span>待开票</span><span class="warn">{{ fmtMoney(c.uninvoiced) }}</span></div>
-                </div>
-                <div class="cat-card-foot">点击查看该分类供应商 →</div>
-              </div>
-            </div>
-            <EmptyHint v-if="!categoryCards.length" text="暂无供应商账目，点右上角「新增供应商」开始" size="sm" />
-          </div>
-
-          <!-- 🆕 需求十一：下钻——某分类的供应商列表 -->
-          <template v-else>
-          <div class="drill-head">
-            <el-button link type="primary" :icon="ArrowLeft" @click="stmtDrillCat = null">全部分类</el-button>
-            <span class="drill-cat">{{ stmtDrillCat }}</span>
-            <span class="muted small">共 {{ drillRows.length }} 家供应商</span>
-          </div>
           <el-table
-            :data="drillRows"
+            :data="filteredStatementRows"
             stripe show-summary
             :summary-method="stmtSummary"
             :default-sort="{ prop: 'outstanding', order: 'descending' }"
-            max-height="max(320px, calc(100vh - 320px))"
+            max-height="max(320px, calc(100vh - 280px))"
             :scrollbar-always-on="true"
             class="wrap-cells compact-tbl"
           >
@@ -1861,10 +1830,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </template>
             </el-table-column>
             <template #empty>
-              <EmptyHint :text="stmtNameFilter ? '没有匹配的供应商，试试清空搜索' : '该分类暂无供应商'" size="sm" />
+              <EmptyHint :text="stmtNameFilter || stmtCatFilter ? '没有匹配的供应商，试试清空筛选' : '暂无供应商，点右上角「新增供应商」开始'" size="sm" />
             </template>
           </el-table>
-          </template>
         </el-tab-pane>
 
         <!-- ==================== Tab: 请款记录（采购员跟进审批进度） ==================== -->
@@ -2203,8 +2171,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-col :xs="12" :sm="8" :md="4">
             <el-form-item label="默认订单编号">
               <el-select v-model="orderForm.project_code" filterable allow-create clearable default-first-option
-                         placeholder="选/输项目编号，行内可覆盖" style="width:100%">
-                <el-option v-for="c in projectCodeOptions" :key="c" :label="c" :value="c" />
+                         placeholder="选/输项目编号；无项目可填 固定资产/耗材 等" style="width:100%">
+                <el-option-group label="非项目（无编号时选/输）">
+                  <el-option v-for="c in NON_PROJECT_CODES" :key="'np-'+c" :label="c" :value="c" />
+                </el-option-group>
+                <el-option-group label="项目编号">
+                  <el-option v-for="c in projectCodeOptions" :key="c" :label="c" :value="c" />
+                </el-option-group>
               </el-select>
             </el-form-item>
           </el-col>
