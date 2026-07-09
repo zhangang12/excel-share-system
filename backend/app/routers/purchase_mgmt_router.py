@@ -554,7 +554,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         custom_values=i.custom_values or {},
         buyer_id=i.buyer_id,
         buyer_name=_uname(i.buyer),
-        is_kit=bool(i.is_kit), kit_parts=i.kit_parts,
+        is_kit=bool(i.is_kit), kit_parts=i.kit_parts, is_stock=bool(i.is_stock),
         notes=i.notes, created_at=i.created_at,
     )
 
@@ -645,6 +645,7 @@ async def create_purchase_order(
             payment_method=body.payment_method, prepay_ratio=body.prepay_ratio,
             custom_values=cv,
             buyer_id=current.id,
+            is_stock=body.is_stock,   # 🆕 新建采购单「是否备货」(默认True=只入库)
         ))
     await db.commit()
     r = await db.execute(
@@ -931,7 +932,7 @@ async def create_order_from_list(
             item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=(l.payment_method or body.payment_method),
             prepay_ratio=(l.prepay_ratio if l.prepay_ratio is not None else body.prepay_ratio),
-            notes=l.notes, buyer_id=current.id))
+            notes=l.notes, buyer_id=current.id, is_stock=False))   # 🆕 按清单下单→收货入库+出库
         if l.source_sheet_id and l.source_record_id:
             # 各来源表的「下单日期」列名不同（订购/下单/发出日期），全写一遍只有存在的列生效
             wb = {"采购负责人": uname}
@@ -979,6 +980,7 @@ async def create_kit_order_from_list(
         qty=qty, unit_price=unit_price, received_amount=round(body.kit_total, 2),
         payment_method=body.payment_method, prepay_ratio=body.prepay_ratio,
         is_kit=True, kit_parts=kit_parts, notes=body.notes, buyer_id=current.id,
+        is_stock=False,   # 🆕 按套下单（从清单）→收货入库+出库
     )
     db.add(item)
     # 回写各来源清单行（与从清单下单一致：采购负责人 + 下单日期）
@@ -997,7 +999,8 @@ async def create_kit_order_from_list(
 
 
 async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: models.User) -> None:
-    """采购收货 → 自动生成一笔入库（带采购单价/金额）；幂等：同一采购明细只入库一次。"""
+    """采购收货 → 自动入库（带采购单价/金额）；非备货(is_stock=False)再自动一笔「采购领用」出库
+    (直发对应项目，净库存过账为0)；备货(is_stock=True)只入库、留库存。幂等：同一采购明细只过账一次。"""
     if not item.qty or item.qty <= 0:
         return
     ex = await db.execute(select(models.WhTxn).where(
@@ -1026,6 +1029,15 @@ async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: m
         unit_price=up, amount=amt, purchase_item_id=item.id,
         source="采购入库", party=(item.supplier.name if item.supplier else None),
         project_id=pid, ref_no=ref, operator_id=current.id))
+    # 🆕 非备货(按清单下单 / 新建单备货=否)：入库后紧接一笔「采购领用」出库，直发对应项目，
+    #   数量=收货数量，净库存过账为0；备货单(is_stock=True)只入库、留库存。
+    if not item.is_stock:
+        ref_out = await _next_ref(db, "out", bd)
+        db.add(models.WhTxn(
+            material_id=m.id, biz_date=bd, direction="out", qty=item.qty,
+            unit_price=up, amount=amt, purchase_item_id=item.id,
+            source="采购领用", party=(item.project_code or None),
+            project_id=pid, ref_no=ref_out, operator_id=current.id))
 
 
 # ==================== 采购历史数据 一键导入 ====================

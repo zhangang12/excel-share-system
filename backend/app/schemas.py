@@ -1000,7 +1000,7 @@ class PurchaseCustomFieldOut(BaseModel):
 
 # ---------- 🆕 物料字典（类别 / 单位 / 供应商分类 受管理取值） ----------
 class MaterialDictIn(BaseModel):
-    dtype: str = Field(pattern="^(category|unit|supplier_category|material_grade)$")   # category / unit / supplier_category / material_grade
+    dtype: str = Field(pattern="^(category|unit|supplier_category|material_grade|order_no)$")   # + order_no 订单编号(非项目)
     value: str = Field(min_length=1, max_length=64)
     sort_order: int = 0
     enabled: bool = True
@@ -1022,6 +1022,7 @@ class PurchaseOrderCreate(BaseModel):
     project_code: Optional[str] = None           # 默认项目编号（行可覆盖）
     payment_method: Optional[str] = None          # 🆕 付款方式（表头，作用于全单）
     prepay_ratio: Optional[float] = None          # 🆕 预付比例(%)（表头，作用于全单）
+    is_stock: bool = True                          # 🆕 是否备货：True=收货只入库；False=收货入库+出库
     lines: list[PurchaseOrderLine] = Field(min_length=1)
 
 
@@ -1190,6 +1191,7 @@ class PurchaseItemOut(BaseModel):
     receipt_count: int = 0   # 🆕 需求十四：已上传收货单数量
     is_kit: bool = False                       # 🆕 成套采购：是否成套明细
     kit_parts: Optional[list] = None           # 🆕 成套采购：套内零件清单[{name,spec,qty}]
+    is_stock: bool = True                      # 🆕 备货：True=收货只入库；False=收货入库+出库
     notes: Optional[str] = None
     created_at: datetime
 

@@ -9,7 +9,7 @@ import {
   Key, SwitchButton, Grid, Lock,
   Suitcase, EditPen, Lightning, SetUp, Scissor, ShoppingCart,
   Box, Van, Money, Service, TrendCharts, Bell, Stamp, ChatDotRound, ChatLineRound,
-  Aim, Checked,
+  Aim, Checked, Collection,
 } from '@element-plus/icons-vue'
 import { messagesApi } from '@/api/messages'
 import { userFeedbackApi } from '@/api/userFeedback'
@@ -188,6 +188,10 @@ onUnmounted(() => {
           <a :class="{ active: activeKey === 'admin-audit' }" @click="go('admin-audit')">
             <el-icon class="nav-icon"><Document /></el-icon>
             <span v-if="!collapsed">操作审计</span>
+          </a>
+          <a :class="{ active: activeKey === 'dict-admin' }" @click="go('dict-admin')">
+            <el-icon class="nav-icon"><Collection /></el-icon>
+            <span v-if="!collapsed">字典设置</span>
           </a>
           <!-- 🆕 v3 管理组新菜单（导出审批/企微绑定） -->
           <a v-for="m in adminExtraMenus" :key="m.key"

@@ -48,6 +48,12 @@ const router = createRouter({
           component: () => import('@/views/admin/AuditView.vue'),
           // admin 和 manager 都能访问（后端 /api/admin/audit 用 require_admin_or_manager）
         },
+        {
+          path: 'admin/dict',
+          name: 'dict-admin',
+          component: () => import('@/views/admin/DictSettingsView.vue'),
+          // 🆕 字典设置：admin+manager；物料类别/单位/材质/供应商分类/订单编号
+        },
         // ===== 🆕 v3 增量模块路由（菜单可见性由后端 /api/auth/menus 决定，meta.menuKey 守卫） =====
         {
           path: 'messages',

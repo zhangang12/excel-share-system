@@ -2,7 +2,7 @@
 // 采购管理（含采购部）：采购部 / 采购明细 / 供应商账目 / 汇总报表
 import { ref, computed, onMounted, onBeforeUnmount, reactive, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, ArrowLeft, Search, Tickets, EditPen, Setting, Collection, Box, Lock } from '@element-plus/icons-vue'
+import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, ArrowLeft, Search, Tickets, EditPen, Setting, Collection, Box, Lock, QuestionFilled } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
@@ -592,16 +592,22 @@ const orderForm = reactive({
   supplier_id: '' as number | '',
   delivery_date: '', contract_no: '', project_code: '', payment_method: '',
   prepay_ratio: null as number | null,
+  is_stock: true,   // 🆕 是否备货：是=收货只入库；否=收货入库+出库(直发项目)
   lines: [blankLine()] as OrderLine[],
 })
 // 采购商抬头（打印采购单用；如公司全称有出入，改这里即可）
-const PO_COMPANY = '同辉智能装备有限公司'
+const PO_COMPANY = '同辉智能装备（无锡）有限公司'
 const orderTotal = computed(() =>
   orderForm.lines.reduce((s, l) => s + (l.received_amount ?? ((l.qty || 0) * (l.unit_price || 0))), 0))
 
-// 🆕 订单编号可选：历史项目编号供下拉选择（allow-create 仍可手输新编号）
-// #156：没有项目编号的采购（固定资产/耗材等）给几个常用非项目选项，也可手输
-const NON_PROJECT_CODES = ['固定资产', '耗材', '办公用品', '劳保用品', '外购工具']
+// 订单编号：项目编号从项目下拉选；非项目编号只能从「字典设置-订单编号」里维护的值选(不可手打)
+const NON_PROJECT_CODES = ref<string[]>([])   // 🆕 来自字典 dtype=order_no
+async function loadOrderNoDict() {
+  try {
+    const r = await http.get<{ value: string }[]>('/wh/material-dict', { params: { dtype: 'order_no', enabled_only: true } })
+    NON_PROJECT_CODES.value = r.data.map(x => x.value)
+  } catch { NON_PROJECT_CODES.value = [] }
+}
 const projectCodeOptions = ref<string[]>([])
 async function loadProjectCodes() {
   try {
@@ -613,9 +619,11 @@ async function loadProjectCodes() {
 function openNewOrder() {
   Object.assign(orderForm, {
     supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10),
-    contract_no: '', project_code: '', payment_method: '', prepay_ratio: null, lines: [blankLine()],
+    contract_no: '', project_code: '', payment_method: '', prepay_ratio: null,
+    is_stock: true, lines: [blankLine()],
   })
   loadProjectCodes()
+  loadOrderNoDict()
   orderDialogVisible.value = true
 }
 function addOrderLine() { orderForm.lines.push(blankLine()) }
@@ -647,6 +655,7 @@ async function saveOrder() {
       delivery_date: orderForm.delivery_date || null,
       contract_no: orderForm.contract_no || null,
       project_code: orderForm.project_code || null,
+      is_stock: orderForm.is_stock,
       payment_method: orderForm.payment_method || null,
       prepay_ratio: isPrepayMethod(orderForm.payment_method) ? orderForm.prepay_ratio : null,
       lines: lines.map(l => ({
@@ -2533,15 +2542,26 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :xs="12" :sm="8" :md="4">
             <el-form-item label="默认订单编号">
-              <el-select v-model="orderForm.project_code" filterable allow-create clearable default-first-option
-                         placeholder="选/输项目编号；无项目可填 固定资产/耗材 等" style="width:100%">
-                <el-option-group label="非项目（无编号时选/输）">
+              <el-select v-model="orderForm.project_code" filterable clearable
+                         placeholder="选项目编号；非项目从字典选" style="width:100%">
+                <el-option-group label="非项目（字典维护）">
                   <el-option v-for="c in NON_PROJECT_CODES" :key="'np-'+c" :label="c" :value="c" />
                 </el-option-group>
                 <el-option-group label="项目编号">
                   <el-option v-for="c in projectCodeOptions" :key="c" :label="c" :value="c" />
                 </el-option-group>
               </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="12" :sm="8" :md="5">
+            <el-form-item>
+              <template #label>
+                是否备货
+                <el-tooltip placement="top" content="备货=是：仓库收货后只自动入库(留库存)。备货=否：收货后自动入库+出库(直发对应项目，不留库存)。按清单下单一律入库+出库。">
+                  <el-icon style="vertical-align:-2px;color:var(--el-text-color-secondary)"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </template>
+              <el-switch v-model="orderForm.is_stock" active-text="备货(只入库)" inactive-text="不备货(入库+出库)" inline-prompt style="--el-switch-on-color:var(--el-color-primary)" />
             </el-form-item>
           </el-col>
         </el-row>

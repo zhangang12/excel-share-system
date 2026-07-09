@@ -38,6 +38,7 @@ ADMIN_MENU_DEFS: list[dict] = [
     {"key": "admin-users",    "label": "用户"},
     {"key": "admin-perms",    "label": "权限管理"},
     {"key": "admin-audit",    "label": "操作审计"},
+    {"key": "dict-admin",     "label": "字典设置"},   # 🆕 物料类别/单位/材质/供应商分类/订单编号 字典（admin+manager）
     {"key": "approve",        "label": "导出审批"},
     {"key": "wxbind",         "label": "企微绑定"},
     {"key": "user-feedback",  "label": "用户反馈"},  # 🆕 收集所有用户提交的问题/建议

@@ -52,7 +52,7 @@ export const useAuthStore = defineStore('auth', () => {
   // 🆕 业务部门菜单（新增模块；排除老的 catalog/list 与管理组）
   const deptMenus = computed<MenuItem[]>(() => {
     if (!menus.value) return []
-    const skip = new Set(['catalog', 'list', 'admin-users', 'admin-perms', 'admin-audit'])
+    const skip = new Set(['catalog', 'list', 'admin-users', 'admin-perms', 'admin-audit', 'dict-admin'])
     return menus.value.filter((m) => !skip.has(m.key))
   })
 

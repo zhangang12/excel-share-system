@@ -621,6 +621,9 @@ class PurchaseItem(Base):
     #   kit_parts=套内零件清单[{name,spec,qty}](描述性,供PDF/展示,不参与交易)。整套作一个库存单位入库/领料。
     is_kit: Mapped[bool] = mapped_column(default=False, index=True)
     kit_parts: Mapped[Optional[list]] = mapped_column(PortableJSON())
+    # 🆕 备货标记：True=收货只自动入库(留库存)；False=收货自动入库+出库(直发项目,库存过账为0)。
+    #   按清单下单/按套下单 → False；新建采购单 → 由「是否备货」开关决定(默认 True)。
+    is_stock: Mapped[bool] = mapped_column(default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
