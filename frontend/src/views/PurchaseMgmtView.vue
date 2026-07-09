@@ -374,6 +374,8 @@ function clearSelection() { itemsTableRef.value?.clearSelection() }
 // 🆕 #144 采购明细按采购单号折叠分组：同一采购单(≥2行)收成一个可展开的父行，
 //    单行采购单/无采购单号的散单仍平铺。父行显示汇总(共N件+收货/开票/已付合计)。
 const rowKey = (row: any) => (row._isGroup ? row._key : 'i' + row.id)
+// 🆕 折叠层级配色：父(汇总)行 grp-row；子零件行由 Element 自动加 --level-1，走全局样式
+const grpRowClass = ({ row }: { row: any }) => (row._isGroup ? 'grp-row' : '')
 const groupedItems = computed<any[]>(() => {
   const groups = new Map<string, any>()
   const out: any[] = []
@@ -1658,7 +1660,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-button :icon="Refresh" :loading="purchaseLoading" @click="loadPurchaseRows">刷新</el-button>
           </div>
 
-          <el-table :data="purchaseRows" stripe v-loading="purchaseLoading" max-height="max(320px, calc(100vh - 310px))" :scrollbar-always-on="true" class="wrap-cells">
+          <el-table :data="purchaseRows" stripe v-loading="purchaseLoading" max-height="max(320px, calc(100vh - 310px))" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column type="index" label="#" width="50" fixed />
             <el-table-column label="项目编号" width="116" fixed>
               <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
@@ -1762,7 +1764,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-button :icon="Refresh" size="small" @click="loadIncomingReqs">刷新</el-button>
             <span class="muted small">仓库提交的采购申请汇到这里。核对后「已处理」（表示已按此下单）或「驳回」；仓库会收到通知。</span>
           </div>
-          <el-table :data="incomingReqs" v-loading="incomingLoading" stripe size="small" max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="wrap-cells">
+          <el-table :data="incomingReqs" v-loading="incomingLoading" stripe size="small" max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column type="expand" width="36">
               <template #default="{ row }">
                 <el-table :data="row.lines" size="small" border style="margin:6px 12px">
@@ -1859,10 +1861,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             ref="itemsTableRef"
             :data="groupedItems" stripe
             :row-key="rowKey" :tree-props="{ children: 'children' }"
+            :row-class-name="grpRowClass"
             @selection-change="(v: PurchaseItemOut[]) => selectedItems = v"
             max-height="max(320px, calc(100vh - 340px))"
             :scrollbar-always-on="true"
-            class="wrap-cells compact-tbl"
+            class="compact-tbl"
           >
             <!-- 🆕 需求九：合并父行也可勾选（汇总请款/维护开票号会自动展开成子明细） -->
             <el-table-column v-if="canWrite" type="selection" width="40" fixed />
@@ -2011,7 +2014,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             :default-sort="{ prop: 'outstanding', order: 'descending' }"
             max-height="max(320px, calc(100vh - 280px))"
             :scrollbar-always-on="true"
-            class="wrap-cells compact-tbl"
+            class="compact-tbl"
           >
             <el-table-column prop="supplier_name" label="供应商" min-width="200" fixed sortable />
             <el-table-column prop="category" label="分类" width="92">
@@ -2088,7 +2091,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <span class="muted">发起请款后在这里跟进财务审批进度，被驳回会显示原因；点行首箭头看关联明细</span>
           </div>
           <el-table :data="filteredPayReqs" stripe v-loading="prLoading"
-                    max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="wrap-cells compact-tbl">
+                    max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column type="expand" width="36">
               <template #default="{ row }">
                 <div class="pr-expand">
@@ -2175,7 +2178,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-col :xs="24" :sm="24" :md="14">
               <div class="report-section">
                 <div class="sec-title" style="margin-top:0">月度趋势明细（近12个月）</div>
-                <el-table :data="monthlyTrend" stripe size="small" max-height="320" show-summary :summary-method="trendSummary" class="wrap-cells">
+                <el-table :data="monthlyTrend" stripe size="small" max-height="320" show-summary :summary-method="trendSummary" class="compact-tbl">
                   <el-table-column prop="month" label="月份" width="90" />
                   <el-table-column label="收货金额" align="right">
                     <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
@@ -2192,7 +2195,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-col :xs="24" :sm="24" :md="10">
               <div class="report-section">
                 <div class="sec-title" style="margin-top:0">Top 供应商</div>
-                <el-table :data="topSuppliers" stripe size="small" max-height="320" class="wrap-cells">
+                <el-table :data="topSuppliers" stripe size="small" max-height="320" class="compact-tbl">
                   <el-table-column type="index" width="40" />
                   <el-table-column prop="supplier_name" label="供应商" min-width="100" />
                   <el-table-column label="采购额" align="right">
@@ -2207,7 +2210,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-col :xs="24" :sm="24" :md="10">
               <div class="report-section">
                 <div class="sec-title" style="margin-top:0">按采购员</div>
-                <el-table :data="byBuyer" stripe size="small" max-height="260" show-summary :summary-method="buyerSummary" class="wrap-cells">
+                <el-table :data="byBuyer" stripe size="small" max-height="260" show-summary :summary-method="buyerSummary" class="compact-tbl">
                   <el-table-column prop="buyer_name" label="采购员" min-width="90" />
                   <el-table-column label="采购额" align="right">
                     <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
@@ -2223,7 +2226,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                   <el-input v-model="projectSearch" placeholder="搜索项目编号" clearable :prefix-icon="Search" style="width:180px" @change="loadProjectReport" />
                   <el-button @click="loadProjectReport">查询</el-button>
                 </div>
-                <el-table :data="byProject" stripe size="small" max-height="220" class="wrap-cells">
+                <el-table :data="byProject" stripe size="small" max-height="220" class="compact-tbl">
                   <el-table-column label="项目编号" min-width="110">
                     <template #default="{ row }"><b class="code">{{ row.project_code }}</b></template>
                   </el-table-column>
@@ -2333,7 +2336,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </div>
       <el-table :data="filteredPurchasable" v-loading="purchasableLoading" size="small" border stripe
                 :empty-text="listOrderForm.project_id ? '该清单为空' : '请先选择项目和清单类型'"
-                max-height="calc(100vh - 430px)" class="wrap-cells">
+                max-height="calc(100vh - 430px)" class="compact-tbl">
         <el-table-column width="46" align="center" fixed>
           <template #header>
             <el-checkbox :model-value="allFilteredChecked" :indeterminate="someFilteredChecked"
@@ -2887,7 +2890,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <!-- 🆕 按月合计开票：按到货日期分月，未开票/已开票一目了然 -->
       <el-collapse v-if="drawerMonthly.length" class="monthly-collapse">
         <el-collapse-item :title="`按月收货/开票/付款汇总（${drawerMonthly.length} 个月）`" name="m">
-          <el-table :data="drawerMonthly" size="small" stripe class="wrap-cells">
+          <el-table :data="drawerMonthly" size="small" stripe class="compact-tbl">
             <el-table-column label="月份（按到货日期）" min-width="140">
               <template #default="{ row }"><b>{{ row.month }}</b></template>
             </el-table-column>
@@ -2910,7 +2913,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-collapse-item>
       </el-collapse>
       <el-table v-loading="drawerLoading" :data="drawerItems" stripe size="small"
-                max-height="max(300px, calc(100vh - 180px))" :scrollbar-always-on="true" class="wrap-cells compact-tbl">
+                max-height="max(300px, calc(100vh - 180px))" :scrollbar-always-on="true" class="compact-tbl">
         <el-table-column prop="delivery_date" label="下单日期" width="100" />
         <el-table-column prop="project_code" label="项目编号" width="100">
           <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
@@ -3014,7 +3017,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     <!-- ==================== 数据表预览弹窗（采购部用）==================== -->
     <el-dialog v-model="previewVisible" :title="previewTitle" fullscreen destroy-on-close>
       <el-table :data="previewRecords" stripe v-loading="previewLoading"
-                max-height="calc(100vh - 130px)" :scrollbar-always-on="true" size="small" class="wrap-cells">
+                max-height="calc(100vh - 130px)" :scrollbar-always-on="true" size="small" class="compact-tbl">
         <el-table-column
           v-for="f in previewFields" :key="f.id"
           :label="f.name" :min-width="previewColWidth">
@@ -3030,7 +3033,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     <el-dialog v-model="cfManagerVisible" title="采购单自定义字段设置" width="min(860px, 96vw)" top="6vh" class="v3-scroll-dialog">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
         title="在这里给采购明细增删自定义列（如 用途 / 项目阶段 / 交货周期 等）。新增字段只对之后录入/编辑的明细生效；删除字段不影响已录入的历史值。" />
-      <el-table :data="customFields" size="small" border stripe max-height="34vh" class="wrap-cells">
+      <el-table :data="customFields" size="small" border stripe max-height="34vh" class="compact-tbl">
         <el-table-column type="index" label="#" width="46" align="center" />
         <el-table-column prop="label" label="字段名称" min-width="120" />
         <el-table-column label="类型" width="90"><template #default="{ row }">{{ CF_TYPES.find(t => t.v === row.ftype)?.l || row.ftype }}</template></el-table-column>

@@ -553,7 +553,7 @@ async function revokeInvoice(row: ViewRow) {
             <span class="muted small">已收货未付款 = 对供应商的应付;审批走「请款审批」，付款走「付款」页</span>
           </div>
           <el-table :data="payables" v-loading="payablesLoading" stripe size="small"
-                    max-height="calc(100vh - 300px)" :scrollbar-always-on="true" class="wrap-cells">
+                    max-height="calc(100vh - 300px)" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column prop="supplier_name" label="供应商" min-width="180" />
             <el-table-column prop="category" label="分类" width="90"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
             <el-table-column label="收货合计" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.received_total) }}</template></el-table-column>
@@ -574,7 +574,7 @@ async function revokeInvoice(row: ViewRow) {
           <el-row :gutter="16">
             <el-col :span="14">
               <div class="section-title">库存金额（按物料）</div>
-              <el-table :data="invValue.rows" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="wrap-cells">
+              <el-table :data="invValue.rows" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="compact-tbl">
                 <el-table-column prop="name" label="物料" min-width="140" />
                 <el-table-column prop="spec" label="规格" min-width="110"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
                 <el-table-column label="现存" width="80" align="right"><template #default="{ row }">{{ row.stock }}</template></el-table-column>
@@ -584,7 +584,7 @@ async function revokeInvoice(row: ViewRow) {
             </el-col>
             <el-col :span="10">
               <div class="section-title">项目材料成本</div>
-              <el-table :data="projCost" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="wrap-cells">
+              <el-table :data="projCost" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="compact-tbl">
                 <el-table-column label="项目" min-width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
                 <el-table-column label="材料成本" width="130" align="right"><template #default="{ row }"><b>{{ fmtMoney(row.cost) }}</b></template></el-table-column>
               </el-table>

@@ -225,6 +225,8 @@ const recvSupplierOptions = computed(() => {
 // 🆕 需求二：采购收货列表也按采购单号(po_no)合并——同一采购单(≥2行)收成一个可展开的主汇总父行，
 //   收货/送货单号、到货日期在父行上体现并在父行统一维护（合并收货写整批各行）。单行/无采购单号散单平铺。
 const recvRowKey = (row: any) => (row._isGroup ? row._key : 'i' + row.id)
+// 🆕 折叠层级配色：父(汇总)行 grp-row；子零件行由 Element 自动加 --level-1，走全局样式
+const grpRowClass = ({ row }: { row: any }) => (row._isGroup ? 'grp-row' : '')
 const groupedRecv = computed<any[]>(() => {
   const groups = new Map<string, any>()
   const out: any[] = []
@@ -739,7 +741,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <span class="muted small">列出有「标准件清单」的项目；点「查看」进入逐行需求并领用出库。待出库=有货且未领完的物料行数，已出库=已领用过的行数。</span>
             </div>
             <el-table :data="demandOverview" v-loading="demandOverviewLoading" stripe size="small"
-                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
+                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
               <el-table-column prop="name" label="项目名称" min-width="200" show-overflow-tooltip />
               <el-table-column label="物料行数" width="100" align="right"><template #default="{ row }">{{ row.total_lines }}</template></el-table-column>
@@ -764,7 +766,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <span class="muted small">读项目「标准件清单」,逐行看 需求量 / 现有库存 / 建议采购量。有货的可直接领用出库(自动登记出库),缺的走采购。</span>
           </div>
           <el-table :data="demandRows" v-loading="demandLoading" stripe size="small"
-                    max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
+                    max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column prop="item_name" label="名称" min-width="150" />
             <el-table-column prop="spec" label="规格型号" min-width="150"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column label="需求量" width="90" align="right"><template #default="{ row }">{{ row.demand_qty ?? '—' }}</template></el-table-column>
@@ -816,7 +818,8 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             </div>
             <el-table :data="groupedRecv" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
                       :row-key="recvRowKey" :tree-props="{ children: 'children' }" default-expand-all
-                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
+                      :row-class-name="grpRowClass"
+                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column type="selection" width="40" :selectable="(row: any) => !row._isGroup" />
               <el-table-column prop="po_no" label="采购单号" width="150">
                 <template #default="{ row }">
@@ -943,7 +946,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-button :icon="Search" size="small" @click="loadPurchReqs">刷新</el-button>
               <span class="muted small">仓库发现要买的东西（缺料/耗材/工具等）在这里提申请，采购部会收到通知并处理。</span>
             </div>
-            <el-table :data="preqList" v-loading="preqLoading" stripe size="small" max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="wrap-cells">
+            <el-table :data="preqList" v-loading="preqLoading" stripe size="small" max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column type="expand" width="36">
                 <template #default="{ row }">
                   <el-table :data="row.lines" size="small" border style="margin:6px 12px">
