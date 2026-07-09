@@ -26,6 +26,40 @@ const form = reactive({
   is_active: true,
 })
 
+// 🆕 #7 二级菜单(tab)权限：管理层给某账号勾掉不可见的 tab
+const tabRegistry = ref<{ menu_key: string; menu_label: string; tabs: { key: string; label: string }[] }[]>([])
+const tabDlgVisible = ref(false)
+const tabDlgUser = ref<User | null>(null)
+const tabHiddenSet = ref<Set<string>>(new Set())
+const tabSaving = ref(false)
+async function openTabPerm(u: User) {
+  tabDlgUser.value = u
+  tabHiddenSet.value = new Set(u.hidden_tabs || [])
+  if (!tabRegistry.value.length) { try { tabRegistry.value = await adminApi.tabRegistry() } catch { /* */ } }
+  tabDlgVisible.value = true
+}
+function tabChecked(key: string) { return !tabHiddenSet.value.has(key) }   // 勾选=可见
+function toggleTab(key: string, visible: boolean) {
+  const s = new Set(tabHiddenSet.value)
+  if (visible) s.delete(key); else s.add(key)
+  tabHiddenSet.value = s
+}
+function toggleMenuAll(g: { tabs: { key: string }[] }, visible: boolean) {
+  const s = new Set(tabHiddenSet.value)
+  for (const t of g.tabs) { if (visible) s.delete(t.key); else s.add(t.key) }
+  tabHiddenSet.value = s
+}
+async function saveTabPerm() {
+  if (!tabDlgUser.value) return
+  tabSaving.value = true
+  try {
+    await adminApi.updateUser(tabDlgUser.value.id, { hidden_tabs: [...tabHiddenSet.value] } as Partial<User>)
+    ElMessage.success('二级菜单权限已保存（该账号重新登录或刷新后生效）')
+    tabDlgVisible.value = false
+    await load()
+  } catch { /* handled */ } finally { tabSaving.value = false }
+}
+
 const filtered = computed(() => {
   const k = keyword.value.trim().toLowerCase()
   if (!k) return users.value
@@ -182,9 +216,10 @@ onMounted(load)
             <StatusPill v-else text="停用" variant="danger" />
           </template>
         </el-table-column>
-        <el-table-column v-if="isAdmin" label="操作" width="180" align="right" fixed="right">
+        <el-table-column v-if="isAdmin" label="操作" width="270" align="right" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" @click="openTabPerm(row)">二级菜单权限</el-button>
             <el-button size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -218,6 +253,25 @@ onMounted(load)
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 🆕 #7 二级菜单(tab)权限：勾选=该账号可见该 tab -->
+    <el-dialog v-model="tabDlgVisible" :title="`二级菜单权限 — ${tabDlgUser?.full_name || tabDlgUser?.username || ''}`" width="min(720px, 96vw)" top="6vh">
+      <el-alert type="info" :closable="false" style="margin-bottom:12px"
+        title="勾选=该账号可见该二级菜单(tab)，取消勾选=对该账号隐藏。这里只控制页面内的二级 tab；顶层菜单仍由角色决定。管理层不受此限制。" />
+      <div v-for="g in tabRegistry" :key="g.menu_key" style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+          <b>{{ g.menu_label }}</b>
+          <el-button size="small" link type="primary" @click="toggleMenuAll(g, true)">全选</el-button>
+          <el-button size="small" link @click="toggleMenuAll(g, false)">全不选</el-button>
+        </div>
+        <el-checkbox v-for="t in g.tabs" :key="t.key" :model-value="tabChecked(t.key)"
+                     @change="(v: any) => toggleTab(t.key, !!v)" style="margin-right:18px">{{ t.label }}</el-checkbox>
+      </div>
+      <template #footer>
+        <el-button @click="tabDlgVisible = false">取消</el-button>
+        <el-button type="primary" :loading="tabSaving" @click="saveTabPerm">保存</el-button>
       </template>
     </el-dialog>
   </div>

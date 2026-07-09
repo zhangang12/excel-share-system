@@ -29,6 +29,14 @@ async def list_roles(
     return [schemas.RoleOut.model_validate(r) for r in res.scalars().all()]
 
 
+# ---------- 🆕 #7 可授权的二级菜单(tab) 注册表 ----------
+@router.get("/tab-registry")
+async def get_tab_registry(_: models.User = Depends(require_admin_or_manager)):
+    """按账号分配二级菜单权限用：返回可管控的 tab 清单(带全局唯一 key)。"""
+    from ..menus import tab_registry
+    return tab_registry()
+
+
 
 
 # ---------- 用户 ----------
@@ -53,6 +61,7 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         is_active=u.is_active,
         password_must_change=u.password_must_change,
         wxid=u.wxid,
+        hidden_tabs=list(u.hidden_tabs or []),
         created_at=u.created_at, last_login=u.last_login,
     )
 
@@ -171,6 +180,8 @@ async def update_user(
             await _add_user_to_all_active_projects(db, u.id, "edit")
     if data.is_active is not None:
         u.is_active = data.is_active
+    if data.hidden_tabs is not None:   # 🆕 #7 设置该账号隐藏的二级菜单tab
+        u.hidden_tabs = list(dict.fromkeys(data.hidden_tabs))
     if data.password:
         u.password_hash = hash_password(data.password)
         u.password_must_change = True

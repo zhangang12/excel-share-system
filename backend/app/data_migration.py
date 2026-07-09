@@ -18,7 +18,8 @@ log = logging.getLogger("data_migration")
 # 表名 -> [(列名, DDL 类型片段)]；ADD COLUMN 在 SQLite 与 PostgreSQL 均支持，幂等：已存在跳过
 _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "roles": [("can_push", "BOOLEAN DEFAULT FALSE")],
-    "users": [("wxid", "VARCHAR(64)"), ("can_export", "BOOLEAN DEFAULT FALSE")],
+    "users": [("wxid", "VARCHAR(64)"), ("can_export", "BOOLEAN DEFAULT FALSE"),
+              ("hidden_tabs", "JSON")],   # 🆕 #7 按账号隐藏的二级菜单tab
     "datasheets": [
         ("imported_at", "TIMESTAMP"),       # P-16 四表导入标记
         ("done_flag", "BOOLEAN DEFAULT FALSE"),  # §十七 装配前置完成标记

@@ -11,6 +11,7 @@ export interface User {
   role_ids?: number[]; role_codes?: string[]; role_names?: string[]
   is_active: boolean; password_must_change: boolean
   wxid?: string | null
+  hidden_tabs?: string[]   // 🆕 #7 该账号隐藏的二级菜单tab key
   created_at: string; last_login?: string | null
 }
 

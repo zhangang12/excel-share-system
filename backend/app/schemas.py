@@ -39,6 +39,7 @@ class UserUpdate(BaseModel):
     role_ids: Optional[list[int]] = None  # 传则整体替换该用户的角色集
     is_active: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=6, max_length=128)
+    hidden_tabs: Optional[list[str]] = None  # 🆕 #7 传则整体替换该账号隐藏的二级菜单tab
 
 
 class UserOut(BaseModel):
@@ -59,6 +60,7 @@ class UserOut(BaseModel):
     is_active: bool
     password_must_change: bool = False
     wxid: Optional[str] = None  # 🆕 v3 企微绑定
+    hidden_tabs: list[str] = []  # 🆕 #7 该账号隐藏的二级菜单tab
     created_at: datetime
     last_login: Optional[datetime] = None
 

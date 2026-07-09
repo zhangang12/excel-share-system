@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const isManager = computed(() => auth.hasRole('admin', 'manager'))
+const tv = (name: string) => auth.tabVisible('finance', name)   // 🆕 #7 按账号二级菜单授权
 
 interface PaymentRequestOut {
   id: number; supplier_id: number; supplier_name: string
@@ -333,7 +334,7 @@ async function revokeInvoice(row: ViewRow) {
 
     <el-card shadow="never" v-loading="loading">
       <el-tabs v-model="tab" @tab-change="onFinTab">
-        <el-tab-pane :label="`📥 待开票 (${pendingView.length})`" name="pending">
+        <el-tab-pane v-if="tv('pending')" :label="`📥 待开票 (${pendingView.length})`" name="pending">
           <el-table :data="pendingView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="140">
               <template #default="{ row }">
@@ -371,7 +372,7 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!pendingView.length" text="暂无待开票" />
         </el-tab-pane>
 
-        <el-tab-pane :label="`✅ 已开票 (${invoicedView.length})`" name="invoiced">
+        <el-tab-pane v-if="tv('invoiced')" :label="`✅ 已开票 (${invoicedView.length})`" name="invoiced">
           <el-table :data="invoicedView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="140">
               <template #default="{ row }">
@@ -402,7 +403,7 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!invoicedView.length" text="暂无已开票" />
         </el-tab-pane>
 
-        <el-tab-pane :label="`🛎️ 安装/售后费用 (${aftersales.length})`" name="aftersales">
+        <el-tab-pane v-if="tv('aftersales')" :label="`🛎️ 安装/售后费用 (${aftersales.length})`" name="aftersales">
           <el-table :data="aftersales" stripe show-summary :summary-method="() => ['合计', '', '', '', '', fmtMoney(asTotal), '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="50" />
             <el-table-column label="类型" width="70" align="center">
@@ -430,7 +431,7 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!aftersales.length" text="暂无已审批售后费用（售后部审批后自动同步）" />
         </el-tab-pane>
 
-        <el-tab-pane :label="`💰 请款审批 (${prCounts.pending})`" name="pay_requests">
+        <el-tab-pane v-if="tv('pay_requests')" :label="`💰 请款审批 (${prCounts.pending})`" name="pay_requests">
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
             <el-radio-group v-model="prStatus">
               <el-radio-button value="all">全部 ({{ prCounts.all }})</el-radio-button>
@@ -488,7 +489,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 需求一：付款 tab（已审批待付 / 已付款）-->
-        <el-tab-pane :label="`💳 付款 (${paymentCounts.approved})`" name="pay_payment">
+        <el-tab-pane v-if="tv('pay_payment')" :label="`💳 付款 (${paymentCounts.approved})`" name="pay_payment">
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
             <el-radio-group v-model="paymentTab">
               <el-radio-button value="all">全部 ({{ paymentCounts.all }})</el-radio-button>
@@ -546,7 +547,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 采购应付 -->
-        <el-tab-pane label="📄 采购应付" name="payables">
+        <el-tab-pane v-if="tv('payables')" label="📄 采购应付" name="payables">
           <div class="summary-bar" style="margin-bottom:10px">
             <span>应付合计 <b class="danger">{{ fmtMoney(payablesTotal) }}</b></span>
             <span class="muted small">已收货未付款 = 对供应商的应付;审批走「请款审批」，付款走「付款」页</span>

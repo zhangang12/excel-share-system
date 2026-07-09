@@ -16,6 +16,7 @@ import { fmtDate, fmtMoney } from '@/utils/format'
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('warehouse', 'warehouse_lead', 'admin', 'manager'))
 const isManager = computed(() => auth.hasRole('admin', 'manager'))   // #5：单价/总价仅管理层可见
+const tv = (name: string) => auth.tabVisible('warehouse', name)   // 🆕 #7 按账号二级菜单授权
 // 🆕 需求十五：仓库总监/管理层可一键清空
 const canClear = computed(() => auth.hasRole('warehouse_lead', 'admin', 'manager'))
 async function clearAll() {
@@ -607,7 +608,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
     <el-card shadow="never" v-loading="loading">
       <el-tabs v-model="tab" @tab-change="onTab">
         <!-- 总览 -->
-        <el-tab-pane label="库存总览" name="ov">
+        <el-tab-pane v-if="tv('ov')" label="库存总览" name="ov">
           <div class="kpi-grid">
             <div class="kpi"><div class="kpi-v">{{ materials.length }}</div><div class="kpi-l">物料种类</div></div>
             <div class="kpi"><div class="kpi-v">{{ totalStock }}</div><div class="kpi-l">库存总量</div></div>
@@ -641,7 +642,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 出入库登记 -->
-        <el-tab-pane label="出入库登记" name="io">
+        <el-tab-pane v-if="tv('io')" label="出入库登记" name="io">
           <EmptyHint v-if="!canWrite" text="仅仓库角色可登记出入库" :icon="Lock" />
           <template v-else>
             <el-button type="primary" :icon="Plus" @click="openIo('in')">入库登记</el-button>
@@ -651,7 +652,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 收发存汇总 -->
-        <el-tab-pane label="收发存汇总" name="sum">
+        <el-tab-pane v-if="tv('sum')" label="收发存汇总" name="sum">
           <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
             <el-date-picker v-model="period" type="month" value-format="YYYY-MM" @change="loadSummary" />
             <span class="muted small">期初 + 本期入 − 本期出 = 期末</span>
@@ -671,7 +672,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 流水 -->
-        <el-tab-pane label="出入库流水" name="txn">
+        <el-tab-pane v-if="tv('txn')" label="出入库流水" name="txn">
           <div style="margin-bottom:10px">
             <el-radio-group v-model="txnDir" @change="loadTxns" size="small">
               <el-radio-button value="">全部</el-radio-button>
@@ -706,7 +707,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 物料主数据 -->
-        <el-tab-pane label="物料主数据" name="mat">
+        <el-tab-pane v-if="tv('mat')" label="物料主数据" name="mat">
           <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openMat()" style="margin-bottom:10px">新增物料</el-button>
           <el-button v-if="canConfigFields" :icon="Setting" @click="openFieldManager" style="margin-bottom:10px;margin-left:8px">字段设置</el-button>
           <el-button v-if="canClear" type="danger" plain :icon="Delete" @click="clearAll" style="margin-bottom:10px;margin-left:8px">一键清空</el-button>
@@ -729,7 +730,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 🆕 项目物料需求（清单→仓库）-->
-        <el-tab-pane label="物料需求" name="demand">
+        <el-tab-pane v-if="tv('demand')" label="物料需求" name="demand">
           <!-- #157：默认直接列出有清单的项目 + 待出库/已出库条数，不用先从下拉选项目 -->
           <template v-if="!demandProj">
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -796,7 +797,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 🆕 采购收货 -->
-        <el-tab-pane name="recv">
+        <el-tab-pane v-if="tv('recv')" name="recv">
           <template #label>采购收货<span v-if="recvPendingCount" class="wh-tab-badge">{{ recvPendingCount > 99 ? '99+' : recvPendingCount }}</span></template>
           <EmptyHint v-if="!canWrite" text="仅仓库角色可确认收货" :icon="Lock" />
           <template v-else>
@@ -872,7 +873,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 发货清单目录：设计部下发 → 仓库核对备齐 → 通知物流 -->
-        <el-tab-pane name="ship">
+        <el-tab-pane v-if="tv('ship')" name="ship">
           <template #label>发货清单<span v-if="shipPendingCount" class="wh-tab-badge">{{ shipPendingCount > 99 ? '99+' : shipPendingCount }}</span></template>
           <EmptyHint v-if="!canWrite" text="仅仓库角色可查看发货清单目录" :icon="Lock" />
           <template v-else>
@@ -934,7 +935,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 🆕 #167 采购申请：仓库列出要买什么 → 提交到采购部 -->
-        <el-tab-pane label="采购申请" name="preq">
+        <el-tab-pane v-if="tv('preq')" label="采购申请" name="preq">
           <EmptyHint v-if="!canWrite" text="仅仓库角色可提采购申请" :icon="Lock" />
           <template v-else>
             <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">

@@ -13,6 +13,7 @@ const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
 const isLeadOrAbove = computed(() => auth.hasRole('buyer_lead', 'finance', 'admin', 'manager'))
 const showPurchaseTab = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
+const tv = (name: string) => auth.tabVisible('purchase_mgmt', name)   // 🆕 #7 按账号二级菜单授权
 // 🆕 R6：采购自定义字段
 const canConfigFields = computed(() => auth.hasRole('buyer_lead', 'admin', 'manager'))
 interface CustomField {
@@ -1643,7 +1644,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <el-tabs v-model="tab" @tab-change="onTabChange">
 
         <!-- ==================== Tab 0: 采购部 ==================== -->
-        <el-tab-pane v-if="showPurchaseTab" label="🗂️ 采购部" name="purchase">
+        <el-tab-pane v-if="showPurchaseTab && tv('purchase')" label="🗂️ 采购部" name="purchase">
           <!-- 筛选栏 -->
           <div class="filter-bar">
             <el-select v-model="pYearFilter" style="width:100px" @change="loadPurchaseRows">
@@ -1755,7 +1756,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
 
         <!-- ==================== 🆕 #167 采购申请（仓库提 → 采购部处理）==================== -->
-        <el-tab-pane v-if="showPurchaseTab" name="preq" lazy>
+        <el-tab-pane v-if="showPurchaseTab && tv('preq')" name="preq" lazy>
           <template #label>📥 采购申请<span v-if="incomingPending">（{{ incomingPending }}）</span></template>
           <div class="filter-bar">
             <el-button :icon="Refresh" size="small" @click="loadIncomingReqs">刷新</el-button>
@@ -1795,7 +1796,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
 
         <!-- ==================== Tab 1: 采购明细 ==================== -->
-        <el-tab-pane label="📦 采购明细" name="items" lazy>
+        <el-tab-pane v-if="tv('items')" label="📦 采购明细" name="items" lazy>
           <div class="filter-bar">
             <el-select v-model="filterSupplierId" placeholder="全部供应商" clearable filterable style="width:160px" @change="onFilterChange">
               <el-option v-for="s in filterSuppliers" :key="s.id" :label="s.name" :value="s.id" />
@@ -1991,7 +1992,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
 
         <!-- ==================== Tab 2: 供应商账目一览 ==================== -->
-        <el-tab-pane label="📊 供应商账目" name="statements" lazy>
+        <el-tab-pane v-if="tv('statements')" label="📊 供应商账目" name="statements" lazy>
           <div class="filter-bar">
             <el-input v-model="stmtNameFilter" placeholder="搜索供应商名称" clearable :prefix-icon="Search" style="width:200px" />
             <el-select v-model="stmtCatFilter" placeholder="全部分类" clearable style="width:140px">
@@ -2072,7 +2073,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
 
         <!-- ==================== Tab: 请款记录（采购员跟进审批进度） ==================== -->
-        <el-tab-pane v-if="showPurchaseTab" label="💳 请款记录" name="payreq" lazy>
+        <el-tab-pane v-if="showPurchaseTab && tv('payreq')" label="💳 请款记录" name="payreq" lazy>
           <div class="filter-bar">
             <el-radio-group v-model="prStatusFilter" size="small">
               <el-radio-button value="">全部 ({{ prCounts[''] }})</el-radio-button>
@@ -2130,7 +2131,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
 
         <!-- ==================== Tab 3: 汇总报表（需求五：采购员也可见，数据按本人隔离）==================== -->
-        <el-tab-pane v-if="isLeadOrAbove || canWrite" label="📈 汇总报表" name="reports" lazy>
+        <el-tab-pane v-if="(isLeadOrAbove || canWrite) && tv('reports')" label="📈 汇总报表" name="reports" lazy>
           <div v-if="kpi" class="kpi-grid" style="margin-bottom:16px">
             <div class="kpi is-primary">
               <div class="kpi-v">{{ fmtMoney(kpi.month_amount) }}</div>

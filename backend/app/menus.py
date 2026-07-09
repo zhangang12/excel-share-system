@@ -76,6 +76,31 @@ ROLE_MENUS: dict[str, list[str]] = {
 }
 
 
+# 🆕 #7 可按账号授权的「二级菜单(tab)」注册表：menu_key -> [(tab_name, 中文名)]。
+#   全局唯一 key = f"{menu_key}:{tab_name}"，存进 User.hidden_tabs 表示对该账号隐藏。
+#   tab_name 必须与前端 <el-tab-pane name="..."> 一致。
+TAB_REGISTRY: list[dict] = [
+    {"menu_key": "purchase_mgmt", "menu_label": "采购管理", "tabs": [
+        ("purchase", "采购部"), ("items", "采购明细"), ("statements", "供应商账目"),
+        ("payreq", "请款记录"), ("preq", "采购申请"), ("reports", "汇总报表")]},
+    {"menu_key": "finance", "menu_label": "财务部", "tabs": [
+        ("pending", "待开票"), ("invoiced", "已开票"), ("aftersales", "安装/售后费用"),
+        ("pay_requests", "请款审批"), ("pay_payment", "付款"), ("payables", "采购应付"),
+        ("inventory", "库存/成本")]},
+    {"menu_key": "warehouse", "menu_label": "仓库", "tabs": [
+        ("ov", "库存总览"), ("io", "出入库登记"), ("sum", "收发存汇总"), ("txn", "出入库流水"),
+        ("mat", "物料主数据"), ("demand", "物料需求"), ("recv", "采购收货"),
+        ("ship", "发货清单"), ("preq", "采购申请")]},
+]
+
+
+def tab_registry() -> list[dict]:
+    """给管理端权限页用：可授权的二级菜单清单(带全局唯一 key)。"""
+    return [{"menu_key": g["menu_key"], "menu_label": g["menu_label"],
+             "tabs": [{"key": f'{g["menu_key"]}:{name}', "label": label} for name, label in g["tabs"]]}
+            for g in TAB_REGISTRY]
+
+
 def user_menu_keys(user: models.User) -> list[str]:
     """当前用户可见的业务菜单 key（按 MENU_DEFS 顺序）+ 管理组 key。
 

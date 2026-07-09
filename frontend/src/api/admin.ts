@@ -4,6 +4,8 @@ import type { User, Role, AuditLog } from '@/types'
 export const adminApi = {
   // 角色
   listRoles: () => http.get<Role[]>('/admin/roles').then((r) => r.data),
+  // 🆕 #7 可授权的二级菜单(tab) 注册表
+  tabRegistry: () => http.get<{ menu_key: string; menu_label: string; tabs: { key: string; label: string }[] }[]>('/admin/tab-registry').then((r) => r.data),
 
   // 用户
   listUsers: () => http.get<User[]>('/admin/users').then((r) => r.data),

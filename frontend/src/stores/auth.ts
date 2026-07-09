@@ -33,6 +33,14 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   const isAdmin = computed(() => hasRole('admin', 'manager'))
+
+  // 🆕 #7 二级菜单(tab)按账号授权：某 tab 是否对当前账号隐藏。管理层不受限(始终可见)。
+  //   key 形如 "finance:pay_payment"（menuKey:tabName）。
+  function tabHidden(menuKey: string, tabName: string): boolean {
+    if (hasRole('admin', 'manager')) return false
+    return (user.value?.hidden_tabs || []).includes(`${menuKey}:${tabName}`)
+  }
+  function tabVisible(menuKey: string, tabName: string): boolean { return !tabHidden(menuKey, tabName) }
   const mustChangePassword = computed(() => !!user.value?.password_must_change)
 
   // 🆕 是否可见某菜单：菜单未加载时 catalog/list 按老默认放行（老角色无感知）
@@ -104,6 +112,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   return { token, user, isLoggedIn, isAdmin, mustChangePassword,
            menus, canViewDetail, hasMenu, deptMenus, fetchMenus,
-           hasRole, roleCodes,
+           hasRole, roleCodes, tabHidden, tabVisible,
            login, fetchMe, changePassword, logout }
 })

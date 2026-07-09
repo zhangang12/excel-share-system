@@ -32,6 +32,7 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         is_active=u.is_active,
         password_must_change=u.password_must_change,
         wxid=u.wxid,
+        hidden_tabs=list(u.hidden_tabs or []),   # 🆕 #7 前端据此隐藏二级菜单tab
         created_at=u.created_at,
         last_login=u.last_login,
     )

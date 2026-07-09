@@ -50,6 +50,8 @@ class User(Base):
     wxid: Mapped[Optional[str]] = mapped_column(String(64))
     # 🆕 v3 M16：导出权限（审批通过后永久放行；管理层天然有）
     can_export: Mapped[bool] = mapped_column(default=False)
+    # 🆕 #7 按账号隐藏的二级菜单(tab) key 列表（形如 "finance:pay_payment"）；空=按角色可见全部 tab
+    hidden_tabs: Mapped[Optional[list]] = mapped_column(PortableJSON())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
