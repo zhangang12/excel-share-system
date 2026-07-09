@@ -314,9 +314,14 @@ function openReceive(it: RecvItem) {
   recvReceiptFile.value = null
   recvVisible.value = true
 }
-function onRecvCalc() {
+function onRecvCalc() {   // 填单价 → 算总价（收货金额）
   if (recvForm.qty != null && recvForm.unit_price != null) {
     recvForm.received_amount = Number((recvForm.qty * recvForm.unit_price).toFixed(2))
+  }
+}
+function onRecvAmountCalc() {   // #186 填总价(收货金额) → 按数量均分算单价
+  if (recvForm.qty && recvForm.qty > 0 && recvForm.received_amount != null) {
+    recvForm.unit_price = Number((recvForm.received_amount / recvForm.qty).toFixed(4))
   }
 }
 // 🆕 需求十四：单条收货时可上传收货单（图片/PDF）
@@ -847,6 +852,9 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                   <el-tag v-else size="small" type="warning" effect="plain">后填</el-tag>
                 </template>
               </el-table-column>
+              <el-table-column label="总价" width="104" align="right">
+                <template #default="{ row }"><b>{{ row.received_amount ? fmtMoney(row.received_amount) : '—' }}</b></template>
+              </el-table-column>
               <el-table-column label="送货单号" width="110">
                 <template #default="{ row }">{{ row.delivery_note_no || '—' }}</template>
               </el-table-column>
@@ -1157,8 +1165,8 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <el-form-item label="单价（后填价格在此补）">
             <el-input-number v-model="recvForm.unit_price" :min="0" :precision="4" :controls="false" style="width:100%" @change="onRecvCalc" />
           </el-form-item>
-          <el-form-item label="收货金额">
-            <el-input-number v-model="recvForm.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" />
+          <el-form-item label="收货金额（总价，填此按数量算单价）">
+            <el-input-number v-model="recvForm.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" @change="onRecvAmountCalc" />
           </el-form-item>
         </div>
         <!-- 🆕 需求十四：上传收货单（图片/PDF） -->
