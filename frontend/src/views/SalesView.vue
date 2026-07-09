@@ -799,7 +799,7 @@ async function openReport() {
     </el-card>
 
     <el-card shadow="never" :class="{ 'fit-screen-card': fitScreen }">
-      <el-table :data="rows" stripe v-loading="loading" :show-summary="false"
+      <el-table show-overflow-tooltip :data="rows" stripe v-loading="loading" :show-summary="false"
                 max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
         <el-table-column type="index" label="#" :width="cw(48, 36)" fixed />
         <el-table-column label="项目编号" :width="cw(120, 92)" fixed>
@@ -928,7 +928,7 @@ async function openReport() {
         <el-table-column label="尾款日期" :width="cw(118, 80)">
           <template #default="{ row }">{{ fmtDate(row.balance_date) }}</template>
         </el-table-column>
-        <el-table-column label="操作" :width="(fitScreen || opCompact) ? 52 : 150" fixed="right" align="center">
+        <el-table-column label="操作" :width="(fitScreen || opCompact) ? 52 : 150" fixed="right" align="center" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <!-- 收起：只显示 ⋯ -->
             <el-dropdown v-if="opCompact || fitScreen" trigger="click" placement="bottom-end">
@@ -1295,7 +1295,7 @@ async function openReport() {
           <div class="rate-bar"><span class="rb-label">合同覆盖率</span><div class="rb-track"><div class="rb-fill" :style="{ width: (report.contract_rate || 0) + '%' }"></div></div><span class="rb-val">{{ report.contract_rate ?? 0 }}%</span></div>
         </div>
         <div class="sec-title">销售员业绩</div>
-        <el-table :data="report.by_salesperson" size="small" stripe>
+        <el-table show-overflow-tooltip :data="report.by_salesperson" size="small" stripe>
           <el-table-column prop="name" label="销售员" min-width="100" />
           <el-table-column prop="count" label="项目数" width="80" />
           <el-table-column label="合同额" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
@@ -1306,14 +1306,14 @@ async function openReport() {
         <el-row :gutter="14" style="margin-top:8px">
           <el-col :span="12">
             <div class="sec-title">客户分类</div>
-            <el-table :data="report.by_cust_type" size="small">
+            <el-table show-overflow-tooltip :data="report.by_cust_type" size="small">
               <el-table-column prop="type" label="分类" /><el-table-column prop="count" label="项目" width="70" />
               <el-table-column label="金额" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
             </el-table>
           </el-col>
           <el-col :span="12">
             <div class="sec-title">开票状态</div>
-            <el-table :data="report.by_invoice_state" size="small">
+            <el-table show-overflow-tooltip :data="report.by_invoice_state" size="small">
               <el-table-column prop="label" label="状态" /><el-table-column prop="count" label="项目" width="70" />
               <el-table-column label="金额" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
             </el-table>
@@ -1332,7 +1332,7 @@ async function openReport() {
     <!-- ===== 开票审批（主管）：单项目 + 🆕 合并批次 ===== -->
     <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="900px" class="v3-scroll-dialog">
       <EmptyHint v-if="!approvalGroups.length" text="暂无待审批的开票申请" size="sm" />
-      <el-table v-else :data="approvalGroups" row-key="key" stripe>
+      <el-table show-overflow-tooltip v-else :data="approvalGroups" row-key="key" stripe>
         <el-table-column label="项目编号" min-width="160">
           <template #default="{ row }">
             <el-tag v-if="row.isBatch" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row.count }}</el-tag>
@@ -1358,7 +1358,7 @@ async function openReport() {
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="190">
+        <el-table-column label="操作" width="190" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <el-button size="small" type="success" :icon="Check" @click="approveGroup(row, true)">通过</el-button>
             <el-button size="small" @click="approveGroup(row, false)">驳回</el-button>
@@ -1371,7 +1371,7 @@ async function openReport() {
     <el-dialog v-model="mergeVisible" title="🧾 合并开票申请" width="780px" class="v3-scroll-dialog">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 10px"
                 title="勾选同一客户的多个项目合并开票：选中首个项目后，其它客户的项目将不可勾选。上传一份合并开票申请表，主管审批通过后由财务开具一张合并发票。" />
-      <el-table ref="mergeTableRef" :data="mergeEligible" stripe max-height="380" @selection-change="onMergeSel">
+      <el-table show-overflow-tooltip ref="mergeTableRef" :data="mergeEligible" stripe max-height="380" @selection-change="onMergeSel">
         <el-table-column type="selection" width="46" :selectable="mergeSelectable" />
         <el-table-column prop="code" label="项目编号" width="120" />
         <el-table-column prop="name" label="设备名称" min-width="150" />
@@ -1409,7 +1409,7 @@ async function openReport() {
       <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 10px"
                 title="通过后将作废订单并同步移除项目目录、项目详单及各部门流程（软删可追溯，必要时管理层可恢复）。" />
       <EmptyHint v-if="!voidApprovals.length" text="暂无待审批的作废申请" size="sm" />
-      <el-table v-else :data="voidApprovals" stripe>
+      <el-table show-overflow-tooltip v-else :data="voidApprovals" stripe>
         <el-table-column prop="code" label="项目编号" width="110" />
         <el-table-column prop="name" label="设备名称" min-width="130" />
         <el-table-column label="销售" width="84">
@@ -1421,7 +1421,7 @@ async function openReport() {
         <el-table-column label="作废原因" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ row.void_reason || '—' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="156">
+        <el-table-column label="操作" width="156" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <el-button size="small" type="danger" @click="approveVoid(row, true)">通过作废</el-button>
             <el-button size="small" @click="approveVoid(row, false)">驳回</el-button>
@@ -1435,7 +1435,7 @@ async function openReport() {
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 10px"
                 title="通过后才正式创建并推送各部门任务与物流发货待办；退回则销售可修改后重新提交。" />
       <EmptyHint v-if="!orderApprovalRows.length" text="暂无待审批的下单" size="sm" />
-      <el-table v-else :data="orderApprovalRows" stripe style="width: 100%">
+      <el-table show-overflow-tooltip v-else :data="orderApprovalRows" stripe style="width: 100%">
         <el-table-column prop="code" label="项目编号" width="110" />
         <el-table-column prop="name" label="设备名称" min-width="150" show-overflow-tooltip />
         <el-table-column label="客户" min-width="140" show-overflow-tooltip>
@@ -1450,7 +1450,7 @@ async function openReport() {
         <el-table-column label="派往" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ (row.pending_order?.depts || []).map((d:string)=>({design:'设计',electric:'电工',produce:'生产'}[d]||d)).join('、') || '调货(仅发货)' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="180" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <el-button size="small" type="success" :icon="Check" @click="approveOrder(row, true)">通过</el-button>
             <el-button size="small" type="danger" plain :icon="Close" @click="approveOrder(row, false)">驳回</el-button>

@@ -201,7 +201,7 @@ async function openReport() {
     </el-card>
 
     <el-card shadow="never">
-      <el-table :data="rows" stripe v-loading="loading" max-height="calc(100vh - 290px)">
+      <el-table show-overflow-tooltip :data="rows" stripe v-loading="loading" max-height="calc(100vh - 290px)">
         <el-table-column type="index" label="#" :width="48" />
         <el-table-column label="来源" :width="92">
           <template #default="{ row }"><el-tag size="small" effect="plain" type="info">{{ row.source }}</el-tag></template>
@@ -247,7 +247,7 @@ async function openReport() {
         <el-table-column label="录入时间" :width="108">
           <template #default="{ row }">{{ fmtDate(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" :width="allView ? 120 : 70" fixed="right" align="center">
+        <el-table-column label="操作" :width="allView ? 120 : 70" fixed="right" align="center" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="openEdit(row)">{{ allView ? '编辑' : '跟进' }}</el-button>
             <el-button v-if="allView" size="small" link type="danger" @click="removeLead(row)">删除</el-button>
@@ -359,7 +359,7 @@ async function openReport() {
       <div v-if="report" class="report-grid">
         <div>
           <div class="rep-title">按询盘来源</div>
-          <el-table :data="report.by_source" size="small" stripe>
+          <el-table show-overflow-tooltip :data="report.by_source" size="small" stripe>
             <el-table-column prop="key" label="来源" min-width="90" />
             <el-table-column prop="leads" label="线索" align="right" :width="64" />
             <el-table-column prop="quote" label="报价" align="right" :width="64" />
@@ -371,7 +371,7 @@ async function openReport() {
         </div>
         <div>
           <div class="rep-title">按跟进销售</div>
-          <el-table :data="report.by_owner" size="small" stripe>
+          <el-table show-overflow-tooltip :data="report.by_owner" size="small" stripe>
             <el-table-column prop="key" label="销售" min-width="90" />
             <el-table-column prop="leads" label="分配" align="right" :width="64" />
             <el-table-column prop="quote" label="报价" align="right" :width="64" />

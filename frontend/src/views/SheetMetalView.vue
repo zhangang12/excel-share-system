@@ -63,7 +63,7 @@ function viewSheet(row: Row) {
     </div>
 
     <el-card shadow="never">
-      <el-table :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+      <el-table show-overflow-tooltip :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="项目" width="120">
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>

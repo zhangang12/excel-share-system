@@ -152,7 +152,7 @@ function closePreview() {
           </el-select>
         </div>
       </template>
-      <el-table :data="list" v-loading="loading" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+      <el-table show-overflow-tooltip :data="list" v-loading="loading" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column prop="id" label="#" width="60" />
         <el-table-column label="类型" width="100">
           <template #default="{ row }"><el-tag size="small" :type="KIND_TAG[row.kind]">{{ KIND_TXT[row.kind] }}</el-tag></template>
@@ -184,7 +184,7 @@ function closePreview() {
         <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }"><StatusPill :text="STATUS_TXT[row.status]" :variant="row.status === 'done' ? 'success' : 'warn'" /></template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="180" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <el-button size="small" link type="primary" :icon="ChatLineRound" @click="openReply(row)">{{ row.reply ? '修改回复' : '回复' }}</el-button>
             <el-button v-if="row.status === 'open'" size="small" link type="success" :icon="Check" @click="markDone(row)">已处理</el-button>

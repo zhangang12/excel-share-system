@@ -891,7 +891,7 @@ const stockVisible = ref(false)
         </el-tab-pane>
 
         <el-tab-pane v-if="isWorker && !isProduce" :label="`✅ 我的订单（已完成 ${myDone.length}）`" name="done">
-          <el-table :data="myDone" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="myDone" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="112">
               <template #default="{ row }"><b>{{ row.project_code }}</b></template>
             </el-table-column>
@@ -928,7 +928,7 @@ const stockVisible = ref(false)
             <el-table-column label="通知" min-width="110">
               <template #default="{ row }">{{ row.notify_user_name ? '📲 ' + row.notify_user_name : '—' }}</template>
             </el-table-column>
-            <el-table-column label="操作" :width="dept === 'design' ? 300 : 130" fixed="right">
+            <el-table-column label="操作" :width="dept === 'design' ? 300 : 130" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <template v-if="dept === 'design'">
                   <el-button size="small" type="success" plain @click="openRes(row, 'shipprep')">
@@ -976,7 +976,7 @@ const stockVisible = ref(false)
         </el-tab-pane>
 
         <el-tab-pane v-if="isLead || isMgr" label="📋 任务跟踪" name="track">
-          <el-table :data="orders.filter(matchSearch)" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="orders.filter(matchSearch)" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="112">
               <template #default="{ row }"><b>{{ row.project_code }}</b></template>
             </el-table-column>
@@ -1046,7 +1046,7 @@ const stockVisible = ref(false)
                 <el-button size="small" link type="primary" @click="openPack(row)">预览/下载</el-button>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="248" fixed="right">
+            <el-table-column label="操作" width="248" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button v-if="['assigned', 'in_progress'].includes(row.status) && !isProduce"
                            size="small" :icon="SwitchIcon" @click="openReassign(row)">换人</el-button>
@@ -1069,7 +1069,7 @@ const stockVisible = ref(false)
             </el-select>
             <span class="muted small">共 {{ smRowsView.length }} 项</span>
           </div>
-          <el-table :data="smRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="smRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="240" show-overflow-tooltip />
@@ -1113,7 +1113,7 @@ const stockVisible = ref(false)
             </el-select>
             <span class="muted small">共 {{ asmRowsView.length }} 项</span>
           </div>
-          <el-table :data="asmRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="asmRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
@@ -1182,7 +1182,7 @@ const stockVisible = ref(false)
           <div class="kpi" :class="report.overdue ? 'is-bad' : ''"><div class="kpi-v">{{ report.overdue }}</div><div class="kpi-l">逾期</div></div>
           <div class="kpi"><div class="kpi-v">{{ report.ontime_rate ?? '—' }}%</div><div class="kpi-l">按时率 · 均效率 {{ report.avg_eff ?? '—' }}%</div></div>
         </div>
-        <el-table :data="report.workers" size="small" stripe style="margin-top:10px" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+        <el-table show-overflow-tooltip :data="report.workers" size="small" stripe style="margin-top:10px" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="worker_name" label="人员" min-width="100" />
           <el-table-column prop="total" label="任务数" width="80" />
           <el-table-column prop="done" label="完成" width="70" />
@@ -1192,7 +1192,7 @@ const stockVisible = ref(false)
           <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff != null && row.avg_eff >= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff ?? '—' }}%</span></template></el-table-column>
         </el-table>
         <div class="sec-title" style="margin-top:16px">逾期任务（{{ report.overdue_items.length }}）</div>
-        <el-table v-if="report.overdue_items.length" :data="report.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+        <el-table show-overflow-tooltip v-if="report.overdue_items.length" :data="report.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="worker_name" label="人员" width="100" />
           <el-table-column prop="code" label="项目编号" width="120" />
           <el-table-column prop="name" label="项目名称" min-width="160" show-overflow-tooltip />

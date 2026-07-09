@@ -73,7 +73,7 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
 
       <el-card shadow="never" style="margin-top:14px" v-if="rep">
         <template #header>👤 人员明细</template>
-        <el-table :data="rep.workers" size="small" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+        <el-table show-overflow-tooltip :data="rep.workers" size="small" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="dept_name" label="部门" width="90" />
           <el-table-column prop="worker_name" label="人员" width="100" />
           <el-table-column prop="total" label="任务数" width="80" />
@@ -87,7 +87,7 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
 
       <el-card shadow="never" style="margin-top:14px" v-if="rep">
         <template #header>⏰ 逾期任务清单（{{ rep.overdue_items.length }}）</template>
-        <el-table v-if="rep.overdue_items.length" :data="rep.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+        <el-table show-overflow-tooltip v-if="rep.overdue_items.length" :data="rep.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="dept_name" label="部门" width="90" />
           <el-table-column prop="worker_name" label="人员" width="100" />
           <el-table-column prop="code" label="项目编号" width="120" />

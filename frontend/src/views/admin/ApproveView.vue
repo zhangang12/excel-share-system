@@ -63,7 +63,7 @@ function fmt(s: string) {
     <el-alert v-if="!enabled" type="info" :closable="false" style="margin-bottom:12px"
               title="导出审批当前为「关闭」状态：所有角色可直接导出（与上线前一致）。开启需在后端 export_approval_enabled 配置。" />
     <el-card shadow="never" v-loading="loading">
-      <el-table :data="list" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+      <el-table show-overflow-tooltip :data="list" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="申请人" min-width="120">
           <template #default="{ row }">{{ row.user_name }} <span class="muted small">{{ row.user_role }}</span></template>
         </el-table-column>
@@ -75,7 +75,7 @@ function fmt(s: string) {
                         :variant="row.status === 'approved' ? 'success' : row.status === 'pending' ? 'warn' : row.status === 'rejected' ? 'danger' : 'muted'" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160">
+        <el-table-column label="操作" width="160" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <template v-if="row.status === 'pending'">
               <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="act(row, true)">批准</el-button>

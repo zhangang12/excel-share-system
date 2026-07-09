@@ -407,7 +407,7 @@ onMounted(async () => {
           <el-button type="primary" :icon="Plus" @click="openSubmit">新建申请</el-button>
           <el-button :icon="RefreshLeft" @click="loadList">刷新</el-button>
         </div>
-        <el-table :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
+        <el-table show-overflow-tooltip :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
           <el-table-column prop="request_no" label="单号" width="150" />
           <el-table-column label="单据类型" width="120"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
           <el-table-column prop="department_name" label="部门" width="100" />
@@ -416,7 +416,7 @@ onMounted(async () => {
           <el-table-column label="状态" width="100"><template #default="{ row }"><StatusPill :text="STATUS_TEXT[row.status]" :variant="STATUS_VARIANT[row.status]" /></template></el-table-column>
           <el-table-column label="当前环节" width="110"><template #default="{ row }">{{ curStepLabel(row) }}</template></el-table-column>
           <el-table-column label="提交时间" width="150"><template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template></el-table-column>
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="90" fixed="right" :show-overflow-tooltip="false">
             <template #default="{ row }"><el-button size="small" link type="primary" @click="openDetail(row.id)">查看</el-button></template>
           </el-table-column>
           <template #empty><EmptyHint text="还没有提交过申请" /></template>
@@ -425,7 +425,7 @@ onMounted(async () => {
 
       <el-tab-pane label="待我审批" name="pending_me">
         <div class="toolbar"><el-button :icon="RefreshLeft" @click="loadList">刷新</el-button></div>
-        <el-table :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
+        <el-table show-overflow-tooltip :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
           <el-table-column prop="request_no" label="单号" width="150" />
           <el-table-column label="单据类型" width="120"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
           <el-table-column prop="department_name" label="部门" width="100" />
@@ -433,7 +433,7 @@ onMounted(async () => {
           <el-table-column prop="title" label="标题" min-width="150" show-overflow-tooltip />
           <el-table-column label="金额" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
           <el-table-column label="提交时间" width="150"><template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template></el-table-column>
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="90" fixed="right" :show-overflow-tooltip="false">
             <template #default="{ row }"><el-button size="small" link type="primary" @click="openDetail(row.id)">处理</el-button></template>
           </el-table-column>
           <template #empty><EmptyHint text="没有待你审批的申请" /></template>
@@ -442,7 +442,7 @@ onMounted(async () => {
 
       <el-tab-pane label="抄送我的" name="cc_me">
         <div class="toolbar"><el-button :icon="RefreshLeft" @click="loadList">刷新</el-button></div>
-        <el-table :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
+        <el-table show-overflow-tooltip :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
           <el-table-column prop="request_no" label="单号" width="150" />
           <el-table-column label="单据类型" width="120"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
           <el-table-column prop="department_name" label="部门" width="100" />
@@ -451,7 +451,7 @@ onMounted(async () => {
           <el-table-column label="金额" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
           <el-table-column label="状态" width="100"><template #default="{ row }"><StatusPill :text="STATUS_TEXT[row.status]" :variant="STATUS_VARIANT[row.status]" /></template></el-table-column>
           <el-table-column label="提交时间" width="150"><template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template></el-table-column>
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="90" fixed="right" :show-overflow-tooltip="false">
             <template #default="{ row }"><el-button size="small" link type="primary" @click="openDetail(row.id)">查看</el-button></template>
           </el-table-column>
           <template #empty><EmptyHint text="没有抄送给你的申请" /></template>
@@ -460,7 +460,7 @@ onMounted(async () => {
 
       <el-tab-pane v-if="isDeptLead" label="部门审批" name="dept">
         <div class="toolbar"><el-button :icon="RefreshLeft" @click="loadList">刷新</el-button></div>
-        <el-table :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
+        <el-table show-overflow-tooltip :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
           <el-table-column prop="request_no" label="单号" width="150" />
           <el-table-column label="单据类型" width="120"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
           <el-table-column prop="requester_name" label="申请人" width="100" />
@@ -468,7 +468,7 @@ onMounted(async () => {
           <el-table-column label="金额" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
           <el-table-column label="状态" width="100"><template #default="{ row }"><StatusPill :text="STATUS_TEXT[row.status]" :variant="STATUS_VARIANT[row.status]" /></template></el-table-column>
           <el-table-column label="当前环节" width="110"><template #default="{ row }">{{ curStepLabel(row) }}</template></el-table-column>
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="90" fixed="right" :show-overflow-tooltip="false">
             <template #default="{ row }"><el-button size="small" link type="primary" @click="openDetail(row.id)">查看</el-button></template>
           </el-table-column>
           <template #empty><EmptyHint text="本部门暂无申请" /></template>
@@ -477,7 +477,7 @@ onMounted(async () => {
 
       <el-tab-pane v-if="canViewAll" label="全部申请" name="all">
         <div class="toolbar"><el-button :icon="RefreshLeft" @click="loadList">刷新</el-button></div>
-        <el-table :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
+        <el-table show-overflow-tooltip :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
           <el-table-column prop="request_no" label="单号" width="150" />
           <el-table-column label="单据类型" width="120"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
           <el-table-column prop="department_name" label="部门" width="100" />
@@ -486,7 +486,7 @@ onMounted(async () => {
           <el-table-column label="金额" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
           <el-table-column label="状态" width="100"><template #default="{ row }"><StatusPill :text="STATUS_TEXT[row.status]" :variant="STATUS_VARIANT[row.status]" /></template></el-table-column>
           <el-table-column label="当前环节" width="110"><template #default="{ row }">{{ curStepLabel(row) }}</template></el-table-column>
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="90" fixed="right" :show-overflow-tooltip="false">
             <template #default="{ row }"><el-button size="small" link type="primary" @click="openDetail(row.id)">查看</el-button></template>
           </el-table-column>
           <template #empty><EmptyHint text="暂无申请记录" /></template>
@@ -494,7 +494,7 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane v-if="canViewSummary" label="汇总报表" name="summary">
-        <el-table :data="summaryRows" v-loading="summaryLoading" stripe size="small">
+        <el-table show-overflow-tooltip :data="summaryRows" v-loading="summaryLoading" stripe size="small">
           <el-table-column prop="department_name" label="部门" width="140" />
           <el-table-column label="单据类型" width="140"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
           <el-table-column prop="count" label="已批件数" width="100" align="right" />
@@ -512,13 +512,13 @@ onMounted(async () => {
         </el-radio-group>
 
         <div v-if="settingsTab === 'dept'">
-          <el-table :data="departments" size="small" border stripe max-height="34vh">
+          <el-table show-overflow-tooltip :data="departments" size="small" border stripe max-height="34vh">
             <el-table-column type="index" label="#" width="46" align="center" />
             <el-table-column prop="name" label="部门名称" min-width="120" />
             <el-table-column label="部门负责人角色" min-width="150"><template #default="{ row }">{{ roleName(row.lead_role) }}</template></el-table-column>
             <el-table-column label="排序" width="70" prop="sort_order" />
             <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="110">
+            <el-table-column label="操作" width="110" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button size="small" link type="primary" @click="deptEdit(row)">编辑</el-button>
                 <el-button size="small" link type="danger" @click="deptDelete(row)">删除</el-button>
@@ -549,14 +549,14 @@ onMounted(async () => {
         <div v-else-if="settingsTab === 'doctype'">
           <el-alert type="info" :closable="false" style="margin-bottom:14px"
             title="维护业务/报销/采购三大类下具体的单据类型。标识（key）创建后不可修改；停用后不再出现在新建申请/审批流程配置的下拉里，但历史记录正常显示。" />
-          <el-table :data="docTypes" size="small" border stripe max-height="34vh">
+          <el-table show-overflow-tooltip :data="docTypes" size="small" border stripe max-height="34vh">
             <el-table-column type="index" label="#" width="46" align="center" />
             <el-table-column label="所属大类" width="110"><template #default="{ row }">{{ categoryLabel(row.category) }}</template></el-table-column>
             <el-table-column prop="label" label="展示名称" min-width="120" />
             <el-table-column prop="key" label="标识（key）" min-width="120" />
             <el-table-column label="排序" width="70" prop="sort_order" />
             <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="110">
+            <el-table-column label="操作" width="110" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button size="small" link type="primary" @click="dtEdit(row)">编辑</el-button>
                 <el-button size="small" link type="danger" @click="dtDelete(row)">删除</el-button>
@@ -592,7 +592,7 @@ onMounted(async () => {
         <div v-else-if="settingsTab === 'chain'">
           <!-- 🆕 已配置流程一览：一屏看到所有部门×单据类型的审批链 -->
           <div class="form-section-title" style="margin-top:0">已配置的审批流程一览</div>
-          <el-table :data="chainOverview" size="small" border stripe max-height="32vh" style="margin-bottom:18px">
+          <el-table show-overflow-tooltip :data="chainOverview" size="small" border stripe max-height="32vh" style="margin-bottom:18px">
             <el-table-column label="部门" width="120"><template #default="{ row }">{{ row.department_name }}</template></el-table-column>
             <el-table-column label="单据类型" width="130"><template #default="{ row }">{{ row.doc_label }}</template></el-table-column>
             <el-table-column label="审批链（按顺序）" min-width="280">
@@ -603,7 +603,7 @@ onMounted(async () => {
                 </span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="80">
+            <el-table-column label="操作" width="80" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }"><el-button size="small" link type="primary" @click="loadChainForEdit(row)">编辑</el-button></template>
             </el-table-column>
             <template #empty><EmptyHint text="还没有配置任何审批流程，在下方选部门+单据类型开始配置" size="sm" /></template>
@@ -626,12 +626,12 @@ onMounted(async () => {
               </el-select>
             </el-col>
           </el-row>
-          <el-table :data="chainSteps" v-loading="chainLoading" size="small" border stripe>
+          <el-table show-overflow-tooltip :data="chainSteps" v-loading="chainLoading" size="small" border stripe>
             <el-table-column prop="step_order" label="顺序" width="60" align="center" />
             <el-table-column label="审批角色" min-width="120"><template #default="{ row }">{{ roleName(row.approver_role) }}</template></el-table-column>
             <el-table-column prop="step_label" label="展示名" min-width="120" />
             <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="110">
+            <el-table-column label="操作" width="110" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button size="small" link type="primary" @click="stepEdit(row)">编辑</el-button>
                 <el-button size="small" link type="danger" @click="stepDelete(row)">删除</el-button>
@@ -715,7 +715,7 @@ onMounted(async () => {
             <el-col :span="24">
               <el-form-item label="费用明细">
                 <div style="width:100%">
-                  <el-table :data="subForm.expense_items" size="small" border>
+                  <el-table show-overflow-tooltip :data="subForm.expense_items" size="small" border>
                     <el-table-column label="费用类型" width="130">
                       <template #default="{ row }">
                         <el-select v-model="row.category" filterable allow-create default-first-option placeholder="选/填类型" size="small" style="width:100%">
@@ -737,7 +737,7 @@ onMounted(async () => {
                         </el-tooltip>
                       </template>
                     </el-table-column>
-                    <el-table-column label="操作" width="56" align="center">
+                    <el-table-column label="操作" width="56" align="center" fixed="right" :show-overflow-tooltip="false">
                       <template #default="{ $index }"><el-button size="small" link type="danger" @click="delExpenseRow($index)">删</el-button></template>
                     </el-table-column>
                     <template #empty><span class="muted" style="font-size:12px">还没有费用明细，点下方「添加一行」</span></template>
@@ -796,7 +796,7 @@ onMounted(async () => {
         <!-- 🆕 #149：报销费用明细 + 逐行发票下载 -->
         <div v-if="detailReq.detail && detailReq.detail.expense_items && detailReq.detail.expense_items.length" style="margin:6px 0 12px">
           <div class="form-section-title" style="margin-top:0">费用明细</div>
-          <el-table :data="detailReq.detail.expense_items" size="small" border>
+          <el-table show-overflow-tooltip :data="detailReq.detail.expense_items" size="small" border>
             <el-table-column label="费用类型" width="96"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
             <el-table-column label="说明" min-width="110"><template #default="{ row }">{{ row.note || '—' }}</template></el-table-column>
             <el-table-column label="金额" width="96" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>

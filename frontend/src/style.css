@@ -342,7 +342,55 @@ a:hover { text-decoration: none; opacity: .85; }
   scrollbar-color: #b4bcc8 #eef1f5;
 }
 
+/* ===== 🆕 全局 UI 紧凑化（2026-07-10 全站表格/表单美化）：
+   表单行距、弹窗提示条、Tabs 间距、表格内操作按钮统一收紧，版面紧凑、按钮清晰。 ===== */
+/* 表单：行距 18→14px；label-top 标签更贴近控件（弹窗表单矮一截，小屏少滚动） */
+.el-form-item { margin-bottom: 14px; }
+.el-form--inline .el-form-item { margin-right: 12px; margin-bottom: 8px; }
+.el-form--label-top .el-form-item__label { padding-bottom: 4px !important; line-height: 1.35; }
+
+/* 弹窗/页内提示条(el-alert 作说明用)：更矮更紧，少占一行高度 */
+.el-alert { padding: 7px 12px !important; border-radius: var(--radius-sm) !important; }
+.el-alert__title { font-size: 12.5px !important; line-height: 1.55; }
+
+/* Tabs 头与内容间距收紧 */
+.el-tabs__header { margin-bottom: 12px !important; }
+
+/* 表格内操作按钮：清晰但不占行高——小按钮收紧内边距，link 按钮加字重醒目 */
+.el-table .el-button--small:not(.is-link) { padding: 3px 10px !important; font-size: 12.5px !important; }
+.el-table .el-button.is-link { font-weight: 500; }
+/* 操作列(fixed右侧)与数据列之间自带阴影分隔(Element 默认)，保证按钮区一眼可辨 */
+
+/* descriptions 键值展示：标签加重、行距收紧 */
+.el-descriptions__label { font-weight: 600 !important; }
+.el-descriptions__cell { padding-bottom: 6px !important; }
+
+/* 通用筛选工具栏（各页顶部筛选行）：控件间 8px、自动换行，窄屏不横向溢出 */
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.filter-bar .el-button + .el-button { margin-left: 0; }
+
 /* ===== 小屏笔记本 / 平板适配 ===== */
+/* 🆕 窄幅笔记本（≤1440px：13/14寸 1366/1440 宽）：整体再紧一档，尽量一屏放下更多列 */
+@media (max-width: 1440px) {
+  html, body { font-size: 14.5px; }
+  .el-table { font-size: 12.8px !important; }
+  .el-table td.el-table__cell { padding: 5px 0 !important; }
+  .el-table th.el-table__cell { font-size: 12.5px; }
+  .el-table:not(.compact-tbl) .cell { padding-left: 8px; padding-right: 8px; }
+  .el-button { font-size: 13.5px !important; padding: 7px 14px !important; }
+  .el-button--small { font-size: 12.5px !important; padding: 5px 10px !important; }
+  .el-card__body { padding: 14px !important; }
+  .el-card__header { padding: 12px 16px !important; }
+  .kpi { padding: 12px 14px; }
+  .kpi .kpi-v { font-size: 20px; }
+  .kpi.is-primary .kpi-v { font-size: 22px; }
+  .page-header { margin-bottom: 12px; }
+  .page-header h1 { font-size: 20px; }
+  .el-form-item { margin-bottom: 12px; }
+  .el-dialog__header { padding: 14px 20px 8px !important; font-size: 15.5px !important; }
+  .el-dialog__body { padding: 10px 20px 6px !important; }
+  .el-dialog__footer { padding: 12px 20px 16px !important; }
+}
 /* 矮屏（1366×768 笔记本、平板横屏）：压缩垂直占用，给表格腾高度 */
 @media (max-height: 800px) {
   .page-header { margin-bottom: 10px; padding: 0 2px; }

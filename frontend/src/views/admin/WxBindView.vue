@@ -73,7 +73,7 @@ onMounted(load)
     </div>
 
     <el-card v-loading="loading" shadow="never">
-      <el-table :data="users" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+      <el-table show-overflow-tooltip :data="users" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="姓名" min-width="140">
           <template #default="{ row }">{{ row.full_name || row.username }}</template>
         </el-table-column>

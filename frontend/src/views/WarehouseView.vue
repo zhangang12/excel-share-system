@@ -628,7 +628,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-input v-model="kw" placeholder="搜索物料" :prefix-icon="Search" clearable style="width:240px" @change="loadMaterials" />
           </div>
           <!-- 🆕 #140 列宽用 min-width 平均分布，避免名称/规格独占空白、右侧列挤在一起 -->
-          <el-table :data="materials" stripe size="small" max-height="calc(100vh - 240px)">
+          <el-table show-overflow-tooltip :data="materials" stripe size="small" max-height="calc(100vh - 240px)">
             <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
             <el-table-column prop="spec" label="规格型号" min-width="140"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="category" label="类别" min-width="110"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
@@ -664,7 +664,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-date-picker v-model="period" type="month" value-format="YYYY-MM" @change="loadSummary" />
             <span class="muted small">期初 + 本期入 − 本期出 = 期末</span>
           </div>
-          <el-table :data="summary" stripe size="small" show-summary
+          <el-table show-overflow-tooltip :data="summary" stripe size="small" show-summary
                     :summary-method="(p:any) => ['合计','','', summary.reduce((s,r)=>s+r.opening,0), summary.reduce((s,r)=>s+r.in_qty,0), summary.reduce((s,r)=>s+r.out_qty,0), summary.reduce((s,r)=>s+r.closing,0)]"
                     max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="name" label="物料" min-width="120" />
@@ -687,7 +687,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-radio-button value="out">出库</el-radio-button>
             </el-radio-group>
           </div>
-          <el-table :data="txns" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="txns" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="ref_no" label="单号" width="140" />
             <el-table-column prop="biz_date" label="日期" width="110">
               <template #default="{ row }">{{ fmtDate(row.biz_date) }}</template>
@@ -702,7 +702,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-table-column prop="source" label="来源/用途" width="100"><template #default="{ row }">{{ row.source || '—' }}</template></el-table-column>
             <el-table-column prop="party" label="供应商/领用方" min-width="110"><template #default="{ row }">{{ row.party || '—' }}</template></el-table-column>
             <el-table-column prop="project_code" label="项目" width="100"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>
-            <el-table-column label="操作" width="90">
+            <el-table-column label="操作" width="90" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <StatusPill v-if="row.is_reversal" text="冲红单" variant="muted" />
                 <StatusPill v-else-if="row.reversed" text="已冲红" variant="danger" />
@@ -718,7 +718,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openMat()" style="margin-bottom:10px">新增物料</el-button>
           <el-button v-if="canConfigFields" :icon="Setting" @click="openFieldManager" style="margin-bottom:10px;margin-left:8px">字段设置</el-button>
           <el-button v-if="canClear" type="danger" plain :icon="Delete" @click="clearAll" style="margin-bottom:10px;margin-left:8px">一键清空</el-button>
-          <el-table :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="name" label="名称" min-width="120" />
             <el-table-column prop="spec" label="规格型号" min-width="120"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="category" label="类别" width="100"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
@@ -731,7 +731,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-table-column v-for="f in listCustomFields" :key="f.id" :label="f.label" min-width="100">
               <template #default="{ row }">{{ cfDisplay(row.custom_values, f) }}</template>
             </el-table-column>
-            <el-table-column v-if="canWrite" label="操作" width="110" fixed="right"><template #default="{ row }"><el-button size="small" link type="primary" @click="openMat(row)">编辑</el-button><el-button size="small" link type="danger" @click="deleteMat(row)">删除</el-button></template></el-table-column>
+            <el-table-column v-if="canWrite" label="操作" width="110" fixed="right" :show-overflow-tooltip="false"><template #default="{ row }"><el-button size="small" link type="primary" @click="openMat(row)">编辑</el-button><el-button size="small" link type="danger" @click="deleteMat(row)">删除</el-button></template></el-table-column>
           </el-table>
           <EmptyHint v-if="!materials.length" text="暂无物料主数据，点「新增物料」开始" size="sm" />
         </el-tab-pane>
@@ -745,7 +745,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-button :icon="Search" size="small" @click="loadDemandOverview">刷新</el-button>
               <span class="muted small">列出有「标准件清单」的项目；点「查看」进入逐行需求并领用出库。待出库=有货且未领完的物料行数，已出库=已领用过的行数。</span>
             </div>
-            <el-table :data="demandOverview" v-loading="demandOverviewLoading" stripe size="small"
+            <el-table show-overflow-tooltip :data="demandOverview" v-loading="demandOverviewLoading" stripe size="small"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
               <el-table-column prop="name" label="项目名称" min-width="200" show-overflow-tooltip />
@@ -756,7 +756,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-table-column label="已出库" width="110" align="center">
                 <template #default="{ row }"><StatusPill :text="`已出库 ${row.issued_out}`" :variant="row.issued_out > 0 ? 'success' : 'muted'" /></template>
               </el-table-column>
-              <el-table-column label="操作" width="100" align="center" fixed="right">
+              <el-table-column label="操作" width="100" align="center" fixed="right" :show-overflow-tooltip="false">
                 <template #default="{ row }"><el-button size="small" type="primary" plain @click="openDemandProject(row.project_id)">查看</el-button></template>
               </el-table-column>
               <template #empty><EmptyHint text="暂无带标准件清单的项目" size="sm" /></template>
@@ -770,7 +770,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-button v-if="canWrite" type="warning" :icon="Plus" size="small" @click="issueAll">一键领用出库</el-button>
             <span class="muted small">读项目「标准件清单」,逐行看 需求量 / 现有库存 / 建议采购量。有货的可直接领用出库(自动登记出库),缺的走采购。</span>
           </div>
-          <el-table :data="demandRows" v-loading="demandLoading" stripe size="small"
+          <el-table show-overflow-tooltip :data="demandRows" v-loading="demandLoading" stripe size="small"
                     max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column prop="item_name" label="名称" min-width="150" />
             <el-table-column prop="spec" label="规格型号" min-width="150"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
@@ -792,7 +792,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-table-column label="已领用" width="90" align="right">
               <template #default="{ row }">{{ row.issued_qty || 0 }}</template>
             </el-table-column>
-            <el-table-column v-if="canWrite" label="操作" width="110" align="center" fixed="right">
+            <el-table-column v-if="canWrite" label="操作" width="110" align="center" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button v-if="row.material_id && row.stock > 0" size="small" type="warning" plain @click="issueOne(row)">领用出库</el-button>
                 <span v-else class="muted small">—</span>
@@ -821,7 +821,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-button v-if="recvSelected.length" type="primary" @click="openBatchReceive">合并收货 ({{ recvSelected.length }})</el-button>
               <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。合并零件可勾选多条「合并收货」只填总价。</span>
             </div>
-            <el-table :data="groupedRecv" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
+            <el-table show-overflow-tooltip :data="groupedRecv" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
                       :row-key="recvRowKey" :tree-props="{ children: 'children' }" default-expand-all
                       :row-class-name="grpRowClass"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
@@ -868,7 +868,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                   <span v-else class="muted small">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="112" align="center" fixed="right">
+              <el-table-column label="操作" width="112" align="center" fixed="right" :show-overflow-tooltip="false">
                 <template #default="{ row }">
                   <el-button v-if="row._isGroup" size="small" :type="recvReceived ? 'default' : 'primary'" plain @click="openBatchReceiveGroup(row)">
                     {{ recvReceived ? '合并修改' : '合并收货' }}
@@ -900,7 +900,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               发货清单由设计部下发（同时直推发货部与仓库）。仓库只需按清单核对、备好货物后点「已备齐」，物流发货部即可安排发货——无需在此上传。
             </div>
 
-            <el-table :data="shipPending" v-loading="shipPendingLoading" stripe size="small"
+            <el-table show-overflow-tooltip :data="shipPending" v-loading="shipPendingLoading" stripe size="small"
                       max-height="calc(100vh - 320px)" :scrollbar-always-on="true">
               <el-table-column label="项目编号" width="118"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
               <el-table-column prop="name" label="项目名称" min-width="150" show-overflow-tooltip />
@@ -932,7 +932,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                   <el-tag v-else type="warning" effect="light" size="small">⏳ 待备货</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="110" align="center" fixed="right">
+              <el-table-column label="操作" width="110" align="center" fixed="right" :show-overflow-tooltip="false">
                 <template #default="{ row }">
                   <el-button v-if="row.packlist_status !== 'ready'" size="small" type="success" @click="markShipReady(row)">已备齐</el-button>
                   <span v-else class="muted">已完成</span>
@@ -954,10 +954,10 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-button :icon="Search" size="small" @click="loadPurchReqs">刷新</el-button>
               <span class="muted small">仓库发现要买的东西（缺料/耗材/工具等）在这里提申请，采购部会收到通知并处理。</span>
             </div>
-            <el-table :data="preqList" v-loading="preqLoading" stripe size="small" max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
+            <el-table show-overflow-tooltip :data="preqList" v-loading="preqLoading" stripe size="small" max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column type="expand" width="36">
                 <template #default="{ row }">
-                  <el-table :data="row.lines" size="small" border style="margin:6px 12px">
+                  <el-table show-overflow-tooltip :data="row.lines" size="small" border style="margin:6px 12px">
                     <el-table-column type="index" label="#" width="44" />
                     <el-table-column label="名称" prop="item_name" min-width="140" />
                     <el-table-column label="规格" min-width="120"><template #default="{ row: l }">{{ l.spec || '—' }}</template></el-table-column>
@@ -972,7 +972,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-table-column label="状态" width="100" align="center"><template #default="{ row }"><StatusPill :text="PREQ_STATUS[row.status] || row.status" :variant="preqStatusVariant(row.status)" /></template></el-table-column>
               <el-table-column label="处理" min-width="140"><template #default="{ row }"><span v-if="row.status === 'done'" class="muted small">{{ row.handler_name }} 已处理</span><span v-else-if="row.status === 'rejected'" class="danger small">驳回：{{ row.reject_reason || '—' }}</span><span v-else class="muted small">等待采购部处理</span></template></el-table-column>
               <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
-              <el-table-column label="操作" width="70" align="center"><template #default="{ row }"><el-button v-if="row.status !== 'done'" size="small" link type="danger" @click="deletePurchReq(row)">删除</el-button></template></el-table-column>
+              <el-table-column label="操作" width="70" align="center" fixed="right" :show-overflow-tooltip="false"><template #default="{ row }"><el-button v-if="row.status !== 'done'" size="small" link type="danger" @click="deletePurchReq(row)">删除</el-button></template></el-table-column>
               <template #empty><EmptyHint text="暂无采购申请，点「提采购申请」开始" size="sm" /></template>
             </el-table>
           </template>
@@ -994,14 +994,14 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         <span class="order-lines-title">采购物料（{{ preqForm.lines.length }} 行）</span>
         <el-button size="small" :icon="Plus" @click="addPreqLine">添加一行</el-button>
       </div>
-      <el-table :data="preqForm.lines" size="small" border max-height="46vh">
+      <el-table show-overflow-tooltip :data="preqForm.lines" size="small" border max-height="46vh">
         <el-table-column type="index" label="#" width="44" align="center" />
         <el-table-column label="名称 *" min-width="160"><template #default="{ row }"><el-input v-model="row.item_name" placeholder="物料名称" /></template></el-table-column>
         <el-table-column label="规格型号" min-width="140"><template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template></el-table-column>
         <el-table-column label="数量" width="110"><template #default="{ row }"><el-input-number v-model="row.qty" :min="0" :controls="false" style="width:100%" /></template></el-table-column>
         <el-table-column label="项目编号" width="120"><template #default="{ row }"><el-input v-model="row.project_code" placeholder="选填" /></template></el-table-column>
         <el-table-column label="备注" min-width="120"><template #default="{ row }"><el-input v-model="row.notes" placeholder="选填" /></template></el-table-column>
-        <el-table-column label="操作" width="60" align="center"><template #default="{ $index }"><el-button size="small" link type="danger" :icon="Delete" @click="removePreqLine($index)" /></template></el-table-column>
+        <el-table-column label="操作" width="60" align="center" fixed="right" :show-overflow-tooltip="false"><template #default="{ $index }"><el-button size="small" link type="danger" :icon="Delete" @click="removePreqLine($index)" /></template></el-table-column>
       </el-table>
       <el-input v-model="preqForm.notes" type="textarea" :rows="2" placeholder="整单备注（选填）" style="margin-top:12px" />
       <template #footer>
@@ -1111,7 +1111,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
     <el-dialog v-model="cfManagerVisible" title="物料自定义字段设置" width="640px">
       <el-alert type="info" :closable="false" style="margin-bottom:12px"
         title="给物料表单加自定义字段（文本/数字/日期/下拉）。启用后新增/编辑物料会出现对应输入框；勾选「列表显示」的字段在物料主数据表里显示成一列。删除字段不影响已录入的历史值。" />
-      <el-table :data="customFields" size="small" border stripe max-height="34vh">
+      <el-table show-overflow-tooltip :data="customFields" size="small" border stripe max-height="34vh">
         <el-table-column type="index" label="#" width="46" align="center" />
         <el-table-column prop="label" label="字段名称" min-width="110" />
         <el-table-column label="类型" width="90"><template #default="{ row }">{{ CF_TYPES.find(t => t.v === row.ftype)?.l || row.ftype }}</template></el-table-column>
@@ -1119,7 +1119,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         <el-table-column label="列表显示" width="80"><template #default="{ row }">{{ row.show_in_list ? '是' : '—' }}</template></el-table-column>
         <el-table-column label="排序" width="60" prop="sort_order" />
         <el-table-column label="状态" width="70"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="100">
+        <el-table-column label="操作" width="100" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="cfEdit(row)">编辑</el-button>
             <el-button size="small" link type="danger" @click="cfDelete(row)">删除</el-button>
@@ -1194,7 +1194,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </div>
         <div class="muted small" style="margin:2px 0 8px">逐行填单价/收货金额（单价可留空，货到再补）。</div>
       </el-form>
-      <el-table :data="batchRecvLines" size="small" border max-height="34vh">
+      <el-table show-overflow-tooltip :data="batchRecvLines" size="small" border max-height="34vh">
         <el-table-column label="名称" min-width="130">
           <template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template>
         </el-table-column>

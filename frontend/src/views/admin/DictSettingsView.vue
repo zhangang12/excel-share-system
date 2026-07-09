@@ -82,7 +82,7 @@ function onTab() { load() }
         <el-button type="primary" :icon="Plus" @click="openAdd">新增取值</el-button>
       </div>
 
-      <el-table :data="list" v-loading="loading" stripe size="small" class="compact-tbl" max-height="calc(100vh - 300px)">
+      <el-table show-overflow-tooltip :data="list" v-loading="loading" stripe size="small" class="compact-tbl" max-height="calc(100vh - 300px)">
         <el-table-column type="index" label="#" width="52" align="center" />
         <el-table-column prop="value" label="取值" min-width="220" />
         <el-table-column prop="sort_order" label="排序" width="90" align="right" />
@@ -91,7 +91,7 @@ function onTab() { load() }
             <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" align="right">
+        <el-table-column label="操作" width="220" align="right" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" @click="toggleEnabled(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>

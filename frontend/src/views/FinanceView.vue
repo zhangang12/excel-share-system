@@ -335,7 +335,7 @@ async function revokeInvoice(row: ViewRow) {
     <el-card shadow="never" v-loading="loading">
       <el-tabs v-model="tab" @tab-change="onFinTab">
         <el-tab-pane v-if="tv('pending')" :label="`📥 待开票 (${pendingView.length})`" name="pending">
-          <el-table :data="pendingView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="pendingView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="140">
               <template #default="{ row }">
                 <el-tag v-if="row._isBatch" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row._count }}</el-tag>
@@ -357,7 +357,7 @@ async function revokeInvoice(row: ViewRow) {
                 </el-tooltip>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="200">
+            <el-table-column label="操作" width="200" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button size="small" type="primary" :icon="UploadFilled" @click="uploadInvoice(row)">
                   {{ row._isBatch ? '上传合并发票' : '上传发票' }}
@@ -373,7 +373,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <el-tab-pane v-if="tv('invoiced')" :label="`✅ 已开票 (${invoicedView.length})`" name="invoiced">
-          <el-table :data="invoicedView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="invoicedView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="140">
               <template #default="{ row }">
                 <el-tag v-if="row._isBatch" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row._count }}</el-tag>
@@ -391,7 +391,7 @@ async function revokeInvoice(row: ViewRow) {
                 </el-button>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="110">
+            <el-table-column label="操作" width="110" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button v-if="!row._isBatch" size="small" link type="warning" @click="revokeInvoice(row)">作废重开</el-button>
                 <el-tooltip v-else content="合并发票暂不支持单项目作废" placement="top">
@@ -404,7 +404,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <el-tab-pane v-if="tv('aftersales')" :label="`🛎️ 安装/售后费用 (${aftersales.length})`" name="aftersales">
-          <el-table :data="aftersales" stripe show-summary :summary-method="() => ['合计', '', '', '', '', fmtMoney(asTotal), '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="aftersales" stripe show-summary :summary-method="() => ['合计', '', '', '', '', fmtMoney(asTotal), '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="50" />
             <el-table-column label="类型" width="70" align="center">
               <template #default="{ row }"><el-tag :type="row.kind === 'install' ? 'success' : 'warning'" size="small" effect="light">{{ KIND_TXT[row.kind] || '售后' }}</el-tag></template>
@@ -422,7 +422,7 @@ async function revokeInvoice(row: ViewRow) {
                 <span v-else>—</span>
               </template>
             </el-table-column>
-            <el-table-column v-if="isManager" label="操作" width="80">
+            <el-table-column v-if="isManager" label="操作" width="80" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button size="small" link type="danger" @click="voidAfterSales(row)">作废</el-button>
               </template>
@@ -442,7 +442,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
             <span class="muted small">💡 内控职责分离：审批通过后到「付款」tab 付款，审批人不能给自己审过的单付款。</span>
           </div>
-          <el-table :data="filteredPayReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="filteredPayReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
             <el-table-column prop="id" label="申请编号" width="80" />
             <el-table-column prop="supplier_name" label="供应商" min-width="130" />
             <el-table-column prop="requester_name" label="申请人" width="90" />
@@ -475,7 +475,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column prop="created_at" label="申请时间" width="110">
               <template #default="{ row }">{{ row.created_at?.slice(0, 10) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="200">
+            <el-table-column label="操作" width="200" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <template v-if="row.status === 'pending'">
                   <el-button size="small" type="primary" @click="approvePayReq(row.id)">审批通过</el-button>
@@ -499,7 +499,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
             <span class="muted small">💡 仅对已审批通过的请款单付款；审批人不能给自己审过的单付款（后端校验）。</span>
           </div>
-          <el-table :data="filteredPaymentReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="filteredPaymentReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
             <el-table-column prop="id" label="申请编号" width="80" />
             <el-table-column prop="supplier_name" label="供应商" min-width="130" />
             <el-table-column prop="requester_name" label="申请人" width="90" />
@@ -536,7 +536,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column prop="created_at" label="申请时间" width="110">
               <template #default="{ row }">{{ row.created_at?.slice(0, 10) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="200">
+            <el-table-column label="操作" width="200" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button v-if="row.status === 'approved'" size="small" type="success" @click="openPay(row)">记录付款</el-button>
                 <el-button size="small" type="danger" link @click="deletePayReq(row)">删除</el-button>
@@ -552,7 +552,7 @@ async function revokeInvoice(row: ViewRow) {
             <span>应付合计 <b class="danger">{{ fmtMoney(payablesTotal) }}</b></span>
             <span class="muted small">已收货未付款 = 对供应商的应付;审批走「请款审批」，付款走「付款」页</span>
           </div>
-          <el-table :data="payables" v-loading="payablesLoading" stripe size="small"
+          <el-table show-overflow-tooltip :data="payables" v-loading="payablesLoading" stripe size="small"
                     max-height="calc(100vh - 300px)" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column prop="supplier_name" label="供应商" min-width="180" />
             <el-table-column prop="category" label="分类" width="90"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
@@ -574,7 +574,7 @@ async function revokeInvoice(row: ViewRow) {
           <el-row :gutter="16">
             <el-col :span="14">
               <div class="section-title">库存金额（按物料）</div>
-              <el-table :data="invValue.rows" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="compact-tbl">
+              <el-table show-overflow-tooltip :data="invValue.rows" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="compact-tbl">
                 <el-table-column prop="name" label="物料" min-width="140" />
                 <el-table-column prop="spec" label="规格" min-width="110"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
                 <el-table-column label="现存" width="80" align="right"><template #default="{ row }">{{ row.stock }}</template></el-table-column>
@@ -584,7 +584,7 @@ async function revokeInvoice(row: ViewRow) {
             </el-col>
             <el-col :span="10">
               <div class="section-title">项目材料成本</div>
-              <el-table :data="projCost" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="compact-tbl">
+              <el-table show-overflow-tooltip :data="projCost" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="compact-tbl">
                 <el-table-column label="项目" min-width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
                 <el-table-column label="材料成本" width="130" align="right"><template #default="{ row }"><b>{{ fmtMoney(row.cost) }}</b></template></el-table-column>
               </el-table>
@@ -624,7 +624,7 @@ async function revokeInvoice(row: ViewRow) {
               <el-button v-for="po in payingPr.po_nos" :key="po" size="small" link type="primary" @click="downloadPoPdf(po)">📄 {{ po }}</el-button>
             </template>
           </div>
-          <el-table :data="payingPr.items" size="small" border max-height="180">
+          <el-table show-overflow-tooltip :data="payingPr.items" size="small" border max-height="180">
             <el-table-column label="采购单号" width="150"><template #default="{ row }"><span class="code">{{ row.po_no || '散件' }}</span></template></el-table-column>
             <el-table-column label="名称" min-width="120"><template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
             <el-table-column label="项目" width="100"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>

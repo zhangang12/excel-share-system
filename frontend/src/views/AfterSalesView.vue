@@ -147,7 +147,7 @@ async function approve(r: Row, ok: boolean) {
 
     <el-card shadow="never">
       <template #header>📋 安装/售后登记台账</template>
-      <el-table :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+      <el-table show-overflow-tooltip :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column type="index" label="#" width="50" />
         <el-table-column label="类型" width="70" align="center">
           <template #default="{ row }">
@@ -176,7 +176,7 @@ async function approve(r: Row, ok: boolean) {
             <StatusPill :text="STATUS_TXT[row.status]" :variant="STATUS_VARIANT[row.status] || 'muted'" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="190">
+        <el-table-column label="操作" width="190" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <div class="op-cell">
               <template v-if="row.status === 'pending' && canApprove">

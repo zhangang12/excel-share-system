@@ -182,7 +182,7 @@ onMounted(load)
     </div>
 
     <el-card v-loading="loading">
-      <el-table :data="filtered" stripe size="large" :empty-text="loading ? '加载中…' : '暂无用户'" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+      <el-table show-overflow-tooltip :data="filtered" stripe size="large" :empty-text="loading ? '加载中…' : '暂无用户'" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column label="用户" min-width="220">
           <template #default="{ row }">
             <div style="display:flex;align-items:center;gap:10px">
@@ -216,7 +216,7 @@ onMounted(load)
             <StatusPill v-else text="停用" variant="danger" />
           </template>
         </el-table-column>
-        <el-table-column v-if="isAdmin" label="操作" width="270" align="right" fixed="right">
+        <el-table-column v-if="isAdmin" label="操作" width="270" align="right" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" @click="openTabPerm(row)">二级菜单权限</el-button>
