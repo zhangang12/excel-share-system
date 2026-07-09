@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 采购管理（含采购部）：采购部 / 采购明细 / 供应商账目 / 汇总报表
-import { ref, computed, onMounted, onBeforeUnmount, reactive, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, reactive, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, ArrowLeft, Search, Tickets, EditPen, Setting, Collection, Box, Lock } from '@element-plus/icons-vue'
 import { http } from '@/api'
@@ -330,7 +330,13 @@ async function packDownload() {
 const items = ref<PurchaseItemOut[]>([])
 const itemSummary = ref<ItemSummary | null>(null)
 const selectedItems = ref<PurchaseItemOut[]>([])
-const itemsTableRef = ref<{ clearSelection: () => void }>()
+const itemsTableRef = ref<{ clearSelection: () => void; toggleRowSelection: (row: any, selected?: boolean) => void }>()
+// #2 勾父(汇总)行 → 自动全选/取消其下全部零件（可视化联动，避免只勾父行时零件不打勾的困惑）
+function onItemSelect(selection: any[], row: any) {
+  if (!row?._isGroup || !row.children?.length) return
+  const checked = selection.includes(row)
+  nextTick(() => { for (const c of row.children) itemsTableRef.value?.toggleRowSelection(c, checked) })
+}
 const filterSupplierId = ref<number | ''>('')
 const filterProjectCode = ref('')
 const filterMonth = ref('')
@@ -1317,31 +1323,49 @@ async function submitPaymentRequest() {
   } catch { /* handled */ } finally { payReqSaving.value = false }
 }
 
-// 🆕 需求十三：批量维护开票号（对多个零件统一维护同一开票号，开票金额=收货金额）
+// 🆕 需求十三 + #2：合并开票（多零件统一开票号；每零件开票金额=各自收货金额；
+//   合并开票金额=发票总额，须与Σ勾选零件收货金额一致才放行；未收货零件不能开票）
 const invoiceNoDialogVisible = ref(false)
-const invoiceNoForm = reactive({ invoice_no: '', invoice_date: '' })
+const invoiceNoForm = reactive({ invoice_no: '', invoice_date: '', invoice_amount: null as number | null })
 const invoiceNoSaving = ref(false)
+// 勾选零件收货金额合计（合并开票的应开总额）
+const selRecvTotal = computed(() => selLeaves.value.reduce((s, i) => s + (i.received_amount || 0), 0))
+// 合并开票金额是否与Σ收货金额一致（±0.01 容差）
+const invoiceAmtMatch = computed(() =>
+  invoiceNoForm.invoice_amount != null &&
+  Math.abs(invoiceNoForm.invoice_amount - Number(selRecvTotal.value.toFixed(2))) <= 0.01)
 function openBatchInvoiceNo() {
   const leaves = selLeaves.value
-  if (!leaves.length) { ElMessage.warning('请先勾选要维护开票号的明细（可勾选合并行）'); return }
+  if (!leaves.length) { ElMessage.warning('请先勾选要维护开票号的明细（可勾选合并行=自动含其下全部零件）'); return }
   // #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（与请款一致）
   if (!selSameSupplier.value) { ElMessage.error('跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商），请只勾选同一供应商的明细'); return }
+  // #2：未收货(收货金额为0/空)的零件不能参与合并开票，必须先全部收货
+  const unrecv = leaves.filter(i => !(i.received_amount && i.received_amount > 0))
+  if (unrecv.length) { ElMessage.error(`所选含 ${unrecv.length} 项尚未收货（收货金额为0），请先全部收货后再合并开票`); return }
   // #154：仅当所勾选明细已是同一个开票号时才预填(编辑场景)，否则一律留空，避免残留上次输入
   const nos = new Set(leaves.map(i => i.invoice_no).filter(Boolean))
   invoiceNoForm.invoice_no = nos.size === 1 ? String([...nos][0]) : ''
   invoiceNoForm.invoice_date = ''
+  invoiceNoForm.invoice_amount = Number(selRecvTotal.value.toFixed(2))   // 预填=Σ收货金额，可按实际发票改
   invoiceNoDialogVisible.value = true
 }
 async function submitBatchInvoiceNo() {
   if (!invoiceNoForm.invoice_no.trim()) { ElMessage.warning('请填写开票号'); return }
+  if (invoiceNoForm.invoice_amount == null) { ElMessage.warning('请填写合并开票金额'); return }
+  const recvTotal = Number(selRecvTotal.value.toFixed(2))
+  if (!invoiceAmtMatch.value) {
+    ElMessage.error(`合并开票金额 ¥${fmtMoney(invoiceNoForm.invoice_amount)} 与勾选零件收货金额合计 ¥${fmtMoney(recvTotal)} 不一致，无法开票`)
+    return
+  }
   const ids = selLeaves.value.map(i => i.id)
   invoiceNoSaving.value = true
   try {
     const r = await http.post<{ updated: number }>('/purchase-mgmt/items/set-invoice-no', {
       item_ids: ids, invoice_no: invoiceNoForm.invoice_no.trim(),
       invoice_date: invoiceNoForm.invoice_date || null,
+      invoice_amount: invoiceNoForm.invoice_amount,
     })
-    ElMessage.success(`已对 ${r.data.updated} 条明细维护开票号（开票金额=收货金额）`)
+    ElMessage.success(`已对 ${r.data.updated} 条零件维护开票号（每件开票金额=各自收货金额）`)
     invoiceNoDialogVisible.value = false
     clearSelection()
     await loadItems()
@@ -1822,7 +1846,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <template v-if="canWrite">
               <el-button type="primary" :icon="Tickets" @click="openListOrder">从清单下单</el-button>
               <el-button :icon="Plus" @click="openNewOrder">新建采购单</el-button>
-              <el-button :icon="Box" @click="openListOrder('kit')">按套下单</el-button>
+              <!-- #1 「按套下单」按钮已隐藏（成套下单功能不再需要；已有成套明细仍正常显示/收货/开票） -->
+              <!-- <el-button :icon="Box" @click="openListOrder('kit')">按套下单</el-button> -->
+
               <!-- 🆕 「单条明细」按用户要求隐藏（openNewItem 及弹窗保留，需要时恢复本按钮即可） -->
               <el-dropdown trigger="click">
                 <el-button :loading="importing">
@@ -1862,6 +1888,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             :data="groupedItems" stripe
             :row-key="rowKey" :tree-props="{ children: 'children' }"
             :row-class-name="grpRowClass"
+            @select="onItemSelect"
             @selection-change="(v: PurchaseItemOut[]) => selectedItems = v"
             max-height="max(320px, calc(100vh - 340px))"
             :scrollbar-always-on="true"
@@ -2712,13 +2739,25 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </template>
     </el-dialog>
 
-    <!-- 🆕 需求十三：批量维护开票号 -->
-    <el-dialog v-model="invoiceNoDialogVisible" title="维护开票号" width="460px">
+    <!-- 🆕 需求十三 + #2：合并开票（校验开票金额=Σ收货金额） -->
+    <el-dialog v-model="invoiceNoDialogVisible" title="合并开票 / 维护开票号" width="480px">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
-        :title="`将对已勾选的 ${selLeaves.length} 条明细统一维护同一开票号；每条明细的开票金额将取其收货金额，并标记为「已开票」。`" />
+        :title="`将对已勾选的 ${selLeaves.length} 条零件统一维护同一开票号；每条零件的开票金额取其各自收货金额，并标记为「已开票」。`" />
+      <div class="inv-recv-bar">
+        <span>勾选零件收货金额合计</span>
+        <b class="amt">¥{{ fmtMoney(selRecvTotal) }}</b>
+      </div>
       <el-form label-position="top">
         <el-form-item label="开票号" required>
           <el-input v-model="invoiceNoForm.invoice_no" placeholder="填写发票号码" />
+        </el-form-item>
+        <el-form-item label="合并开票金额（发票总额）" required>
+          <el-input-number v-model="invoiceNoForm.invoice_amount" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="按实际发票金额填写" />
+          <div class="inv-match" :class="invoiceAmtMatch ? 'ok' : 'bad'">
+            <template v-if="invoiceNoForm.invoice_amount == null">请填写发票总额；须与上方收货金额合计一致方可开票</template>
+            <template v-else-if="invoiceAmtMatch">✓ 与收货金额合计一致，可开票</template>
+            <template v-else>✗ 与收货金额合计不一致（差 ¥{{ fmtMoney(Math.abs((invoiceNoForm.invoice_amount || 0) - selRecvTotal)) }}），无法开票</template>
+          </div>
         </el-form-item>
         <el-form-item label="开票日期（选填）">
           <el-date-picker v-model="invoiceNoForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
@@ -2726,7 +2765,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </el-form>
       <template #footer>
         <el-button @click="invoiceNoDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="invoiceNoSaving" @click="submitBatchInvoiceNo">确认维护</el-button>
+        <el-button type="primary" :loading="invoiceNoSaving" :disabled="!invoiceAmtMatch" @click="submitBatchInvoiceNo">确认开票</el-button>
       </template>
     </el-dialog>
 
@@ -3205,6 +3244,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .order-total-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding: 10px 14px; background: var(--el-fill-color-light); border-radius: 6px; font-size: 14px; }
 .order-lines-title { font-weight: 600; font-size: 14px; }
 .pager-bar { display: flex; justify-content: flex-end; margin-top: 10px; }
+/* #2 合并开票：收货合计条 + 金额一致性提示 */
+.inv-recv-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; margin-bottom: 12px; background: var(--el-fill-color-light); border-radius: 6px; font-size: 14px; }
+.inv-recv-bar .amt { font-size: 16px; font-variant-numeric: tabular-nums; }
+.inv-match { margin-top: 6px; font-size: 12.5px; line-height: 1.5; }
+.inv-match.ok { color: var(--el-color-success); }
+.inv-match.bad { color: var(--el-color-danger); }
 .pr-expand { padding: 6px 12px 6px 48px; }
 .pr-expand-row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; font-size: 13px; border-bottom: 1px dashed var(--el-border-color-lighter); max-width: 560px; }
 .pr-expand-row:last-of-type { border-bottom: none; }

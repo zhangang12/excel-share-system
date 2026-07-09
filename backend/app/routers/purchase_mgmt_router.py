@@ -1507,12 +1507,22 @@ async def set_invoice_no(
     items = r.scalars().all()
     if _buyer_restricted(current):
         items = [i for i in items if i.buyer_id == current.id]
+    if not items:
+        raise HTTPException(404, "明细不存在或无权限")
     # #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（前端也拦，这里兜底）
     if len({i.supplier_id for i in items}) > 1:
         raise HTTPException(400, "跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商）")
+    # #2：未收货(收货金额<=0)的零件不能参与合并开票——必须先全部收货
+    unrecv = [i for i in items if not (i.received_amount and i.received_amount > 0)]
+    if unrecv:
+        raise HTTPException(400, f"有 {len(unrecv)} 项尚未收货（收货金额为0），请先全部收货后再合并开票")
+    # #2：合并开票金额(发票总额)必须与Σ勾选零件收货金额一致（≤1分误差）才放行
+    recv_total = round(sum(i.received_amount or 0 for i in items), 2)
+    if body.invoice_amount is not None and abs(round(body.invoice_amount, 2) - recv_total) > 0.01:
+        raise HTTPException(400, f"合并开票金额 {round(body.invoice_amount, 2)} 与勾选零件收货金额合计 {recv_total} 不一致，无法开票")
     for item in items:
         item.invoice_no = ino
-        item.invoice_amount = item.received_amount or 0   # 分享的开票金额=收货金额
+        item.invoice_amount = item.received_amount or 0   # 每个零件开票金额=各自收货金额
         item.invoice_status = "已开票"
         if body.invoice_date:
             item.invoice_date = body.invoice_date

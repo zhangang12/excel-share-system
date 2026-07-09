@@ -1278,10 +1278,12 @@ class GroupSummaryIn(BaseModel):
 
 
 class SetInvoiceNoIn(BaseModel):
-    """🆕 需求十三：对多个零件统一维护同一开票号；开票金额=各行收货金额。"""
+    """🆕 需求十三：对多个零件统一维护同一开票号；开票金额=各行收货金额。
+    #2：invoice_amount=合并开票金额(发票总额)，后端校验==Σ勾选零件收货金额，一致才放行。"""
     item_ids: list[int]
     invoice_no: str = Field(min_length=1, max_length=64)
     invoice_date: Optional[str] = None
+    invoice_amount: Optional[float] = None   # 合并开票金额(发票总额)，用于与Σ收货金额比对
 
 
 # ---------- 期初余额 ----------
