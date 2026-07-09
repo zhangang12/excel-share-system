@@ -22,7 +22,8 @@ async def list_messages(
     res = await db.execute(
         select(models.Message)
         .where(models.Message.to_user_id == current.id)
-        .order_by(models.Message.id.desc())
+        # #179：按推送时间倒序（最新在最上），同一时刻再按 id 兜底
+        .order_by(models.Message.created_at.desc(), models.Message.id.desc())
         .limit(limit).offset(offset)
     )
     return [schemas.MessageOut.model_validate(m) for m in res.scalars().all()]

@@ -426,6 +426,15 @@ const groupedItems = computed<any[]>(() => {
     r.invoice_no = invnos.length === 0 ? null : invnos.length === 1 ? invnos[0] : '多个'
     const invdates = Array.from(r._invdates) as string[]
     r.invoice_date = invdates.length === 0 ? null : invdates.length === 1 ? invdates[0] : '多个'
+    // #176 汇总(父)行聚合 付款状态 / 对账状态 / 采购员，让合并行也能一眼看到状态
+    const kids = r.children as any[]
+    const payAll = kids.every(k => k.pay_status === '已付款')
+    const payNone = kids.every(k => (k.pay_status || '未付款') === '未付款')
+    r.pay_status = payAll ? '已付款' : payNone ? '未付款' : '部分付款'
+    const invDone = kids.every(k => k.invoice_status === '已对账' || k.invoice_status === '已开票')
+    r.invoice_status = invDone ? '已对账' : '待对账'
+    const buyers = Array.from(new Set(kids.map(k => k.buyer_name).filter(Boolean))) as string[]
+    r.buyer_name = buyers.length === 0 ? null : buyers.length === 1 ? buyers[0] : '多人'
     return r
   })
 })
@@ -438,6 +447,47 @@ const drawerVisible = ref(false)
 const drawerSupplier = ref<SupplierStatementRow | null>(null)
 const drawerItems = ref<PurchaseItemOut[]>([])
 const drawerLoading = ref(false)
+// #175 供应商账目下钻也按采购单号合并折叠（与采购明细一致：父=汇总行，子=零件）
+const groupedDrawerItems = computed<any[]>(() => {
+  const groups = new Map<string, any>()
+  const out: any[] = []
+  for (const it of drawerItems.value as any[]) {
+    const po = it.po_no
+    if (!po) { out.push(it); continue }
+    let g = groups.get(po)
+    if (!g) {
+      g = { _isGroup: true, _key: 'dg:' + po, po_no: po, supplier_name: it.supplier_name,
+        supplier_id: it.supplier_id, delivery_date: it.delivery_date,
+        received_amount: 0, invoice_amount: 0, paid_amount: 0,
+        _codes: new Set<string>(), _dnotes: new Set<string>(), _arrivals: new Set<string>(), _invdates: new Set<string>(),
+        children: [] as any[] }
+      groups.set(po, g); out.push(g)
+    }
+    g.children.push(it)
+    g.received_amount += it.received_amount || 0
+    g.invoice_amount += it.invoice_amount || 0
+    g.paid_amount += it.paid_amount || 0
+    if (it.project_code) g._codes.add(it.project_code)
+    if (it.delivery_note_no) g._dnotes.add(it.delivery_note_no)
+    if (it.arrival_date) g._arrivals.add(it.arrival_date)
+    if (it.invoice_date) g._invdates.add(it.invoice_date)
+  }
+  const one = (s: Set<string>) => { const a = Array.from(s) as string[]; return a.length === 0 ? null : a.length === 1 ? a[0] : '多个' }
+  return out.map((r) => {
+    if (!r._isGroup) return r
+    if (r.children.length === 1) return r.children[0]
+    r._count = r.children.length
+    r.project_code = one(r._codes); r.delivery_note_no = one(r._dnotes)
+    r.arrival_date = one(r._arrivals); r.invoice_date = one(r._invdates)
+    const kids = r.children as any[]
+    const payAll = kids.every(k => k.pay_status === '已付款')
+    const payNone = kids.every(k => (k.pay_status || '未付款') === '未付款')
+    r.pay_status = payAll ? '已付款' : payNone ? '未付款' : '部分付款'
+    const invDone = kids.every(k => k.invoice_status === '已对账' || k.invoice_status === '已开票')
+    r.invoice_status = invDone ? '已对账' : '待对账'
+    return r
+  })
+})
 
 // 🆕 按月「合计开票」汇总：按到货日期分月，看某月 收货合计 / 已开票 / 未开票
 const drawerMonthly = computed(() => {
@@ -1345,12 +1395,13 @@ function openBatchInvoiceNo() {
   // #154：仅当所勾选明细已是同一个开票号时才预填(编辑场景)，否则一律留空，避免残留上次输入
   const nos = new Set(leaves.map(i => i.invoice_no).filter(Boolean))
   invoiceNoForm.invoice_no = nos.size === 1 ? String([...nos][0]) : ''
-  invoiceNoForm.invoice_date = ''
+  invoiceNoForm.invoice_date = new Date().toISOString().slice(0, 10)   // 默认今天，确保同步到每个零件
   invoiceNoForm.invoice_amount = Number(selRecvTotal.value.toFixed(2))   // 预填=Σ收货金额，可按实际发票改
   invoiceNoDialogVisible.value = true
 }
 async function submitBatchInvoiceNo() {
   if (!invoiceNoForm.invoice_no.trim()) { ElMessage.warning('请填写开票号'); return }
+  if (!invoiceNoForm.invoice_date) { ElMessage.warning('请填写开票日期'); return }
   if (invoiceNoForm.invoice_amount == null) { ElMessage.warning('请填写合并开票金额'); return }
   const recvTotal = Number(selRecvTotal.value.toFixed(2))
   if (!invoiceAmtMatch.value) {
@@ -1977,12 +2028,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column label="付款状态" width="84" align="center">
               <template #default="{ row }">
-                <el-tag v-if="!row._isGroup" :type="payStatusTag(row.pay_status)" size="small" effect="light">{{ row.pay_status || '未付款' }}</el-tag>
+                <el-tag :type="payStatusTag(row.pay_status)" size="small" effect="light">{{ row.pay_status || '未付款' }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="对账状态" width="76">
               <template #default="{ row }">
-                <el-tag v-if="!row._isGroup" :type="reconcileTag(row)" size="small">{{ reconcileText(row) }}</el-tag>
+                <el-tag :type="reconcileTag(row)" size="small">{{ reconcileText(row) }}</el-tag>
               </template>
             </el-table-column>
             <!-- 🆕 R6 自定义列 -->
@@ -2759,8 +2810,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <template v-else>✗ 与收货金额合计不一致（差 ¥{{ fmtMoney(Math.abs((invoiceNoForm.invoice_amount || 0) - selRecvTotal)) }}），无法开票</template>
           </div>
         </el-form-item>
-        <el-form-item label="开票日期（选填）">
-          <el-date-picker v-model="invoiceNoForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+        <el-form-item label="开票日期" required>
+          <el-date-picker v-model="invoiceNoForm.invoice_date" type="date" value-format="YYYY-MM-DD" style="width:100%" placeholder="默认今天，将同步到每个零件" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -2951,7 +3002,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-table>
         </el-collapse-item>
       </el-collapse>
-      <el-table v-loading="drawerLoading" :data="drawerItems" stripe size="small"
+      <el-table v-loading="drawerLoading" :data="groupedDrawerItems" stripe size="small"
+                :row-key="rowKey" :tree-props="{ children: 'children' }" default-expand-all
+                :row-class-name="grpRowClass"
                 max-height="max(300px, calc(100vh - 180px))" :scrollbar-always-on="true" class="compact-tbl">
         <el-table-column prop="delivery_date" label="下单日期" width="100" />
         <el-table-column prop="project_code" label="项目编号" width="100">
@@ -2963,9 +3016,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-table-column prop="arrival_date" label="到货日期" width="100">
           <template #default="{ row }">{{ row.arrival_date || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="item_name" label="名称" min-width="120" />
+        <el-table-column prop="item_name" label="名称" min-width="120">
+          <template #default="{ row }"><b v-if="row._isGroup">共 {{ row._count }} 项零件</b><span v-else>{{ row.item_name }}</span></template>
+        </el-table-column>
         <el-table-column prop="spec" label="规格" min-width="90">
-          <template #default="{ row }">{{ row.spec || '—' }}</template>
+          <template #default="{ row }">{{ row._isGroup ? '' : (row.spec || '—') }}</template>
         </el-table-column>
         <el-table-column label="数量" width="70" align="right">
           <template #default="{ row }">{{ row.qty ?? '—' }}</template>

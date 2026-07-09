@@ -367,7 +367,7 @@ async def get_order(
 
 
 # ==================== 🆕 采购单 PDF（服务端直出，替代浏览器弹窗打印） ====================
-_PO_COMPANY = "同辉智能装备有限公司"
+_PO_COMPANY = "同辉智能装备（无锡）有限公司"
 _PREPAY_METHODS = ("现金预付", "对公预付")
 
 
@@ -1520,12 +1520,13 @@ async def set_invoice_no(
     recv_total = round(sum(i.received_amount or 0 for i in items), 2)
     if body.invoice_amount is not None and abs(round(body.invoice_amount, 2) - recv_total) > 0.01:
         raise HTTPException(400, f"合并开票金额 {round(body.invoice_amount, 2)} 与勾选零件收货金额合计 {recv_total} 不一致，无法开票")
+    # 开票日期：合并开票必然有开票日期，未传则默认今天——必须同步到每个零件(修:原来选填留空则不同步)
+    inv_date = (body.invoice_date or "").strip() or _date.today().isoformat()
     for item in items:
         item.invoice_no = ino
         item.invoice_amount = item.received_amount or 0   # 每个零件开票金额=各自收货金额
         item.invoice_status = "已开票"
-        if body.invoice_date:
-            item.invoice_date = body.invoice_date
+        item.invoice_date = inv_date                      # 总是同步开票日期到每个零件
     await db.commit()
     await write_audit(db, user=current, action="set_invoice_no", target_type="purchase_item",
                       target_id=None, detail=f"开票号 {ino} → {len(items)} 条明细")
@@ -1789,6 +1790,19 @@ async def create_payment_request(
             ))).scalars().all())
         if set(ids) - owned:
             raise HTTPException(403, "请款单只能包含本人下单的采购明细")
+    # #177：防重复请款——同一采购明细若已有未完成(待审批/已批待付)的请款单，禁止再次请款
+    if body.items:
+        ids2 = [it.item_id for it in body.items]
+        dup_r = await db.execute(
+            select(models.PurchaseItem.item_name)
+            .join(models.PaymentRequestItem, models.PaymentRequestItem.item_id == models.PurchaseItem.id)
+            .join(models.PaymentRequest, models.PaymentRequestItem.request_id == models.PaymentRequest.id)
+            .where(models.PaymentRequestItem.item_id.in_(ids2),
+                   models.PaymentRequest.status.in_(("pending", "approved")))
+        )
+        dups = list(dict.fromkeys(dup_r.scalars().all()))
+        if dups:
+            raise HTTPException(400, f"以下明细已有未完成的请款单，请勿重复请款：{'、'.join(dups)[:120]}")
     pr = models.PaymentRequest(
         supplier_id=body.supplier_id,
         requested_amount=body.requested_amount,
