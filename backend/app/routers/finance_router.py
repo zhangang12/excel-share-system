@@ -4,7 +4,7 @@
 """
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -100,3 +100,69 @@ async def finance_aftersales(
         total_cost=sum(a.cost or 0 for a in items),
     )
     return schemas.AfterSalesListOut(rows=rows, stats=stats)
+
+
+# ==================== 🆕 支出总览（所有花销在财务部一处看） ====================
+# 盈利改善规划第一档(项目毛利/成本黑洞审计)的第一块：先把全公司的钱花在哪按月汇总到一张表。
+# 口径：采购付款(purchase_items.paid_amount,按付款日期) + 安装/售后费用(aftersales已审批,按审批时间)
+#      + OA费用(业务/报销大类已审批,按最后更新时间;核定金额优先)。
+# 材料领用成本是"项目成本"口径(不重复计——钱已在采购付款里),归项目毛利榜(待办)。
+@router.get("/expense-overview")
+async def expense_overview(
+    year: Optional[int] = Query(None, description="年份，默认今年"),
+    current: models.User = Depends(require_roles("finance", "finance_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    from datetime import date as _d
+    y = year or int(_d.today().isoformat()[:4])
+    ys = str(y)
+    months = [f"{ys}-{m:02d}" for m in range(1, 13)]
+    buckets: dict = {m: {"purchase": 0.0, "aftersales": 0.0, "oa": 0.0} for m in months}
+    undated = {"purchase": 0.0, "aftersales": 0.0, "oa": 0.0}
+
+    def put(kind: str, month: Optional[str], amt: float) -> None:
+        if not amt:
+            return
+        if month and month in buckets:
+            buckets[month][kind] += amt
+        elif not month:
+            undated[kind] += amt   # 已付但没记日期的,单独一行提示补日期
+
+    # ① 采购付款（含整单维护直接记的已付款）
+    r = await db.execute(select(models.PurchaseItem.paid_amount, models.PurchaseItem.paid_date)
+                         .where(models.PurchaseItem.paid_amount > 0))
+    for amt, pd in r.all():
+        m = (pd or "")[:7] or None
+        if m and not m.startswith(ys):
+            continue
+        put("purchase", m, float(amt or 0))
+
+    # ② 安装/售后费用（已审批）
+    r = await db.execute(select(models.AfterSales.cost, models.AfterSales.appr_at, models.AfterSales.created_at)
+                         .where(models.AfterSales.status == "approved", models.AfterSales.cost > 0))
+    for cost, appr, created in r.all():
+        dt = appr or created
+        m = dt.strftime("%Y-%m") if dt else None
+        if m and not m.startswith(ys):
+            continue
+        put("aftersales", m, float(cost or 0))
+
+    # ③ OA 费用（业务/报销大类，已审批；核定金额优先。采购大类不计——避免与①采购付款双算）
+    r = await db.execute(select(models.OaRequest.amount, models.OaRequest.settle_amount, models.OaRequest.updated_at)
+                         .where(models.OaRequest.status == "approved",
+                                models.OaRequest.category.in_(("business", "reimbursement"))))
+    for amt, settle, upd in r.all():
+        val = settle if settle is not None else amt
+        m = upd.strftime("%Y-%m") if upd else None
+        if m and not m.startswith(ys):
+            continue
+        put("oa", m, float(val or 0))
+
+    rows = [{"month": m, **{k: round(v, 2) for k, v in buckets[m].items()},
+             "total": round(sum(buckets[m].values()), 2)} for m in months]
+    totals = {k: round(sum(b[k] for b in buckets.values()) + undated[k], 2)
+              for k in ("purchase", "aftersales", "oa")}
+    totals["grand"] = round(sum(totals.values()), 2)
+    und = {k: round(v, 2) for k, v in undated.items()}
+    und["total"] = round(sum(undated.values()), 2)
+    return {"year": y, "rows": rows, "undated": und, "totals": totals}

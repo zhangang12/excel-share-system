@@ -76,6 +76,20 @@ async function loadInventory() {
 function onFinTab(name: string) {
   if (name === 'payables') loadPayables()
   if (name === 'inventory') loadInventory()
+  if (name === 'expense') loadExpense()
+}
+
+// ===== 🆕 支出总览：全公司花销按月一张表（采购付款+安装售后+OA费用）=====
+interface ExpenseRow { month: string; purchase: number; aftersales: number; oa: number; total: number }
+interface ExpenseData { year: number; rows: ExpenseRow[]; undated: { purchase: number; aftersales: number; oa: number; total: number }; totals: { purchase: number; aftersales: number; oa: number; grand: number } }
+const expYear = ref(new Date().getFullYear())
+const expYears = Array.from({ length: new Date().getFullYear() - 2024 + 1 }, (_, i) => new Date().getFullYear() - i)
+const expData = ref<ExpenseData | null>(null)
+const expLoading = ref(false)
+async function loadExpense() {
+  expLoading.value = true
+  try { expData.value = (await http.get<ExpenseData>('/finance/expense-overview', { params: { year: expYear.value } })).data }
+  catch { expData.value = null } finally { expLoading.value = false }
 }
 
 // 请款审批（🆕 #119：默认显示全部，避免只看待审批时列表空）
@@ -544,6 +558,31 @@ async function revokeInvoice(row: ViewRow) {
             </el-table-column>
           </el-table>
           <EmptyHint v-if="!paymentReqs.length" text="暂无待付款 / 已付款记录" />
+        </el-tab-pane>
+
+        <!-- 🆕 支出总览：全公司的钱花在哪，一张表看全（盈利改善第一档的第一块） -->
+        <el-tab-pane v-if="tv('expense')" label="💸 支出总览" name="expense">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+            <el-select v-model="expYear" style="width:110px" @change="loadExpense">
+              <el-option v-for="y in expYears" :key="y" :label="y + ' 年'" :value="y" />
+            </el-select>
+            <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先)。材料领用是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「项目毛利榜」(规划中)。</span>
+          </div>
+          <div v-if="expData" class="kpi-grid" style="margin-bottom:12px">
+            <div class="kpi is-primary"><div class="kpi-v">¥{{ fmtMoney(expData.totals.grand) }}</div><div class="kpi-l">{{ expData.year }} 年总支出</div></div>
+            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.purchase) }}</div><div class="kpi-l">采购付款</div></div>
+            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.aftersales) }}</div><div class="kpi-l">安装/售后费用</div></div>
+            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.oa) }}</div><div class="kpi-l">OA 业务/报销</div></div>
+          </div>
+          <el-table show-overflow-tooltip v-loading="expLoading" :data="expData?.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
+            <el-table-column prop="month" label="月份" width="110"><template #default="{ row }"><b>{{ row.month }}</b></template></el-table-column>
+            <el-table-column label="采购付款" min-width="130" align="right"><template #default="{ row }">{{ row.purchase ? fmtMoney(row.purchase) : '—' }}</template></el-table-column>
+            <el-table-column label="安装/售后" min-width="130" align="right"><template #default="{ row }">{{ row.aftersales ? fmtMoney(row.aftersales) : '—' }}</template></el-table-column>
+            <el-table-column label="OA 业务/报销" min-width="130" align="right"><template #default="{ row }">{{ row.oa ? fmtMoney(row.oa) : '—' }}</template></el-table-column>
+            <el-table-column label="合计" min-width="140" align="right"><template #default="{ row }"><b class="amt">{{ row.total ? fmtMoney(row.total) : '—' }}</b></template></el-table-column>
+          </el-table>
+          <el-alert v-if="expData && expData.undated.total > 0" type="warning" :closable="false" style="margin-top:10px"
+            :title="`另有 ¥${fmtMoney(expData.undated.total)} 已付款但未记付款日期（采购 ¥${fmtMoney(expData.undated.purchase)}），未计入上表月份——请在采购明细补付款日期。`" />
         </el-tab-pane>
 
         <!-- 🆕 采购应付 -->

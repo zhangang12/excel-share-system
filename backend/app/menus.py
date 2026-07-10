@@ -86,8 +86,8 @@ TAB_REGISTRY: list[dict] = [
         ("payreq", "请款记录"), ("preq", "采购申请"), ("reports", "汇总报表")]},
     {"menu_key": "finance", "menu_label": "财务部", "tabs": [
         ("pending", "待开票"), ("invoiced", "已开票"), ("aftersales", "安装/售后费用"),
-        ("pay_requests", "请款审批"), ("pay_payment", "付款"), ("payables", "采购应付"),
-        ("inventory", "库存/成本")]},
+        ("pay_requests", "请款审批"), ("pay_payment", "付款"), ("expense", "支出总览"),
+        ("payables", "采购应付"), ("inventory", "库存/成本")]},
     {"menu_key": "warehouse", "menu_label": "仓库", "tabs": [
         ("ov", "库存总览"), ("io", "出入库登记"), ("sum", "收发存汇总"), ("txn", "出入库流水"),
         ("mat", "物料主数据"), ("demand", "物料需求"), ("recv", "采购收货"),
