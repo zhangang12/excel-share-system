@@ -268,6 +268,8 @@ async def delete_wh_custom_field(
 # 树在「字典设置-物料编码分类」维护；物料主数据选到细分类，保存时自动发码。
 
 _SEG_LEN = {1: 1, 2: 2, 3: 2}   # 各级段码位数
+# 字典/编码分类的维护角色：采购主管（admin/manager 由 require_roles 自动放行）
+_DICT_ADMIN_ROLES = ("buyer_lead",)
 
 
 @router.get("/material-categories", response_model=List[schemas.MaterialCategoryOut])
@@ -393,7 +395,8 @@ async def _gen_material_code(db: AsyncSession, category_id: int) -> str:
 # ==================== 🆕 字典维护（物料类别 / 计量单位 / 供应商分类 受管理取值）====================
 # 同一张表(dtype 区分)、同一套 CRUD；三者取值语义各自独立，互不并入对方下拉。
 # 维护：采购主管（admin/manager 由 require_roles 自动放行）；读取：所有登录用户
-_DICT_ADMIN_ROLES = ("buyer_lead",)
+# （_DICT_ADMIN_ROLES 定义已前移到物料编码分类段之前——Depends 默认参数在 import 时求值，
+#   定义在使用之后会让整个后端 NameError 起不来）
 
 
 def _dict_ref(dtype: str):
@@ -550,6 +553,16 @@ async def create_txn(
         raise HTTPException(400, "方向必须是 in/out")
     if data.qty <= 0:
         raise HTTPException(400, "数量必须为正数")
+    # 🆕 盈利改善1b·堵「无主领料」黑洞：出库必须挂项目，或明确勾「非项目领用」+原因——
+    #   此前 project_id 选填，无主出库的材料钱在全系统蒸发（project-cost 直接丢弃）。
+    src = (data.source or "").strip()
+    party = (data.party or "").strip()
+    if data.direction == "out" and not data.project_id:
+        reason = (data.non_project_reason or "").strip()
+        if not data.non_project or not reason:
+            raise HTTPException(400, "出库必须选择领用项目；确属非项目领用请勾选「非项目领用」并填写原因")
+        src = src or "非项目领用"
+        party = (f"{party}〔非项目:{reason}〕" if party else f"非项目:{reason}")[:128]
     bd = normalize_date_str(data.biz_date) or date.today().isoformat()
     r = await db.execute(select(models.WhMaterial).where(models.WhMaterial.id == data.material_id))
     m = r.scalar_one_or_none()
@@ -565,8 +578,8 @@ async def create_txn(
     txn = models.WhTxn(
         material_id=data.material_id, biz_date=bd, direction=data.direction, qty=data.qty,
         unit_price=data.unit_price, amount=amount,
-        source=(data.source or ("采购入库" if data.direction == "in" else "领料出库")),
-        party=(data.party or "").strip() or None, project_id=data.project_id,
+        source=(src or ("采购入库" if data.direction == "in" else "领料出库")),
+        party=party or None, project_id=data.project_id,
         ref_no=ref, operator_id=current.id,
     )
     db.add(txn)
@@ -701,12 +714,15 @@ def _minus1(d: str) -> str:
 
 # ==================== 🆕 项目物料需求（清单→仓库）+ 库存金额 / 项目成本（→财务） ====================
 async def _avg_price_map(db: AsyncSession) -> dict:
-    """各物料入库加权平均单价 = Σ入库金额 / Σ入库数量（仅统计带金额的入库）。"""
+    """各物料入库加权平均单价 = Σ入库金额 / Σ入库数量（仅统计带金额的入库）。
+    🆕 盈利改善1b·冲红口径：被冲红的原单(reversed=True)与冲红单本身都排除——
+    此前只排除冲红单，被冲红的原入库仍计入，冲红越多加权价越歪。"""
     r = await db.execute(
         select(models.WhTxn.material_id,
                func.sum(models.WhTxn.amount), func.sum(models.WhTxn.qty))
         .where(models.WhTxn.direction == "in", models.WhTxn.amount.isnot(None),
-               models.WhTxn.is_reversal == False)  # noqa: E712
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False)  # noqa: E712
         .group_by(models.WhTxn.material_id))
     out: dict = {}
     for mid, amt, qty in r.all():
@@ -748,7 +764,8 @@ async def _demand_rows(db: AsyncSession, project_id: int, *, stock=None, mats=No
     ir = await db.execute(
         select(models.WhTxn.material_id, func.sum(models.WhTxn.qty))
         .where(models.WhTxn.direction == "out", models.WhTxn.project_id == project_id,
-               models.WhTxn.is_reversal == False)  # noqa: E712
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False)  # noqa: E712
         .group_by(models.WhTxn.material_id))
     for mid, tot in ir.all():
         issued_map[mid] = tot or 0
@@ -913,7 +930,8 @@ async def project_cost(
     r = await db.execute(
         select(models.WhTxn.project_id, models.WhTxn.material_id, func.sum(models.WhTxn.qty))
         .where(models.WhTxn.direction == "out", models.WhTxn.project_id.isnot(None),
-               models.WhTxn.is_reversal == False)  # noqa: E712
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False)  # noqa: E712
         .group_by(models.WhTxn.project_id, models.WhTxn.material_id))
     by_proj: dict = defaultdict(float)
     for pid, mid, qty in r.all():

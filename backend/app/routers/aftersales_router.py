@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from ..database import get_db
 from .. import models, schemas
@@ -162,6 +162,23 @@ async def approve(
     await push_message(db, to_role="finance", kind="info",
                        text=f"【{label}费用同步】{disp} {label}费用 ¥{a.cost:,.0f} 已审批{mat}",
                        biz_type="aftersales", biz_id=a.id)
+    # 🆕 盈利改善1a·售后侵蚀率报警：该项目累计已审批安装/售后费用 ÷ 合同额 > 5% → 提醒管理层
+    if a.project_id:
+        lr = await db.execute(select(models.SalesLedger.amount).where(
+            models.SalesLedger.project_id == a.project_id))
+        contract = lr.scalar_one_or_none()
+        if contract and contract > 0:
+            tr = await db.execute(select(func.sum(models.AfterSales.cost)).where(
+                models.AfterSales.project_id == a.project_id,
+                models.AfterSales.status == "approved"))
+            total_as = tr.scalar() or 0
+            ratio = total_as / contract * 100
+            if ratio > 5:
+                await push_message(
+                    db, to_role="manager", kind="warn",
+                    text=(f"【售后侵蚀预警】{disp} 累计安装/售后费用 ¥{total_as:,.0f}"
+                          f"，已达合同额 {ratio:.1f}%（阈值 5%），请关注该项目/机型的质量成本"),
+                    biz_type="aftersales", biz_id=a.id)
     await write_audit(db, user=current, action="approve", target_type="aftersales", target_id=aid)
     return schemas.Msg(message=f"已通过，{label}费用/清单已同步财务部")
 

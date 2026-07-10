@@ -457,6 +457,9 @@ class WhTxnIn(BaseModel):
     source: Optional[str] = None
     party: Optional[str] = None
     project_id: Optional[int] = None
+    # 🆕 盈利改善1b·堵「无主领料」黑洞：出库必须挂项目；确属非项目领用需明确勾选并填原因
+    non_project: bool = False
+    non_project_reason: Optional[str] = None
 
 
 class WhTxnOut(BaseModel):

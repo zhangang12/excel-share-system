@@ -1233,6 +1233,15 @@ async def update_item(
     if ("qty" in data or "unit_price" in data) and "received_amount" not in data:
         if item.qty and item.unit_price:
             item.received_amount = round(item.qty * item.unit_price, 4)
+    # 🆕 盈利改善1b·修真bug：先收货后补价 → 回写已生成的出入库流水。此前补价只更新
+    #   PurchaseItem，收货时生成的 amount=NULL 的 wh_txn 永久无价，库存金额与项目材料成本双双偏低。
+    if ("qty" in data or "unit_price" in data or "received_amount" in data) and item.unit_price is not None:
+        tr = await db.execute(select(models.WhTxn).where(
+            models.WhTxn.purchase_item_id == item.id,
+            models.WhTxn.is_reversal == False))  # noqa: E712
+        for t in tr.scalars().all():
+            t.unit_price = item.unit_price
+            t.amount = round((t.qty or 0) * item.unit_price, 4)
     _maybe_auto_reconcile(item)
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == iid))

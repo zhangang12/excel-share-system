@@ -60,10 +60,12 @@ const lowList = computed(() => materials.value.filter(m => m.low))
 const ioVisible = ref(false)
 const ioForm = reactive({ material_id: undefined as number | undefined, direction: 'in', qty: 1,
   unit_price: null as number | null, biz_date: new Date().toISOString().slice(0, 10), source: '', party: '',
-  project_id: undefined as number | undefined })
+  project_id: undefined as number | undefined,
+  non_project: false, non_project_reason: '' })   // 🆕 盈利改善1b：出库必选项目或明确非项目领用
 function openIo(dir: string) {
   Object.assign(ioForm, { material_id: undefined, direction: dir, qty: 1, unit_price: null,
-    biz_date: new Date().toISOString().slice(0, 10), source: '', party: '', project_id: undefined })
+    biz_date: new Date().toISOString().slice(0, 10), source: '', party: '', project_id: undefined,
+    non_project: false, non_project_reason: '' })
   if (dir === 'out' && !projects.value.length) loadProjects()   // 🆕 出库要选领用项目→项目材料成本
   ioVisible.value = true
 }
@@ -72,6 +74,11 @@ const ioSubmitting = ref(false)
 async function submitIo() {
   if (!ioForm.material_id) { ElMessage.warning('请选择物料'); return }
   if (!ioForm.qty || ioForm.qty <= 0) { ElMessage.warning('数量须为正'); return }
+  // 🆕 盈利改善1b·堵「无主领料」：出库必须挂项目，或明确勾「非项目领用」+原因
+  if (ioForm.direction === 'out' && !ioForm.project_id) {
+    if (!ioForm.non_project) { ElMessage.warning('出库必须选择领用项目；确属非项目领用请勾选「非项目领用」'); return }
+    if (!ioForm.non_project_reason.trim()) { ElMessage.warning('请填写非项目领用原因'); return }
+  }
   ioSubmitting.value = true
   try {
     const r: any = await whApi.createTxn({ ...ioForm })
@@ -1066,12 +1073,22 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           </el-form-item>
           <el-form-item :label="ioForm.direction === 'in' ? '供应商' : '领用方'" style="flex:1"><el-input v-model="ioForm.party" /></el-form-item>
         </div>
-        <!-- 🆕 出库领用项目：填了才计入「项目材料成本」(项目成本=领料出库×单价) -->
+        <!-- 🆕 盈利改善1b：出库必选项目(计入项目材料成本)；确属非项目领用需勾选+填原因 -->
         <div class="frow" v-if="ioForm.direction === 'out'">
-          <el-form-item label="领用项目（选填，填了才计入项目材料成本）" style="flex:1">
-            <el-select v-model="ioForm.project_id" filterable clearable placeholder="选择领用到哪个项目" style="width:100%">
+          <el-form-item label="领用项目（必选；无主出库的材料钱不会进任何项目成本）" :required="!ioForm.non_project" style="flex:1">
+            <el-select v-model="ioForm.project_id" filterable clearable :disabled="ioForm.non_project"
+                       placeholder="选择领用到哪个项目" style="width:100%">
               <el-option v-for="p in projects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
             </el-select>
+          </el-form-item>
+        </div>
+        <div class="frow" v-if="ioForm.direction === 'out'" style="align-items:flex-end">
+          <el-form-item style="flex-shrink:0;margin-bottom:0">
+            <el-checkbox v-model="ioForm.non_project"
+                         @change="(v: any) => { if (v) ioForm.project_id = undefined }">非项目领用</el-checkbox>
+          </el-form-item>
+          <el-form-item v-if="ioForm.non_project" style="flex:1;margin-bottom:0">
+            <el-input v-model="ioForm.non_project_reason" placeholder="非项目领用原因（必填，如：车间耗材/工具磨损）" />
           </el-form-item>
         </div>
       </el-form>

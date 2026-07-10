@@ -77,6 +77,112 @@ function onFinTab(name: string) {
   if (name === 'payables') loadPayables()
   if (name === 'inventory') loadInventory()
   if (name === 'expense') loadExpense()
+  if (name === 'pnl') loadPnl()
+  if (name === 'audit') { loadAudit(); loadAuditProjects() }
+}
+
+// ===== 🆕 盈利改善第一档 1a：项目毛利红黑榜 =====
+interface PnlRow {
+  project_id: number; code: string; name: string; status: string
+  customer: string; cust_type: string; sales_name: string; order_type: string; year: string
+  amount: number; mat_cost: number; direct_cost: number; as_cost: number
+  total_cost: number; profit: number; margin: number | null; flags: string[]
+}
+interface PnlData {
+  note: string; rows: PnlRow[]
+  summary: { projects: number; amount: number; cost: number; profit: number; loss_count: number; incomplete_count: number }
+}
+const pnlData = ref<PnlData | null>(null)
+const pnlLoading = ref(false)
+const pnlGroup = ref('')      // ''=项目明细 / customer / cust_type / sales_name / order_type / name(机型) / year
+const pnlYear = ref('')
+const GROUP_LABELS: Record<string, string> = {
+  customer: '客户', cust_type: '客户类型', sales_name: '销售员', order_type: '订单类型', name: '机型', year: '年份',
+}
+async function loadPnl() {
+  pnlLoading.value = true
+  try { pnlData.value = (await http.get<PnlData>('/reports/project-pnl')).data }
+  catch { pnlData.value = null } finally { pnlLoading.value = false }
+}
+const pnlYears = computed(() =>
+  Array.from(new Set((pnlData.value?.rows || []).map(r => r.year))).sort().reverse())
+const pnlRows = computed(() => {
+  const rows = pnlData.value?.rows || []
+  return pnlYear.value ? rows.filter(r => r.year === pnlYear.value) : rows
+})
+interface PnlGroupRow { key: string; count: number; amount: number; total_cost: number; profit: number; margin: number | null; as_cost: number; as_ratio: number | null }
+const pnlGrouped = computed<PnlGroupRow[]>(() => {
+  if (!pnlGroup.value) return []
+  const by = new Map<string, PnlGroupRow>()
+  for (const r of pnlRows.value) {
+    const key = String((r as any)[pnlGroup.value] || '未填')
+    let g = by.get(key)
+    if (!g) { g = { key, count: 0, amount: 0, total_cost: 0, profit: 0, margin: null, as_cost: 0, as_ratio: null }; by.set(key, g) }
+    g.count++; g.amount += r.amount; g.total_cost += r.total_cost; g.profit += r.profit; g.as_cost += r.as_cost
+  }
+  const out = Array.from(by.values())
+  for (const g of out) {
+    g.margin = g.amount ? Math.round((g.profit / g.amount) * 1000) / 10 : null
+    g.as_ratio = g.amount ? Math.round((g.as_cost / g.amount) * 1000) / 10 : null
+  }
+  return out.sort((a, b) => a.profit - b.profit)
+})
+// 售后侵蚀 Top5：Σ售后费 ÷ 合同额，按机型/客户切换，定位返修高发
+const asTopDim = ref<'name' | 'customer'>('name')
+const asTop = computed(() => {
+  const by = new Map<string, { key: string; amount: number; as_cost: number }>()
+  for (const r of pnlRows.value) {
+    if (!r.as_cost) continue
+    const key = String((r as any)[asTopDim.value] || '未填')
+    let g = by.get(key)
+    if (!g) { g = { key, amount: 0, as_cost: 0 }; by.set(key, g) }
+    g.amount += r.amount; g.as_cost += r.as_cost
+  }
+  return Array.from(by.values())
+    .map(g => ({ ...g, ratio: g.amount ? Math.round((g.as_cost / g.amount) * 1000) / 10 : null }))
+    .sort((a, b) => (b.ratio ?? 999) - (a.ratio ?? 999)).slice(0, 5)
+})
+
+// ===== 🆕 盈利改善第一档 1b：成本黑洞审计 =====
+interface AuditData {
+  month: string; month_unallocated: number; total_unallocated: number; fillable_count: number
+  orphan_out: { id: number; ref_no: string; biz_date: string; name: string; spec?: string | null; qty: number; source?: string | null; party?: string | null; value: number | null }[]
+  unpriced_in: { id: number; ref_no: string; biz_date: string; direction: string; name: string; spec?: string | null; qty: number; po_no?: string | null; supplier?: string | null; item_price?: number | null; fillable: boolean }[]
+  orphan_purchase: { id: number; po_no?: string | null; supplier?: string | null; item_name: string; spec?: string | null; project_code?: string | null; received_amount: number; arrival_date?: string | null; buyer?: string | null }[]
+  recon: { project_id: number; code: string; name: string; purchase: number; warehouse: number; diff: number }[]
+}
+const auditData = ref<AuditData | null>(null)
+const auditLoading = ref(false)
+const auditTab = ref('orphan_out')
+async function loadAudit() {
+  auditLoading.value = true
+  try { auditData.value = (await http.get<AuditData>('/reports/cost-audit')).data }
+  catch { auditData.value = null } finally { auditLoading.value = false }
+}
+const auditProjects = ref<{ id: number; code: string; name: string }[]>([])
+const assignPid = ref<Record<number, number | undefined>>({})
+async function loadAuditProjects() {
+  if (auditProjects.value.length) return
+  try { auditProjects.value = (await http.get<any[]>('/projects')).data } catch { /* 无目录权限时下拉为空 */ }
+}
+async function assignProject(txnId: number) {
+  const pid = assignPid.value[txnId]
+  if (!pid) { ElMessage.warning('请先选择要归集到的项目'); return }
+  try {
+    const r: any = (await http.patch(`/reports/cost-audit/txns/${txnId}/project`, { project_id: pid })).data
+    ElMessage.success(r.message || '已归集')
+    await loadAudit()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '归集失败') }
+}
+async function backfillPrices() {
+  try {
+    await ElMessageBox.confirm(
+      `把「采购侧已补价」的无价收货流水按采购单价一键回填？当前可回填 ${auditData.value?.fillable_count ?? 0} 条。`,
+      '一键回填价格', { type: 'info' })
+  } catch { return }
+  const r: any = (await http.post('/reports/cost-audit/backfill-prices')).data
+  ElMessage.success(r.message || '已回填')
+  await loadAudit()
 }
 
 // ===== 🆕 支出总览：全公司花销按月一张表（采购付款+安装售后+OA费用）=====
@@ -566,7 +672,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-select v-model="expYear" style="width:110px" @change="loadExpense">
               <el-option v-for="y in expYears" :key="y" :label="y + ' 年'" :value="y" />
             </el-select>
-            <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先)。材料领用是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「项目毛利榜」(规划中)。</span>
+            <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先)。材料领用是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「📈 项目毛利」tab。</span>
           </div>
           <div v-if="expData" class="kpi-grid" style="margin-bottom:12px">
             <div class="kpi is-primary"><div class="kpi-v">¥{{ fmtMoney(expData.totals.grand) }}</div><div class="kpi-l">{{ expData.year }} 年总支出</div></div>
@@ -583,6 +689,181 @@ async function revokeInvoice(row: ViewRow) {
           </el-table>
           <el-alert v-if="expData && expData.undated.total > 0" type="warning" :closable="false" style="margin-top:10px"
             :title="`另有 ¥${fmtMoney(expData.undated.total)} 已付款但未记付款日期（采购 ¥${fmtMoney(expData.undated.purchase)}），未计入上表月份——请在采购明细补付款日期。`" />
+        </el-tab-pane>
+
+        <!-- 🆕 盈利改善1a：项目毛利红黑榜——哪个项目赚钱、哪个项目亏钱 -->
+        <el-tab-pane v-if="tv('pnl')" label="📈 项目毛利" name="pnl">
+          <el-alert type="warning" :closable="false" style="margin-bottom:10px"
+            :title="pnlData?.note || '口径：材料边际贡献 = 合同额 − 材料领料 − 直发/外协采购 − 安装/售后费用；不含人工/运费'" />
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+            <el-select v-model="pnlGroup" style="width:150px">
+              <el-option label="按项目明细" value="" />
+              <el-option v-for="(l, k) in GROUP_LABELS" :key="k" :label="'按' + l + '汇总'" :value="k" />
+            </el-select>
+            <el-select v-model="pnlYear" clearable style="width:120px" placeholder="全部年份">
+              <el-option v-for="y in pnlYears" :key="y" :label="y" :value="y" />
+            </el-select>
+            <span class="muted small">默认亏得最多的排最前（红榜在上）；点列头可重新排序。带「领料缺价」标签的行成本被低估，先去成本审计页清黑洞。</span>
+          </div>
+          <div v-if="pnlData" class="kpi-grid" style="margin-bottom:12px">
+            <div class="kpi is-primary"><div class="kpi-v">¥{{ fmtMoney(pnlData.summary.profit) }}</div><div class="kpi-l">总毛利（材料边际贡献）</div></div>
+            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(pnlData.summary.amount) }}</div><div class="kpi-l">合同额合计</div></div>
+            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(pnlData.summary.cost) }}</div><div class="kpi-l">成本合计</div></div>
+            <div class="kpi"><div class="kpi-v" :class="pnlData.summary.loss_count ? 'danger' : ''">{{ pnlData.summary.loss_count }} / {{ pnlData.summary.projects }}</div><div class="kpi-l">亏损项目数 / 上榜项目</div></div>
+          </div>
+          <el-table v-if="!pnlGroup" show-overflow-tooltip v-loading="pnlLoading" :data="pnlRows" stripe size="small"
+                    class="compact-tbl" max-height="calc(100vh - 400px)" :scrollbar-always-on="true"
+                    :row-class-name="({ row }: any) => row.profit < 0 ? 'pnl-loss-row' : ''">
+            <el-table-column label="项目" min-width="170" fixed="left">
+              <template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template>
+            </el-table-column>
+            <el-table-column prop="customer" label="客户" min-width="110" />
+            <el-table-column prop="sales_name" label="销售" width="80" />
+            <el-table-column prop="amount" label="合同额" width="110" align="right" sortable>
+              <template #default="{ row }">{{ row.amount ? fmtMoney(row.amount) : '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="mat_cost" label="材料领料" width="105" align="right" sortable>
+              <template #default="{ row }">{{ row.mat_cost ? fmtMoney(row.mat_cost) : '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="direct_cost" label="直发/外协" width="105" align="right" sortable>
+              <template #default="{ row }">{{ row.direct_cost ? fmtMoney(row.direct_cost) : '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="as_cost" label="安装/售后" width="100" align="right" sortable>
+              <template #default="{ row }">{{ row.as_cost ? fmtMoney(row.as_cost) : '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="total_cost" label="成本合计" width="110" align="right" sortable>
+              <template #default="{ row }">{{ fmtMoney(row.total_cost) }}</template>
+            </el-table-column>
+            <el-table-column prop="profit" label="毛利" width="115" align="right" sortable>
+              <template #default="{ row }"><b :class="row.profit < 0 ? 'danger' : 'profit-pos'">{{ fmtMoney(row.profit) }}</b></template>
+            </el-table-column>
+            <el-table-column prop="margin" label="毛利率" width="90" align="right" sortable>
+              <template #default="{ row }"><b v-if="row.margin != null" :class="row.margin < 0 ? 'danger' : 'profit-pos'">{{ row.margin }}%</b><span v-else class="muted">—</span></template>
+            </el-table-column>
+            <el-table-column label="成本完整度" min-width="130">
+              <template #default="{ row }">
+                <el-tag v-if="!row.flags.length" size="small" type="success" effect="plain">完整</el-tag>
+                <el-tag v-for="f in row.flags" :key="f" size="small" type="warning" effect="plain" style="margin-right:4px">{{ f }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-table v-else show-overflow-tooltip v-loading="pnlLoading" :data="pnlGrouped" stripe size="small"
+                    class="compact-tbl" max-height="calc(100vh - 400px)">
+            <el-table-column prop="key" :label="GROUP_LABELS[pnlGroup]" min-width="150" />
+            <el-table-column prop="count" label="项目数" width="80" align="center" sortable />
+            <el-table-column prop="amount" label="合同额" width="130" align="right" sortable>
+              <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
+            </el-table-column>
+            <el-table-column prop="total_cost" label="成本合计" width="130" align="right" sortable>
+              <template #default="{ row }">{{ fmtMoney(row.total_cost) }}</template>
+            </el-table-column>
+            <el-table-column prop="profit" label="毛利" width="130" align="right" sortable>
+              <template #default="{ row }"><b :class="row.profit < 0 ? 'danger' : 'profit-pos'">{{ fmtMoney(row.profit) }}</b></template>
+            </el-table-column>
+            <el-table-column prop="margin" label="毛利率" width="95" align="right" sortable>
+              <template #default="{ row }"><b v-if="row.margin != null" :class="row.margin < 0 ? 'danger' : 'profit-pos'">{{ row.margin }}%</b><span v-else class="muted">—</span></template>
+            </el-table-column>
+            <el-table-column prop="as_ratio" label="售后侵蚀率" width="110" align="right" sortable>
+              <template #default="{ row }"><span v-if="row.as_ratio != null" :class="row.as_ratio > 5 ? 'danger' : ''">{{ row.as_ratio }}%</span><span v-else class="muted">—</span></template>
+            </el-table-column>
+          </el-table>
+          <EmptyHint v-if="!pnlLoading && !pnlRows.length" text="暂无项目毛利数据（需要销售台账或项目成本数据）" />
+          <div v-if="asTop.length" style="margin-top:14px">
+            <div class="section-title" style="display:flex;align-items:center;gap:10px">
+              🛎️ 售后侵蚀 Top5（Σ安装/售后费 ÷ 合同额，定位返修高发）
+              <el-radio-group v-model="asTopDim" size="small">
+                <el-radio-button value="name">按机型</el-radio-button>
+                <el-radio-button value="customer">按客户</el-radio-button>
+              </el-radio-group>
+            </div>
+            <el-table show-overflow-tooltip :data="asTop" size="small" class="compact-tbl" style="max-width:720px">
+              <el-table-column prop="key" :label="asTopDim === 'name' ? '机型' : '客户'" min-width="180" />
+              <el-table-column label="合同额" width="130" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+              <el-table-column label="售后费用" width="130" align="right"><template #default="{ row }">{{ fmtMoney(row.as_cost) }}</template></el-table-column>
+              <el-table-column label="侵蚀率" width="100" align="right">
+                <template #default="{ row }"><b :class="(row.ratio ?? 0) > 5 ? 'danger' : ''">{{ row.ratio != null ? row.ratio + '%' : '—' }}</b></template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
+
+        <!-- 🆕 盈利改善1b：成本黑洞审计——清单不清零，毛利榜就系统性虚高 -->
+        <el-tab-pane v-if="tv('audit')" label="🕳️ 成本审计" name="audit">
+          <div class="summary-bar" style="margin-bottom:10px" v-if="auditData">
+            <span>本月未归集到项目的成本 <b class="danger">¥{{ fmtMoney(auditData.month_unallocated) }}</b></span>
+            <span>累计未归集 <b class="danger">¥{{ fmtMoney(auditData.total_unallocated) }}</b></span>
+            <el-button v-if="auditData.fillable_count" size="small" type="primary" @click="backfillPrices">
+              ⚡ 一键回填 {{ auditData.fillable_count }} 条已补价的无价流水
+            </el-button>
+            <span class="muted small">这三张清单是「项目毛利」可信度的前提：无主领料的钱在全系统蒸发、无价入库压低库存与项目成本、孤儿采购挂空</span>
+          </div>
+          <el-tabs v-model="auditTab" type="card" v-loading="auditLoading">
+            <el-tab-pane :label="`🕳 无主领料 (${auditData?.orphan_out.length ?? 0})`" name="orphan_out">
+              <el-table show-overflow-tooltip :data="auditData?.orphan_out || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
+                <el-table-column prop="ref_no" label="单据号" width="130"><template #default="{ row }"><span class="code">{{ row.ref_no }}</span></template></el-table-column>
+                <el-table-column prop="biz_date" label="日期" width="100" />
+                <el-table-column label="物料" min-width="140"><template #default="{ row }">{{ row.name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                <el-table-column prop="qty" label="数量" width="70" align="right" />
+                <el-table-column label="估值(均价)" width="110" align="right"><template #default="{ row }"><b v-if="row.value != null" class="danger">{{ fmtMoney(row.value) }}</b><span v-else class="muted">无均价</span></template></el-table-column>
+                <el-table-column prop="party" label="领用方" min-width="110"><template #default="{ row }">{{ row.party || '—' }}</template></el-table-column>
+                <el-table-column label="补选项目（归集）" min-width="250" fixed="right">
+                  <template #default="{ row }">
+                    <div style="display:flex;gap:6px;align-items:center">
+                      <el-select v-model="assignPid[row.id]" filterable clearable size="small" placeholder="归集到哪个项目" style="flex:1">
+                        <el-option v-for="p in auditProjects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
+                      </el-select>
+                      <el-button size="small" type="primary" @click="assignProject(row.id)">归集</el-button>
+                    </div>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <EmptyHint v-if="!auditLoading && !(auditData?.orphan_out.length)" text="没有无主领料 ✅（出库登记已强制选项目/非项目领用）" />
+            </el-tab-pane>
+            <el-tab-pane :label="`💸 无价入库 (${auditData?.unpriced_in.length ?? 0})`" name="unpriced">
+              <el-table show-overflow-tooltip :data="auditData?.unpriced_in || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
+                <el-table-column prop="ref_no" label="单据号" width="130"><template #default="{ row }"><span class="code">{{ row.ref_no }}</span></template></el-table-column>
+                <el-table-column label="方向" width="70"><template #default="{ row }"><el-tag size="small" :type="row.direction === 'in' ? 'success' : 'warning'" effect="plain">{{ row.direction === 'in' ? '入库' : '出库' }}</el-tag></template></el-table-column>
+                <el-table-column prop="biz_date" label="日期" width="100" />
+                <el-table-column label="物料" min-width="140"><template #default="{ row }">{{ row.name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                <el-table-column prop="qty" label="数量" width="70" align="right" />
+                <el-table-column prop="po_no" label="采购单号" width="140"><template #default="{ row }"><span class="code">{{ row.po_no || '—' }}</span></template></el-table-column>
+                <el-table-column prop="supplier" label="供应商" min-width="120"><template #default="{ row }">{{ row.supplier || '—' }}</template></el-table-column>
+                <el-table-column label="采购侧单价" width="110" align="right">
+                  <template #default="{ row }">
+                    <el-tag v-if="row.fillable" size="small" type="success">{{ fmtMoney(row.item_price) }} 可回填</el-tag>
+                    <el-tag v-else size="small" type="danger" effect="plain">采购也没价</el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div class="muted small" style="margin-top:6px">「可回填」= 采购明细后来补了价，但收货流水还没同步——点上方「一键回填」。「采购也没价」的请先到采购明细补单价（补价现在会自动同步流水）。</div>
+              <EmptyHint v-if="!auditLoading && !(auditData?.unpriced_in.length)" text="没有无价入库 ✅" />
+            </el-tab-pane>
+            <el-tab-pane :label="`👻 孤儿采购 (${auditData?.orphan_purchase.length ?? 0})`" name="orphan_purchase">
+              <el-table show-overflow-tooltip :data="auditData?.orphan_purchase || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
+                <el-table-column prop="po_no" label="采购单号" width="140"><template #default="{ row }"><span class="code">{{ row.po_no || '散件' }}</span></template></el-table-column>
+                <el-table-column label="名称" min-width="140"><template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                <el-table-column prop="supplier" label="供应商" min-width="120"><template #default="{ row }">{{ row.supplier || '—' }}</template></el-table-column>
+                <el-table-column label="订单编号(挂空)" width="130"><template #default="{ row }"><b class="danger">{{ row.project_code || '未填' }}</b></template></el-table-column>
+                <el-table-column label="收货金额" width="110" align="right"><template #default="{ row }">{{ row.received_amount ? fmtMoney(row.received_amount) : '—' }}</template></el-table-column>
+                <el-table-column prop="arrival_date" label="到货日期" width="100"><template #default="{ row }">{{ row.arrival_date || '—' }}</template></el-table-column>
+                <el-table-column prop="buyer" label="采购员" width="90"><template #default="{ row }">{{ row.buyer || '—' }}</template></el-table-column>
+              </el-table>
+              <div class="muted small" style="margin-top:6px">订单编号既不是项目编号、也不在字典「订单编号」里 → 成本挂空。请到采购明细把订单编号改成正确的项目编号（下单入口已改为只能下拉选择，新增不会再产生）。</div>
+              <EmptyHint v-if="!auditLoading && !(auditData?.orphan_purchase.length)" text="没有孤儿采购 ✅" />
+            </el-tab-pane>
+            <el-tab-pane label="⚖️ 双口径对账" name="recon">
+              <el-table show-overflow-tooltip :data="auditData?.recon || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
+                <el-table-column label="项目" min-width="170"><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
+                <el-table-column prop="purchase" label="采购口径(收货金额)" width="150" align="right" sortable><template #default="{ row }">{{ fmtMoney(row.purchase) }}</template></el-table-column>
+                <el-table-column prop="warehouse" label="仓库口径(领料×均价)" width="160" align="right" sortable><template #default="{ row }">{{ fmtMoney(row.warehouse) }}</template></el-table-column>
+                <el-table-column prop="diff" label="差异" width="130" align="right" sortable>
+                  <template #default="{ row }"><b :class="Math.abs(row.diff) > 0.01 ? 'danger' : 'profit-pos'">{{ fmtMoney(row.diff) }}</b></template>
+                </el-table-column>
+              </el-table>
+              <div class="muted small" style="margin-top:6px">差异大 = 漏归集重灾区：采购按订单编号进了项目、但材料没领(还压在库存)，或领料没挂项目。默认按差异绝对值倒序。</div>
+              <EmptyHint v-if="!auditLoading && !(auditData?.recon.length)" text="暂无对账数据" />
+            </el-tab-pane>
+          </el-tabs>
         </el-tab-pane>
 
         <!-- 🆕 采购应付 -->
@@ -708,6 +989,9 @@ async function revokeInvoice(row: ViewRow) {
 .section-title { font-weight: 600; font-size: 14px; margin: 4px 0 8px; color: var(--el-text-color-primary); }
 .danger { color: var(--el-color-danger); }
 .amt { color: var(--el-color-primary); }
+.profit-pos { color: var(--el-color-success); }
+/* 🆕 项目毛利红黑榜：亏损行整行淡红 */
+:deep(.pnl-loss-row) { --el-table-tr-bg-color: var(--el-color-danger-light-9); }
 .code { color: var(--primary, #2563eb); }
 /* 🆕 需求十六：付款弹窗的账户信息/采购单区块 */
 .pay-info { display: flex; flex-direction: column; gap: 12px; }
