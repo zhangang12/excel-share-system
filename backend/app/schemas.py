@@ -371,6 +371,26 @@ class FeedbackProjOption(BaseModel):
 
 
 # ---------- 🆕 仓库组 ----------
+class MaterialCategoryIn(BaseModel):
+    """🆕 物料编码分类节点：段码=数字(大类1位/中类2位/细分2位)。"""
+    parent_id: Optional[int] = None
+    seg_code: str = Field(min_length=1, max_length=4, pattern=r"^\d+$")
+    name: str = Field(min_length=1, max_length=64)
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class MaterialCategoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    parent_id: Optional[int] = None
+    level: int
+    seg_code: str
+    name: str
+    sort_order: int
+    enabled: bool
+
+
 class WhMaterialIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     spec: Optional[str] = None
@@ -382,12 +402,14 @@ class WhMaterialIn(BaseModel):
     safety_stock: float = 0
     init_stock: float = 0
     code: Optional[str] = None
+    category_id: Optional[int] = None   # 🆕 编码分类(选到细分类自动发码)
     custom_values: dict = Field(default_factory=dict)   # 🆕 自定义字段值
 
 
 class WhMaterialOut(BaseModel):
     id: int
     code: Optional[str] = None
+    category_id: Optional[int] = None   # 🆕 编码分类
     name: str
     spec: Optional[str] = None
     category: Optional[str] = None

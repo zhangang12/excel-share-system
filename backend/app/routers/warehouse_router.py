@@ -58,7 +58,7 @@ async def _stock_map(db: AsyncSession, material_ids: Optional[list[int]] = None,
 def _mat_out(m: models.WhMaterial, stock: float) -> schemas.WhMaterialOut:
     up = m.unit_price
     return schemas.WhMaterialOut(
-        id=m.id, code=m.code, name=m.name, spec=m.spec, category=m.category,
+        id=m.id, code=m.code, category_id=m.category_id, name=m.name, spec=m.spec, category=m.category,
         material_grade=m.material_grade,
         unit=m.unit, unit_price=up, location=m.location, safety_stock=m.safety_stock or 0,
         init_stock=m.init_stock or 0, status=m.status, stock=stock,
@@ -106,8 +106,12 @@ async def create_material(
         location=(data.location or "").strip() or None,
         safety_stock=data.safety_stock or 0, init_stock=data.init_stock or 0,
         code=(data.code or "").strip() or None,
+        category_id=data.category_id,
         custom_values=await _clean_wh_custom(db, data.custom_values),
     )
+    # 🆕 选了编码分类且未手填编码 → 自动发码（大类+中类+细分+4位流水）
+    if data.category_id and not m.code:
+        m.code = await _gen_material_code(db, data.category_id)
     db.add(m)
     await db.commit()
     await db.refresh(m)
@@ -138,6 +142,12 @@ async def update_material(
     m.unit_price = data.unit_price   # 🆕 需求三：参考单价
     m.location = (data.location or "").strip() or None
     m.safety_stock = data.safety_stock or 0
+    # 🆕 编码分类：新选/改选细分类时自动重发码（原编码作废，编码跟分类走）
+    if data.category_id and data.category_id != m.category_id:
+        m.category_id = data.category_id
+        m.code = await _gen_material_code(db, data.category_id)
+    elif data.category_id and not m.code:
+        m.code = await _gen_material_code(db, data.category_id)
     m.custom_values = await _clean_wh_custom(db, data.custom_values)
     await db.commit()
     return schemas.Msg(message="已保存")
@@ -250,6 +260,134 @@ async def delete_wh_custom_field(
     await db.commit()
     await write_audit(db, user=current, action="delete", target_type="wh_material_custom_field", target_id=fid)
     return schemas.Msg(message="已删除该自定义字段")
+
+
+
+# ==================== 🆕 物料编码分类(3级树) + 自动发码 ====================
+# 编码 = 大类(1位)+中类(2位)+细分类(2位) 前缀 + 4位流水号，如 1·01·01 → 101010001。
+# 树在「字典设置-物料编码分类」维护；物料主数据选到细分类，保存时自动发码。
+
+_SEG_LEN = {1: 1, 2: 2, 3: 2}   # 各级段码位数
+
+
+@router.get("/material-categories", response_model=List[schemas.MaterialCategoryOut])
+async def list_material_categories(
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """物料编码分类（平铺全量，前端组树）。所有登录用户可读。"""
+    r = await db.execute(select(models.MaterialCategory).order_by(
+        models.MaterialCategory.level, models.MaterialCategory.sort_order, models.MaterialCategory.id))
+    return [schemas.MaterialCategoryOut.model_validate(x) for x in r.scalars().all()]
+
+
+@router.post("/material-categories", response_model=schemas.MaterialCategoryOut)
+async def create_material_category(
+    body: schemas.MaterialCategoryIn,
+    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    level = 1
+    if body.parent_id:
+        p = (await db.execute(select(models.MaterialCategory).where(
+            models.MaterialCategory.id == body.parent_id))).scalar_one_or_none()
+        if not p:
+            raise HTTPException(404, "上级分类不存在")
+        if p.level >= 3:
+            raise HTTPException(400, "最多三级（大类→中类→细分类）")
+        level = p.level + 1
+    want = _SEG_LEN[level]
+    if len(body.seg_code) != want:
+        raise HTTPException(400, f"第{level}级段码须为 {want} 位数字（如 {'1' if want == 1 else '01'}）")
+    dup = await db.execute(select(models.MaterialCategory).where(
+        models.MaterialCategory.parent_id == body.parent_id,
+        models.MaterialCategory.seg_code == body.seg_code))
+    if dup.scalar_one_or_none():
+        raise HTTPException(409, "同级下该段码已存在")
+    c = models.MaterialCategory(parent_id=body.parent_id, level=level, seg_code=body.seg_code,
+                                name=body.name.strip(), sort_order=body.sort_order, enabled=body.enabled)
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    await write_audit(db, user=current, action="create", target_type="material_category", target_id=c.id)
+    return schemas.MaterialCategoryOut.model_validate(c)
+
+
+@router.put("/material-categories/{cid}", response_model=schemas.MaterialCategoryOut)
+async def update_material_category(
+    cid: int, body: schemas.MaterialCategoryIn,
+    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """改段码只影响之后新发的编码，已发编码不追改（编码一经发出不变）。上级不可改。"""
+    c = (await db.execute(select(models.MaterialCategory).where(
+        models.MaterialCategory.id == cid))).scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "分类不存在")
+    want = _SEG_LEN[c.level]
+    if len(body.seg_code) != want:
+        raise HTTPException(400, f"第{c.level}级段码须为 {want} 位数字")
+    dup = await db.execute(select(models.MaterialCategory).where(
+        models.MaterialCategory.parent_id == c.parent_id,
+        models.MaterialCategory.seg_code == body.seg_code,
+        models.MaterialCategory.id != cid))
+    if dup.scalar_one_or_none():
+        raise HTTPException(409, "同级下该段码已存在")
+    c.seg_code = body.seg_code
+    c.name = body.name.strip()
+    c.sort_order = body.sort_order
+    c.enabled = body.enabled
+    await db.commit()
+    await db.refresh(c)
+    return schemas.MaterialCategoryOut.model_validate(c)
+
+
+@router.delete("/material-categories/{cid}", response_model=schemas.Msg)
+async def delete_material_category(
+    cid: int,
+    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    child = (await db.execute(select(func.count(models.MaterialCategory.id)).where(
+        models.MaterialCategory.parent_id == cid))).scalar() or 0
+    if child:
+        raise HTTPException(400, f"该分类下还有 {child} 个子分类，先删除/移走子分类")
+    used = (await db.execute(select(func.count(models.WhMaterial.id)).where(
+        models.WhMaterial.category_id == cid))).scalar() or 0
+    if used:
+        raise HTTPException(400, f"该分类已被 {used} 个物料使用，不能删除（可停用）")
+    c = (await db.execute(select(models.MaterialCategory).where(
+        models.MaterialCategory.id == cid))).scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "分类不存在")
+    await db.delete(c)
+    await db.commit()
+    return schemas.Msg(message="已删除")
+
+
+async def _gen_material_code(db: AsyncSession, category_id: int) -> str:
+    """按细分类叶子生成物料编码：前缀=大类+中类+细分段码；流水=同前缀现有最大+1(4位)。"""
+    cat = (await db.execute(select(models.MaterialCategory).where(
+        models.MaterialCategory.id == category_id))).scalar_one_or_none()
+    if not cat:
+        raise HTTPException(404, "编码分类不存在")
+    if cat.level != 3:
+        raise HTTPException(400, "请选择到第三级（细分类）再发码")
+    segs = [cat.seg_code]
+    node = cat
+    while node.parent_id:
+        node = (await db.execute(select(models.MaterialCategory).where(
+            models.MaterialCategory.id == node.parent_id))).scalar_one()
+        segs.append(node.seg_code)
+    prefix = "".join(reversed(segs))
+    r = await db.execute(select(models.WhMaterial.code).where(
+        models.WhMaterial.code.like(prefix + "%")))
+    mx = 0
+    for (c,) in r.all():
+        tail = (c or "")[len(prefix):]
+        if tail.isdigit():
+            mx = max(mx, int(tail))
+    return f"{prefix}{mx + 1:04d}"
 
 
 # ==================== 🆕 字典维护（物料类别 / 计量单位 / 供应商分类 受管理取值）====================

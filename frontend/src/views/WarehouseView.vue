@@ -102,7 +102,27 @@ async function loadSummary() { summary.value = await whApi.summary(period.value)
 
 // ===== 物料主数据 =====
 const matVisible = ref(false)
-const matForm = reactive<any>({ id: null, name: '', spec: '', category: '', unit: '个', unit_price: null, location: '', safety_stock: 0, init_stock: 0, custom_values: {} })
+const matForm = reactive<any>({ id: null, name: '', spec: '', category: '', unit: '个', unit_price: null, location: '', safety_stock: 0, init_stock: 0, category_id: null, code: '', custom_values: {} })
+
+// 🆕 物料编码分类(3级树)：选到细分类保存时后端自动发码（大类+中类+细分+4位流水）
+interface MatCatNode { id: number; parent_id: number | null; level: number; seg_code: string; name: string; sort_order: number; enabled: boolean }
+const matCats = ref<MatCatNode[]>([])
+async function loadMatCatTree() {
+  try { matCats.value = (await http.get<MatCatNode[]>('/wh/material-categories')).data } catch { matCats.value = [] }
+}
+const matCatCascade = computed(() => {
+  const byParent = new Map<number | null, MatCatNode[]>()
+  for (const c of matCats.value.filter(x => x.enabled)) {
+    const k = c.parent_id ?? null
+    if (!byParent.has(k)) byParent.set(k, [])
+    byParent.get(k)!.push(c)
+  }
+  const build = (pid: number | null): any[] => (byParent.get(pid) || []).map(c => {
+    const children = build(c.id)
+    return { id: c.id, lab: `${c.seg_code} ${c.name}`, ...(children.length ? { children } : {}) }
+  })
+  return build(null)
+})
 
 // ===== 🆕 物料自定义字段（可配置列，跟采购 R6 同一套做法） =====
 const canConfigFields = computed(() => auth.hasRole('warehouse_lead', 'admin', 'manager'))
@@ -163,7 +183,8 @@ const matUnitOptions = computed(() => matDict.value.filter(d => d.dtype === 'uni
 const matGradeOptions = computed(() => matDict.value.filter(d => d.dtype === 'material_grade').map(d => d.value))
 function openMat(m?: WhMaterial) {
   if (m) Object.assign(matForm, { ...m, custom_values: { ...(m.custom_values || {}) } })
-  else Object.assign(matForm, { id: null, name: '', spec: '', category: '', material_grade: '', unit: '个', unit_price: null, location: '', safety_stock: 0, init_stock: 0, custom_values: {} })
+  else Object.assign(matForm, { id: null, name: '', spec: '', category: '', material_grade: '', unit: '个', unit_price: null, location: '', safety_stock: 0, init_stock: 0, category_id: null, code: '', custom_values: {} })
+  if (!matCats.value.length) loadMatCatTree()
   matVisible.value = true
 }
 // 🆕 删除物料（有出入库流水的后端会拦截）
@@ -633,6 +654,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           </div>
           <!-- 🆕 #140 列宽用 min-width 平均分布，避免名称/规格独占空白、右侧列挤在一起 -->
           <el-table show-overflow-tooltip :data="materials" stripe size="small" max-height="calc(100vh - 240px)">
+            <el-table-column prop="code" label="编码" width="104"><template #default="{ row }"><span v-if="row.code" class="code">{{ row.code }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
             <el-table-column prop="spec" label="规格型号" min-width="140"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="category" label="类别" min-width="110"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
@@ -723,6 +745,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <el-button v-if="canConfigFields" :icon="Setting" @click="openFieldManager" style="margin-bottom:10px;margin-left:8px">字段设置</el-button>
           <el-button v-if="canClear" type="danger" plain :icon="Delete" @click="clearAll" style="margin-bottom:10px;margin-left:8px">一键清空</el-button>
           <el-table show-overflow-tooltip :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+            <el-table-column prop="code" label="编码" width="104"><template #default="{ row }"><span v-if="row.code" class="code">{{ row.code }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="name" label="名称" min-width="120" />
             <el-table-column prop="spec" label="规格型号" min-width="120"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="category" label="类别" width="100"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
@@ -1064,6 +1087,17 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         <div class="frow">
           <el-form-item label="名称" required style="flex:1"><el-input v-model="matForm.name" /></el-form-item>
           <el-form-item label="规格型号" style="flex:1"><el-input v-model="matForm.spec" /></el-form-item>
+        </div>
+        <div class="frow">
+          <el-form-item style="flex:1.4">
+            <template #label>编码分类（选到细分类自动发码）</template>
+            <el-cascader v-model="matForm.category_id" :options="matCatCascade"
+                         :props="{ emitPath: false, value: 'id', label: 'lab' }"
+                         clearable filterable placeholder="大类 / 中类 / 细分类" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="物料编码" style="flex:1">
+            <el-input :model-value="matForm.code || '保存后自动生成'" disabled />
+          </el-form-item>
         </div>
         <div class="frow">
           <el-form-item label="类别" style="flex:1">

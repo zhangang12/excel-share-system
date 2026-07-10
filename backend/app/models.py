@@ -360,7 +360,8 @@ class WhMaterial(Base):
     __tablename__ = "wh_materials"
     __table_args__ = (UniqueConstraint("name", "spec", name="uq_wh_material_name_spec"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[Optional[str]] = mapped_column(String(64), index=True)   # 物料编码（可空，留扩展）
+    code: Mapped[Optional[str]] = mapped_column(String(64), index=True)   # 物料编码（大类+中类+细分+流水,自动生成）
+    category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("material_categories.id"), index=True)  # 🆕 编码分类(细分类叶子)
     name: Mapped[str] = mapped_column(String(128), index=True)
     spec: Mapped[Optional[str]] = mapped_column(String(128))              # 规格型号
     category: Mapped[Optional[str]] = mapped_column(String(64))          # 类别（搅拌桨/标准件…）
@@ -657,6 +658,21 @@ class WhMaterialCustomField(Base):
     options: Mapped[Optional[dict]] = mapped_column(PortableJSON(), default=list)  # select 选项 list[str]
     required: Mapped[bool] = mapped_column(default=False)           # 是否必填
     show_in_list: Mapped[bool] = mapped_column(default=True)        # 列表是否显示
+    sort_order: Mapped[int] = mapped_column(default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MaterialCategory(Base):
+    """🆕 物料编码分类树(3级)：大类(1位段码)→中类(2位)→细分类(2位)；
+    物料编码 = 大类+中类+细分 前缀 + 4位流水号（如 1 01 01 0001 → 101010001）。
+    管理层在「字典设置-物料编码分类」维护；物料主数据选到细分类自动发码。"""
+    __tablename__ = "material_categories"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("material_categories.id"), index=True)
+    level: Mapped[int] = mapped_column(default=1, index=True)      # 1大类 / 2中类 / 3细分类
+    seg_code: Mapped[str] = mapped_column(String(4))               # 段码：大类1位、中类2位、细分2位(数字)
+    name: Mapped[str] = mapped_column(String(64))
     sort_order: Mapped[int] = mapped_column(default=0)
     enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

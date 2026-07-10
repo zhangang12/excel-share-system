@@ -2,7 +2,7 @@ import { http } from './index'
 
 // 🆕 v3 M07 仓库组
 export interface WhMaterial {
-  id: number; code?: string | null; name: string; spec?: string | null
+  id: number; code?: string | null; category_id?: number | null; name: string; spec?: string | null
   category?: string | null; material_grade?: string | null; unit: string; location?: string | null
   unit_price?: number | null            // 🆕 需求三：参考单价
   stock_value?: number | null           // 🆕 需求三：库存总价=现存×单价
