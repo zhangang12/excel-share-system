@@ -208,6 +208,7 @@ interface RecvItem {
   id: number; po_no?: string | null; supplier_id: number; supplier_name: string
   project_code?: string | null; item_name: string; spec?: string | null
   qty?: number | null; unit_price?: number | null; received_amount: number
+  stock_location?: string | null
   delivery_note_no?: string | null; arrival_date?: string | null
   receipt_count?: number   // 🆕 需求十四：已上传收货单数量
 }
@@ -238,7 +239,7 @@ const groupedRecv = computed<any[]>(() => {
       g = {
         _isGroup: true, _key: 'g:' + po, po_no: po,
         supplier_name: it.supplier_name, supplier_id: it.supplier_id,
-        qty: 0, received_amount: 0, receipt_count: 0,
+        qty: 0, received_amount: 0, receipt_count: 0, stock_location: null as string | null,
         _codes: new Set<string>(), _dnotes: new Set<string>(), _arrivals: new Set<string>(),
         children: [] as RecvItem[],
       }
@@ -247,6 +248,7 @@ const groupedRecv = computed<any[]>(() => {
     g.children.push(it)
     g.qty += it.qty || 0
     g.received_amount += it.received_amount || 0
+    if (it.stock_location) g.stock_location = g.stock_location && g.stock_location !== it.stock_location ? '多个' : it.stock_location
     g.receipt_count += it.receipt_count || 0
     if (it.project_code) g._codes.add(it.project_code)
     if (it.delivery_note_no) g._dnotes.add(it.delivery_note_no)
@@ -299,6 +301,7 @@ const recvVisible = ref(false)
 const recvSaving = ref(false)
 const recvForm = reactive({
   id: 0, po_no: '', supplier_name: '', item_name: '', spec: '', qty: null as number | null,
+  stock_location: '' as string | null,
   delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10),
   unit_price: null as number | null, received_amount: null as number | null,
 })
@@ -306,6 +309,7 @@ function openReceive(it: RecvItem) {
   Object.assign(recvForm, {
     id: it.id, po_no: it.po_no || '', supplier_name: it.supplier_name,
     item_name: it.item_name, spec: it.spec || '', qty: it.qty ?? null,
+    stock_location: it.stock_location || null,
     delivery_note_no: it.delivery_note_no || '',
     arrival_date: it.arrival_date || new Date().toISOString().slice(0, 10),
     unit_price: it.unit_price ?? null,
@@ -836,6 +840,9 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-table-column prop="project_code" label="订单编号" width="110">
                 <template #default="{ row }">{{ row.project_code || '—' }}</template>
               </el-table-column>
+              <el-table-column prop="stock_location" label="库位" width="92">
+                <template #default="{ row }"><b v-if="row.stock_location" style="color:var(--el-color-primary)">{{ row.stock_location }}</b><span v-else class="muted">—</span></template>
+              </el-table-column>
               <el-table-column prop="item_name" label="名称" min-width="120">
                 <template #default="{ row }">{{ row._isGroup ? `共 ${row._count} 项零件` : row.item_name }}</template>
               </el-table-column>
@@ -1151,6 +1158,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         <div><span class="k">供应商</span>{{ recvForm.supplier_name }}</div>
         <div><span class="k">物料</span>{{ recvForm.item_name }}<span v-if="recvForm.spec"> · {{ recvForm.spec }}</span></div>
         <div><span class="k">数量</span>{{ recvForm.qty ?? '—' }}</div>
+        <div><span class="k">库位</span><b v-if="recvForm.stock_location" style="color:var(--el-color-primary)">{{ recvForm.stock_location }}</b><span v-else class="muted">未填（采购下单未指定）</span></div>
       </div>
       <el-form label-position="top" style="margin-top:6px">
         <div class="frow">

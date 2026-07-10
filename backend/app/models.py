@@ -596,6 +596,7 @@ class PurchaseItem(Base):
     delivery_date: Mapped[Optional[str]] = mapped_column(String(10))       # 下单日期（采购填）
     contract_no: Mapped[Optional[str]] = mapped_column(String(64))
     project_code: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    stock_location: Mapped[Optional[str]] = mapped_column(String(64))      # 🆕 库位（采购下单填,整单一个;收货按此入库）
     delivery_note_no: Mapped[Optional[str]] = mapped_column(String(64))    # 送货单号（仓库收货填）
     arrival_date: Mapped[Optional[str]] = mapped_column(String(10))        # 🆕 到货日期（仓库收货填）
     item_name: Mapped[str] = mapped_column(String(128))

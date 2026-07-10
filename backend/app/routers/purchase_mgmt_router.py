@@ -555,6 +555,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         buyer_id=i.buyer_id,
         buyer_name=_uname(i.buyer),
         is_kit=bool(i.is_kit), kit_parts=i.kit_parts, is_stock=bool(i.is_stock),
+        stock_location=i.stock_location,
         notes=i.notes, created_at=i.created_at,
     )
 
@@ -646,6 +647,7 @@ async def create_purchase_order(
             custom_values=cv,
             buyer_id=current.id,
             is_stock=body.is_stock,   # 🆕 新建采购单「是否备货」(默认True=只入库)
+            stock_location=(body.stock_location or "").strip() or None,   # 🆕 库位(整单一个)
         ))
     await db.commit()
     r = await db.execute(
@@ -932,7 +934,8 @@ async def create_order_from_list(
             item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=(l.payment_method or body.payment_method),
             prepay_ratio=(l.prepay_ratio if l.prepay_ratio is not None else body.prepay_ratio),
-            notes=l.notes, buyer_id=current.id, is_stock=False))   # 🆕 按清单下单→收货入库+出库
+            notes=l.notes, buyer_id=current.id, is_stock=False,   # 🆕 按清单下单→收货入库+出库
+            stock_location=(body.stock_location or "").strip() or None))   # 🆕 库位(整单一个)
         if l.source_sheet_id and l.source_record_id:
             # 各来源表的「下单日期」列名不同（订购/下单/发出日期），全写一遍只有存在的列生效
             wb = {"采购负责人": uname}
@@ -981,6 +984,7 @@ async def create_kit_order_from_list(
         payment_method=body.payment_method, prepay_ratio=body.prepay_ratio,
         is_kit=True, kit_parts=kit_parts, notes=body.notes, buyer_id=current.id,
         is_stock=False,   # 🆕 按套下单（从清单）→收货入库+出库
+        stock_location=(body.stock_location or "").strip() or None,
     )
     db.add(item)
     # 回写各来源清单行（与从清单下单一致：采购负责人 + 下单日期）
@@ -1012,9 +1016,12 @@ async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: m
     mq = mq.where(models.WhMaterial.spec == spec) if spec else mq.where(models.WhMaterial.spec.is_(None))
     m = (await db.execute(mq)).scalar_one_or_none()
     if not m:
-        m = models.WhMaterial(name=item.item_name, spec=spec, unit="个", category="采购入库")
+        m = models.WhMaterial(name=item.item_name, spec=spec, unit="个", category="采购入库",
+                              location=item.stock_location)   # 🆕 采购下单填的库位
         db.add(m)
         await db.flush()
+    elif item.stock_location and not m.location:
+        m.location = item.stock_location   # 🆕 已有物料无库位时按采购单补写
     pid = None
     if item.project_code:
         pr = await db.execute(select(models.Project.id).where(models.Project.code == item.project_code))
@@ -2243,8 +2250,9 @@ async def report_supplier_trend(
 
 
 # ==================== 🆕 #167 仓库采购申请（仓库发起 → 采购部处理）====================
-_PREQ_WAREHOUSE = ("warehouse", "warehouse_lead")
-_PREQ_VIEW = ("warehouse", "warehouse_lead", "buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
+# 🆕 请购申请人角色：仓库 + 设计师(设计师请购单,与仓库同一流程/推送)
+_PREQ_WAREHOUSE = ("warehouse", "warehouse_lead", "designer", "design_lead")
+_PREQ_VIEW = ("warehouse", "warehouse_lead", "designer", "design_lead", "buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
 
 
 def _preq_out(pr: models.PurchaseRequest) -> schemas.PurchaseRequestOut:
@@ -2287,7 +2295,7 @@ async def create_purchase_request(
     current: models.User = Depends(require_roles(*_PREQ_WAREHOUSE)),
     db: AsyncSession = Depends(get_db),
 ):
-    """仓库发起采购申请（列出要买什么）→ 待采购部处理，推送采购主管/采购员。"""
+    """仓库/设计师发起采购申请（列出要买什么）→ 推送指定采购员(未指定则全体)，采购部处理。"""
     lines = [l for l in body.lines if (l.item_name or "").strip()]
     if not lines:
         raise HTTPException(400, "请至少填写一行要采购的物料")
@@ -2302,7 +2310,7 @@ async def create_purchase_request(
     await db.commit()
     # #2：推送给指定的采购员；没指定则退回推给全体采购员/主管
     try:
-        text = f"仓库采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理"
+        text = f"采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理"
         if body.buyer_id:
             db.add(models.Message(to_user_id=body.buyer_id, kind="info", text=text,
                                   biz_type="purchase_request", biz_id=pr.id))
@@ -2326,7 +2334,7 @@ async def list_purchase_requests(
     current: models.User = Depends(require_roles(*_PREQ_VIEW)),
     db: AsyncSession = Depends(get_db),
 ):
-    """采购申请列表：仓库(非采购)只看自己提的；采购员/主管看全部。"""
+    """采购申请列表：仓库/设计师(非采购)只看自己提的；采购员/主管看全部。"""
     stmt = select(models.PurchaseRequest).order_by(models.PurchaseRequest.created_at.desc())
     if status:
         stmt = stmt.where(models.PurchaseRequest.status == status)

@@ -1023,6 +1023,7 @@ class PurchaseOrderCreate(BaseModel):
     payment_method: Optional[str] = None          # 🆕 付款方式（表头，作用于全单）
     prepay_ratio: Optional[float] = None          # 🆕 预付比例(%)（表头，作用于全单）
     is_stock: bool = True                          # 🆕 是否备货：True=收货只入库；False=收货入库+出库
+    stock_location: Optional[str] = None           # 🆕 库位（整单一个，仓库收货按此入库）
     lines: list[PurchaseOrderLine] = Field(min_length=1)
 
 
@@ -1073,6 +1074,7 @@ class OrderFromListCreate(BaseModel):
     project_code: Optional[str] = None
     payment_method: Optional[str] = None
     prepay_ratio: Optional[float] = None
+    stock_location: Optional[str] = None   # 🆕 库位（整单一个，仓库收货按此入库）
     lines: list[OrderFromListLine] = Field(min_length=1)
 
 
@@ -1192,6 +1194,7 @@ class PurchaseItemOut(BaseModel):
     is_kit: bool = False                       # 🆕 成套采购：是否成套明细
     kit_parts: Optional[list] = None           # 🆕 成套采购：套内零件清单[{name,spec,qty}]
     is_stock: bool = True                      # 🆕 备货：True=收货只入库；False=收货入库+出库
+    stock_location: Optional[str] = None       # 🆕 库位（采购下单填）
     notes: Optional[str] = None
     created_at: datetime
 
@@ -1213,6 +1216,7 @@ class KitFromListCreate(BaseModel):
     delivery_date: Optional[str] = None
     payment_method: Optional[str] = None
     prepay_ratio: Optional[float] = None
+    stock_location: Optional[str] = None   # 🆕 库位（整套一个）
     source_sheet_id: Optional[int] = None                  # 来源清单（同一张）
     kit_name: str = Field(min_length=1, max_length=128)    # 套名称（手填）
     kit_qty: float = Field(gt=0)                            # 套数

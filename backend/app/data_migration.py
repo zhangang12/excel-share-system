@@ -83,6 +83,10 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "purchase_items": [
         ("is_stock", "BOOLEAN DEFAULT TRUE"),      # 🆕 备货标记(存量默认只入库,保持旧行为)
+        ("stock_location", "VARCHAR(64)"),         # 🆕 库位(采购下单填,收货按此入库)
+    ],
+    "wh_materials": [
+        ("category_id", "INTEGER"),                # 🆕 物料编码分类(细分类叶子)
     ],
     "wh_txns": [                                   # 🆕 库存金额/成本 + 采购收货自动入库来源
         ("unit_price", "FLOAT"),

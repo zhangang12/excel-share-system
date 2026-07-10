@@ -161,6 +161,7 @@ interface PurchaseItemOut {
   custom_values?: Record<string, any>
   invoice_status: string; buyer_id?: number | null; buyer_name?: string | null
   is_kit?: boolean; kit_parts?: { name: string; spec?: string | null; qty?: number | null }[] | null
+  is_stock?: boolean; stock_location?: string | null
   notes?: string | null; created_at: string
 }
 interface ItemSummary { received_total: number; uninvoiced: number; paid_total: number; outstanding: number; count: number }
@@ -395,7 +396,7 @@ const groupedItems = computed<any[]>(() => {
         supplier_name: it.supplier_name, supplier_id: it.supplier_id, delivery_date: it.delivery_date,
         received_amount: 0, invoice_amount: 0, paid_amount: 0,
         _codes: new Set<string>(), _dnotes: new Set<string>(), _arrivals: new Set<string>(),
-        _invnos: new Set<string>(), _invdates: new Set<string>(),
+        _invnos: new Set<string>(), _invdates: new Set<string>(), _locs: new Set<string>(),
         children: [] as PurchaseItemOut[],
       }
       groups.set(po, g); out.push(g)
@@ -409,6 +410,7 @@ const groupedItems = computed<any[]>(() => {
     if (it.arrival_date) g._arrivals.add(it.arrival_date)        // 🆕 需求九
     if (it.invoice_no) g._invnos.add(it.invoice_no)              // 🆕 需求三：开票号上主汇总单
     if (it.invoice_date) g._invdates.add(it.invoice_date)        // 🆕 需求三：开票日期上主汇总单
+    if (it.stock_location) g._locs.add(it.stock_location)         // 🆕 库位(整单一个)
   }
   return out.map((r) => {
     if (!r._isGroup) return r
@@ -426,6 +428,8 @@ const groupedItems = computed<any[]>(() => {
     r.invoice_no = invnos.length === 0 ? null : invnos.length === 1 ? invnos[0] : '多个'
     const invdates = Array.from(r._invdates) as string[]
     r.invoice_date = invdates.length === 0 ? null : invdates.length === 1 ? invdates[0] : '多个'
+    const locs = Array.from(r._locs) as string[]
+    r.stock_location = locs.length === 0 ? null : locs.length === 1 ? locs[0] : '多个'
     // #176 汇总(父)行聚合 付款状态 / 对账状态 / 采购员，让合并行也能一眼看到状态
     const kids = r.children as any[]
     const payAll = kids.every(k => k.pay_status === '已付款')
@@ -593,6 +597,7 @@ const orderForm = reactive({
   delivery_date: '', contract_no: '', project_code: '', payment_method: '',
   prepay_ratio: null as number | null,
   is_stock: true,   // 🆕 是否备货：是=收货只入库；否=收货入库+出库(直发项目)
+  stock_location: '',   // 🆕 库位(整单一个)
   lines: [blankLine()] as OrderLine[],
 })
 // 采购商抬头（打印采购单用；如公司全称有出入，改这里即可）
@@ -620,7 +625,7 @@ function openNewOrder() {
   Object.assign(orderForm, {
     supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10),
     contract_no: '', project_code: '', payment_method: '', prepay_ratio: null,
-    is_stock: true, lines: [blankLine()],
+    is_stock: true, stock_location: '', lines: [blankLine()],
   })
   loadProjectCodes()
   loadOrderNoDict()
@@ -646,6 +651,7 @@ function onLineCalc(l: OrderLine) {
 
 async function saveOrder() {
   if (!orderForm.supplier_id) { ElMessage.error('请选择供应商'); return }
+  if (!orderForm.stock_location.trim()) { ElMessage.error('请填写库位（这批货收货后放到哪个库）'); return }
   const lines = orderForm.lines.filter(l => l.item_name.trim())
   if (!lines.length) { ElMessage.error('请至少填写一行零件（名称必填）'); return }
   orderSaving.value = true
@@ -656,6 +662,7 @@ async function saveOrder() {
       contract_no: orderForm.contract_no || null,
       project_code: orderForm.project_code || null,
       is_stock: orderForm.is_stock,
+      stock_location: orderForm.stock_location.trim() || null,
       payment_method: orderForm.payment_method || null,
       prepay_ratio: isPrepayMethod(orderForm.payment_method) ? orderForm.prepay_ratio : null,
       lines: lines.map(l => ({
@@ -898,7 +905,7 @@ const onlyGap = ref(false)   // 🆕 只看有缺口（建议采购>0）的行
 // 🆕 A4：去掉表头供应商，改逐行选；🆕 付款方式也改逐行(见 _payment_method)，表头只留 项目/清单/下单日期
 const listOrderForm = reactive({
   project_id: '' as number | '', project_code: '',
-  delivery_date: '',
+  delivery_date: '', stock_location: '',   // 🆕 库位(整单一个,收货按此入库)
 })
 // 🆕 R4/A6：沿用采购部项目目录「按人分表」可见性——采购员只对自己负责的清单下单
 //（lixinxin=标准件+电工 / wangqin=不锈钢+激光 / fangbusen=外协；其余人看全部）
@@ -1039,6 +1046,7 @@ async function submitListOrder() {
     return
   }
   // 🆕 A5：勾选了却没选供应商的行，直接拦截报错
+  if (!listOrderForm.stock_location.trim()) { ElMessage.error('请填写库位（这批货收货后放到哪个库）'); return }
   const noSup = sel.filter(r => !r._supplier_id)
   if (noSup.length) {
     ElMessage.error(`有 ${noSup.length} 行未选供应商：${noSup.map(b => b.item_name).slice(0, 3).join('、')}${noSup.length > 3 ? ' 等' : ''}。请逐行选好供应商再生成`)
@@ -1074,6 +1082,7 @@ async function submitListOrder() {
         supplier_id: sid,
         delivery_date: listOrderForm.delivery_date || null,
         project_code: listOrderForm.project_code || null,
+        stock_location: listOrderForm.stock_location.trim() || null,
         lines: rows.map(r => ({
           source_sheet_id: r.sheet_id, source_record_id: r.record_id,
           item_name: r.item_name, spec: foldDrawingSpec(r), brand: r._brand || null,
@@ -1117,6 +1126,7 @@ async function submitKitFromList() {
       supplier_id: kitSet.supplier_id,
       delivery_date: listOrderForm.delivery_date || null,
       project_code: listOrderForm.project_code || null,
+      stock_location: listOrderForm.stock_location.trim() || null,
       payment_method: kitSet.payment_method || null,
       prepay_ratio: isPrepayMethod(kitSet.payment_method) ? kitSet.prepay_ratio : null,
       source_sheet_id: sel[0]?.sheet_id ?? null,
@@ -1976,6 +1986,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column prop="project_code" label="项目编号" width="92">
               <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
             </el-table-column>
+            <el-table-column prop="stock_location" label="库位" width="90">
+              <template #default="{ row }">{{ row.stock_location || '—' }}</template>
+            </el-table-column>
             <el-table-column prop="delivery_note_no" label="送货单号" width="106">
               <template #default="{ row }">{{ row.delivery_note_no || '—' }}</template>
             </el-table-column>
@@ -2358,6 +2371,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-date-picker v-model="listOrderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
+          <el-col :xs="12" :sm="6" :md="5">
+            <el-form-item label="库位 *（收货放哪个库）">
+              <el-input v-model="listOrderForm.stock_location" placeholder="如 A区-3排 / 1号库" maxlength="64" />
+            </el-form-item>
+          </el-col>
         </el-row>
       </el-form>
 
@@ -2562,6 +2580,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 </el-tooltip>
               </template>
               <el-switch v-model="orderForm.is_stock" active-text="备货(只入库)" inactive-text="不备货(入库+出库)" inline-prompt style="--el-switch-on-color:var(--el-color-primary)" />
+            </el-form-item>
+          </el-col>
+          <el-col :xs="12" :sm="8" :md="4">
+            <el-form-item label="库位 *（收货放哪个库）">
+              <el-input v-model="orderForm.stock_location" placeholder="如 A区-3排" maxlength="64" />
             </el-form-item>
           </el-col>
         </el-row>
