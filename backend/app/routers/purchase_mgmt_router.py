@@ -17,7 +17,8 @@ from ..utils import write_audit
 
 router = APIRouter(prefix="/api/purchase-mgmt", tags=["采购管理"])
 
-_PURCHASE_ROLES = ("buyer", "buyer_lead", "finance", "buyer_standard", "buyer_outsource")
+# 🆕 权限统一:tab 可见性由「二级菜单权限」决定,读接口按菜单内全部角色放行(admin/manager 自动)
+_PURCHASE_ROLES = ("buyer", "buyer_lead", "finance", "finance_lead", "buyer_standard", "buyer_outsource")
 # 🆕 采购员（标准件/外协）也可新增/编辑/删除采购明细与供应商
 _WRITE_ROLES = ("buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
 # 🆕 采购收货入库：仓库填送货单号/到货日期/后填价格 → 自动入库。
@@ -646,7 +647,7 @@ async def create_purchase_order(
             payment_method=body.payment_method, prepay_ratio=body.prepay_ratio,
             custom_values=cv,
             buyer_id=current.id,
-            is_stock=body.is_stock,   # 🆕 新建采购单「是否备货」(默认True=只入库)
+            # is_stock 已废弃(收货一律只入库);兼容旧前端仍传值,不再落库为 False
             stock_location=(body.stock_location or "").strip() or None,   # 🆕 库位(整单一个)
         ))
     await db.commit()
@@ -934,7 +935,7 @@ async def create_order_from_list(
             item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=(l.payment_method or body.payment_method),
             prepay_ratio=(l.prepay_ratio if l.prepay_ratio is not None else body.prepay_ratio),
-            notes=l.notes, buyer_id=current.id, is_stock=False,   # 🆕 按清单下单→收货入库+出库
+            notes=l.notes, buyer_id=current.id,   # is_stock 已废弃:收货一律只入库(默认True)
             stock_location=(body.stock_location or "").strip() or None))   # 🆕 库位(整单一个)
         if l.source_sheet_id and l.source_record_id:
             # 各来源表的「下单日期」列名不同（订购/下单/发出日期），全写一遍只有存在的列生效
@@ -983,7 +984,7 @@ async def create_kit_order_from_list(
         qty=qty, unit_price=unit_price, received_amount=round(body.kit_total, 2),
         payment_method=body.payment_method, prepay_ratio=body.prepay_ratio,
         is_kit=True, kit_parts=kit_parts, notes=body.notes, buyer_id=current.id,
-        is_stock=False,   # 🆕 按套下单（从清单）→收货入库+出库
+        # is_stock 已废弃:收货一律只入库(默认True)
         stock_location=(body.stock_location or "").strip() or None,
     )
     db.add(item)
@@ -1015,13 +1016,14 @@ async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: m
     mq = select(models.WhMaterial).where(models.WhMaterial.name == item.item_name)
     mq = mq.where(models.WhMaterial.spec == spec) if spec else mq.where(models.WhMaterial.spec.is_(None))
     m = (await db.execute(mq)).scalar_one_or_none()
+    loc = (item.stock_location or "").strip() or None
     if not m:
         m = models.WhMaterial(name=item.item_name, spec=spec, unit="个", category="采购入库",
-                              location=item.stock_location)   # 🆕 采购下单填的库位
+                              location=loc)   # 🆕 采购下单选的库位
         db.add(m)
         await db.flush()
-    elif item.stock_location and not m.location:
-        m.location = item.stock_location   # 🆕 已有物料无库位时按采购单补写
+    elif loc:
+        m.location = loc   # 🆕 库位管理：最近一次收货放到哪,物料当前库位就是哪(单库位模型)
     pid = None
     if item.project_code:
         pr = await db.execute(select(models.Project.id).where(models.Project.code == item.project_code))
@@ -1035,16 +1037,9 @@ async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: m
         material_id=m.id, biz_date=bd, direction="in", qty=item.qty,
         unit_price=up, amount=amt, purchase_item_id=item.id,
         source="采购入库", party=(item.supplier.name if item.supplier else None),
-        project_id=pid, ref_no=ref, operator_id=current.id))
-    # 🆕 非备货(按清单下单 / 新建单备货=否)：入库后紧接一笔「采购领用」出库，直发对应项目，
-    #   数量=收货数量，净库存过账为0；备货单(is_stock=True)只入库、留库存。
-    if not item.is_stock:
-        ref_out = await _next_ref(db, "out", bd)
-        db.add(models.WhTxn(
-            material_id=m.id, biz_date=bd, direction="out", qty=item.qty,
-            unit_price=up, amount=amt, purchase_item_id=item.id,
-            source="采购领用", party=(item.project_code or None),
-            project_id=pid, ref_no=ref_out, operator_id=current.id))
+        project_id=pid, location=(loc or m.location), ref_no=ref, operator_id=current.id))
+    # 🆕 库位管理批次：**取消收货自动出库**（原 is_stock=False 自动生成「采购领用」出库已删）——
+    #   收货一律只入库到所选库位;出库统一走仓库领料(出入库登记/物料需求一键领用),挂项目计成本。
 
 
 # ==================== 采购历史数据 一键导入 ====================
@@ -2396,10 +2391,11 @@ async def report_supplier_trend(
 
 # ==================== 🆕 #167 仓库采购申请（仓库发起 → 采购部处理）====================
 # 🆕 请购申请人角色：仓库 + 设计师(设计师请购单,与仓库同一流程/推送)
-# 🆕 #198：电工部也可提请购单（与仓库/设计同一流程：指定采购员→推送→行级隔离）
-_PREQ_WAREHOUSE = ("warehouse", "warehouse_lead", "designer", "design_lead", "electrician", "electric_lead")
-_PREQ_VIEW = ("warehouse", "warehouse_lead", "designer", "design_lead", "electrician", "electric_lead",
-              "buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
+# 🆕 #198 电工部、🆕 生产部 也可提请购单（与仓库/设计同一流程：指定采购员→推送→行级隔离）
+_PREQ_WAREHOUSE = ("warehouse", "warehouse_lead", "designer", "design_lead", "electrician", "electric_lead",
+                   "pm_lead", "production_clerk", "assembler", "sheetmetal")
+_PREQ_VIEW = _PREQ_WAREHOUSE + ("buyer", "buyer_lead", "buyer_standard", "buyer_outsource",
+                                "finance", "finance_lead")
 
 
 def _preq_out(pr: models.PurchaseRequest) -> schemas.PurchaseRequestOut:

@@ -28,7 +28,52 @@ const loading = ref(false)
 // 编辑中的单元格
 const editingCell = ref<{ rowId: number; fieldId: number } | null>(null)
 const editingValue = ref('')
-const inputRef = ref<HTMLInputElement[]>([])
+const inputRef = ref<any[]>([])
+
+// 🆕 单元格类型：日期列(名称以"日期"结尾)→日期选择器；进度列→下拉；其余→带"下拉复制已有值"的输入
+function isDateField(f: Field) { return (f.name || '').trim().endsWith('日期') }
+function isProgressField(f: Field) { return PROGRESS_FIELD_NAMES.has((f.name || '').trim()) }
+// 该列已填过的去重取值（下拉复制用,最多 20 个）
+function columnValues(f: Field): { value: string }[] {
+  const seen = new Set<string>()
+  for (const r of records.value) {
+    const v = getCellVal(r, f.id).trim()
+    if (v) seen.add(v)
+    if (seen.size >= 20) break
+  }
+  return Array.from(seen).map(v => ({ value: v }))
+}
+function fetchColumnSuggestions(f: Field) {
+  return (query: string, cb: (list: { value: string }[]) => void) => {
+    const all = columnValues(f)
+    cb(query ? all.filter(x => x.value.toLowerCase().includes(query.toLowerCase())) : all)
+  }
+}
+
+// 🆕 向下填充：把该单元格的值复制到下方所有「空」单元格（类 Excel 下拉复制）
+const filling = ref(false)
+async function fillDown(row: SheetRow, f: Field) {
+  const val = getCellVal(row, f.id).trim()
+  if (!val || filling.value) return
+  const idx = records.value.findIndex(r => r.id === row.id)
+  const targets = records.value.slice(idx + 1).filter(r => !getCellVal(r, f.id).trim())
+  if (!targets.length) { ElMessage.info('下方没有空单元格可填充'); return }
+  try {
+    await ElMessageBox.confirm(`把「${val}」向下复制到本列下方 ${targets.length} 个空单元格？`, '向下填充', { type: 'info' })
+  } catch { return }
+  filling.value = true
+  try {
+    for (const t of targets) {
+      await datasheetsApi.produceUpdateCell(props.datasheetId, t.id, f.id, val)
+      const i = records.value.findIndex(r => r.id === t.id)
+      if (i >= 0) records.value[i] = { ...records.value[i], values: { ...records.value[i].values, [String(f.id)]: val } }
+    }
+    ElMessage.success(`已填充 ${targets.length} 格`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '填充失败，部分已保存')
+    load()
+  } finally { filling.value = false }
+}
 
 async function load() {
   loading.value = true
@@ -71,7 +116,7 @@ function startEdit(row: SheetRow, field: Field) {
   if (!props.canEdit) return
   editingCell.value = { rowId: row.id, fieldId: field.id }
   editingValue.value = getCellVal(row, field.id)
-  nextTick(() => inputRef.value[0]?.focus())
+  nextTick(() => inputRef.value[0]?.focus?.())
 }
 
 function isEditing(row: SheetRow, field: Field) {
@@ -137,7 +182,7 @@ async function deleteRow(row: SheetRow) {
     <!-- 工具栏 -->
     <div class="smg-toolbar">
       <span class="smg-tip" v-if="canEdit">
-        点击单元格即可编辑，Enter/Tab 保存，Esc 取消；修改实时同步至项目详单
+        点击单元格编辑：日期列弹日期选择、进度列下拉、其他列可下拉复制已有值；悬停单元格点 ⬇ 向下填充空格；Enter/Tab 保存，Esc 取消；实时同步项目详单
       </span>
       <span class="smg-tip smg-ro" v-else>只读引用</span>
       <div class="smg-actions">
@@ -169,15 +214,53 @@ async function deleteRow(row: SheetRow) {
               :class="[cellStateClass(f, row), { 'smg-editable': canEdit, 'smg-editing': isEditing(row, f) }]"
               @click="startEdit(row, f)"
             >
-              <input
-                v-if="isEditing(row, f)"
-                ref="inputRef"
-                v-model="editingValue"
-                class="smg-input"
-                @blur="saveEdit(row, f)"
-                @keydown="onKeydown($event, row, f)"
-              />
-              <span v-else class="smg-cell-text" :title="getCellVal(row, f.id)">{{ getCellVal(row, f.id) || ' ' }}</span>
+              <template v-if="isEditing(row, f)">
+                <!-- 🆕 日期列:日期选择器 -->
+                <el-date-picker
+                  v-if="isDateField(f)"
+                  ref="inputRef"
+                  v-model="editingValue"
+                  type="date" value-format="YYYY-MM-DD" size="small"
+                  class="smg-editor" :clearable="true" placeholder="选择日期"
+                  @change="saveEdit(row, f)"
+                  @visible-change="(v: boolean) => { if (!v) saveEdit(row, f) }"
+                />
+                <!-- 🆕 进度列:下拉 -->
+                <el-select
+                  v-else-if="isProgressField(f)"
+                  ref="inputRef"
+                  v-model="editingValue"
+                  size="small" class="smg-editor" automatic-dropdown
+                  @change="saveEdit(row, f)"
+                  @visible-change="(v: boolean) => { if (!v) saveEdit(row, f) }"
+                >
+                  <el-option value="完成" label="完成" />
+                  <el-option value="进行中" label="进行中" />
+                </el-select>
+                <!-- 🆕 其余列:输入 + 下拉复制本列已有值 -->
+                <el-autocomplete
+                  v-else
+                  ref="inputRef"
+                  v-model="editingValue"
+                  :fetch-suggestions="fetchColumnSuggestions(f)"
+                  :trigger-on-focus="true"
+                  class="smg-editor"
+                  size="small"
+                  placeholder="输入或下拉选已有值"
+                  @select="saveEdit(row, f)"
+                  @blur="saveEdit(row, f)"
+                  @keydown="onKeydown($event, row, f)"
+                />
+              </template>
+              <template v-else>
+                <span class="smg-cell-text" :title="getCellVal(row, f.id)">{{ getCellVal(row, f.id) || ' ' }}</span>
+                <!-- 🆕 填充柄:悬停出现,把该值向下复制到下方空单元格(类 Excel 下拉复制) -->
+                <button
+                  v-if="canEdit && getCellVal(row, f.id)"
+                  class="smg-fill" title="向下填充到空单元格"
+                  @click.stop="fillDown(row, f)"
+                >⬇</button>
+              </template>
             </td>
             <td v-if="canEdit" class="smg-td smg-op">
               <el-button size="small" link type="danger" :icon="Delete" @click.stop="deleteRow(row)" />
@@ -265,6 +348,20 @@ async function deleteRow(row: SheetRow) {
   outline: none; background: #f5f9ff;
   box-sizing: border-box; text-align: center;
 }
+/* 🆕 单元格内编辑器(日期/下拉/自动补全)统一撑满 */
+.smg-editor { width: 100%; min-width: 132px; }
+.smg-editor :deep(.el-input__wrapper) { border-radius: 0; box-shadow: 0 0 0 2px var(--el-color-primary) inset; }
+/* 🆕 填充柄:悬停单元格才出现 */
+.smg-td { position: relative; }
+.smg-fill {
+  display: none; position: absolute; right: 2px; bottom: 2px; z-index: 1;
+  width: 18px; height: 18px; line-height: 16px; padding: 0;
+  border: 1px solid var(--el-color-primary, #2563eb); border-radius: 4px;
+  background: #fff; color: var(--el-color-primary, #2563eb);
+  font-size: 11px; cursor: pointer;
+}
+.smg-td:hover .smg-fill { display: block; }
+.smg-fill:hover { background: var(--el-color-primary, #2563eb); color: #fff; }
 
 /* 进度列整格着色：完成绿 / 进行中红（与项目详单一致） */
 .smg-td.smg-done { background: #d1fae5 !important; }

@@ -92,6 +92,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("unit_price", "FLOAT"),
         ("amount", "FLOAT"),
         ("purchase_item_id", "INTEGER"),
+        ("location", "VARCHAR(64)"),        # 🆕 库位(入=放到哪/出=从哪领)
     ],
 }
 

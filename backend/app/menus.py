@@ -91,7 +91,7 @@ TAB_REGISTRY: list[dict] = [
         ("payables", "采购应付"), ("inventory", "库存/成本")]},
     {"menu_key": "warehouse", "menu_label": "仓库", "tabs": [
         ("ov", "库存总览"), ("io", "出入库登记"), ("sum", "收发存汇总"), ("txn", "出入库流水"),
-        ("mat", "物料主数据"), ("demand", "物料需求"), ("recv", "采购收货"),
+        ("mat", "物料主数据"), ("loc", "库位管理"), ("demand", "物料需求"), ("recv", "采购收货"),
         ("ship", "发货清单"), ("preq", "采购申请")]},
 ]
 

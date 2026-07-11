@@ -1249,7 +1249,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         </el-tab-pane>
 
         <!-- 🆕 设计师请购单：列清单推给采购员（与仓库采购申请同一流程） -->
-        <el-tab-pane v-if="dept === 'design' || dept === 'electric'" label="🛒 请购单" name="preq">
+        <el-tab-pane v-if="dept === 'design' || dept === 'electric' || dept === 'produce'" label="🛒 请购单" name="preq">
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
             <span class="muted" style="font-size:13px">要买的东西列成清单推送给采购员，处理进度在下方列表查看。</span>
             <span style="flex:1" />

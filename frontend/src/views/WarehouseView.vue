@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Lock, View, Download, Printer, Setting, Delete, ArrowLeft } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow, type WhCustomField } from '@/api/warehouse'
+import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow, type WhCustomField , type WhLocation } from '@/api/warehouse'
 import { canInlinePreview, attachmentBlobUrl, isPdfAtt, isImageAtt } from '@/api/attachments'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -50,7 +50,44 @@ async function loadMaterials() {
     materials.value = j.materials; lowCount.value = j.low_count
   } finally { loading.value = false }
 }
-onMounted(() => { loadMaterials(); loadMatDict(); loadCustomFields(); loadBadgeCounts() })
+// ===== 🆕 库位管理（主数据;采购下单/物料/出入库共用取值） =====
+const locations = ref<WhLocation[]>([])
+async function loadLocations() {
+  try { locations.value = await whApi.locations() } catch { locations.value = [] }
+}
+const enabledLocations = computed(() => locations.value.filter(l => l.enabled))
+const locVisible = ref(false)
+const locForm = reactive({ id: null as number | null, name: '', note: '', sort_order: 0, enabled: true })
+function openLoc(row?: WhLocation) {
+  if (row) Object.assign(locForm, { id: row.id, name: row.name, note: row.note || '', sort_order: row.sort_order, enabled: row.enabled })
+  else Object.assign(locForm, { id: null, name: '', note: '', sort_order: 0, enabled: true })
+  locVisible.value = true
+}
+const locSaving = ref(false)
+async function submitLoc() {
+  if (!locForm.name.trim()) { ElMessage.warning('请填写库位名称'); return }
+  locSaving.value = true
+  try {
+    if (locForm.id) await whApi.updateLocation(locForm.id, { name: locForm.name.trim(), note: locForm.note, sort_order: locForm.sort_order, enabled: locForm.enabled })
+    else await whApi.createLocation({ name: locForm.name.trim(), note: locForm.note, sort_order: locForm.sort_order, enabled: locForm.enabled })
+    ElMessage.success('已保存')
+    locVisible.value = false
+    await loadLocations()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '保存失败') }
+  finally { locSaving.value = false }
+}
+async function deleteLoc(row: WhLocation) {
+  try {
+    await ElMessageBox.confirm(`删除库位「${row.name}」？在用的库位删不掉，可改用停用。`, '删除库位', { type: 'warning' })
+  } catch { return }
+  try {
+    await whApi.deleteLocation(row.id)
+    ElMessage.success('已删除')
+    await loadLocations()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '删除失败') }
+}
+
+onMounted(() => { loadMaterials(); loadMatDict(); loadCustomFields(); loadBadgeCounts(); loadLocations() })
 
 const totalStock = computed(() => materials.value.reduce((s, m) => s + m.stock, 0))
 const totalValue = computed(() => materials.value.reduce((s, m) => s + (m.stock_value || 0), 0))  // 🆕 需求三：库存总价
@@ -60,12 +97,14 @@ const lowList = computed(() => materials.value.filter(m => m.low))
 const ioVisible = ref(false)
 const ioForm = reactive({ material_id: undefined as number | undefined, direction: 'in', qty: 1,
   unit_price: null as number | null, biz_date: new Date().toISOString().slice(0, 10), source: '', party: '',
-  project_id: undefined as number | undefined,
+  project_id: undefined as number | undefined, location: '' as string | null,   // 🆕 库位(入库用)
   non_project: false, non_project_reason: '' })   // 🆕 盈利改善1b：出库必选项目或明确非项目领用
+const ioMatLocation = computed(() =>
+  materials.value.find(m => m.id === ioForm.material_id)?.location || '')   // 🆕 出库显示物料当前库位
 function openIo(dir: string) {
   Object.assign(ioForm, { material_id: undefined, direction: dir, qty: 1, unit_price: null,
     biz_date: new Date().toISOString().slice(0, 10), source: '', party: '', project_id: undefined,
-    non_project: false, non_project_reason: '' })
+    location: '', non_project: false, non_project_reason: '' })
   if (dir === 'out' && !projects.value.length) loadProjects()   // 🆕 出库要选领用项目→项目材料成本
   ioVisible.value = true
 }
@@ -732,6 +771,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-table-column prop="qty" label="数量" width="70" />
             <el-table-column label="单价" width="90"><template #default="{ row }">{{ fmtMoney(row.unit_price) }}</template></el-table-column>
             <el-table-column label="金额" width="100"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+            <el-table-column prop="location" label="库位" width="90"><template #default="{ row }"><b v-if="row.location" style="color:var(--el-color-primary)">{{ row.location }}</b><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="source" label="来源/用途" width="100"><template #default="{ row }">{{ row.source || '—' }}</template></el-table-column>
             <el-table-column prop="party" label="供应商/领用方" min-width="110"><template #default="{ row }">{{ row.party || '—' }}</template></el-table-column>
             <el-table-column prop="project_code" label="项目" width="100"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>
@@ -771,6 +811,30 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 🆕 项目物料需求（清单→仓库）-->
+        <!-- 🆕 库位管理:主数据维护(采购下单/物料/出入库共用取值) -->
+        <el-tab-pane v-if="tv('loc')" label="库位管理" name="loc">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openLoc()">新增库位</el-button>
+            <span class="muted small">采购下单选库位、物料库位、出入库登记都从这里取值；在用的库位删不掉，可停用。</span>
+          </div>
+          <el-table show-overflow-tooltip :data="locations" stripe size="small" class="compact-tbl" max-height="calc(100vh - 260px)">
+            <el-table-column prop="name" label="库位" min-width="140"><template #default="{ row }"><b style="color:var(--el-color-primary)">{{ row.name }}</b></template></el-table-column>
+            <el-table-column prop="note" label="备注" min-width="160"><template #default="{ row }">{{ row.note || '—' }}</template></el-table-column>
+            <el-table-column prop="mat_count" label="在用物料数" width="100" align="center" />
+            <el-table-column prop="sort_order" label="排序" width="70" align="center" />
+            <el-table-column label="状态" width="80">
+              <template #default="{ row }"><el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template>
+            </el-table-column>
+            <el-table-column v-if="canWrite" label="操作" width="120" fixed="right" :show-overflow-tooltip="false">
+              <template #default="{ row }">
+                <el-button size="small" link type="primary" @click="openLoc(row)">编辑</el-button>
+                <el-button size="small" link type="danger" @click="deleteLoc(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <EmptyHint v-if="!locations.length" text="暂无库位，点「新增库位」开始（如 A区-1排 / 1号库）" size="sm" />
+        </el-tab-pane>
+
         <el-tab-pane v-if="tv('demand')" label="物料需求" name="demand">
           <!-- #157：默认直接列出有清单的项目 + 待出库/已出库条数，不用先从下拉选项目 -->
           <template v-if="!demandProj">
@@ -1073,6 +1137,17 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           </el-form-item>
           <el-form-item :label="ioForm.direction === 'in' ? '供应商' : '领用方'" style="flex:1"><el-input v-model="ioForm.party" /></el-form-item>
         </div>
+        <!-- 🆕 库位:入库=放到哪(选填,默认物料当前库位,选了会更新物料库位);出库=从物料当前库位领 -->
+        <div class="frow">
+          <el-form-item v-if="ioForm.direction === 'in'" label="库位（放到哪;不选=物料当前库位）" style="flex:1">
+            <el-select v-model="ioForm.location" filterable clearable placeholder="选择库位" style="width:100%">
+              <el-option v-for="l in enabledLocations" :key="l.id" :label="l.name" :value="l.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-else label="库位（从物料当前库位领出）" style="flex:1">
+            <el-input :model-value="ioMatLocation || '未设置库位'" disabled />
+          </el-form-item>
+        </div>
         <!-- 🆕 盈利改善1b：出库必选项目(计入项目材料成本)；确属非项目领用需勾选+填原因 -->
         <div class="frow" v-if="ioForm.direction === 'out'">
           <el-form-item label="领用项目（必选；无主出库的材料钱不会进任何项目成本）" :required="!ioForm.non_project" style="flex:1">
@@ -1095,6 +1170,22 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
       <template #footer>
         <el-button @click="ioVisible = false">取消</el-button>
         <el-button type="primary" :loading="ioSubmitting" @click="submitIo">登记</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 🆕 库位弹窗 -->
+    <el-dialog v-model="locVisible" :title="locForm.id ? '编辑库位' : '新增库位'" width="420px">
+      <el-form label-position="top">
+        <el-form-item label="库位名称" required><el-input v-model="locForm.name" placeholder="如 A区-3排 / 1号库" maxlength="64" /></el-form-item>
+        <el-form-item label="备注"><el-input v-model="locForm.note" placeholder="选填,如 存放电气件" maxlength="128" /></el-form-item>
+        <div class="frow">
+          <el-form-item label="排序" style="flex:1"><el-input-number v-model="locForm.sort_order" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="启用" style="flex:1"><el-switch v-model="locForm.enabled" /></el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="locVisible = false">取消</el-button>
+        <el-button type="primary" :loading="locSaving" @click="submitLoc">保存</el-button>
       </template>
     </el-dialog>
 
@@ -1140,7 +1231,11 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <el-form-item label="单价(元)" style="flex:1">
             <el-input-number v-model="matForm.unit_price" :min="0" :controls="false" placeholder="参考单价" style="width:100%" />
           </el-form-item>
-          <el-form-item label="库位" style="flex:1"><el-input v-model="matForm.location" /></el-form-item>
+          <el-form-item label="库位" style="flex:1">
+            <el-select v-model="matForm.location" filterable clearable placeholder="选择库位(库位管理里维护)" style="width:100%">
+              <el-option v-for="l in enabledLocations" :key="l.id" :label="l.name" :value="l.name" />
+            </el-select>
+          </el-form-item>
         </div>
         <div class="frow">
           <el-form-item label="安全库存" style="flex:1"><el-input-number v-model="matForm.safety_stock" :min="0" :controls="false" style="width:100%" /></el-form-item>

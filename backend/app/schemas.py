@@ -449,6 +449,23 @@ class WhMaterialCustomFieldOut(BaseModel):
     enabled: bool
 
 
+class WhLocationIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    note: Optional[str] = Field(default=None, max_length=128)
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class WhLocationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    note: Optional[str] = None
+    sort_order: int
+    enabled: bool
+    mat_count: int = 0     # 当前挂在该库位的物料数(删除保护提示用)
+
+
 class WhTxnIn(BaseModel):
     material_id: int
     biz_date: str
@@ -458,6 +475,7 @@ class WhTxnIn(BaseModel):
     source: Optional[str] = None
     party: Optional[str] = None
     project_id: Optional[int] = None
+    location: Optional[str] = None       # 🆕 库位：入库=放到哪(选填,默认物料当前库位并回写物料)
     # 🆕 盈利改善1b·堵「无主领料」黑洞：出库必须挂项目；确属非项目领用需明确勾选并填原因
     non_project: bool = False
     non_project_reason: Optional[str] = None
@@ -477,6 +495,7 @@ class WhTxnOut(BaseModel):
     party: Optional[str] = None
     project_id: Optional[int] = None
     project_code: Optional[str] = None
+    location: Optional[str] = None       # 🆕 库位
     ref_no: str
     is_reversal: bool = False
     reversed: bool = False

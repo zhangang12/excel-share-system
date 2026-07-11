@@ -20,7 +20,13 @@ export interface WhTxn {
   unit_price?: number | null; amount?: number | null
   source?: string | null; party?: string | null
   project_id?: number | null; project_code?: string | null; ref_no: string
+  location?: string | null   // 🆕 库位(入=放到哪/出=从哪领)
   is_reversal: boolean; reversed: boolean; created_at: string
+}
+// 🆕 库位主数据（仓库维护;采购下单/出入库共用取值）
+export interface WhLocation {
+  id: number; name: string; note?: string | null
+  sort_order: number; enabled: boolean; mat_count: number
 }
 export interface WhSummaryRow {
   material_id: number; name: string; spec?: string | null; unit: string
@@ -59,6 +65,12 @@ export const whApi = {
   deleteCustomField: (id: number) => http.delete(`/wh/material-custom-fields/${id}`).then((r) => r.data),
   txns: (params?: { direction?: string; material_id?: number }) =>
     http.get<WhTxn[]>('/wh/txns', { params }).then((r) => r.data),
+  // 🆕 库位管理
+  locations: (enabledOnly = false) =>
+    http.get<WhLocation[]>('/wh/locations', { params: { enabled_only: enabledOnly } }).then((r) => r.data),
+  createLocation: (data: Partial<WhLocation>) => http.post('/wh/locations', data).then((r) => r.data),
+  updateLocation: (id: number, data: Partial<WhLocation>) => http.put(`/wh/locations/${id}`, data).then((r) => r.data),
+  deleteLocation: (id: number) => http.delete(`/wh/locations/${id}`).then((r) => r.data),
   createTxn: (data: any) => http.post('/wh/txns', data).then((r) => r.data),
   reverse: (id: number) => http.post(`/wh/txns/${id}/reverse`).then((r) => r.data),
   summary: (period: string) => http.get<WhSummaryRow[]>('/wh/summary', { params: { period } }).then((r) => r.data),

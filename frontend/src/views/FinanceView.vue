@@ -1082,7 +1082,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 库存 / 成本（需求六：仅管理层可见） -->
-        <el-tab-pane v-if="isManager" label="📦 库存 / 成本" name="inventory">
+        <el-tab-pane v-if="tv('inventory')" label="📦 库存 / 成本" name="inventory">
           <div class="summary-bar" style="margin-bottom:10px">
             <span>库存总金额 <b class="amt">{{ fmtMoney(invValue.total_value) }}</b></span>
             <span class="muted small">库存金额 = 现存 × 入库加权平均单价;项目成本 = 领料出库 × 单价</span>

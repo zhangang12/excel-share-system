@@ -543,6 +543,112 @@ async def _next_ref(db: AsyncSession, direction: str, biz_date: str) -> str:
     return f"{prefix}{ymd}-{n:03d}"
 
 
+# ==================== 🆕 库位管理（仓库维护;采购下单/出入库流水共用取值） ====================
+@router.get("/locations", response_model=List[schemas.WhLocationOut])
+async def list_locations(
+    enabled_only: bool = Query(False, description="True=只返回启用的(表单下拉用)"),
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """库位列表（所有登录用户可读——采购下单、物料表单的下拉取值）。"""
+    q = select(models.WhLocation).order_by(models.WhLocation.sort_order, models.WhLocation.id)
+    if enabled_only:
+        q = q.where(models.WhLocation.enabled == True)  # noqa: E712
+    locs = list((await db.execute(q)).scalars().all())
+    # 在用物料数（删除保护提示）
+    cnt = dict((await db.execute(
+        select(models.WhMaterial.location, func.count(models.WhMaterial.id))
+        .where(models.WhMaterial.location.isnot(None))
+        .group_by(models.WhMaterial.location))).all())
+    out = []
+    for l in locs:
+        o = schemas.WhLocationOut.model_validate(l)
+        o.mat_count = cnt.get(l.name, 0)
+        out.append(o)
+    return out
+
+
+@router.post("/locations", response_model=schemas.WhLocationOut)
+async def create_location(
+    body: schemas.WhLocationIn,
+    current: models.User = Depends(require_roles(*WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "库位名称不能为空")
+    ex = (await db.execute(select(models.WhLocation).where(
+        models.WhLocation.name == name))).scalar_one_or_none()
+    if ex:
+        raise HTTPException(400, f"库位「{name}」已存在")
+    l = models.WhLocation(name=name, note=(body.note or "").strip() or None,
+                          sort_order=body.sort_order, enabled=body.enabled)
+    db.add(l)
+    await db.commit()
+    await write_audit(db, user=current, action="wh_location_create", target_type="wh_location",
+                      target_id=l.id, detail=name)
+    return schemas.WhLocationOut.model_validate(l)
+
+
+@router.put("/locations/{lid}", response_model=schemas.WhLocationOut)
+async def update_location(
+    lid: int, body: schemas.WhLocationIn,
+    current: models.User = Depends(require_roles(*WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    l = (await db.execute(select(models.WhLocation).where(
+        models.WhLocation.id == lid))).scalar_one_or_none()
+    if not l:
+        raise HTTPException(404, "库位不存在")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "库位名称不能为空")
+    dup = (await db.execute(select(models.WhLocation).where(
+        models.WhLocation.name == name, models.WhLocation.id != lid))).scalar_one_or_none()
+    if dup:
+        raise HTTPException(400, f"库位「{name}」已存在")
+    old_name = l.name
+    l.name, l.note = name, (body.note or "").strip() or None
+    l.sort_order, l.enabled = body.sort_order, body.enabled
+    # 改名级联：把挂在旧库位名下的物料/未收货采购单同步到新名（流水是历史快照,不改）
+    if old_name != name:
+        await db.execute(sa_update(models.WhMaterial).where(
+            models.WhMaterial.location == old_name).values(location=name))
+        await db.execute(sa_update(models.PurchaseItem).where(
+            models.PurchaseItem.stock_location == old_name,
+            models.PurchaseItem.arrival_date.is_(None)).values(stock_location=name))
+    await db.commit()
+    await write_audit(db, user=current, action="wh_location_update", target_type="wh_location",
+                      target_id=l.id, detail=f"{old_name} → {name}")
+    return schemas.WhLocationOut.model_validate(l)
+
+
+@router.delete("/locations/{lid}", response_model=schemas.Msg)
+async def delete_location(
+    lid: int,
+    current: models.User = Depends(require_roles(*WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    l = (await db.execute(select(models.WhLocation).where(
+        models.WhLocation.id == lid))).scalar_one_or_none()
+    if not l:
+        raise HTTPException(404, "库位不存在")
+    used_mat = (await db.execute(select(func.count(models.WhMaterial.id)).where(
+        models.WhMaterial.location == l.name))).scalar() or 0
+    used_po = (await db.execute(select(func.count(models.PurchaseItem.id)).where(
+        models.PurchaseItem.stock_location == l.name,
+        models.PurchaseItem.arrival_date.is_(None)))).scalar() or 0
+    if used_mat or used_po:
+        raise HTTPException(400, f"该库位仍有 {used_mat} 个物料 / {used_po} 条未收货采购在用，"
+                                 f"请先转移或改用「停用」")
+    name = l.name
+    await db.delete(l)
+    await db.commit()
+    await write_audit(db, user=current, action="wh_location_delete", target_type="wh_location",
+                      target_id=lid, detail=name)
+    return schemas.Msg(message=f"已删除库位「{name}」")
+
+
 @router.post("/txns", response_model=schemas.Msg)
 async def create_txn(
     data: schemas.WhTxnIn,
@@ -575,11 +681,19 @@ async def create_txn(
             raise HTTPException(400, f"出库数量 {data.qty} 超过现存 {stock}")
     ref = await _next_ref(db, data.direction, bd)
     amount = round(data.qty * data.unit_price, 4) if data.unit_price is not None else None
+    # 🆕 库位：入库=放到哪(选填,默认物料当前库位;填了回写物料当前库位)；出库=从物料当前库位领
+    loc = (data.location or "").strip() or None
+    if data.direction == "in":
+        txn_loc = loc or m.location
+        if loc:
+            m.location = loc
+    else:
+        txn_loc = m.location
     txn = models.WhTxn(
         material_id=data.material_id, biz_date=bd, direction=data.direction, qty=data.qty,
         unit_price=data.unit_price, amount=amount,
         source=(src or ("采购入库" if data.direction == "in" else "领料出库")),
-        party=party or None, project_id=data.project_id,
+        party=party or None, project_id=data.project_id, location=txn_loc,
         ref_no=ref, operator_id=current.id,
     )
     db.add(txn)
@@ -621,7 +735,7 @@ async def reverse_txn(
     ref = await _next_ref(db, rev_dir, bd)
     rev = models.WhTxn(
         material_id=o.material_id, biz_date=bd, direction=rev_dir, qty=o.qty,
-        unit_price=o.unit_price, amount=o.amount,
+        unit_price=o.unit_price, amount=o.amount, location=o.location,
         source="冲红", party=f"冲销 {o.ref_no}", project_id=o.project_id,
         ref_no=ref, operator_id=current.id, is_reversal=True, reversal_of=o.id,
     )
@@ -659,7 +773,7 @@ async def list_txns(
         material_name=t.material.name if t.material else "", spec=t.material.spec if t.material else None,
         biz_date=t.biz_date, direction=t.direction, qty=t.qty,
         unit_price=t.unit_price, amount=t.amount, source=t.source, party=t.party,
-        project_id=t.project_id, project_code=pmap.get(t.project_id),
+        project_id=t.project_id, project_code=pmap.get(t.project_id), location=t.location,
         ref_no=t.ref_no, is_reversal=t.is_reversal, reversed=t.reversed, created_at=t.created_at,
     ) for t in txns]
 
@@ -883,7 +997,7 @@ async def issue_demand(
         db.add(models.WhTxn(
             material_id=m.id, biz_date=bd, direction="out", qty=take,
             unit_price=up, amount=(round(take * up, 4) if up is not None else None),
-            source="领料出库", party=p.code, project_id=project_id,
+            source="领料出库", party=p.code, project_id=project_id, location=m.location,
             ref_no=ref, operator_id=current.id))
         issued += 1
     if not issued:
@@ -899,7 +1013,7 @@ async def issue_demand(
 
 @router.get("/inventory-value")
 async def inventory_value(
-    _: models.User = Depends(require_roles()),   # 🆕 需求六：库存/成本仅管理层可见
+    _: models.User = Depends(require_roles("finance", "finance_lead")),   # 🆕 权限统一:tab由二级菜单权限控
     db: AsyncSession = Depends(get_db),
 ):
     """库存金额：各物料 现存 × 入库加权平均单价，汇总总库存金额（仅管理层）。"""
@@ -922,7 +1036,7 @@ async def inventory_value(
 
 @router.get("/project-cost")
 async def project_cost(
-    _: models.User = Depends(require_roles()),   # 🆕 需求六：库存/成本仅管理层可见
+    _: models.User = Depends(require_roles("finance", "finance_lead")),   # 🆕 权限统一:tab由二级菜单权限控
     db: AsyncSession = Depends(get_db),
 ):
     """项目材料成本：出库(领料)到各项目的数量 × 物料加权平均单价，按项目汇总（仅管理层）。"""

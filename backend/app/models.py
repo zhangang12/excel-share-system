@@ -388,6 +388,7 @@ class WhTxn(Base):
     purchase_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("purchase_items.id"), index=True)  # 🆕 采购收货自动入库来源
     source: Mapped[Optional[str]] = mapped_column(String(32))           # 采购入库/领料出库/冲红…
     party: Mapped[Optional[str]] = mapped_column(String(128))           # 供应商/领用方
+    location: Mapped[Optional[str]] = mapped_column(String(64))         # 🆕 库位(入=放到哪/出=从哪领)
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), index=True)
     ref_no: Mapped[str] = mapped_column(String(32), index=True)         # 单据号 RK/CKyyyymmdd-NNN
     operator_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
@@ -673,6 +674,18 @@ class MaterialCategory(Base):
     level: Mapped[int] = mapped_column(default=1, index=True)      # 1大类 / 2中类 / 3细分类
     seg_code: Mapped[str] = mapped_column(String(4))               # 段码：大类1位、中类2位、细分2位(数字)
     name: Mapped[str] = mapped_column(String(64))
+    sort_order: Mapped[int] = mapped_column(default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WhLocation(Base):
+    """🆕 库位主数据（仓库维护）：采购下单选库位、出入库流水记库位都从这里取值。
+    单库位模型：一个物料一个当前库位(WhMaterial.location)，流水记录每笔的实际库位。"""
+    __tablename__ = "wh_locations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)   # 如 A区-3排 / 1号库
+    note: Mapped[Optional[str]] = mapped_column(String(128))
     sort_order: Mapped[int] = mapped_column(default=0)
     enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

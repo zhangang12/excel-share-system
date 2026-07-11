@@ -12,7 +12,8 @@ import LineChart from '@/components/LineChart.vue'
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
 const isLeadOrAbove = computed(() => auth.hasRole('buyer_lead', 'finance', 'admin', 'manager'))
-const showPurchaseTab = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
+// 🆕 权限统一：tab 可见性只由「二级菜单权限」(hidden_tabs)决定,不再按角色写死
+const showPurchaseTab = computed(() => auth.tabVisible('purchase_mgmt', 'purchase'))
 const tv = (name: string) => auth.tabVisible('purchase_mgmt', name)   // 🆕 #7 按账号二级菜单授权
 // 🆕 R6：采购自定义字段
 const canConfigFields = computed(() => auth.hasRole('buyer_lead', 'admin', 'manager'))
@@ -592,12 +593,18 @@ function blankLine(): OrderLine {
 }
 const orderDialogVisible = ref(false)
 const orderSaving = ref(false)
+// 🆕 库位下拉取值(仓库「库位管理」维护;只取启用的)
+const whLocations = ref<{ id: number; name: string }[]>([])
+async function loadWhLocations() {
+  try { whLocations.value = (await http.get<any[]>('/wh/locations', { params: { enabled_only: true } })).data }
+  catch { whLocations.value = [] }
+}
+
 const orderForm = reactive({
   supplier_id: '' as number | '',
   delivery_date: '', contract_no: '', project_code: '', payment_method: '',
   prepay_ratio: null as number | null,
-  is_stock: true,   // 🆕 是否备货：是=收货只入库；否=收货入库+出库(直发项目)
-  stock_location: '',   // 🆕 库位(整单一个)
+  stock_location: '',   // 🆕 库位(整单一个;从仓库「库位管理」取值)
   lines: [blankLine()] as OrderLine[],
 })
 // 采购商抬头（打印采购单用；如公司全称有出入，改这里即可）
@@ -625,7 +632,7 @@ function openNewOrder() {
   Object.assign(orderForm, {
     supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10),
     contract_no: '', project_code: '', payment_method: '', prepay_ratio: null,
-    is_stock: true, stock_location: '', lines: [blankLine()],
+    stock_location: '', lines: [blankLine()],
   })
   loadProjectCodes()
   loadOrderNoDict()
@@ -661,7 +668,6 @@ async function saveOrder() {
       delivery_date: orderForm.delivery_date || null,
       contract_no: orderForm.contract_no || null,
       project_code: orderForm.project_code || null,
-      is_stock: orderForm.is_stock,
       stock_location: orderForm.stock_location.trim() || null,
       payment_method: orderForm.payment_method || null,
       prepay_ratio: isPrepayMethod(orderForm.payment_method) ? orderForm.prepay_ratio : null,
@@ -1292,6 +1298,7 @@ const supTrendChart = computed(() => ({
 
 onMounted(async () => {
   await Promise.all([loadSuppliers(), loadCustomFields(), loadMatDict()])
+  loadWhLocations()   // 🆕 库位下拉(下单表单用,不阻塞首屏)
   if (showPurchaseTab.value) {
     await loadPurchaseRows()
     loadIncomingReqs()   // #167：加载采购申请以显示角标
@@ -1774,7 +1781,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <el-tabs v-model="tab" @tab-change="onTabChange">
 
         <!-- ==================== Tab 0: 采购部 ==================== -->
-        <el-tab-pane v-if="showPurchaseTab && tv('purchase')" label="🗂️ 采购部" name="purchase">
+        <el-tab-pane v-if="tv('purchase')" label="🗂️ 采购部" name="purchase">
           <!-- 筛选栏 -->
           <div class="filter-bar">
             <el-select v-model="pYearFilter" style="width:100px" @change="loadPurchaseRows">
@@ -1886,7 +1893,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
 
         <!-- ==================== 🆕 #167 采购申请（仓库提 → 采购部处理）==================== -->
-        <el-tab-pane v-if="showPurchaseTab && tv('preq')" name="preq" lazy>
+        <el-tab-pane v-if="tv('preq')" name="preq" lazy>
           <template #label>📥 采购申请<span v-if="incomingPending">（{{ incomingPending }}）</span></template>
           <div class="filter-bar">
             <el-button :icon="Refresh" size="small" @click="loadIncomingReqs">刷新</el-button>
@@ -2219,7 +2226,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
 
         <!-- ==================== Tab: 请款记录（采购员跟进审批进度） ==================== -->
-        <el-tab-pane v-if="showPurchaseTab && tv('payreq')" label="💳 请款记录" name="payreq" lazy>
+        <el-tab-pane v-if="tv('payreq')" label="💳 请款记录" name="payreq" lazy>
           <div class="filter-bar">
             <el-radio-group v-model="prStatusFilter" size="small">
               <el-radio-button value="">全部 ({{ prCounts[''] }})</el-radio-button>
@@ -2277,7 +2284,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-tab-pane>
 
         <!-- ==================== Tab 3: 汇总报表（需求五：采购员也可见，数据按本人隔离）==================== -->
-        <el-tab-pane v-if="(isLeadOrAbove || canWrite) && tv('reports')" label="📈 汇总报表" name="reports" lazy>
+        <el-tab-pane v-if="tv('reports')" label="📈 汇总报表" name="reports" lazy>
           <div v-if="kpi" class="kpi-grid" style="margin-bottom:16px">
             <div class="kpi is-primary">
               <div class="kpi-v">{{ fmtMoney(kpi.month_amount) }}</div>
@@ -2416,7 +2423,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :xs="12" :sm="6" :md="5">
             <el-form-item label="库位 *（收货放哪个库）">
-              <el-input v-model="listOrderForm.stock_location" placeholder="如 A区-3排 / 1号库" maxlength="64" />
+              <el-select v-model="listOrderForm.stock_location" filterable clearable placeholder="选择库位(仓库维护)" style="width:100%">
+                <el-option v-for="l in whLocations" :key="l.id" :label="l.name" :value="l.name" />
+              </el-select>
             </el-form-item>
           </el-col>
         </el-row>
@@ -2614,20 +2623,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </el-select>
             </el-form-item>
           </el-col>
+          <!-- 🆕 库位管理批次:「是否备货」开关已取消——收货一律只入库,出库统一走仓库领料 -->
           <el-col :xs="12" :sm="8" :md="5">
-            <el-form-item>
-              <template #label>
-                是否备货
-                <el-tooltip placement="top" content="备货=是：仓库收货后只自动入库(留库存)。备货=否：收货后自动入库+出库(直发对应项目，不留库存)。按清单下单一律入库+出库。">
-                  <el-icon style="vertical-align:-2px;color:var(--el-text-color-secondary)"><QuestionFilled /></el-icon>
-                </el-tooltip>
-              </template>
-              <el-switch v-model="orderForm.is_stock" active-text="备货(只入库)" inactive-text="不备货(入库+出库)" inline-prompt style="--el-switch-on-color:var(--el-color-primary)" />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="12" :sm="8" :md="4">
             <el-form-item label="库位 *（收货放哪个库）">
-              <el-input v-model="orderForm.stock_location" placeholder="如 A区-3排" maxlength="64" />
+              <el-select v-model="orderForm.stock_location" filterable clearable placeholder="选择库位(仓库维护)" style="width:100%">
+                <el-option v-for="l in whLocations" :key="l.id" :label="l.name" :value="l.name" />
+              </el-select>
             </el-form-item>
           </el-col>
         </el-row>

@@ -123,7 +123,8 @@ class PurchaseProjectRow(BaseModel):
 async def purchase_projects(
     year: Optional[str] = None,
     proj_status: Optional[str] = None,
-    _: models.User = Depends(require_roles("buyer", "buyer_standard", "buyer_outsource", "admin", "manager")),
+    _: models.User = Depends(require_roles(
+        "buyer", "buyer_lead", "buyer_standard", "buyer_outsource", "finance", "finance_lead")),
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 采购部项目列表：按项目汇总采购所需数据表(引用下载)与设计师推送的图纸附件。
@@ -225,7 +226,8 @@ class PurchasePackageReq(BaseModel):
 @router.post("/purchase/package")
 async def purchase_package(
     req: PurchasePackageReq,
-    _: models.User = Depends(require_roles("buyer", "buyer_standard", "buyer_outsource", "admin", "manager")),
+    _: models.User = Depends(require_roles(
+        "buyer", "buyer_lead", "buyer_standard", "buyer_outsource", "finance", "finance_lead")),
     db: AsyncSession = Depends(get_db),
 ):
     """采购部：把勾选的采购数据表(导出 xlsx)与设计推送附件(CAD激光图纸/外购附图)打包成一个 zip 下载。
@@ -294,7 +296,8 @@ async def purchase_package(
 
 @router.get("/purchase/inbox", response_model=List[PurchaseInboxRow])
 async def purchase_inbox(
-    _: models.User = Depends(require_roles("buyer", "buyer_standard", "buyer_outsource")),
+    _: models.User = Depends(require_roles(
+        "buyer", "buyer_lead", "buyer_standard", "buyer_outsource", "finance", "finance_lead")),
     db: AsyncSession = Depends(get_db),
 ):
     """采购清单收件箱：电工接单上传的采购清单（撤回即消失）。"""
