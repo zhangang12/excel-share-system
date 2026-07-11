@@ -1314,6 +1314,34 @@ async def backfill_elec_po_from_uploaded(db: AsyncSession) -> dict:
     return {"filled": filled}
 
 
+async def close_legacy_electric_done_orders(db: AsyncSession) -> dict:
+    """🆕 #197 止损迁移：「接线完成即完成」上线时，把此前已点过接线完成、还卡在
+    进行中等发货准备的存量电工单直接置为完成（完成日期=本次部署日）——
+    避免这批单按旧口径继续累计逾期天数（系统没记录当初接线完成是哪天，
+    done_date 只能取部署日，比继续流血准）。电路图/发货准备去「已完成」tab 里补。
+
+    幂等：新口径下点接线完成即置 done；reopen 现在会清 electric_done_flag——
+    此后 in_progress + electric_done_flag 的组合不会再出现，本迁移只命中存量。"""
+    from datetime import date as _date
+
+    r = await db.execute(select(models.DeptOrder).where(
+        models.DeptOrder.dept == "electric",
+        models.DeptOrder.status == "in_progress",
+        models.DeptOrder.electric_done_flag == True))  # noqa: E712
+    orders = list(r.scalars().all())
+    if not orders:
+        return {"closed": 0}
+    today_s = _date.today().isoformat()
+    for o in orders:
+        o.status = "done"
+        if not o.done_date:
+            o.done_date = today_s
+    await db.commit()
+    log.info("[close_legacy_electric_done_orders] 止损置完成 %d 张电工存量单(done_date=%s)",
+             len(orders), today_s)
+    return {"closed": len(orders)}
+
+
 async def add_location_column_to_known_sheets(db: AsyncSession) -> dict:
     """🆕 #195：给存量项目的进度表（钣金装配/标准件清单/外协加工/不锈钢原料下料单/
     激光件清单/电工采购单）末尾补「库位」列。新建项目由模板自带。
@@ -2043,6 +2071,10 @@ async def run_all(db: AsyncSession) -> None:
         await add_location_column_to_known_sheets(db)   # 🆕 #195 存量进度表补「库位」列
     except Exception as e:
         log.warning("add_location_column_to_known_sheets failed: %s", e)
+    try:
+        await close_legacy_electric_done_orders(db)   # 🆕 #197 止损:卡在旧二步流的电工单置完成
+    except Exception as e:
+        log.warning("close_legacy_electric_done_orders failed: %s", e)
     try:
         await backfill_project_visibility_from_overview_names(db)
     except Exception as e:

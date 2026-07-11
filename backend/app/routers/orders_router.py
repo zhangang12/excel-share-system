@@ -1017,6 +1017,11 @@ async def reopen_order(
         raise HTTPException(400, "该项目已发货，任务不可改回进行中（如需返工请先撤回发货）")
     o.status = "in_progress"
     o.done_date = None
+    # 🆕 #197：改回=返工，设计/接线完成标记一并清掉，回到"未完成"状态机
+    #   （也是 close_legacy_electric_done_orders 止损迁移不误关返工单的前提——
+    #    迁移按 in_progress+electric_done_flag 识别"卡在旧二步流的存量单"）
+    o.design_done_flag = False
+    o.electric_done_flag = False
     p = o.project
     if cfg["writeback_done"]:
         _writeback_overview(p, cfg["writeback_done"], None)
