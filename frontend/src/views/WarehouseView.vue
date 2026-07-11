@@ -698,24 +698,25 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <div style="display:flex;gap:10px;margin-bottom:10px">
             <el-input v-model="kw" placeholder="搜索物料" :prefix-icon="Search" clearable style="width:240px" @change="loadMaterials" />
           </div>
-          <!-- 🆕 #140 列宽用 min-width 平均分布，避免名称/规格独占空白、右侧列挤在一起 -->
+          <!-- 🆕 列宽整齐化：文本列(名称/规格/类别)用 min-width 填充空白；数字/短列用固定宽度右对齐，
+               避免数字列被拉伸出大空隙（此前 #140 把数字列也设 min-width 导致宽屏爆宽） -->
           <el-table show-overflow-tooltip :data="materials" stripe size="small" max-height="calc(100vh - 240px)">
             <el-table-column prop="code" label="编码" width="104"><template #default="{ row }"><span v-if="row.code" class="code">{{ row.code }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
             <el-table-column prop="spec" label="规格型号" min-width="140"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
-            <el-table-column prop="category" label="类别" min-width="110"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
-            <el-table-column prop="unit" label="单位" width="70" align="center" />
-            <el-table-column label="现存" min-width="90" align="right">
+            <el-table-column prop="category" label="类别" min-width="100"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
+            <el-table-column prop="unit" label="单位" width="64" align="center" />
+            <el-table-column label="现存" width="90" align="right">
               <template #default="{ row }"><b :class="{ bad: row.low }">{{ row.stock }}</b></template>
             </el-table-column>
-            <el-table-column v-if="isManager" label="单价" min-width="90" align="right">
+            <el-table-column v-if="isManager" label="单价" width="90" align="right">
               <template #default="{ row }">{{ row.unit_price != null ? fmtMoney(row.unit_price) : '—' }}</template>
             </el-table-column>
-            <el-table-column v-if="isManager" label="总价" min-width="100" align="right">
+            <el-table-column v-if="isManager" label="总价" width="110" align="right">
               <template #default="{ row }"><b>{{ row.stock_value != null ? fmtMoney(row.stock_value) : '—' }}</b></template>
             </el-table-column>
-            <el-table-column prop="safety_stock" label="安全库存" min-width="100" align="right" />
-            <el-table-column prop="location" label="库位" min-width="100"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
+            <el-table-column prop="safety_stock" label="安全库存" width="90" align="right" />
+            <el-table-column prop="location" label="库位" width="100"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
           </el-table>
           <EmptyHint v-if="!materials.length" text="暂无物料，去「物料主数据」新增" size="sm" />
         </el-tab-pane>
@@ -844,7 +845,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <span class="muted small">列出有「标准件清单」的项目；点「查看」进入逐行需求并领用出库。待出库=有货且未领完的物料行数，已出库=已领用过的行数。</span>
             </div>
             <el-table show-overflow-tooltip :data="demandOverview" v-loading="demandOverviewLoading" stripe size="small"
-                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
+                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl" :fit="false">
               <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
               <el-table-column prop="name" label="项目名称" min-width="200" show-overflow-tooltip />
               <el-table-column label="物料行数" width="100" align="right"><template #default="{ row }">{{ row.total_lines }}</template></el-table-column>

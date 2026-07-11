@@ -3067,7 +3067,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <!-- 🆕 按月合计开票：按到货日期分月，未开票/已开票一目了然 -->
       <el-collapse v-if="drawerMonthly.length" class="monthly-collapse">
         <el-collapse-item :title="`按月收货/开票/付款汇总（${drawerMonthly.length} 个月）`" name="m">
-          <el-table show-overflow-tooltip :data="drawerMonthly" size="small" stripe class="compact-tbl">
+          <el-table show-overflow-tooltip :data="drawerMonthly" size="small" stripe class="compact-tbl" :fit="false">
             <el-table-column label="月份（按到货日期）" min-width="140">
               <template #default="{ row }"><b>{{ row.month }}</b></template>
             </el-table-column>

@@ -812,7 +812,7 @@ async function revokeInvoice(row: ViewRow) {
             </el-table-column>
           </el-table>
           <el-table v-else show-overflow-tooltip v-loading="pnlLoading" :data="pnlGrouped" stripe size="small"
-                    class="compact-tbl" max-height="calc(100vh - 400px)">
+                    class="compact-tbl" max-height="calc(100vh - 400px)" :fit="false">
             <el-table-column prop="key" :label="GROUP_LABELS[pnlGroup]" min-width="150" />
             <el-table-column prop="count" label="项目数" width="80" align="center" sortable />
             <el-table-column prop="amount" label="合同额" width="130" align="right" sortable>
@@ -977,8 +977,8 @@ async function revokeInvoice(row: ViewRow) {
             </el-tab-pane>
             <el-tab-pane :label="`💳 预付敞口 (${fundData?.prepay.rows.length ?? 0})`" name="prepay">
               <div class="muted small" style="margin-bottom:8px">已付款但货未到 = 押在供应商那里的钱，按押款天数催交货。</div>
-              <el-table show-overflow-tooltip :data="fundData?.prepay.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 420px)">
-                <el-table-column prop="supplier" label="供应商" min-width="160" />
+              <el-table show-overflow-tooltip :data="fundData?.prepay.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 420px)" :fit="false">
+                <el-table-column prop="supplier" label="供应商" min-width="220" />
                 <el-table-column label="押款金额" width="130" align="right" sortable prop="amount"><template #default="{ row }"><b class="danger">{{ fmtMoney(row.amount) }}</b></template></el-table-column>
                 <el-table-column prop="items" label="明细数" width="80" align="center" />
                 <el-table-column prop="oldest_paid" label="最早付款日" width="110"><template #default="{ row }">{{ row.oldest_paid || '—' }}</template></el-table-column>
@@ -1035,7 +1035,7 @@ async function revokeInvoice(row: ViewRow) {
               <EmptyHint v-if="!fundLoading && !(fundData?.dead_stock.rows.length)" text="没有呆滞库存 ✅" />
               <div v-if="fundData?.dead_stock.safety.length" style="margin-top:12px">
                 <div class="section-title">🩺 安全库存体检</div>
-                <el-table show-overflow-tooltip :data="fundData.dead_stock.safety" size="small" class="compact-tbl" style="max-width:860px">
+                <el-table show-overflow-tooltip :data="fundData.dead_stock.safety" size="small" class="compact-tbl" style="max-width:860px" :fit="false">
                   <el-table-column label="物料" min-width="150"><template #default="{ row }">{{ row.name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
                   <el-table-column prop="safety_stock" label="安全库存" width="90" align="right" />
                   <el-table-column prop="month_avg_out" label="月均出库" width="90" align="right" />
@@ -1047,7 +1047,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-tab-pane label="📉 13周现金排程" name="cash">
               <el-alert type="info" :closable="false" style="margin-bottom:10px" :title="fundData?.cashgap.note || ''" />
               <el-table show-overflow-tooltip :data="fundData?.cashgap.weeks || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 420px)"
-                        :row-class-name="({ row }: any) => row.cum < 0 ? 'pnl-loss-row' : ''">
+                        :fit="false" :row-class-name="({ row }: any) => row.cum < 0 ? 'pnl-loss-row' : ''">
                 <el-table-column prop="label" label="周" width="130"><template #default="{ row }"><b>{{ row.label }}</b></template></el-table-column>
                 <el-table-column label="预计流入" width="130" align="right"><template #default="{ row }"><span :class="row.inflow ? 'profit-pos' : 'muted'">{{ row.inflow ? fmtMoney(row.inflow) : '—' }}</span></template></el-table-column>
                 <el-table-column label="预计流出" width="130" align="right"><template #default="{ row }"><span :class="row.outflow ? 'danger' : 'muted'">{{ row.outflow ? fmtMoney(row.outflow) : '—' }}</span></template></el-table-column>
@@ -1069,8 +1069,8 @@ async function revokeInvoice(row: ViewRow) {
             <span class="muted small">已收货未付款 = 对供应商的应付;审批走「请款审批」，付款走「付款」页</span>
           </div>
           <el-table show-overflow-tooltip :data="payables" v-loading="payablesLoading" stripe size="small"
-                    max-height="calc(100vh - 300px)" :scrollbar-always-on="true" class="compact-tbl">
-            <el-table-column prop="supplier_name" label="供应商" min-width="180" />
+                    max-height="calc(100vh - 300px)" :scrollbar-always-on="true" class="compact-tbl" :fit="false">
+            <el-table-column prop="supplier_name" label="供应商" min-width="220" />
             <el-table-column prop="category" label="分类" width="90"><template #default="{ row }">{{ row.category || '—' }}</template></el-table-column>
             <el-table-column label="收货合计" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.received_total) }}</template></el-table-column>
             <el-table-column label="开票合计" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.invoice_total) }}</template></el-table-column>
