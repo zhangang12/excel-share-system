@@ -1,5 +1,5 @@
 """🆕 采购管理模块：供应商档案 / 采购明细 / 账目一览 / 请款流程 / 汇总报表 / 历史导入"""
-from datetime import datetime, timezone, date as _date, datetime as _dt
+from datetime import datetime, timezone, date as _date, datetime as _dt, timedelta as _td
 from io import BytesIO
 from typing import Optional, List, Dict
 from collections import defaultdict
@@ -1758,6 +1758,7 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         .join(models.PurchaseItem, models.PaymentRequestItem.item_id == models.PurchaseItem.id)
         .where(models.PaymentRequestItem.request_id == pr_id)
     )
+    pairs = ri.all()
     item_rows = [
         {
             "item_id": pri.item_id,
@@ -1768,8 +1769,20 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
             "received_amount": pi.received_amount or 0,
             "allocated_amount": pri.allocated_amount,
         }
-        for pri, pi in ri.all()
+        for pri, pi in pairs
     ]
+    # 🆕 盈利改善2·应付账期：最早到期日 = min(明细到货日) + 供应商账期天数——
+    #   财务按到期日排程付款：有账期不必提前付(白放弃免息资金)，逾期未付有断供风险。
+    earliest_due = None
+    due_in_days = None
+    arrivals = [pi.arrival_date for _pri, pi in pairs if pi.arrival_date]
+    if arrivals and pr.supplier and pr.supplier.credit_days is not None:
+        try:
+            _d0 = _date.fromisoformat(min(arrivals)) + _td(days=pr.supplier.credit_days)
+            earliest_due = _d0.isoformat()
+            due_in_days = (_d0 - _date.today()).days
+        except ValueError:
+            pass
     po_nos = sorted({r["po_no"] for r in item_rows if r["po_no"]})
     voucher_name = None
     if pr.pay_voucher_file_id:
@@ -1797,6 +1810,7 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         supplier_bank_account=(sup.bank_account if sup else None),
         supplier_tax_no=(sup.tax_no if sup else None),
         po_nos=po_nos,
+        earliest_due=earliest_due, due_in_days=due_in_days,
         created_at=pr.created_at,
         items=item_rows,
     )

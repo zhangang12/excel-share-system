@@ -87,7 +87,7 @@ TAB_REGISTRY: list[dict] = [
     {"menu_key": "finance", "menu_label": "财务部", "tabs": [
         ("pending", "待开票"), ("invoiced", "已开票"), ("aftersales", "安装/售后费用"),
         ("pay_requests", "请款审批"), ("pay_payment", "付款"), ("expense", "支出总览"),
-        ("pnl", "项目毛利"), ("audit", "成本审计"),
+        ("pnl", "项目毛利"), ("audit", "成本审计"), ("fund", "资金面板"),
         ("payables", "采购应付"), ("inventory", "库存/成本")]},
     {"menu_key": "warehouse", "menu_label": "仓库", "tabs": [
         ("ov", "库存总览"), ("io", "出入库登记"), ("sum", "收发存汇总"), ("txn", "出入库流水"),

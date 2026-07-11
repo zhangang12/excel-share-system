@@ -1390,6 +1390,10 @@ class PaymentRequestOut(BaseModel):
     supplier_bank_account: Optional[str] = None
     supplier_tax_no: Optional[str] = None
     po_nos: list[str] = Field(default_factory=list)
+    # 🆕 盈利改善2·应付账期利用：最早到期日=min(到货日)+供应商账期天数;距到期天数(负=已逾期)。
+    #   供应商未维护 credit_days 或明细未到货时为 None。
+    earliest_due: Optional[str] = None
+    due_in_days: Optional[int] = None
     created_at: datetime
     items: list[dict] = Field(default_factory=list)
 

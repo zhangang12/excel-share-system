@@ -24,6 +24,8 @@ interface PaymentRequestOut {
   // 🆕 需求十六：付款时可见收款账户信息 + 关联采购单
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
   po_nos?: string[]
+  // 🆕 盈利改善2·应付账期：最早到期日(到货+账期) 与 距到期天数(负=已逾期)
+  earliest_due?: string | null; due_in_days?: number | null
   items: { item_id: number; allocated_amount: number; item_name?: string; po_no?: string | null; spec?: string | null; project_code?: string | null; received_amount?: number }[]
 }
 
@@ -79,6 +81,52 @@ function onFinTab(name: string) {
   if (name === 'expense') loadExpense()
   if (name === 'pnl') loadPnl()
   if (name === 'audit') { loadAudit(); loadAuditProjects() }
+  if (name === 'fund') loadFund()
+}
+
+// ===== 🆕 盈利改善第二档：资金面板（应收/应付/呆滞/13周现金） =====
+interface FundData {
+  as_of: string
+  receivables: {
+    total: number; buckets: { bucket: string; amount: number }[]
+    balance_rows: any[]; ship_rows: any[]
+    by_customer: { key: string; amount: number }[]; by_sales: { key: string; amount: number }[]
+  }
+  prepay: { total: number; rows: { supplier: string; amount: number; items: number; oldest_paid?: string | null; days?: number | null }[] }
+  payables: {
+    overdue: { supplier: string; amount: number; items: number; worst_days: number }[]
+    overdue_total: number
+    due_soon: { supplier: string; amount: number; items: number; nearest_due: string }[]
+    due_soon_total: number
+    early_paid: { total: number; avg_wasted_days: number; rows: any[] }
+    missing_credit: { supplier: string; outstanding: number }[]
+  }
+  dead_stock: { total_value: number; buckets: { bucket: string; value: number }[]; rows: any[]; safety: any[] }
+  cashgap: { weeks: { idx: number; label: string; inflow: number; outflow: number; net: number; cum: number }[]; undated_inflow: number; inflow_later: number; outflow_later: number; note: string }
+}
+const fundData = ref<FundData | null>(null)
+const fundLoading = ref(false)
+const fundTab = ref('recv')
+async function loadFund() {
+  fundLoading.value = true
+  try { fundData.value = (await http.get<FundData>('/reports/fund-panel')).data }
+  catch { fundData.value = null } finally { fundLoading.value = false }
+}
+const recvRows = computed(() =>
+  [...(fundData.value?.receivables.balance_rows || []), ...(fundData.value?.receivables.ship_rows || [])]
+    .sort((a, b) => b.over_days - a.over_days))
+// 请款单「距到期」标签：负=已逾期(红)、0-7天(橙)、>7天(绿)、无账期(灰)
+function dueTagType(d?: number | null) {
+  if (d == null) return 'info'
+  if (d < 0) return 'danger'
+  if (d <= 7) return 'warning'
+  return 'success'
+}
+function dueTagText(r: PaymentRequestOut) {
+  if (r.due_in_days == null) return '未维护账期'
+  if (r.due_in_days < 0) return `逾期${-r.due_in_days}天`
+  if (r.due_in_days === 0) return '今天到期'
+  return `距到期${r.due_in_days}天`
 }
 
 // ===== 🆕 盈利改善第一档 1a：项目毛利红黑榜 =====
@@ -574,6 +622,14 @@ async function revokeInvoice(row: ViewRow) {
                 <el-tag :type="prTagType(row.status)" size="small">{{ prStatusLabel[row.status] || row.status }}</el-tag>
               </template>
             </el-table-column>
+            <!-- 🆕 盈利改善2·应付账期利用：按到期日排程付款,有账期别提前付、逾期未付防断供 -->
+            <el-table-column label="账期到期" width="110">
+              <template #default="{ row }">
+                <span v-if="row.status === 'paid'" class="muted small">已付</span>
+                <el-tag v-else :type="dueTagType(row.due_in_days)" size="small" effect="plain"
+                        :title="row.earliest_due ? '到期日 ' + row.earliest_due : ''">{{ dueTagText(row) }}</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="notes" label="备注" min-width="150" show-overflow-tooltip>
               <template #default="{ row }">{{ row.notes || '—' }}</template>
             </el-table-column>
@@ -629,6 +685,14 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column label="状态" width="90">
               <template #default="{ row }">
                 <el-tag :type="prTagType(row.status)" size="small">{{ prStatusLabel[row.status] || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <!-- 🆕 盈利改善2·应付账期利用：按到期日排程付款,有账期别提前付、逾期未付防断供 -->
+            <el-table-column label="账期到期" width="110">
+              <template #default="{ row }">
+                <span v-if="row.status === 'paid'" class="muted small">已付</span>
+                <el-tag v-else :type="dueTagType(row.due_in_days)" size="small" effect="plain"
+                        :title="row.earliest_due ? '到期日 ' + row.earliest_due : ''">{{ dueTagText(row) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="采购单" min-width="130">
@@ -862,6 +926,138 @@ async function revokeInvoice(row: ViewRow) {
               </el-table>
               <div class="muted small" style="margin-top:6px">差异大 = 漏归集重灾区：采购按订单编号进了项目、但材料没领(还压在库存)，或领料没挂项目。默认按差异绝对值倒序。</div>
               <EmptyHint v-if="!auditLoading && !(auditData?.recon.length)" text="暂无对账数据" />
+            </el-tab-pane>
+          </el-tabs>
+        </el-tab-pane>
+
+        <!-- 🆕 盈利改善2：资金面板——现金断裂比利润难看死得更快 -->
+        <el-tab-pane v-if="tv('fund')" label="💰 资金面板" name="fund">
+          <div v-if="fundData" class="kpi-grid" style="margin-bottom:12px">
+            <div class="kpi"><div class="kpi-v danger">¥{{ fmtMoney(fundData.receivables.total) }}</div><div class="kpi-l">逾期应收（尾款+发货款）</div></div>
+            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(fundData.prepay.total) }}</div><div class="kpi-l">预付敞口（已付未到货）</div></div>
+            <div class="kpi"><div class="kpi-v danger">¥{{ fmtMoney(fundData.payables.overdue_total) }}</div><div class="kpi-l">逾期应付（断供风险）</div></div>
+            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(fundData.dead_stock.total_value) }}</div><div class="kpi-l">呆滞库存（≥90天无动销）</div></div>
+          </div>
+          <el-tabs v-model="fundTab" type="card" v-loading="fundLoading">
+            <el-tab-pane :label="`⏰ 逾期应收 (${recvRows.length})`" name="recv">
+              <div class="summary-bar" style="margin-bottom:10px" v-if="fundData">
+                <span v-for="b in fundData.receivables.buckets" :key="b.bucket">
+                  {{ b.bucket }} <b :class="b.bucket === '90天以上' ? 'danger' : ''">¥{{ fmtMoney(b.amount) }}</b>
+                </span>
+                <span class="muted small">尾款按约定日、发货款按发货日计龄；逾期后系统每周自动催办（销售→第2周+主管→第3周+管理层）</span>
+              </div>
+              <el-row :gutter="16">
+                <el-col :span="16">
+                  <el-table show-overflow-tooltip :data="recvRows" stripe size="small" class="compact-tbl" max-height="calc(100vh - 460px)">
+                    <el-table-column label="项目" min-width="150"><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
+                    <el-table-column prop="kind" label="款项" width="70"><template #default="{ row }"><el-tag size="small" :type="row.kind === '尾款' ? 'warning' : 'primary'" effect="plain">{{ row.kind }}</el-tag></template></el-table-column>
+                    <el-table-column prop="customer" label="客户" min-width="110" />
+                    <el-table-column prop="sales_name" label="销售" width="80" />
+                    <el-table-column label="金额" width="110" align="right"><template #default="{ row }"><b class="danger">{{ fmtMoney(row.amount) }}</b></template></el-table-column>
+                    <el-table-column prop="due_date" label="约定/发货日" width="105" />
+                    <el-table-column prop="over_days" label="逾期" width="90" align="right" sortable>
+                      <template #default="{ row }"><b :class="row.over_days > 90 ? 'danger' : ''">{{ row.over_days }}天</b></template>
+                    </el-table-column>
+                  </el-table>
+                  <EmptyHint v-if="!fundLoading && !recvRows.length" text="没有逾期应收 ✅" />
+                </el-col>
+                <el-col :span="8" v-if="fundData">
+                  <div class="section-title">按客户排名（Top10）</div>
+                  <el-table show-overflow-tooltip :data="fundData.receivables.by_customer" size="small" class="compact-tbl">
+                    <el-table-column prop="key" label="客户" min-width="120" />
+                    <el-table-column label="逾期金额" width="120" align="right"><template #default="{ row }"><b class="danger">{{ fmtMoney(row.amount) }}</b></template></el-table-column>
+                  </el-table>
+                  <div class="section-title" style="margin-top:10px">按销售排名（Top10）</div>
+                  <el-table show-overflow-tooltip :data="fundData.receivables.by_sales" size="small" class="compact-tbl">
+                    <el-table-column prop="key" label="销售" min-width="120" />
+                    <el-table-column label="逾期金额" width="120" align="right"><template #default="{ row }"><b class="danger">{{ fmtMoney(row.amount) }}</b></template></el-table-column>
+                  </el-table>
+                </el-col>
+              </el-row>
+            </el-tab-pane>
+            <el-tab-pane :label="`💳 预付敞口 (${fundData?.prepay.rows.length ?? 0})`" name="prepay">
+              <div class="muted small" style="margin-bottom:8px">已付款但货未到 = 押在供应商那里的钱，按押款天数催交货。</div>
+              <el-table show-overflow-tooltip :data="fundData?.prepay.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 420px)">
+                <el-table-column prop="supplier" label="供应商" min-width="160" />
+                <el-table-column label="押款金额" width="130" align="right" sortable prop="amount"><template #default="{ row }"><b class="danger">{{ fmtMoney(row.amount) }}</b></template></el-table-column>
+                <el-table-column prop="items" label="明细数" width="80" align="center" />
+                <el-table-column prop="oldest_paid" label="最早付款日" width="110"><template #default="{ row }">{{ row.oldest_paid || '—' }}</template></el-table-column>
+                <el-table-column prop="days" label="已押天数" width="100" align="right" sortable><template #default="{ row }"><b v-if="row.days != null" :class="row.days > 30 ? 'danger' : ''">{{ row.days }}天</b><span v-else class="muted">未记付款日</span></template></el-table-column>
+              </el-table>
+              <EmptyHint v-if="!fundLoading && !(fundData?.prepay.rows.length)" text="没有预付敞口 ✅" />
+            </el-tab-pane>
+            <el-tab-pane label="📆 应付账期" name="payterm">
+              <div class="summary-bar" style="margin-bottom:10px" v-if="fundData">
+                <span>逾期未付 <b class="danger">¥{{ fmtMoney(fundData.payables.overdue_total) }}</b></span>
+                <span>14天内到期 <b>¥{{ fmtMoney(fundData.payables.due_soon_total) }}</b></span>
+                <span>历史提前付 <b>¥{{ fmtMoney(fundData.payables.early_paid.total) }}</b>（平均白放弃 {{ fundData.payables.early_paid.avg_wasted_days }} 天免息）</span>
+                <span class="muted small">到期日=到货日+供应商账期；请款审批/付款页每张单都有「距到期」标签，按到期排程付款</span>
+              </div>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <div class="section-title danger">⚠️ 逾期未付（断供风险）</div>
+                  <el-table show-overflow-tooltip :data="fundData?.payables.overdue || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 480px)">
+                    <el-table-column prop="supplier" label="供应商" min-width="130" />
+                    <el-table-column label="逾期金额" width="115" align="right"><template #default="{ row }"><b class="danger">{{ fmtMoney(row.amount) }}</b></template></el-table-column>
+                    <el-table-column prop="worst_days" label="最长逾期" width="90" align="right"><template #default="{ row }">{{ row.worst_days }}天</template></el-table-column>
+                  </el-table>
+                  <EmptyHint v-if="!fundLoading && !(fundData?.payables.overdue.length)" text="没有逾期应付 ✅" size="sm" />
+                </el-col>
+                <el-col :span="12">
+                  <div class="section-title">🗓 14天内到期（排程付款）</div>
+                  <el-table show-overflow-tooltip :data="fundData?.payables.due_soon || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 480px)">
+                    <el-table-column prop="supplier" label="供应商" min-width="130" />
+                    <el-table-column label="金额" width="115" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+                    <el-table-column prop="nearest_due" label="最近到期" width="105" />
+                  </el-table>
+                  <EmptyHint v-if="!fundLoading && !(fundData?.payables.due_soon.length)" text="14天内无到期应付" size="sm" />
+                </el-col>
+              </el-row>
+              <el-alert v-if="fundData?.payables.missing_credit.length" type="warning" :closable="false" style="margin-top:10px"
+                :title="`有 ${fundData.payables.missing_credit.length} 家供应商未维护账期天数（合计应付 ¥${fmtMoney(fundData.payables.missing_credit.reduce((s, x) => s + x.outstanding, 0))}），无法算到期日——请在供应商档案补 credit_days：${fundData.payables.missing_credit.slice(0, 5).map(x => x.supplier).join('、')}${fundData.payables.missing_credit.length > 5 ? ' 等' : ''}`" />
+            </el-tab-pane>
+            <el-tab-pane :label="`🧊 呆滞库存 (${fundData?.dead_stock.rows.length ?? 0})`" name="dead">
+              <div class="summary-bar" style="margin-bottom:10px" v-if="fundData">
+                <span>锁死现金合计 <b class="danger">¥{{ fmtMoney(fundData.dead_stock.total_value) }}</b></span>
+                <span v-for="b in fundData.dead_stock.buckets" :key="b.bucket">{{ b.bucket }} <b>¥{{ fmtMoney(b.value) }}</b></span>
+                <span class="muted small">≥90 天无出库动销的 现存×加权均价；可回溯谁为哪个项目买的</span>
+              </div>
+              <el-table show-overflow-tooltip :data="fundData?.dead_stock.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 470px)">
+                <el-table-column label="物料" min-width="150"><template #default="{ row }">{{ row.name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                <el-table-column prop="stock" label="现存" width="80" align="right" />
+                <el-table-column label="金额" width="110" align="right" sortable prop="value"><template #default="{ row }"><b v-if="row.value != null" class="danger">{{ fmtMoney(row.value) }}</b><span v-else class="muted">无均价</span></template></el-table-column>
+                <el-table-column prop="idle_days" label="呆滞天数" width="100" align="right" sortable>
+                  <template #default="{ row }">{{ row.idle_days }}天<el-tag v-if="row.never_out" size="small" type="danger" effect="plain" style="margin-left:4px">从未出库</el-tag></template>
+                </el-table-column>
+                <el-table-column prop="bucket" label="档位" width="100" />
+                <el-table-column label="采购回溯" min-width="140"><template #default="{ row }">{{ row.trace_buyer || '—' }}<span v-if="row.trace_project" class="muted small"> → {{ row.trace_project }}</span></template></el-table-column>
+              </el-table>
+              <EmptyHint v-if="!fundLoading && !(fundData?.dead_stock.rows.length)" text="没有呆滞库存 ✅" />
+              <div v-if="fundData?.dead_stock.safety.length" style="margin-top:12px">
+                <div class="section-title">🩺 安全库存体检</div>
+                <el-table show-overflow-tooltip :data="fundData.dead_stock.safety" size="small" class="compact-tbl" style="max-width:860px">
+                  <el-table-column label="物料" min-width="150"><template #default="{ row }">{{ row.name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                  <el-table-column prop="safety_stock" label="安全库存" width="90" align="right" />
+                  <el-table-column prop="month_avg_out" label="月均出库" width="90" align="right" />
+                  <el-table-column prop="stock" label="现存" width="80" align="right" />
+                  <el-table-column label="体检结论" width="170"><template #default="{ row }"><el-tag size="small" :type="row.verdict === '偏高压钱' ? 'warning' : 'danger'" effect="plain">{{ row.verdict }}</el-tag></template></el-table-column>
+                </el-table>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="📉 13周现金排程" name="cash">
+              <el-alert type="info" :closable="false" style="margin-bottom:10px" :title="fundData?.cashgap.note || ''" />
+              <el-table show-overflow-tooltip :data="fundData?.cashgap.weeks || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 420px)"
+                        :row-class-name="({ row }: any) => row.cum < 0 ? 'pnl-loss-row' : ''">
+                <el-table-column prop="label" label="周" width="130"><template #default="{ row }"><b>{{ row.label }}</b></template></el-table-column>
+                <el-table-column label="预计流入" width="130" align="right"><template #default="{ row }"><span :class="row.inflow ? 'profit-pos' : 'muted'">{{ row.inflow ? fmtMoney(row.inflow) : '—' }}</span></template></el-table-column>
+                <el-table-column label="预计流出" width="130" align="right"><template #default="{ row }"><span :class="row.outflow ? 'danger' : 'muted'">{{ row.outflow ? fmtMoney(row.outflow) : '—' }}</span></template></el-table-column>
+                <el-table-column label="当周净额" width="130" align="right"><template #default="{ row }"><b :class="row.net < 0 ? 'danger' : 'profit-pos'">{{ fmtMoney(row.net) }}</b></template></el-table-column>
+                <el-table-column label="累计净额" width="140" align="right"><template #default="{ row }"><b :class="row.cum < 0 ? 'danger' : 'profit-pos'">{{ fmtMoney(row.cum) }}</b><el-tag v-if="row.cum < 0" size="small" type="danger" style="margin-left:6px">缺口</el-tag></template></el-table-column>
+              </el-table>
+              <div class="muted small" style="margin-top:8px" v-if="fundData">
+                另有：无约定日的已发货应收 ¥{{ fmtMoney(fundData.cashgap.undated_inflow) }}（催回即是流入）；
+                13周以后的流入 ¥{{ fmtMoney(fundData.cashgap.inflow_later) }} / 流出 ¥{{ fmtMoney(fundData.cashgap.outflow_later) }}。
+              </div>
             </el-tab-pane>
           </el-tabs>
         </el-tab-pane>

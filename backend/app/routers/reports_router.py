@@ -698,3 +698,343 @@ async def audit_backfill_prices(
         await write_audit(db, user=current, action="audit_backfill_prices", target_type="wh_txn",
                           detail=f"一键回填 {n} 条无价收货流水")
     return {"message": f"已回填 {n} 条流水价格", "fixed": n}
+
+
+# ==================== 🆕 盈利改善第二档：资金面板（应收/应付/呆滞，纯现有数据） ====================
+# 依据《盈利改善功能规划.md》第二档："不赚钱的企业,现金断裂比利润难看死得更快。"
+# 口径备注：
+# - 应收：四段款是合同条款数字非到账流水(规划§四)——尾款按 balance_date、发货款按 ship_date 计龄;
+#   预付/发货前付无约定日期字段，不进账龄（真实回款率要靠第三档收款流水）。
+# - 应付到期日 = 到货日期 + Supplier.credit_days（月结口径如与财务口径不符，调这里）。
+# - 13周现金排程的流出侧：已批未付请款与"应付到期"会重叠——已进请款单的明细从应付排程里剔除。
+
+
+def _aging_bucket(days: int) -> str:
+    if days <= 30:
+        return "1-30天"
+    if days <= 60:
+        return "31-60天"
+    if days <= 90:
+        return "61-90天"
+    return "90天以上"
+
+
+@router.get("/fund-panel")
+async def fund_panel(
+    _: models.User = Depends(require_roles(*_PNL_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """资金面板：逾期应收账龄 / 预付敞口 / 应付账期利用 / 呆滞库存 / 未来13周现金排程。"""
+    today = date.today()
+    today_s = today.isoformat()
+
+    # ───────── ① 逾期应收账龄（尾款按 balance_date；发货款按 ship_date） ─────────
+    leds = (await db.execute(select(models.SalesLedger))).scalars().all()
+    balance_rows, ship_rows = [], []
+    buckets: dict = defaultdict(float)
+    by_customer: dict = defaultdict(float)
+    by_sales: dict = defaultdict(float)
+    for led in leds:
+        p = led.project
+        if not p or p.is_deleted:
+            continue
+        code, name = p.code, p.name
+        sales = (led.sales_user.full_name or led.sales_user.username) if led.sales_user else "未填"
+        cust = led.customer or "未填"
+        # 尾款逾期
+        if (led.balance or 0) > 0 and led.balance_date:
+            try:
+                due = date.fromisoformat(led.balance_date)
+            except ValueError:
+                due = None
+            if due and due < today:
+                over = (today - due).days
+                balance_rows.append({
+                    "ledger_id": led.id, "code": code, "name": name, "customer": cust,
+                    "sales_name": sales, "kind": "尾款", "amount": led.balance,
+                    "due_date": led.balance_date, "over_days": over,
+                    "bucket": _aging_bucket(over), "shipped": bool(led.ship_date)})
+                buckets[_aging_bucket(over)] += led.balance
+                by_customer[cust] += led.balance
+                by_sales[sales] += led.balance
+        # 发货款（已发货即应收；无收讫字段，>0 视为未收）
+        if (led.ship_receivable or 0) > 0 and led.ship_date:
+            try:
+                sd = date.fromisoformat(led.ship_date)
+            except ValueError:
+                sd = None
+            if sd and sd < today:
+                over = (today - sd).days
+                ship_rows.append({
+                    "ledger_id": led.id, "code": code, "name": name, "customer": cust,
+                    "sales_name": sales, "kind": "发货款", "amount": led.ship_receivable,
+                    "due_date": led.ship_date, "over_days": over,
+                    "bucket": _aging_bucket(over), "shipped": True})
+                buckets[_aging_bucket(over)] += led.ship_receivable
+                by_customer[cust] += led.ship_receivable
+                by_sales[sales] += led.ship_receivable
+    balance_rows.sort(key=lambda x: -x["over_days"])
+    ship_rows.sort(key=lambda x: -x["over_days"])
+    recv_total = round(sum(buckets.values()), 2)
+    receivables = {
+        "total": recv_total,
+        "buckets": [{"bucket": b, "amount": round(buckets.get(b, 0), 2)}
+                    for b in ("1-30天", "31-60天", "61-90天", "90天以上")],
+        "balance_rows": balance_rows[:300], "ship_rows": ship_rows[:300],
+        "by_customer": sorted(
+            [{"key": k, "amount": round(v, 2)} for k, v in by_customer.items()],
+            key=lambda x: -x["amount"])[:10],
+        "by_sales": sorted(
+            [{"key": k, "amount": round(v, 2)} for k, v in by_sales.items()],
+            key=lambda x: -x["amount"])[:10],
+    }
+
+    # ───────── ② 预付敞口（已付款、货未到——押在供应商那里的钱） ─────────
+    r = await db.execute(
+        select(models.PurchaseItem)
+        .where(models.PurchaseItem.paid_amount > 0,
+               models.PurchaseItem.arrival_date.is_(None)))
+    pre_by_sup: dict = {}
+    for i in r.scalars().all():
+        sup = i.supplier.name if i.supplier else "未知供应商"
+        g = pre_by_sup.setdefault(sup, {"supplier": sup, "amount": 0.0, "items": 0,
+                                        "oldest_paid": None, "days": None})
+        g["amount"] += i.paid_amount or 0
+        g["items"] += 1
+        if i.paid_date and (g["oldest_paid"] is None or i.paid_date < g["oldest_paid"]):
+            g["oldest_paid"] = i.paid_date
+    for g in pre_by_sup.values():
+        g["amount"] = round(g["amount"], 2)
+        if g["oldest_paid"]:
+            try:
+                g["days"] = (today - date.fromisoformat(g["oldest_paid"])).days
+            except ValueError:
+                pass
+    prepay_rows = sorted(pre_by_sup.values(), key=lambda x: -x["amount"])
+    prepay = {"total": round(sum(g["amount"] for g in prepay_rows), 2), "rows": prepay_rows[:100]}
+
+    # ───────── ③ 应付账期利用（到期日=到货+credit_days） ─────────
+    r = await db.execute(
+        select(models.PurchaseItem).where(models.PurchaseItem.received_amount > 0))
+    pay_items = list(r.scalars().all())
+    # 已进「已批未付」请款单的明细：13周排程剔除（这笔钱已按请款单金额计入 W0 流出，防双算）。
+    # 待审批(pending)的不剔——其请款金额不计入流出，明细仍按应付到期排周。
+    pr_linked = {iid for (iid,) in (await db.execute(
+        select(models.PaymentRequestItem.item_id)
+        .join(models.PaymentRequest,
+              models.PaymentRequest.id == models.PaymentRequestItem.request_id)
+        .where(models.PaymentRequest.status == "approved"))).all()}
+    overdue_by_sup: dict = {}
+    due_soon_by_sup: dict = {}
+    early_rows = []
+    early_total = 0.0
+    early_days_sum = 0.0
+    missing_credit: dict = defaultdict(float)
+    due_schedule: list = []   # (due_date, outstanding, item_id) → 13周排程流出
+    for i in pay_items:
+        sup = i.supplier
+        sup_name = sup.name if sup else "未知供应商"
+        outstanding = round((i.received_amount or 0) - (i.paid_amount or 0), 2)
+        due = None
+        if i.arrival_date and sup and sup.credit_days is not None:
+            try:
+                due = date.fromisoformat(i.arrival_date) + timedelta(days=sup.credit_days)
+            except ValueError:
+                due = None
+        if outstanding > 0.01 and i.arrival_date and (sup is None or sup.credit_days is None):
+            missing_credit[sup_name] += outstanding   # 有应付但没维护账期 → 补主数据
+        if due is None:
+            continue
+        if outstanding > 0.01:
+            due_schedule.append((due, outstanding, i.id))
+            if due < today:
+                g = overdue_by_sup.setdefault(sup_name, {"supplier": sup_name, "amount": 0.0,
+                                                         "items": 0, "worst_days": 0})
+                g["amount"] += outstanding
+                g["items"] += 1
+                g["worst_days"] = max(g["worst_days"], (today - due).days)
+            elif (due - today).days <= 14:
+                g = due_soon_by_sup.setdefault(sup_name, {"supplier": sup_name, "amount": 0.0,
+                                                          "items": 0, "nearest_due": due.isoformat()})
+                g["amount"] += outstanding
+                g["items"] += 1
+                g["nearest_due"] = min(g["nearest_due"], due.isoformat())
+        # 提前付：有账期却在到期日前就付了 → 白白放弃的免息天数
+        if (i.paid_amount or 0) > 0 and i.paid_date and sup and (sup.credit_days or 0) > 0:
+            try:
+                pd = date.fromisoformat(i.paid_date)
+            except ValueError:
+                pd = None
+            if pd and pd < due:
+                wasted = (due - pd).days
+                early_total += i.paid_amount or 0
+                early_days_sum += wasted * (i.paid_amount or 0)
+                early_rows.append({"po_no": i.po_no, "supplier": sup_name,
+                                   "item_name": i.item_name, "paid_amount": i.paid_amount,
+                                   "paid_date": i.paid_date, "due_date": due.isoformat(),
+                                   "wasted_days": wasted})
+    for g in overdue_by_sup.values():
+        g["amount"] = round(g["amount"], 2)
+    for g in due_soon_by_sup.values():
+        g["amount"] = round(g["amount"], 2)
+    early_rows.sort(key=lambda x: -(x["paid_amount"] or 0))
+    payables = {
+        "overdue": sorted(overdue_by_sup.values(), key=lambda x: -x["amount"])[:100],
+        "overdue_total": round(sum(g["amount"] for g in overdue_by_sup.values()), 2),
+        "due_soon": sorted(due_soon_by_sup.values(), key=lambda x: x["nearest_due"])[:100],
+        "due_soon_total": round(sum(g["amount"] for g in due_soon_by_sup.values()), 2),
+        "early_paid": {"total": round(early_total, 2),
+                       "avg_wasted_days": (round(early_days_sum / early_total, 1) if early_total else 0),
+                       "rows": early_rows[:50]},
+        "missing_credit": sorted(
+            [{"supplier": k, "outstanding": round(v, 2)} for k, v in missing_credit.items()],
+            key=lambda x: -x["outstanding"])[:50],
+    }
+
+    # ───────── ④ 呆滞库存（≥90天无出库动销的 现存×加权均价 = 锁死的现金） ─────────
+    from .warehouse_router import _avg_price_map, _stock_map
+    avg = await _avg_price_map(db)
+    stock = await _stock_map(db)
+    mats = (await db.execute(select(models.WhMaterial))).scalars().all()
+    # 各物料最后一次出库日 / 最后一次入库日（判定从未动销的入库时点）
+    lo = dict((await db.execute(
+        select(models.WhTxn.material_id, func.max(models.WhTxn.biz_date))
+        .where(models.WhTxn.direction == "out",
+               models.WhTxn.is_reversal == False)  # noqa: E712
+        .group_by(models.WhTxn.material_id))).all())
+    li = dict((await db.execute(
+        select(models.WhTxn.material_id, func.max(models.WhTxn.biz_date))
+        .where(models.WhTxn.direction == "in",
+               models.WhTxn.is_reversal == False)  # noqa: E712
+        .group_by(models.WhTxn.material_id))).all())
+    # 采购回溯：各物料最近一笔带采购来源的入库 → 谁为哪个项目买的
+    trace: dict = {}
+    tr = await db.execute(
+        select(models.WhTxn.material_id, models.PurchaseItem.project_code,
+               models.User.full_name, models.User.username, models.WhTxn.id)
+        .join(models.PurchaseItem, models.PurchaseItem.id == models.WhTxn.purchase_item_id)
+        .outerjoin(models.User, models.User.id == models.PurchaseItem.buyer_id)
+        .where(models.WhTxn.direction == "in")
+        .order_by(models.WhTxn.id))
+    for mid, pcode, fn, un, _tid in tr.all():
+        trace[mid] = {"project_code": pcode, "buyer": fn or un}   # 按 id 升序遍历,留下最新一笔
+    # 近90天月均出库（安全库存体检用）
+    d90 = (today - timedelta(days=90)).isoformat()
+    out90 = dict((await db.execute(
+        select(models.WhTxn.material_id, func.sum(models.WhTxn.qty))
+        .where(models.WhTxn.direction == "out", models.WhTxn.biz_date >= d90,
+               models.WhTxn.is_reversal == False)  # noqa: E712
+        .group_by(models.WhTxn.material_id))).all())
+    dead_rows = []
+    dead_total = 0.0
+    dead_buckets: dict = defaultdict(float)
+    safety_rows = []
+    for m in mats:
+        st = stock.get(m.id, m.init_stock or 0)
+        if st <= 0:
+            continue
+        last = lo.get(m.id)
+        since = last or li.get(m.id)   # 从未出库 → 按最后入库日起算
+        idle = None
+        if since:
+            try:
+                idle = (today - date.fromisoformat(since[:10])).days
+            except ValueError:
+                idle = None
+        price = avg.get(m.id)
+        val = round(st * price, 2) if price is not None else None
+        if idle is not None and idle >= 90:
+            b = "365天以上" if idle >= 365 else ("180-365天" if idle >= 180 else "90-180天")
+            dead_rows.append({
+                "material_id": m.id, "name": m.name, "spec": m.spec, "unit": m.unit,
+                "stock": st, "avg_price": price, "value": val,
+                "last_out": last, "idle_days": idle, "never_out": last is None, "bucket": b,
+                "trace_project": (trace.get(m.id) or {}).get("project_code"),
+                "trace_buyer": (trace.get(m.id) or {}).get("buyer")})
+            if val:
+                dead_total += val
+                dead_buckets[b] += val
+        # 安全库存体检
+        mo = round((out90.get(m.id, 0) or 0) / 3, 1)
+        if (m.safety_stock or 0) > 0:
+            if mo == 0 or (m.safety_stock or 0) > 2 * mo:
+                safety_rows.append({"material_id": m.id, "name": m.name, "spec": m.spec,
+                                    "safety_stock": m.safety_stock, "month_avg_out": mo,
+                                    "stock": st, "verdict": "偏高压钱"})
+            elif st < (m.safety_stock or 0):
+                safety_rows.append({"material_id": m.id, "name": m.name, "spec": m.spec,
+                                    "safety_stock": m.safety_stock, "month_avg_out": mo,
+                                    "stock": st, "verdict": "低于安全库存(常报警)"})
+    dead_rows.sort(key=lambda x: -(x["value"] or 0))
+    dead_stock = {
+        "total_value": round(dead_total, 2),
+        "buckets": [{"bucket": b, "value": round(dead_buckets.get(b, 0), 2)}
+                    for b in ("90-180天", "180-365天", "365天以上")],
+        "rows": dead_rows[:200], "safety": safety_rows[:100],
+    }
+
+    # ───────── ⑤ 未来13周现金排程 ─────────
+    # 流入：尾款(有约定日)按周挂；已逾期未收进 W0。发货款/预付等无日期 → undated 提示。
+    # 流出：已批未付请款(随时可付,W0) + 应付到期按周(剔除已进请款单的明细,防双算) + OA待付款(W0)。
+    weeks = [{"idx": i,
+              "label": ("已到期/随时" if i == 0 else
+                        f"{(today + timedelta(days=(i - 1) * 7 + 1)).strftime('%m-%d')}~"
+                        f"{(today + timedelta(days=i * 7)).strftime('%m-%d')}"),
+              "inflow": 0.0, "outflow": 0.0} for i in range(14)]
+    inflow_later = outflow_later = 0.0
+    undated_inflow = 0.0
+    for led in leds:
+        p = led.project
+        if not p or p.is_deleted:
+            continue
+        if (led.balance or 0) > 0 and led.balance_date:
+            try:
+                due = date.fromisoformat(led.balance_date)
+            except ValueError:
+                continue
+            dd = (due - today).days
+            if dd <= 0:
+                weeks[0]["inflow"] += led.balance
+            elif dd <= 13 * 7:
+                weeks[(dd + 6) // 7]["inflow"] += led.balance
+            else:
+                inflow_later += led.balance
+        if (led.ship_receivable or 0) > 0 and led.ship_date:
+            undated_inflow += led.ship_receivable   # 已发货应收但无约定日 → 无法排周
+    apr = (await db.execute(
+        select(func.coalesce(func.sum(models.PaymentRequest.requested_amount), 0))
+        .where(models.PaymentRequest.status == "approved"))).scalar() or 0
+    weeks[0]["outflow"] += apr
+    for due, outstanding, iid in due_schedule:
+        if iid in pr_linked:
+            continue   # 已进请款单 → 金额算在请款侧
+        dd = (due - today).days
+        if dd <= 0:
+            weeks[0]["outflow"] += outstanding
+        elif dd <= 13 * 7:
+            weeks[(dd + 6) // 7]["outflow"] += outstanding
+        else:
+            outflow_later += outstanding
+    oa_pend = (await db.execute(
+        select(func.coalesce(func.sum(
+            func.coalesce(models.OaRequest.settle_amount, models.OaRequest.amount)), 0))
+        .where(models.OaRequest.status == "pending_payment"))).scalar() or 0
+    weeks[0]["outflow"] += oa_pend
+    cum = 0.0
+    for w in weeks:
+        w["inflow"] = round(w["inflow"], 2)
+        w["outflow"] = round(w["outflow"], 2)
+        w["net"] = round(w["inflow"] - w["outflow"], 2)
+        cum += w["net"]
+        w["cum"] = round(cum, 2)
+    cashgap = {
+        "weeks": weeks,
+        "undated_inflow": round(undated_inflow, 2),
+        "inflow_later": round(inflow_later, 2), "outflow_later": round(outflow_later, 2),
+        "note": ("流入只含有约定日期的尾款(已逾期计入W0)；发货款等无约定日不排周。"
+                 "流出=已批未付请款+应付到期(已进请款单的明细不重复计)+OA待付款。"
+                 "累计净额为负的周=现金缺口预警。实际到账精度依赖第三档「收款流水登记」。"),
+    }
+
+    return {"as_of": today_s, "receivables": receivables, "prepay": prepay,
+            "payables": payables, "dead_stock": dead_stock, "cashgap": cashgap}

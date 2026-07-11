@@ -133,9 +133,68 @@ async def scan_balance_due(db: AsyncSession, *, advance_days: int = 14) -> dict:
     return {"scanned": len(ledgers), "notified": notified}
 
 
+async def scan_balance_overdue(db: AsyncSession) -> dict:
+    """🆕 盈利改善2·逾期尾款每周升级催办（补上 scan_balance_due「终身只提醒一次」之后的盲区）。
+
+    balance>0 且 balance_date < 今天 的台账：每 7 天催一次，逐级升级——
+    第 1 周内 → 销售本人；第 2 周 → +销售主管；第 3 周起 → +管理层。
+    幂等：biz_type='balance_overdue'，距最近一次催办不足 7 天则跳过。返回 {scanned, notified}。
+    """
+    today = datetime.now(_CN_TZ).date()
+    r = await db.execute(
+        select(models.SalesLedger).where(
+            models.SalesLedger.balance > 0,
+            models.SalesLedger.balance_date.isnot(None),
+            models.SalesLedger.balance_date != "",
+            models.SalesLedger.balance_date < today.isoformat(),
+        )
+    )
+    ledgers = list(r.scalars().all())
+    notified = 0
+    for led in ledgers:
+        p = led.project
+        if not p or p.is_deleted:
+            continue
+        try:
+            due = date.fromisoformat(led.balance_date)
+        except (ValueError, TypeError):
+            continue
+        over_days = (today - due).days
+        if over_days <= 0:
+            continue
+        # 7 天窗口去重：最近一次周催办距今不足 7 天则跳过
+        r2 = await db.execute(
+            select(models.Message.created_at).where(
+                models.Message.biz_type == "balance_overdue",
+                models.Message.biz_id == led.id,
+            ).order_by(models.Message.created_at.desc()).limit(1))
+        last = r2.scalar_one_or_none()
+        if last is not None:
+            last_d = date.fromisoformat(_cn_date(last))
+            if (today - last_d).days < 7:
+                continue
+        week = (over_days - 1) // 7 + 1   # 逾期第几周
+        text = (f"【尾款催办·第{week}周】{p.code} {p.name} 尾款 ¥{led.balance:,.0f} "
+                f"约定 {led.balance_date}，已逾期 {over_days} 天，请立即跟进收款。")
+        if led.sales_uid:
+            await push_message(db, to_user_id=led.sales_uid, kind="wx",
+                               text=text, biz_type="balance_overdue", biz_id=led.id)
+        if week >= 2:
+            await push_message(db, to_role="sales_lead", kind="warn",
+                               text=text + "（升级抄送销售主管）", biz_type="balance_overdue", biz_id=led.id)
+        if week >= 3:
+            await push_message(db, to_role="manager", kind="warn",
+                               text=text + "（升级抄送管理层）", biz_type="balance_overdue", biz_id=led.id)
+        notified += 1
+
+    if notified:
+        log.info("[scan_balance_overdue] 周催办 %d 条逾期尾款（共扫描 %d）", notified, len(ledgers))
+    return {"scanned": len(ledgers), "notified": notified}
+
+
 async def overdue_scheduler(interval_hours: int = 12) -> None:
     """启动期周期任务：每 interval_hours 扫一次（单容器部署用 asyncio 即可）。
-    含：逾期任务提醒 + 🆕 尾款到期提醒（各用独立会话，互不影响）。"""
+    含：逾期任务提醒 + 🆕 尾款到期提醒 + 🆕 逾期尾款周催办（各用独立会话，互不影响）。"""
     while True:
         try:
             async with SessionLocal() as db:
@@ -147,4 +206,9 @@ async def overdue_scheduler(interval_hours: int = 12) -> None:
                 await scan_balance_due(db)
         except Exception as e:  # noqa: BLE001
             log.warning("scan_balance_due 失败: %s", e)
+        try:
+            async with SessionLocal() as db:
+                await scan_balance_overdue(db)
+        except Exception as e:  # noqa: BLE001
+            log.warning("scan_balance_overdue 失败: %s", e)
         await asyncio.sleep(interval_hours * 3600)
