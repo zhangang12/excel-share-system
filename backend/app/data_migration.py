@@ -60,6 +60,12 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("packlist_ready_at", "TIMESTAMP"),
         ("packlist_ready_by", "INTEGER"),
         ("receiver_company", "VARCHAR(128)"),   # 🆕 收货单位
+        ("freight_cost", "FLOAT"),              # 🆕 #201 物料运输费
+        ("freight_payer", "VARCHAR(8)"),        # 🆕 #201 我方/到付
+        ("freight_note", "VARCHAR(128)"),
+    ],
+    "employees": [
+        ("emp_no", "VARCHAR(16)"),              # 🆕 #202 企业工号(自增,离职不回收)
     ],
     "purchase_items": [                            # 🆕 采购单号（同一供应商多零件行共享一个采购单）
         ("po_no", "VARCHAR(32)"),
@@ -1694,6 +1700,28 @@ async def backfill_auto_reconcile_invoice_status(db: AsyncSession) -> dict:
     return {"updated": updated}
 
 
+async def backfill_employee_no(db: AsyncSession) -> dict:
+    """🆕 #202 给存量员工按 id 顺序补企业工号(00001 起,自增)；已有工号的跳过。"""
+    r = await db.execute(select(models.Employee).order_by(models.Employee.id))
+    emps = list(r.scalars().all())
+    used = {int(e.emp_no) for e in emps if e.emp_no and e.emp_no.isdigit()}
+    nxt = (max(used) + 1) if used else 1
+    filled = 0
+    for e in emps:
+        if e.emp_no:
+            continue
+        while nxt in used:
+            nxt += 1
+        e.emp_no = f"{nxt:05d}"
+        used.add(nxt)
+        nxt += 1
+        filled += 1
+    if filled:
+        await db.commit()
+        log.info("[backfill_employee_no] 补企业工号 %d 人", filled)
+    return {"filled": filled}
+
+
 async def backfill_oa_departments(db: AsyncSession) -> dict:
     """🆕 OA 部门字典默认值（幂等）：首次启动灌入常见部门；已存在则跳过，不覆盖管理层后续的改名/增删。
     lead_role 只给"有分组的部门"（普通员工/主管两个角色）设主管角色，让主管能看到本部门全部申请；
@@ -1702,6 +1730,7 @@ async def backfill_oa_departments(db: AsyncSession) -> dict:
         ("销售部", "sales_lead"), ("采购部", "buyer_lead"), ("售后部", "as_lead"),
         ("设计部", "design_lead"), ("生产部", "pm_lead"), ("仓库", "warehouse_lead"),
         ("电工部", "electric_lead"), ("物流发货部", None), ("财务部", "finance"), ("人事部", "hr"),
+        ("管理部", "manager"),   # 🆕 #203 管理层部门（总经理等），存量库启动时补建
     ]
     r = await db.execute(select(models.Department.name))
     existing = {n for (n,) in r.all()}
@@ -2112,6 +2141,10 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_oa_departments(db)
     except Exception as e:
         log.warning("backfill_oa_departments failed: %s", e)
+    try:
+        await backfill_employee_no(db)   # 🆕 #202 存量员工补工号
+    except Exception as e:
+        log.warning("backfill_employee_no failed: %s", e)
     try:
         await backfill_oa_doc_types(db)
     except Exception as e:

@@ -49,8 +49,17 @@ class EmployeeIn(BaseModel):
 
 class EmployeeOut(EmployeeIn):
     id: int
+    emp_no: Optional[str] = None
     department_name: Optional[str] = None
     user_name: Optional[str] = None
+
+
+async def _next_emp_no(db: AsyncSession) -> str:
+    """🆕 #202 下一个企业工号：现有数字工号 max+1，5 位补零；离职工号照样占位不复用。"""
+    rows = (await db.execute(select(models.Employee.emp_no).where(
+        models.Employee.emp_no.isnot(None)))).scalars().all()
+    mx = max((int(x) for x in rows if x and x.isdigit()), default=0)
+    return f"{mx + 1:05d}"
 
 
 class RosterOut(BaseModel):
@@ -71,7 +80,7 @@ class PayrollSaveIn(BaseModel):
 # ==================== 员工花名册 ====================
 def _emp_out(e: models.Employee, users: dict) -> EmployeeOut:
     return EmployeeOut(
-        id=e.id, name=e.name, department_id=e.department_id,
+        id=e.id, emp_no=e.emp_no, name=e.name, department_id=e.department_id,
         department_name=(e.department.name if e.department else None),
         position=e.position, hire_date=e.hire_date, regular_date=e.regular_date,
         contract_end=e.contract_end, status=e.status, leave_date=e.leave_date,
@@ -149,11 +158,11 @@ async def create_employee(
     current: models.User = Depends(require_roles(*_HR)),
     db: AsyncSession = Depends(get_db),
 ):
-    e = models.Employee()
+    e = models.Employee(emp_no=await _next_emp_no(db))   # 🆕 #202 自动分配工号
     db.add(e)
     await _apply_emp(db, e, body, current)
     await write_audit(db, user=current, action="hr_emp_create", target_type="employee",
-                      target_id=e.id, detail=e.name)
+                      target_id=e.id, detail=f"{e.emp_no} {e.name}")
     r = await db.execute(select(models.Employee).where(models.Employee.id == e.id))
     return _emp_out(r.scalar_one(), {})
 
@@ -283,6 +292,7 @@ async def import_employees(
         models.Employee.status != "离职"))).scalars().all()}
     created = updated = 0
     errors: list[str] = []
+    _emp_seq = int(await _next_emp_no(db))   # 🆕 #202 导入自动发号,本批递增
     for rn, row in enumerate(rows[1:], start=2):
         if row is None or all(c is None or str(c).strip() == "" for c in row):
             continue
@@ -307,7 +317,8 @@ async def import_employees(
             note=_norm_str(cell(row, "备注")))
         e = existing.get(name)
         if e is None:
-            e = models.Employee(name=name, status=status, **vals)
+            e = models.Employee(name=name, status=status, emp_no=f"{_emp_seq:05d}", **vals)
+            _emp_seq += 1
             db.add(e)
             existing[name] = e
             created += 1

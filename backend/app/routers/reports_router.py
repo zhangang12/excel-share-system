@@ -412,8 +412,8 @@ async def sales_report(
 #   未经仓库过账的（直发/外协加工费）按 project_code 直接计入采购腿。两腿互斥不重叠。
 
 _PNL_ROLES = ("finance", "finance_lead")
-_PNL_NOTE = ("口径：材料边际贡献 = 合同额 − 材料领料(加权均价) − 直发/外协采购 − 安装/售后费用；"
-             "不含人工工资、运费等系统外成本，排名供比较用，绝对值≠净利")
+_PNL_NOTE = ("口径：合同额 − 材料领料(加权均价) − 直发/外协采购 − 安装/售后费用 − 物料运输费(我方)；"
+             "不含人工工资等系统外成本，排名供比较用，绝对值≠净利")
 
 
 def _code_year(code: str) -> str:
@@ -467,6 +467,14 @@ async def project_pnl(
         .group_by(models.AfterSales.project_id))
     as_cost = {pid: (amt or 0) for pid, amt in r.all()}
 
+    # ── 腿4：🆕 #201 物料运输费(我方承担的,按项目)
+    r = await db.execute(
+        select(models.Shipment.project_id, func.sum(models.Shipment.freight_cost))
+        .where(models.Shipment.freight_cost > 0, models.Shipment.project_id.isnot(None),
+               (models.Shipment.freight_payer == "我方") | (models.Shipment.freight_payer.is_(None)))
+        .group_by(models.Shipment.project_id))
+    freight_cost = {pid: (amt or 0) for pid, amt in r.all()}
+
     # ── 收入(销售台账,一项目一行) × 项目主数据
     projs = (await db.execute(select(models.Project).where(
         models.Project.is_deleted == False))).scalars().all()  # noqa: E712
@@ -480,7 +488,8 @@ async def project_pnl(
         mc = round(mat_cost.get(p.id, 0), 2)
         dc = round(direct_by_code.get((p.code or "").strip(), 0), 2)
         ac = round(as_cost.get(p.id, 0), 2)
-        total = round(mc + dc + ac, 2)
+        fc = round(freight_cost.get(p.id, 0), 2)   # 🆕 #201 运费腿(我方)
+        total = round(mc + dc + ac + fc, 2)
         if not amount and not total:
             continue   # 没有任何钱数据的项目不进榜
         profit = round(amount - total, 2)
@@ -499,7 +508,7 @@ async def project_pnl(
                            if led and led.sales_user else "未填"),
             "order_type": (led.order_type if led else None) or "未填",
             "year": _code_year(p.code),
-            "amount": amount, "mat_cost": mc, "direct_cost": dc, "as_cost": ac,
+            "amount": amount, "mat_cost": mc, "direct_cost": dc, "as_cost": ac, "freight_cost": fc,
             "total_cost": total, "profit": profit,
             "margin": (round(profit / amount * 100, 1) if amount else None),
             "flags": flags,

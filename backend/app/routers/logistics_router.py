@@ -51,6 +51,10 @@ class BoardRow(BaseModel):
     ship_doc_name: Optional[str] = None
     ship_doc_id: Optional[int] = None
     shipped_at: Optional[datetime] = None
+    # 🆕 #201 物料运输费
+    freight_cost: Optional[float] = None
+    freight_payer: Optional[str] = None
+    freight_note: Optional[str] = None
     can_ship: bool = False
     gate_missing: list[str] = []     # 闸门缺口部门名
 
@@ -201,6 +205,9 @@ async def board(
                 ship_doc_name=doc_names.get(s.ship_doc_file_id) if s else None,
                 ship_doc_id=s.ship_doc_file_id if s else None,
                 shipped_at=s.shipped_at if s else None,
+                freight_cost=s.freight_cost if s else None,
+                freight_payer=s.freight_payer if s else None,
+                freight_note=s.freight_note if s else None,
                 can_ship=False,
                 gate_missing=[],
             ))
@@ -224,6 +231,7 @@ async def board(
                 ship_doc_name=doc_names.get(s.ship_doc_file_id),
                 ship_doc_id=s.ship_doc_file_id,
                 shipped_at=s.shipped_at,
+                freight_cost=s.freight_cost, freight_payer=s.freight_payer, freight_note=s.freight_note,
                 can_ship=(s.status == "pending" and can),
                 gate_missing=missing if s.status == "pending" else [],
             ))
@@ -264,6 +272,35 @@ async def update_receiver(
     await write_audit(db, user=current, action="update_receiver", target_type="shipment",
                       target_id=sid, detail=f"{old} → {data.name}/{data.phone}/{data.addr}")
     return schemas.Msg(message="收货信息已保存")
+
+
+class FreightIn(BaseModel):
+    freight_cost: Optional[float] = None
+    freight_payer: str = "我方"          # 我方 / 到付
+    freight_note: Optional[str] = None
+
+
+@router.put("/{sid}/freight", response_model=schemas.Msg)
+async def update_freight(
+    sid: int, data: FreightIn,
+    current: models.User = Depends(require_roles("logistics")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #201 物料运输费录入（物流部，发货前后均可维护）。
+    freight_payer=我方 计入公司成本（进财务支出总览、项目毛利运费腿）；到付=客户承担不计。"""
+    s = (await db.execute(select(models.Shipment).where(
+        models.Shipment.id == sid))).scalar_one_or_none()
+    if not s:
+        raise HTTPException(404, "发货单不存在")
+    if data.freight_payer not in ("我方", "到付"):
+        raise HTTPException(400, "运费承担方须为 我方/到付")
+    s.freight_cost = data.freight_cost if (data.freight_cost or 0) > 0 else None
+    s.freight_payer = data.freight_payer
+    s.freight_note = (data.freight_note or "").strip() or None
+    await db.commit()
+    await write_audit(db, user=current, action="update_freight", target_type="shipment",
+                      target_id=sid, detail=f"运费 {s.freight_cost} {s.freight_payer}")
+    return schemas.Msg(message="物料运输费已保存")
 
 
 @router.get("/receiver-by-code")

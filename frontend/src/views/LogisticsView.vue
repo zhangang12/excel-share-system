@@ -4,6 +4,7 @@ import { ref, onMounted, reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Van, Edit, Clock, Phone, Location } from '@element-plus/icons-vue'
 import { http } from '@/api'
+import { fmtMoney } from '@/api/sales'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -32,6 +33,9 @@ interface BoardRow {
   receiver_addr?: string | null
   ship_doc_name?: string | null
   ship_doc_id?: number | null
+  freight_cost?: number | null
+  freight_payer?: string | null
+  freight_note?: string | null
   can_ship: boolean
   gate_missing: string[]
 }
@@ -132,6 +136,29 @@ async function saveReceiver() {
     rcvVisible.value = false
     await load()
   } finally { savingRcv.value = false }
+}
+
+// 🆕 #201 物料运输费录入
+const frVisible = ref(false)
+const frRow = ref<BoardRow | null>(null)
+const frForm = reactive({ freight_cost: null as number | null, freight_payer: '我方', freight_note: '' })
+const savingFr = ref(false)
+function openFreight(r: BoardRow) {
+  frRow.value = r
+  frForm.freight_cost = r.freight_cost ?? null
+  frForm.freight_payer = r.freight_payer || '我方'
+  frForm.freight_note = r.freight_note || ''
+  frVisible.value = true
+}
+async function saveFreight() {
+  if (!frRow.value) return
+  savingFr.value = true
+  try {
+    await http.put(`/logistics/${frRow.value.id}/freight`, { ...frForm })
+    ElMessage.success('物料运输费已保存')
+    frVisible.value = false
+    await load()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '保存失败') } finally { savingFr.value = false }
 }
 
 // 确认发货
@@ -260,6 +287,17 @@ async function confirmShip(force = false) {
             <el-button size="small" link type="primary" @click="openPack(row)">预览/下载</el-button>
           </template>
         </el-table-column>
+        <!-- 🆕 #201 物料运输费 -->
+        <el-table-column label="运费" min-width="120" align="center">
+          <template #default="{ row }">
+            <div v-if="row.freight_cost" style="line-height:1.4">
+              <b style="color:var(--el-color-primary)">¥{{ fmtMoney(row.freight_cost) }}</b>
+              <el-tag size="small" :type="row.freight_payer === '到付' ? 'info' : 'warning'" effect="plain" style="margin-left:4px">{{ row.freight_payer || '我方' }}</el-tag>
+              <el-button size="small" link type="primary" :icon="Edit" @click="openFreight(row)" style="margin-left:2px" />
+            </div>
+            <el-button v-else size="small" link type="primary" :icon="Edit" @click="openFreight(row)">录入</el-button>
+          </template>
+        </el-table-column>
         <el-table-column label="发货闸门" width="200" fixed="right">
           <template #default="{ row }">
             <template v-if="row.status === 'shipped'">
@@ -306,6 +344,28 @@ async function confirmShip(force = false) {
     </el-dialog>
 
     <!-- 确认发货 -->
+    <!-- 🆕 #201 物料运输费弹窗 -->
+    <el-dialog v-model="frVisible" :title="`🚚 物料运输费 · ${frRow?.code || ''}`" width="420px">
+      <el-form label-position="top">
+        <el-form-item label="运费金额（元）">
+          <el-input-number v-model="frForm.freight_cost" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="留空/0 表示无运费" />
+        </el-form-item>
+        <el-form-item label="承担方">
+          <el-radio-group v-model="frForm.freight_payer">
+            <el-radio value="我方">我方承担（计入公司成本/项目毛利）</el-radio>
+            <el-radio value="到付">到付（客户承担，不计成本）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="frForm.freight_note" placeholder="选填，如 承运商/车牌" maxlength="128" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="frVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingFr" @click="saveFreight">保存</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="shipVisible" :title="`📦 确认发货 · ${shipRow?.code || ''}`" width="480px">
       <el-alert v-if="shipRow?.receiver_name" type="success" :closable="false" style="margin-bottom: 12px"
                 :title="`${shipRow.receiver_name} ｜ ${shipRow.receiver_phone || '—'} ｜ ${shipRow.receiver_addr || '—'}`" />

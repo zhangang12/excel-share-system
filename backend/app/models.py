@@ -322,6 +322,10 @@ class Shipment(Base):
     receiver_phone: Mapped[Optional[str]] = mapped_column(String(64))
     receiver_addr: Mapped[Optional[str]] = mapped_column(String(255))
     ship_doc_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
+    # 🆕 #201 物料运输费(物流录入)：freight_payer 我方=计入公司成本(进支出总览/项目毛利)；到付=客户承担不计
+    freight_cost: Mapped[Optional[float]] = mapped_column()
+    freight_payer: Mapped[Optional[str]] = mapped_column(String(8), default="我方")  # 我方 / 到付
+    freight_note: Mapped[Optional[str]] = mapped_column(String(128))
     shipped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     shipped_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     # 🆕 发货清单：设计部推送仓库准备 -> 仓库备货完成 -> 物流可见（none/requested/ready）
@@ -791,6 +795,7 @@ class Employee(Base):
     敏感字段(身份证/电话)仅 hr+管理层可见——整个 /api/hr 都是这个门槛。"""
     __tablename__ = "employees"
     id: Mapped[int] = mapped_column(primary_key=True)
+    emp_no: Mapped[Optional[str]] = mapped_column(String(16), unique=True, index=True)  # 🆕 #202 企业工号(00001,自增,离职不回收)
     name: Mapped[str] = mapped_column(String(64), index=True)
     department_id: Mapped[Optional[int]] = mapped_column(ForeignKey("departments.id"), index=True)
     position: Mapped[Optional[str]] = mapped_column(String(64))          # 岗位

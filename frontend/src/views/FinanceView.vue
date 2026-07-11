@@ -133,7 +133,7 @@ function dueTagText(r: PaymentRequestOut) {
 interface PnlRow {
   project_id: number; code: string; name: string; status: string
   customer: string; cust_type: string; sales_name: string; order_type: string; year: string
-  amount: number; mat_cost: number; direct_cost: number; as_cost: number
+  amount: number; mat_cost: number; direct_cost: number; as_cost: number; freight_cost: number
   total_cost: number; profit: number; margin: number | null; flags: string[]
 }
 interface PnlData {
@@ -234,8 +234,8 @@ async function backfillPrices() {
 }
 
 // ===== 🆕 支出总览：全公司花销按月一张表（采购付款+安装售后+OA费用）=====
-interface ExpenseRow { month: string; purchase: number; aftersales: number; oa: number; total: number }
-interface ExpenseData { year: number; rows: ExpenseRow[]; undated: { purchase: number; aftersales: number; oa: number; total: number }; totals: { purchase: number; aftersales: number; oa: number; grand: number } }
+interface ExpenseRow { month: string; purchase: number; aftersales: number; oa: number; freight: number; total: number }
+interface ExpenseData { year: number; rows: ExpenseRow[]; undated: { purchase: number; aftersales: number; oa: number; freight: number; total: number }; totals: { purchase: number; aftersales: number; oa: number; freight: number; grand: number } }
 const expYear = ref(new Date().getFullYear())
 const expYears = Array.from({ length: new Date().getFullYear() - 2024 + 1 }, (_, i) => new Date().getFullYear() - i)
 const expData = ref<ExpenseData | null>(null)
@@ -736,19 +736,21 @@ async function revokeInvoice(row: ViewRow) {
             <el-select v-model="expYear" style="width:110px" @change="loadExpense">
               <el-option v-for="y in expYears" :key="y" :label="y + ' 年'" :value="y" />
             </el-select>
-            <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先)。材料领用是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「📈 项目毛利」tab。</span>
+            <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先) + 物料运输费(物流录入·我方承担)。材料领用是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「📈 项目毛利」tab。</span>
           </div>
           <div v-if="expData" class="kpi-grid" style="margin-bottom:12px">
             <div class="kpi is-primary"><div class="kpi-v">¥{{ fmtMoney(expData.totals.grand) }}</div><div class="kpi-l">{{ expData.year }} 年总支出</div></div>
             <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.purchase) }}</div><div class="kpi-l">采购付款</div></div>
             <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.aftersales) }}</div><div class="kpi-l">安装/售后费用</div></div>
             <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.oa) }}</div><div class="kpi-l">OA 业务/报销</div></div>
+            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.freight) }}</div><div class="kpi-l">物料运输费</div></div>
           </div>
           <el-table show-overflow-tooltip v-loading="expLoading" :data="expData?.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
             <el-table-column prop="month" label="月份" width="110"><template #default="{ row }"><b>{{ row.month }}</b></template></el-table-column>
             <el-table-column label="采购付款" min-width="130" align="right"><template #default="{ row }">{{ row.purchase ? fmtMoney(row.purchase) : '—' }}</template></el-table-column>
             <el-table-column label="安装/售后" min-width="130" align="right"><template #default="{ row }">{{ row.aftersales ? fmtMoney(row.aftersales) : '—' }}</template></el-table-column>
             <el-table-column label="OA 业务/报销" min-width="130" align="right"><template #default="{ row }">{{ row.oa ? fmtMoney(row.oa) : '—' }}</template></el-table-column>
+            <el-table-column label="物料运输费" min-width="120" align="right"><template #default="{ row }">{{ row.freight ? fmtMoney(row.freight) : '—' }}</template></el-table-column>
             <el-table-column label="合计" min-width="140" align="right"><template #default="{ row }"><b class="amt">{{ row.total ? fmtMoney(row.total) : '—' }}</b></template></el-table-column>
           </el-table>
           <el-alert v-if="expData && expData.undated.total > 0" type="warning" :closable="false" style="margin-top:10px"
@@ -794,6 +796,9 @@ async function revokeInvoice(row: ViewRow) {
             </el-table-column>
             <el-table-column prop="as_cost" label="安装/售后" width="100" align="right" sortable>
               <template #default="{ row }">{{ row.as_cost ? fmtMoney(row.as_cost) : '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="freight_cost" label="运费" width="90" align="right" sortable>
+              <template #default="{ row }">{{ row.freight_cost ? fmtMoney(row.freight_cost) : '—' }}</template>
             </el-table-column>
             <el-table-column prop="total_cost" label="成本合计" width="110" align="right" sortable>
               <template #default="{ row }">{{ fmtMoney(row.total_cost) }}</template>

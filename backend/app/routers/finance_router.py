@@ -117,8 +117,8 @@ async def expense_overview(
     y = year or int(_d.today().isoformat()[:4])
     ys = str(y)
     months = [f"{ys}-{m:02d}" for m in range(1, 13)]
-    buckets: dict = {m: {"purchase": 0.0, "aftersales": 0.0, "oa": 0.0} for m in months}
-    undated = {"purchase": 0.0, "aftersales": 0.0, "oa": 0.0}
+    buckets: dict = {m: {"purchase": 0.0, "aftersales": 0.0, "oa": 0.0, "freight": 0.0} for m in months}
+    undated = {"purchase": 0.0, "aftersales": 0.0, "oa": 0.0, "freight": 0.0}
 
     def put(kind: str, month: Optional[str], amt: float) -> None:
         if not amt:
@@ -158,10 +158,21 @@ async def expense_overview(
             continue
         put("oa", m, float(val or 0))
 
+    # ④ 🆕 #201 物料运输费（我方承担的，按发货月；到付=客户承担不计）
+    r = await db.execute(select(models.Shipment.freight_cost, models.Shipment.shipped_at)
+                         .where(models.Shipment.freight_cost > 0,
+                                (models.Shipment.freight_payer == "我方")
+                                | (models.Shipment.freight_payer.is_(None))))
+    for cost, shipped in r.all():
+        m = shipped.strftime("%Y-%m") if shipped else None
+        if m and not m.startswith(ys):
+            continue
+        put("freight", m, float(cost or 0))
+
     rows = [{"month": m, **{k: round(v, 2) for k, v in buckets[m].items()},
              "total": round(sum(buckets[m].values()), 2)} for m in months]
     totals = {k: round(sum(b[k] for b in buckets.values()) + undated[k], 2)
-              for k in ("purchase", "aftersales", "oa")}
+              for k in ("purchase", "aftersales", "oa", "freight")}
     totals["grand"] = round(sum(totals.values()), 2)
     und = {k: round(v, 2) for k, v in undated.items()}
     und["total"] = round(sum(undated.values()), 2)

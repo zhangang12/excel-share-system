@@ -14,7 +14,7 @@ const tab = ref('roster')
 
 interface Dept { id: number; name: string }
 interface Emp {
-  id: number; name: string; department_id?: number | null; department_name?: string | null
+  id: number; emp_no?: string | null; name: string; department_id?: number | null; department_name?: string | null
   position?: string | null; hire_date?: string | null; regular_date?: string | null
   contract_end?: string | null; status: string; leave_date?: string | null
   id_card?: string | null; phone?: string | null; emergency_contact?: string | null
@@ -203,6 +203,7 @@ onMounted(async () => { await loadDepts(); await loadEmps() })
           </div>
           <el-table show-overflow-tooltip :data="emps" v-loading="loading" stripe size="small" class="compact-tbl"
                     max-height="calc(100vh - 380px)" :scrollbar-always-on="true">
+            <el-table-column prop="emp_no" label="工号" width="76" fixed="left"><template #default="{ row }"><span class="code">{{ row.emp_no || '—' }}</span></template></el-table-column>
             <el-table-column prop="name" label="姓名" width="90" fixed="left"><template #default="{ row }"><b>{{ row.name }}</b></template></el-table-column>
             <el-table-column prop="department_name" label="部门" width="100"><template #default="{ row }">{{ row.department_name || '—' }}</template></el-table-column>
             <el-table-column prop="position" label="岗位" min-width="100"><template #default="{ row }">{{ row.position || '—' }}</template></el-table-column>
@@ -275,6 +276,9 @@ onMounted(async () => { await loadDepts(); await loadEmps() })
     <el-dialog v-model="empVisible" :title="empForm.id ? '编辑员工' : '新增员工'" width="640px" class="v3-scroll-dialog">
       <el-form label-position="top">
         <div class="frow">
+          <el-form-item label="工号" style="flex:0 0 120px">
+            <el-input :model-value="empForm.emp_no || '保存后自动生成'" disabled />
+          </el-form-item>
           <el-form-item label="姓名" required style="flex:1"><el-input v-model="empForm.name" maxlength="64" /></el-form-item>
           <el-form-item label="部门" style="flex:1">
             <el-select v-model="empForm.department_id" clearable filterable placeholder="选择部门" style="width:100%">
