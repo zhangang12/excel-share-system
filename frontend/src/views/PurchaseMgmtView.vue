@@ -820,6 +820,40 @@ async function downloadImportTemplate() {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   } catch { ElMessage.error('模板下载失败') }
 }
+// 🆕 #191 供应商档案批量导入：下载模板 / 上传导入（清空数据后免手工逐家录入）
+async function downloadSupImportTemplate() {
+  try {
+    const res = await http.get('/purchase-mgmt/suppliers/import-template', { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = '供应商导入模板.xlsx'
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch { ElMessage.error('模板下载失败') }
+}
+const supImporting = ref(false)
+function importSuppliers() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.xlsx'
+  input.onchange = async () => {
+    const f = input.files?.[0]; if (!f) return
+    const fd = new FormData(); fd.append('file', f)
+    supImporting.value = true
+    try {
+      const r = await http.post<{ message: string; errors: string[] }>('/purchase-mgmt/suppliers/import', fd)
+      if (r.data.errors?.length) {
+        ElMessageBox.alert(r.data.errors.join('\n'), r.data.message, { type: 'warning' })
+      } else {
+        ElMessage.success(r.data.message)
+      }
+      await loadStatements()
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.detail || '导入失败')
+    } finally { supImporting.value = false }
+  }
+  input.click()
+}
+
 const importing = ref(false)
 function importItems() {
   const input = document.createElement('input')
@@ -2105,6 +2139,15 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-button :icon="Refresh" @click="loadStatements" />
             </el-tooltip>
             <span class="flex-spacer" />
+            <el-dropdown v-if="canWrite" style="margin-right:8px">
+              <el-button :icon="Upload" :loading="supImporting">批量导入<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item :icon="Upload" @click="importSuppliers">导入供应商 Excel</el-dropdown-item>
+                  <el-dropdown-item :icon="Download" @click="downloadSupImportTemplate">下载导入模板</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openNewSupplier">新增供应商</el-button>
           </div>
           <el-table show-overflow-tooltip

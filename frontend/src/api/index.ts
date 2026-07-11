@@ -9,6 +9,10 @@ export const http = axios.create({
 http.interceptors.request.use((config) => {
   const token = localStorage.getItem('pms_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+  // 🆕 #188：文件下载(blob)不设前端超时——打包 zip/CAD 图纸等大文件在慢网络下
+  //   远超全局 30s，被 axios 掐断后表现为「请求超时/打包下载失败」。
+  //   服务端 nginx proxy_read_timeout=300s 仍然兜底，不会无限挂起。
+  if (config.responseType === 'blob') config.timeout = 0
   return config
 })
 

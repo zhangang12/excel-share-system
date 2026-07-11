@@ -1314,6 +1314,121 @@ async def backfill_elec_po_from_uploaded(db: AsyncSession) -> dict:
     return {"filled": filled}
 
 
+async def add_location_column_to_known_sheets(db: AsyncSession) -> dict:
+    """🆕 #195：给存量项目的进度表（钣金装配/标准件清单/外协加工/不锈钢原料下料单/
+    激光件清单/电工采购单）末尾补「库位」列。新建项目由模板自带。
+    幂等：已有同名字段的表跳过。追加在末尾，不影响 Excel 按位置导入的映射。"""
+    from .sheet_templates import SHEET_TEMPLATES, ELEC_PO_SHEET_NAME
+
+    names = list(SHEET_TEMPLATES.keys()) + [ELEC_PO_SHEET_NAME]
+    sheets = (await db.execute(select(models.Datasheet).where(
+        models.Datasheet.name.in_(names)))).scalars().all()
+    added = 0
+    for ds in sheets:
+        flds = (await db.execute(select(models.Field).where(
+            models.Field.datasheet_id == ds.id))).scalars().all()
+        if not flds:
+            continue   # 空表(未导入)不补,建列由导入/模板流程负责
+        if any((f.name or "").strip() == "库位" for f in flds):
+            continue
+        mx = max((f.sort_order or 0) for f in flds)
+        db.add(models.Field(datasheet_id=ds.id, name="库位", type="text", sort_order=mx + 1))
+        added += 1
+    if added:
+        await db.commit()
+        log.info("[add_location_column_to_known_sheets] 为 %d 张进度表补「库位」列", added)
+    return {"added": added}
+
+
+async def fix_elec_po_item_names(db: AsyncSession) -> dict:
+    """🆕 #196：修复「电工采购单」'项目'列被写成项目编号的存量行。
+
+    旧 _populate_elec_po_from_excel 把'项目'列硬编码为项目编号，把电工 Excel 里的物料名称
+    整列丢掉（该列口径与标准件清单一致=物料名称）。本迁移只处理"全部行'项目'==项目编号"
+    的表（bug 特征指纹），重新解析原上传 Excel 的 项目/名称/品名/物料名称 列按行序回填；
+    解析行数与表内行数对不上（被手工增删过）或 Excel 无名称列则跳过。
+    幂等：修复后'项目'≠项目编号，下次启动不再命中。
+    """
+    from pathlib import Path
+    from .routers.orders_router import _read_excel_rows, _cell_to_str
+    from .sheet_templates import ELEC_PO_SHEET_NAME
+    from .config import settings
+
+    sheets = (await db.execute(select(models.Datasheet).where(
+        models.Datasheet.name == ELEC_PO_SHEET_NAME))).scalars().all()
+    fixed = 0
+    for ds in sheets:
+        proj = (await db.execute(select(models.Project).where(
+            models.Project.id == ds.project_id))).scalar_one_or_none()
+        if not proj:
+            continue
+        flds = (await db.execute(select(models.Field).where(
+            models.Field.datasheet_id == ds.id))).scalars().all()
+        fld = next((f for f in flds if f.name == "项目"), None)
+        if not fld:
+            continue
+        recs = (await db.execute(select(models.Record).where(
+            models.Record.datasheet_id == ds.id)
+            .order_by(models.Record.sort_order, models.Record.id))).scalars().all()
+        if not recs:
+            continue
+        fid = str(fld.id)
+        if not all(str((r.values or {}).get(fid) or "").strip() == proj.code for r in recs):
+            continue   # 有行不是项目编号 → 不是本 bug 的表（或已手工修过），不动
+        att = (await db.execute(select(models.Attachment).where(
+            models.Attachment.project_id == ds.project_id,
+            models.Attachment.biz_type == "order_start_output",
+            models.Attachment.kind == "plist")
+            .order_by(models.Attachment.id.desc()).limit(1))).scalar_one_or_none()
+        if not att:
+            continue
+        try:
+            rows = _read_excel_rows(Path(settings.files_dir) / att.path)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[fix_elec_po_item_names] 解析失败 %s: %s", proj.code, e)
+            continue
+        if not rows:
+            continue
+        head_idx, best = 0, -1
+        for i, r in enumerate(rows[:5]):
+            n = sum(1 for c in r if c not in (None, ""))
+            if n > best:
+                best, head_idx = n, i
+        headers = [str(c).strip() if c is not None else "" for c in rows[head_idx]]
+        name_col = next((i for i, h in enumerate(headers)
+                         if h in ("项目", "名称", "品名", "物料名称")), None)
+        if name_col is None:
+            continue
+        # 复刻入表时的行筛选（跳过全空行/无命中列的行），保证与 sort_order 同序
+        fnames = {f.name for f in flds}
+        col_map = {h: i for i, h in enumerate(headers) if h in fnames and h != "项目"}
+        names = []
+        for r in rows[head_idx + 1:]:
+            if not any(c not in (None, "") for c in r):
+                continue
+            if not any(ci < len(r) and r[ci] not in (None, "") for ci in col_map.values()):
+                continue
+            v = r[name_col] if name_col < len(r) else None
+            names.append(_cell_to_str(v) if v not in (None, "") else "")
+        if len(names) != len(recs):
+            log.warning("[fix_elec_po_item_names] %s 行数不匹配(表%d/Excel%d)，跳过",
+                        proj.code, len(recs), len(names))
+            continue
+        changed = False
+        for rec, nm in zip(recs, names):
+            if nm and nm != proj.code:
+                vals = dict(rec.values or {})
+                vals[fid] = nm
+                rec.values = vals
+                changed = True
+        if changed:
+            fixed += 1
+    if fixed:
+        await db.commit()
+        log.info("[fix_elec_po_item_names] 修复 %d 张电工采购单的'项目'列(物料名称)", fixed)
+    return {"fixed": fixed}
+
+
 async def backfill_project_visibility_from_overview_names(db: AsyncSession) -> dict:
     """🆕 存量项目可见性补全（幂等）：解析项目目录 销售/电工/设计师 列(project.extra __o__)，
     把列中人名按系统用户 full_name 精确匹配，匹配到的 user_id 并入项目「可见名单」
@@ -1920,6 +2035,14 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_elec_po_from_uploaded(db)   # 必须在补建第5表之后
     except Exception as e:
         log.warning("backfill_elec_po_from_uploaded failed: %s", e)
+    try:
+        await fix_elec_po_item_names(db)   # 🆕 #196 修'项目'列=项目编号的存量表
+    except Exception as e:
+        log.warning("fix_elec_po_item_names failed: %s", e)
+    try:
+        await add_location_column_to_known_sheets(db)   # 🆕 #195 存量进度表补「库位」列
+    except Exception as e:
+        log.warning("add_location_column_to_known_sheets failed: %s", e)
     try:
         await backfill_project_visibility_from_overview_names(db)
     except Exception as e:

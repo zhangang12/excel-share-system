@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Check } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
+import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
@@ -34,10 +35,27 @@ const title = computed(() => {
 const submitVisible = ref(false)
 const form = reactive({ project_id: undefined as number | undefined, content: '' })
 const projOptions = ref<{ id: number; code: string; name: string }[]>([])
+const fbImages = ref<File[]>([])   // 🆕 #193 现场照片(选填,多张)
 async function openSubmit() {
   projOptions.value = await feedbackApi.myProjects()
-  form.project_id = undefined; form.content = ''
+  form.project_id = undefined; form.content = ''; fbImages.value = []
   submitVisible.value = true
+}
+function pickImages() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = 'image/*'; input.multiple = true
+  input.onchange = () => { fbImages.value = [...fbImages.value, ...Array.from(input.files || [])] }
+  input.click()
+}
+function removeImage(i: number) { fbImages.value.splice(i, 1) }
+// 查看附图：带鉴权取 blob 后新标签打开
+async function viewImage(img: { id: number; name: string }) {
+  try {
+    const r = await http.get(`/attachments/${img.id}/download`, { responseType: 'blob' })
+    const url = URL.createObjectURL(r.data as Blob)
+    window.open(url, '_blank')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch { ElMessage.error('图片打开失败') }
 }
 const submitting = ref(false)
 async function submit() {
@@ -45,7 +63,7 @@ async function submit() {
   if (!form.content.trim()) { ElMessage.warning('请填写问题内容'); return }
   submitting.value = true
   try {
-    await feedbackApi.create(form.project_id, form.content)
+    await feedbackApi.create(form.project_id, form.content, fbImages.value)
     ElMessage.success('已提交，等待生产主管审批')
     submitVisible.value = false
     await load()
@@ -82,6 +100,15 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
     <el-table v-else :data="list" v-loading="loading" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
       <el-table-column label="项目" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
       <el-table-column prop="content" label="问题内容" min-width="220" show-overflow-tooltip />
+      <el-table-column label="附图" width="120">
+        <template #default="{ row }">
+          <template v-if="row.images?.length">
+            <el-tag v-for="(img, i) in row.images" :key="img.id" size="small" effect="plain"
+                    style="cursor:pointer;margin-right:4px" @click="viewImage(img)">📷{{ i + 1 }}</el-tag>
+          </template>
+          <span v-else class="muted small">—</span>
+        </template>
+      </el-table-column>
       <el-table-column v-if="!isAssembler" label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>
       <el-table-column label="状态" width="100" align="center">
         <template #default="{ row }"><StatusPill :text="FB_STATUS_TXT[row.status]" :variant="FB_STATUS_TAG[row.status]" /></template>
@@ -110,6 +137,13 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
         </el-form-item>
         <el-form-item label="问题内容" required>
           <el-input v-model="form.content" type="textarea" :rows="3" placeholder="描述装配中发现的问题，提交后经生产主管审批回馈设计师" />
+        </el-form-item>
+        <!-- 🆕 #193 现场照片(选填,多张) -->
+        <el-form-item label="现场照片（选填，可多张）">
+          <el-button size="small" @click="pickImages">📷 选择图片</el-button>
+          <div v-if="fbImages.length" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">
+            <el-tag v-for="(f, i) in fbImages" :key="i" size="small" closable @close="removeImage(i)">{{ f.name }}</el-tag>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>

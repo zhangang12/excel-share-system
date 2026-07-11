@@ -37,6 +37,7 @@ ALLOWED_BIZ_TYPES = {
     "oa_request",  # 🆕 OA 申请附件（票据/凭证）
     "install_mat",  # 🆕 需求一 安装清单
     "receipt_doc",  # 🆕 需求十四 采购收货单（图片）
+    "feedback",  # 🆕 #193 生产问题反馈现场照片
 }
 
 # 统一允许的扩展名（按业务需要可在端点层再细化）

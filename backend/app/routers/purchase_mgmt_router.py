@@ -1212,6 +1212,128 @@ async def import_items(
     )
 
 
+# ==================== 🆕 #191 供应商档案 一键导入 ====================
+_SUP_IMPORT_COLS = [
+    "供应商名称*", "编码", "分类", "结算方式", "账期天数", "联系人",
+    "电话", "地址", "税号", "开户行", "银行账号", "备注",
+]
+
+
+@router.get("/suppliers/import-template")
+async def supplier_import_template(
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+):
+    """下载供应商导入模板（.xlsx，含表头 + 示例行 + 填写说明）。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "供应商导入"
+    ws.append(_SUP_IMPORT_COLS)
+    hfill = PatternFill("solid", fgColor="E8F0FE")
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = hfill
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.append(["无锡示例金属制品有限公司", "GYS-001", "标准件", "月结", 30, "张三",
+               "13800000000", "无锡市XX路1号", "91320200XXXXXXXXXX", "工商银行无锡支行",
+               "1234567890123456789", "示例行，导入前请删除"])
+    widths = [28, 12, 12, 10, 10, 10, 14, 26, 22, 22, 24, 20]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    ws.freeze_panes = "A2"
+    ws2 = wb.create_sheet("填写说明")
+    for line in [
+        ["供应商档案导入说明"],
+        [""],
+        ["1. 带 * 的列为必填：供应商名称。其余列选填，后续可在供应商档案里补。"],
+        ["2. 名称已存在的供应商：只补空缺字段（不会覆盖已维护的资料）；不存在则新建。"],
+        ["3. 分类建议与「字典设置-供应商分类」里的取值一致（不一致也能导入，下拉里可能选不到）。"],
+        ["4. 结算方式：现金 / 月结 / 无账期。账期天数只填数字（月结供应商务必填，资金面板按它算应付到期）。"],
+        ["5. 第 2 行为示例，导入前请删除。可一次导入多家。"],
+    ]:
+        ws2.append(line)
+    ws2["A1"].font = Font(bold=True, size=13)
+    ws2.column_dimensions["A"].width = 80
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = "供应商导入模板.xlsx"
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
+@router.post("/suppliers/import")
+async def import_suppliers(
+    file: UploadFile = File(...),
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #191 一键导入供应商：按名称匹配——已存在只补空缺字段，不存在新建(建档人=导入人)。"""
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(BytesIO(await file.read()), data_only=True, read_only=True)
+    except Exception:
+        raise HTTPException(400, "无法解析该文件，请使用模板导出的 .xlsx")
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if len(rows) < 2:
+        raise HTTPException(400, "文件为空或只有表头")
+    header = [(_norm_str(c) or "").replace("*", "").strip() for c in rows[0]]
+    col = {name: idx for idx, name in enumerate(header) if name}
+    if "供应商名称" not in col:
+        raise HTTPException(400, "表头缺少必填列「供应商名称」，请用模板")
+
+    def cell(row, name):
+        i = col.get(name)
+        return row[i] if (i is not None and i < len(row)) else None
+
+    sres = await db.execute(select(models.Supplier))
+    sup_by_name = {x.name: x for x in sres.scalars().all()}
+    field_map = [("编码", "code"), ("分类", "category"), ("结算方式", "settlement_type"),
+                 ("联系人", "contact"), ("电话", "phone"), ("地址", "address"),
+                 ("税号", "tax_no"), ("开户行", "bank_name"), ("银行账号", "bank_account"),
+                 ("备注", "notes")]
+    created = updated = 0
+    errors: list[str] = []
+    for rn, row in enumerate(rows[1:], start=2):
+        if row is None or all(c is None or str(c).strip() == "" for c in row):
+            continue
+        name = _norm_str(cell(row, "供应商名称"))
+        if not name:
+            errors.append(f"第 {rn} 行：供应商名称为空，已跳过")
+            continue
+        credit = _norm_num(cell(row, "账期天数"))
+        sup = sup_by_name.get(name)
+        if sup is None:
+            sup = models.Supplier(name=name, status="active", created_by=current.id)
+            db.add(sup)
+            sup_by_name[name] = sup
+            created += 1
+            touched = True
+        else:
+            touched = False
+        # 已存在只补空缺，不覆盖已维护资料
+        for cn, attr in field_map:
+            v = _norm_str(cell(row, cn))
+            if v and not getattr(sup, attr, None):
+                setattr(sup, attr, v)
+                touched = True
+        if credit is not None and sup.credit_days is None:
+            sup.credit_days = int(credit)
+            touched = True
+        if touched and sup.id:
+            updated += 1
+    await db.commit()
+    msg = f"导入完成：新建 {created} 家、补全 {updated} 家"
+    if errors:
+        msg += f"；{len(errors)} 行跳过"
+    return {"message": msg, "created": created, "updated": updated, "errors": errors[:20]}
+
+
 @router.put("/items/{iid}", response_model=schemas.PurchaseItemOut)
 async def update_item(
     iid: int,
@@ -2274,8 +2396,10 @@ async def report_supplier_trend(
 
 # ==================== 🆕 #167 仓库采购申请（仓库发起 → 采购部处理）====================
 # 🆕 请购申请人角色：仓库 + 设计师(设计师请购单,与仓库同一流程/推送)
-_PREQ_WAREHOUSE = ("warehouse", "warehouse_lead", "designer", "design_lead")
-_PREQ_VIEW = ("warehouse", "warehouse_lead", "designer", "design_lead", "buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
+# 🆕 #198：电工部也可提请购单（与仓库/设计同一流程：指定采购员→推送→行级隔离）
+_PREQ_WAREHOUSE = ("warehouse", "warehouse_lead", "designer", "design_lead", "electrician", "electric_lead")
+_PREQ_VIEW = ("warehouse", "warehouse_lead", "designer", "design_lead", "electrician", "electric_lead",
+              "buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
 
 
 def _preq_out(pr: models.PurchaseRequest) -> schemas.PurchaseRequestOut:

@@ -236,6 +236,45 @@ async def set_group_due(
     return schemas.Msg(message="已设置本组预计完成")
 
 
+# ==================== 🆕 #194 换人（重新指派本组负责人） ====================
+class GroupReassignIn(BaseModel):
+    worker_id: int
+
+
+@router.post("/group/{task_id}/reassign", response_model=schemas.Msg)
+async def group_reassign(
+    task_id: int,
+    data: GroupReassignIn,
+    current: models.User = Depends(require_roles("pm_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #194 生产主管/管理层给钣金组/装配组任务换人（已完成的组任务不可换）。"""
+    res = await db.execute(select(models.ProduceGroupTask).where(
+        models.ProduceGroupTask.id == task_id))
+    t = res.scalar_one_or_none()
+    if not t:
+        raise HTTPException(404, "分组任务不存在")
+    if t.status == "done":
+        raise HTTPException(400, "该组已标记完成，不可换人（可先撤销完成）")
+    w = (await db.execute(select(models.User).where(models.User.id == data.worker_id))).scalar_one_or_none()
+    if not w or not w.is_active or not w.has_role(GROUP_ROLE[t.group]):
+        raise HTTPException(400, f"必须换给「{GROUP_NAME[t.group]}」角色的在职人员")
+    if t.worker_id == w.id:
+        raise HTTPException(400, "已经是该负责人")
+    old = (await db.execute(select(models.User).where(models.User.id == t.worker_id))).scalar_one_or_none() \
+        if t.worker_id else None
+    t.worker_id = w.id
+    await db.commit()
+    p = t.project
+    await push_message(db, to_user_id=w.id, kind="info",
+                       text=f"【生产换人】{p.code if p else ''} {p.name if p else ''} "
+                            f"（{GROUP_NAME[t.group]}）已改派给你（操作：{_uname(current)}）。",
+                       biz_type="project", biz_id=t.project_id)
+    await write_audit(db, user=current, action="produce_group_reassign", target_type="produce_group_task",
+                      target_id=t.id, detail=f"{GROUP_NAME[t.group]} {_uname(old) or '—'} → {_uname(w)}")
+    return schemas.Msg(message=f"已把{GROUP_NAME[t.group]}任务改派给 {_uname(w)}")
+
+
 # ==================== 组项目列表（tab） ====================
 class GroupProjectRow(BaseModel):
     project_id: int

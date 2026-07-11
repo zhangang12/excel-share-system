@@ -169,6 +169,9 @@ export const produceApi = {
     http.post(`/produce/group/${taskId}/done`, { done }).then((r) => r.data),
   setGroupDue: (taskId: number, dueDate: string) =>
     http.post(`/produce/group/${taskId}/due`, { due_date: dueDate }).then((r) => r.data),
+  // 🆕 #194 钣金组/装配组任务换人
+  groupReassign: (taskId: number, workerId: number) =>
+    http.post(`/produce/group/${taskId}/reassign`, { worker_id: workerId }).then((r) => r.data),
   sheetmetalProjects: (year?: string, proj_status?: string) =>
     http.get<GroupProjectRow[]>('/produce/sheetmetal-projects', { params: { year, proj_status } }).then((r) => r.data),
   assemblyProjects: (year?: string, proj_status?: string) =>

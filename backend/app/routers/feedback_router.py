@@ -7,7 +7,7 @@
 """
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Form, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
@@ -17,6 +17,7 @@ from ..deps import get_current_user, require_roles
 from ..menus import user_can_view_detail
 from ..notify import push_message
 from ..utils import write_audit
+from .attachments_router import save_upload
 
 router = APIRouter(prefix="/api/feedbacks", tags=["问题反馈"])
 
@@ -47,12 +48,21 @@ async def _fb_or_404(db: AsyncSession, fid: int) -> models.Feedback:
 
 
 async def _rows(db: AsyncSession, items: list[models.Feedback]) -> list[schemas.FeedbackRow]:
+    # 🆕 #193 反馈附图（biz_type=feedback）
+    imgs: dict[int, list[dict]] = {}
+    ids = [f.id for f in items]
+    if ids:
+        ar = await db.execute(select(models.Attachment).where(
+            models.Attachment.biz_type == "feedback", models.Attachment.biz_id.in_(ids))
+            .order_by(models.Attachment.id))
+        for a in ar.scalars().all():
+            imgs.setdefault(a.biz_id, []).append({"id": a.id, "name": a.name})
     return [schemas.FeedbackRow(
         id=f.id, project_id=f.project_id,
         code=f.project.code if f.project else "", name=f.project.name if f.project else "",
         content=f.content, status=f.status,
         created_by_name=_uname(f.creator), designer_name=_uname(f.designer),
-        created_at=f.created_at,
+        created_at=f.created_at, images=imgs.get(f.id, []),
     ) for f in items]
 
 
@@ -109,32 +119,44 @@ async def my_projects(
 
 @router.post("", response_model=schemas.Msg)
 async def create_feedback(
-    data: schemas.FeedbackCreate,
+    project_id: int = Form(...),
+    content: str = Form(...),
+    files: List[UploadFile] = File(default=[]),
     current: models.User = Depends(require_roles("assembler")),
     db: AsyncSession = Depends(get_db),
 ):
-    """装配工人提交问题反馈（限本人在手项目）→ 待生产主管审批。"""
-    if not data.content.strip():
+    """装配工人提交问题反馈（限本人在手项目）→ 待生产主管审批。
+    🆕 #193 改 multipart：可附现场照片(多张,选填)，主管审批/设计师接收时可查看。"""
+    if not content.strip():
         raise HTTPException(400, "请填写问题内容")
     # 校验是本人在手项目
     r = await db.execute(select(models.DeptOrder).where(
-        models.DeptOrder.project_id == data.project_id,
+        models.DeptOrder.project_id == project_id,
         models.DeptOrder.dept == "produce",
         models.DeptOrder.worker_id == current.id,
         models.DeptOrder.status != "voided",
     ))
     if not r.scalars().first():
         raise HTTPException(403, "只能对自己在手的项目提交反馈")
-    rp = await db.execute(select(models.Project).where(models.Project.id == data.project_id))
+    rp = await db.execute(select(models.Project).where(models.Project.id == project_id))
     proj = rp.scalar_one()
     p_code, p_name = proj.code, proj.name
-    fb = models.Feedback(project_id=data.project_id, content=data.content.strip(),
+    fb = models.Feedback(project_id=project_id, content=content.strip(),
                          status="pending_pm", created_by=current.id)
     db.add(fb)
-    await db.commit()
+    await db.flush()
     fid = fb.id
+    n_img = 0
+    for f in files or []:
+        if not f or not f.filename:
+            continue
+        await save_upload(db, f, biz_type="feedback", biz_id=fid,
+                          kind="img", project_id=project_id, user=current)
+        n_img += 1
+    await db.commit()
     await push_message(db, to_role="pm_lead", kind="info",
-                       text=f"【问题反馈待审批】{p_code} {p_name}：{data.content[:24]}…",
+                       text=f"【问题反馈待审批】{p_code} {p_name}：{content[:24]}…"
+                            + (f"（附图{n_img}张）" if n_img else ""),
                        biz_type="feedback", biz_id=fid)
     await write_audit(db, user=current, action="create", target_type="feedback", target_id=fid)
     return schemas.Msg(message="已提交，等待生产主管审批")

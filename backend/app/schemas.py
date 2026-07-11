@@ -362,6 +362,7 @@ class FeedbackRow(BaseModel):
     created_by_name: Optional[str] = None
     designer_name: Optional[str] = None
     created_at: datetime
+    images: list[dict] = Field(default_factory=list)   # 🆕 #193 反馈附图 [{id,name}]
 
 
 class FeedbackProjOption(BaseModel):

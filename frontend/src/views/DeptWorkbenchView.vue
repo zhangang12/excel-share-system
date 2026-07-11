@@ -236,6 +236,28 @@ function importTemplateTables(o: DeptOrder) {
 }
 
 // 🆕 组内标记完成（两组都完成→生产任务单 done）
+// 🆕 #194 组任务换人（主管/管理层）：从派发人选里挑新负责人
+const grpReVisible = ref(false)
+const grpReRow = ref<GroupProjectRow | null>(null)
+const grpReGroup = ref<'sheetmetal' | 'assembly'>('assembly')
+const grpReWid = ref<number | null>(null)
+async function openGroupReassign(row: GroupProjectRow, group: 'sheetmetal' | 'assembly') {
+  grpReRow.value = row; grpReGroup.value = group; grpReWid.value = null
+  if (!dispatchOpts.value.sheetmetal.length && !dispatchOpts.value.assembly.length) {
+    try { dispatchOpts.value = await produceApi.dispatchOptions() } catch { /* 忽略 */ }
+  }
+  grpReVisible.value = true
+}
+async function submitGroupReassign() {
+  if (!grpReRow.value || !grpReWid.value) { ElMessage.warning('请选择新负责人'); return }
+  try {
+    const r: any = await produceApi.groupReassign(grpReRow.value.task_id, grpReWid.value)
+    ElMessage.success(r?.message || '已换人')
+    grpReVisible.value = false
+    await load()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '换人失败') }
+}
+
 async function toggleGroupDone(row: GroupProjectRow) {
   try {
     await produceApi.groupDone(row.task_id, !row.group_done)
@@ -322,8 +344,8 @@ function canElectricShipReady(o: DeptOrder) {
 async function doElectricDone(o: DeptOrder) {
   markingElectricDone.value = o.id
   try {
-    await ordersApi.markElectricDone(o.id)
-    ElMessage.success('已标记接线完成，请上传电路图')
+    const r: any = await ordersApi.markElectricDone(o.id)
+    ElMessage.success(r?.message || '接线完成，已计入考核。到「已完成」里补传电路图/做发货准备')
     await load()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
@@ -364,7 +386,9 @@ const resMode = ref<ResMode>('shipprep')
 const resOrder = computed(() => orders.value.find(o => o.id === resId.value) || null)
 const resTitle = computed(() => resMode.value === 'shipprep' ? '📦 发货准备' : '🔧 设计资料更换')
 const resSections = computed(() => resMode.value === 'shipprep'
-  ? [{ k: 'manual', label: '产品说明书 (Word)', btn: '上传说明书' }, { k: 'nameplate', label: '铭牌 (CAD)', btn: '上传铭牌' }]
+  ? (dept.value === 'electric'   // 🆕 #197 电工发货准备 = 电路图
+      ? [{ k: 'circuit', label: '电路图 (PDF)', btn: '上传电路图' }]
+      : [{ k: 'manual', label: '产品说明书 (Word)', btn: '上传说明书' }, { k: 'nameplate', label: '铭牌 (CAD)', btn: '上传铭牌' }])
   : [{ k: 'sheetpkg', label: 'CAD激光图纸', btn: '上传CAD激光图纸' }, { k: 'outsource_img', label: '外购附图', btn: '上传外购附图' }])
 function openRes(o: DeptOrder, mode: ResMode) { resId.value = o.id; resMode.value = mode; resVisible.value = true }
 function resFiles(o: DeptOrder, kind: string) {
@@ -981,13 +1005,19 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="通知" min-width="110">
               <template #default="{ row }">{{ row.notify_user_name ? '📲 ' + row.notify_user_name : '—' }}</template>
             </el-table-column>
-            <el-table-column label="操作" :width="dept === 'design' ? 300 : 130" fixed="right" :show-overflow-tooltip="false">
+            <el-table-column label="操作" :width="dept === 'design' ? 300 : (dept === 'electric' ? 240 : 130)" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <template v-if="dept === 'design'">
                   <el-button size="small" type="success" plain @click="openRes(row, 'shipprep')">
                     发货准备{{ row.ship_prep_done ? ' ✓' : '' }}
                   </el-button>
                   <el-button size="small" type="warning" plain @click="openRes(row, 'design')">设计资料更换</el-button>
+                </template>
+                <!-- 🆕 #197 电工：接线完成即完成，电路图在这里补传(发货准备口径) -->
+                <template v-else-if="dept === 'electric'">
+                  <el-button size="small" type="success" plain @click="openRes(row, 'shipprep')">
+                    发货准备{{ row.ship_prep_done ? ' ✓' : '' }}
+                  </el-button>
                 </template>
                 <el-button size="small" :icon="RefreshLeft" @click="doReopen(row)">改回进行中</el-button>
               </template>
@@ -1127,7 +1157,13 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="240" show-overflow-tooltip />
             <el-table-column label="设计师" min-width="100" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
-            <el-table-column label="派给" min-width="100" align="center"><template #default="{ row }">{{ row.worker_name || '—' }}</template></el-table-column>
+            <el-table-column label="派给" min-width="130" align="center">
+              <template #default="{ row }">
+                {{ row.worker_name || '—' }}
+                <el-button v-if="(isLead || isMgr) && !row.group_done" size="small" link type="primary"
+                           @click="openGroupReassign(row, 'sheetmetal')">换人</el-button>
+              </template>
+            </el-table-column>
             <el-table-column label="钣金装配表" min-width="200" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
@@ -1171,7 +1207,13 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
             <el-table-column label="设计师" min-width="90" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
-            <el-table-column label="派给" min-width="90" align="center"><template #default="{ row }">{{ row.worker_name || '—' }}</template></el-table-column>
+            <el-table-column label="派给" min-width="130" align="center">
+              <template #default="{ row }">
+                {{ row.worker_name || '—' }}
+                <el-button v-if="(isLead || isMgr) && !row.group_done" size="small" link type="primary"
+                           @click="openGroupReassign(row, 'assembly')">换人</el-button>
+              </template>
+            </el-table-column>
             <el-table-column label="钣金装配表" min-width="180" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
@@ -1207,7 +1249,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         </el-tab-pane>
 
         <!-- 🆕 设计师请购单：列清单推给采购员（与仓库采购申请同一流程） -->
-        <el-tab-pane v-if="dept === 'design'" label="🛒 请购单" name="preq">
+        <el-tab-pane v-if="dept === 'design' || dept === 'electric'" label="🛒 请购单" name="preq">
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
             <span class="muted" style="font-size:13px">要买的东西列成清单推送给采购员，处理进度在下方列表查看。</span>
             <span style="flex:1" />
@@ -1347,6 +1389,22 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
       <template #footer>
         <el-button @click="reassignVisible = false">取消</el-button>
         <el-button type="primary" :loading="reassigning" @click="doReassign">确认转交</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 🆕 #194 组任务换人弹窗 ===== -->
+    <el-dialog v-model="grpReVisible" :title="`🔁 换人 · ${grpReRow?.code || ''}（${grpReGroup === 'sheetmetal' ? '钣金组' : '装配组'}）`" width="380px">
+      <el-form label-position="top">
+        <el-form-item :label="`当前负责人：${grpReRow?.worker_name || '—'}，改派给`" required>
+          <el-select v-model="grpReWid" filterable placeholder="选择新负责人" style="width:100%">
+            <el-option v-for="w in (grpReGroup === 'sheetmetal' ? dispatchOpts.sheetmetal : dispatchOpts.assembly)"
+                       :key="w.id" :label="w.name" :value="w.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="grpReVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitGroupReassign">确认换人</el-button>
       </template>
     </el-dialog>
 

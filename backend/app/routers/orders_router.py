@@ -116,12 +116,20 @@ async def _populate_elec_po_from_excel(db: AsyncSession, project_id: int, projec
     headers = [str(c).strip() if c is not None else "" for c in rows[head_idx]]
     # 表头列名 → Excel 列下标（命中第5表列名的）
     col_map = {h: i for i, h in enumerate(headers) if h in name_to_fid and h != "项目"}
+    # 🆕 #196：'项目'列 = 物料名称（与标准件清单口径一致），优先取 Excel 里的
+    #   项目/名称/品名/物料名称 列；Excel 没有该列或该格为空才回退填项目编号。
+    #   （旧逻辑硬编码写项目编号，把电工清单里的名称整列丢了。）
+    name_col = next((i for i, h in enumerate(headers)
+                     if h in ("项目", "名称", "品名", "物料名称")), None)
 
     written = 0
     for r in rows[head_idx + 1:]:
         if not any(c not in (None, "") for c in r):
             continue
-        values: dict[str, str] = {str(name_to_fid["项目"]): project_code}
+        nm = ""
+        if name_col is not None and name_col < len(r) and r[name_col] not in (None, ""):
+            nm = _cell_to_str(r[name_col])
+        values: dict[str, str] = {str(name_to_fid["项目"]): nm or project_code}
         has_data = False
         for h, ci in col_map.items():
             v = r[ci] if ci < len(r) else None
@@ -613,7 +621,9 @@ async def output_upload(
         raise HTTPException(403, "仅任务负责人可上传")
     # 🆕 #50 状态守卫：已完成/已作废单不得再挂产物（避免改下游资料/破坏留痕），与 start_upload 对齐
     # 🆕 #5 例外：设计部「发货准备」(说明书/铭牌)在设计完成(done)后仍可补传/替换
-    is_ship_prep = o.dept == "design" and kind in ("manual", "nameplate")
+    # 🆕 #197：电工「电路图」同设计说明书/铭牌口径——完成(done)后仍可补传（发货准备）
+    is_ship_prep = (o.dept == "design" and kind in ("manual", "nameplate")) \
+        or (o.dept == "electric" and kind == "circuit")
     if o.status not in ("in_progress", "assigned") and not (is_ship_prep and o.status == "done"):
         raise HTTPException(400, "任务未在进行中，不能上传产物")
     outs = []
@@ -659,7 +669,8 @@ async def remove_order_attachment(
     # 🆕 #5 例外：设计部已完成单允许替换「设计资料/产物」(CAD激光图纸/外购附图=order_start_output、
     #         说明书/铭牌=order_output)，方便发货前更正
     if o.status == "voided" or (o.status == "done" and not (
-            o.dept == "design" and a.biz_type in ("order_output", "order_start_output"))):
+            (o.dept == "design" and a.biz_type in ("order_output", "order_start_output"))
+            or (o.dept == "electric" and a.biz_type == "order_output"))):  # 🆕 #197 电路图可替换
         raise HTTPException(400, "任务已完成/作废，附件不可移除（如需修改请先改回进行中）")
     name = a.name
     await delete_attachment_file(db, a)
@@ -678,19 +689,20 @@ async def ship_prep_done(
     """🆕 #5 设计部「发货准备完成」：设计完成(done)后，确认说明书/铭牌等发货资料已备齐，
     标记 ship_prep_done 并通知物流。仅设计部已完成单可点（说明书/铭牌仍为选填，按需）。"""
     o = await _order_or_404(db, oid)
-    if o.dept != "design":
-        raise HTTPException(400, "仅设计部任务支持发货准备完成")
+    if o.dept not in ("design", "electric"):   # 🆕 #197 电工部同口径（电路图=发货资料）
+        raise HTTPException(400, "仅设计部/电工部任务支持发货准备完成")
     if not (_is_mgr(current) or o.worker_id == current.id):
         raise HTTPException(403, "仅任务负责人可操作")
     if o.status != "done":
-        raise HTTPException(400, "请先点「设计完成」，再做发货准备完成")
+        raise HTTPException(400, "请先完成任务（设计完成/接线完成），再做发货准备完成")
     o.ship_prep_done = True
     await db.commit()
     p = o.project
     is_spare = str((p.extra or {}).get("__o__销售") or "").startswith("备机")
     if not is_spare:
+        what = "设计部说明书/铭牌" if o.dept == "design" else "电工部电路图"
         await push_message(db, to_role="logistics", kind="info",
-                           text=f"【发货准备完成】{p.code} {p.name} 设计部说明书/铭牌等发货资料已备齐。",
+                           text=f"【发货准备完成】{p.code} {p.name} {what}等发货资料已备齐。",
                            biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="ship_prep_done", target_type="dept_order",
                       target_id=o.id)
@@ -900,10 +912,25 @@ async def mark_electric_done(
         raise HTTPException(400, "仅进行中任务可操作")
 
     # 🆕 #4 已放开：不再校验采购清单是否上传（按需可选）
+    # 🆕 #197：接线完成 = 直接完成计考核（与设计部「设计完成」一致）；
+    #   电路图上传/发货准备挪到完成后做，不再阻塞订单完成、不影响考核。
+    cfg = DEPTS["electric"]
+    today_s = date.today().isoformat()
     o.electric_done_flag = True
+    o.status = "done"
+    o.done_date = today_s
     await db.commit()
-    await write_audit(db, user=current, action="electric_done", target_type="dept_order", target_id=o.id)
-    return schemas.Msg(message="已标记接线完成，请继续上传电路图")
+    p = o.project
+    eff, on_time, overdue_days = compute_efficiency(o.start_date, o.due_date, o.done_date)
+    if overdue_days > 0:
+        text = (f"【逾期完成】电工 {p.code} {p.name}：预计 {o.due_date}，实际 {o.done_date}，"
+                f"超 {overdue_days} 天，效率 {eff}%（负责人：{_uname(o.worker)}）")
+        await push_message(db, to_role=cfg["lead_role"], kind="warn", text=text, biz_type="order", biz_id=o.id)
+        await push_message(db, to_role="manager", kind="warn", text=text, biz_type="order", biz_id=o.id)
+    await write_audit(db, user=current, action="electric_done", target_type="dept_order",
+                      target_id=o.id, detail=f"done eff={eff}% on_time={on_time}")
+    return schemas.Msg(message="接线完成，已计入考核。可到「已完成」里上传电路图并做发货准备（不影响考核）"
+                       + (f"；逾期 {overdue_days} 天已提醒主管" if overdue_days else ""))
 
 
 @router.post("/{oid}/complete", response_model=schemas.Msg)
