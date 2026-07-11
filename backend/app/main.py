@@ -23,6 +23,7 @@ from .routers import (
     aftersales_router, finance_router, feedback_router, reports_router,
     warehouse_router, export_router, user_feedback_router,
     produce_router, leads_router, purchase_mgmt_router, oa_router,
+    hr_router,
 )
 from .errors import register_exception_handlers
 from .database import get_db
@@ -116,7 +117,8 @@ def create_app() -> FastAPI:
     app.include_router(produce_router.router)  # 🆕 生产部分组派发（钣金组/装配组）
     app.include_router(leads_router.router)    # 🆕 销售线索跟踪
     app.include_router(purchase_mgmt_router.router)  # 🆕 采购管理模块
-    app.include_router(oa_router.router)  # 🆕 OA 审批模块
+    app.include_router(oa_router.router)
+    app.include_router(hr_router.router)   # 🆕 人事部一期  # 🆕 OA 审批模块
 
     @app.get("/api/health")
     async def health():

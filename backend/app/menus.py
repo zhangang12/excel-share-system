@@ -28,6 +28,7 @@ MENU_DEFS: list[dict] = [
     {"key": "logistics",  "label": "物流发货部"},
     {"key": "finance",    "label": "财务部"},
     {"key": "aftersales", "label": "售后部"},
+    {"key": "hr",         "label": "人事部"},   # 🆕 一期:员工花名册+部门月度工资总额(hr+管理层)
     {"key": "report",     "label": "月度工作报表"},
     {"key": "oa",         "label": "OA审批"},     # 🆕 全员可见（业务/报销/采购申请+审批）
     {"key": "messages",   "label": "消息中心"},
@@ -56,7 +57,7 @@ ROLE_MENUS: dict[str, list[str]] = {
     "warehouse":        ["catalog", "list", "warehouse"],
     "buyer_standard":   ["catalog", "list", "purchase_mgmt"],
     "buyer_outsource":  ["catalog", "list", "purchase_mgmt"],
-    "hr":               ["catalog", "list"],
+    "hr":               ["catalog", "list", "hr"],   # 🆕 人事部一期
     # ---- 🆕 v3 角色 ----
     "sales":            ["catalog", "sales", "leads"],        # 无详单，编号不可点；🆕 销售线索
     "sales_lead":       ["catalog", "sales", "leads"],
@@ -89,6 +90,8 @@ TAB_REGISTRY: list[dict] = [
         ("pay_requests", "请款审批"), ("pay_payment", "付款"), ("expense", "支出总览"),
         ("pnl", "项目毛利"), ("audit", "成本审计"), ("fund", "资金面板"),
         ("payables", "采购应付"), ("inventory", "库存/成本")]},
+    {"menu_key": "hr", "menu_label": "人事部", "tabs": [
+        ("roster", "员工花名册"), ("payroll", "工资总额")]},
     {"menu_key": "warehouse", "menu_label": "仓库", "tabs": [
         ("ov", "库存总览"), ("io", "出入库登记"), ("sum", "收发存汇总"), ("txn", "出入库流水"),
         ("mat", "物料主数据"), ("loc", "库位管理"), ("demand", "物料需求"), ("recv", "采购收货"),

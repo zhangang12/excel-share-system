@@ -121,6 +121,12 @@ const router = createRouter({
           meta: { menuKey: 'aftersales' },
         },
         {
+          path: 'hr',
+          name: 'hr',
+          component: () => import('@/views/HrView.vue'),
+          meta: { menuKey: 'hr' },   // 🆕 人事部一期
+        },
+        {
           path: 'report',
           name: 'report',
           component: () => import('@/views/ReportView.vue'),

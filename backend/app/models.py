@@ -786,6 +786,48 @@ class PurchaseRequestLine(Base):
 
 
 # ==================== 🆕 OA 审批 ====================
+class Employee(Base):
+    """🆕 人事部一期·员工花名册：与登录账号弱关联(user_id 可空)。
+    敏感字段(身份证/电话)仅 hr+管理层可见——整个 /api/hr 都是这个门槛。"""
+    __tablename__ = "employees"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), index=True)
+    department_id: Mapped[Optional[int]] = mapped_column(ForeignKey("departments.id"), index=True)
+    position: Mapped[Optional[str]] = mapped_column(String(64))          # 岗位
+    hire_date: Mapped[Optional[str]] = mapped_column(String(10))         # 入职日期
+    regular_date: Mapped[Optional[str]] = mapped_column(String(10))      # 转正日期(试用期满)
+    contract_end: Mapped[Optional[str]] = mapped_column(String(10), index=True)  # 合同到期日(提醒核心)
+    status: Mapped[str] = mapped_column(String(16), default="在职", index=True)  # 试用/在职/离职
+    leave_date: Mapped[Optional[str]] = mapped_column(String(10))        # 离职日期
+    id_card: Mapped[Optional[str]] = mapped_column(String(32))           # 身份证(选填)
+    phone: Mapped[Optional[str]] = mapped_column(String(32))
+    emergency_contact: Mapped[Optional[str]] = mapped_column(String(64))
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))  # 可选关联登录账号
+    note: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    department: Mapped[Optional["Department"]] = relationship(lazy="joined")
+
+
+class PayrollMonthly(Base):
+    """🆕 人事部一期·部门月度工资总额（一月一部门一行,只到部门汇总不碰个人工资）。
+    盈利改善规划§五-1 人工分摊口径的数据源：毛利榜"含分摊人工"后续直接读这张表。"""
+    __tablename__ = "payroll_monthly"
+    __table_args__ = (UniqueConstraint("month", "department_id", name="uq_payroll_month_dept"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    month: Mapped[str] = mapped_column(String(7), index=True)            # YYYY-MM
+    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"), index=True)
+    total_amount: Mapped[float] = mapped_column(default=0)
+    note: Mapped[Optional[str]] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    department: Mapped["Department"] = relationship(lazy="joined")
+
+
 class Department(Base):
     """OA 部门字典（与角色分组独立、手动维护）。lead_role 设置后，持有该角色的人
     可查看本部门全部 OA 申请（部门负责人视角），不设则无该项额外可见性。"""

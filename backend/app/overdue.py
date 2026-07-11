@@ -192,6 +192,47 @@ async def scan_balance_overdue(db: AsyncSession) -> dict:
     return {"scanned": len(ledgers), "notified": notified}
 
 
+async def scan_hr_reminders(db: AsyncSession) -> dict:
+    """🆕 人事部一期·到期提醒：合同到期前 30 天(含已过期) / 试用期转正前 7 天。
+    每日扫、按员工 7 天窗口去重（同 balance_overdue 模式），推 hr + 管理层。"""
+    today = datetime.now(_CN_TZ).date()
+    r = await db.execute(select(models.Employee).where(models.Employee.status != "离职"))
+    emps = list(r.scalars().all())
+    notified = 0
+    for e in emps:
+        for kind_biz, dt_s, window, label in (
+                ("hr_contract", e.contract_end, 30, "合同"),
+                ("hr_regular", e.regular_date if e.status == "试用" else None, 7, "试用期转正")):
+            if not dt_s:
+                continue
+            try:
+                due = date.fromisoformat(dt_s)
+            except (ValueError, TypeError):
+                continue
+            days = (due - today).days
+            if days > window:
+                continue
+            r2 = await db.execute(
+                select(models.Message.created_at).where(
+                    models.Message.biz_type == kind_biz,
+                    models.Message.biz_id == e.id,
+                ).order_by(models.Message.created_at.desc()).limit(1))
+            last = r2.scalar_one_or_none()
+            if last is not None and (today - date.fromisoformat(_cn_date(last))).days < 7:
+                continue
+            dept = e.department.name if e.department else "未分部门"
+            when = (f"还有 {days} 天" if days > 0 else ("今天" if days == 0 else f"已过 {-days} 天"))
+            text = f"【{label}到期提醒】{e.name}（{dept}）{label}日期 {dt_s}（{when}），请及时处理。"
+            await push_message(db, to_role="hr", kind="warn", text=text,
+                               biz_type=kind_biz, biz_id=e.id)
+            await push_message(db, to_role="manager", kind="warn", text=text,
+                               biz_type=kind_biz, biz_id=e.id)
+            notified += 1
+    if notified:
+        log.info("[scan_hr_reminders] 推送 %d 条人事到期提醒（共扫描 %d 人）", notified, len(emps))
+    return {"scanned": len(emps), "notified": notified}
+
+
 async def overdue_scheduler(interval_hours: int = 12) -> None:
     """启动期周期任务：每 interval_hours 扫一次（单容器部署用 asyncio 即可）。
     含：逾期任务提醒 + 🆕 尾款到期提醒 + 🆕 逾期尾款周催办（各用独立会话，互不影响）。"""
@@ -211,4 +252,9 @@ async def overdue_scheduler(interval_hours: int = 12) -> None:
                 await scan_balance_overdue(db)
         except Exception as e:  # noqa: BLE001
             log.warning("scan_balance_overdue 失败: %s", e)
+        try:
+            async with SessionLocal() as db:
+                await scan_hr_reminders(db)
+        except Exception as e:  # noqa: BLE001
+            log.warning("scan_hr_reminders 失败: %s", e)
         await asyncio.sleep(interval_hours * 3600)
