@@ -12,14 +12,18 @@ from datetime import datetime, timezone, date as _date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, exists, update as sa_update
+from sqlalchemy import select, func, exists, or_, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from pydantic import BaseModel
 
 from ..database import get_db
 from .. import models, schemas
 from ..deps import get_current_user, require_roles
 from ..notify import push_message
+from ..utils import write_audit
+from .attachments_router import delete_attachment_file
 
 router = APIRouter(prefix="/api/oa", tags=["OA审批"])
 
@@ -255,6 +259,46 @@ async def delete_chain_step(
     return schemas.Msg(message="已删除该审批步骤")
 
 
+# ==================== 🆕 #200 流程级固定抄送（部门+单据类型 → 抄送角色） ====================
+@router.get("/flow-cc")
+async def get_flow_cc(
+    department_id: int = Query(...),
+    doc_type: str = Query(...),
+    _: models.User = Depends(require_roles()),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(models.OaFlowCc.role_code).where(
+        models.OaFlowCc.department_id == department_id,
+        models.OaFlowCc.doc_type == doc_type))
+    return {"roles": [x for (x,) in r.all()]}
+
+
+class FlowCcIn(BaseModel):
+    department_id: int
+    doc_type: str
+    roles: list[str] = []
+
+
+@router.put("/flow-cc", response_model=schemas.Msg)
+async def save_flow_cc(
+    body: FlowCcIn,
+    current: models.User = Depends(require_roles()),
+    db: AsyncSession = Depends(get_db),
+):
+    """整组覆盖保存该 部门+单据类型 的自动抄送角色；改配置不影响已提交的申请。"""
+    cur = (await db.execute(select(models.OaFlowCc).where(
+        models.OaFlowCc.department_id == body.department_id,
+        models.OaFlowCc.doc_type == body.doc_type))).scalars().all()
+    for row in cur:
+        await db.delete(row)
+    roles = [r for r in dict.fromkeys(body.roles) if (r or "").strip()]
+    for rc in roles:
+        db.add(models.OaFlowCc(department_id=body.department_id,
+                               doc_type=body.doc_type, role_code=rc))
+    await db.commit()
+    return schemas.Msg(message=f"已保存自动抄送（{len(roles)} 个角色）")
+
+
 @router.get("/chains/overview")
 async def chains_overview(
     current: models.User = Depends(require_roles()),
@@ -437,6 +481,23 @@ async def create_request(
             cc_ids = list(valid)
             for uid in cc_ids:
                 db.add(models.OaRequestCc(request_id=req.id, user_id=uid))
+    # 🆕 #200 流程级固定抄送：该部门+单据类型配置的抄送角色 → 在职用户自动抄送（与手选合并去重）
+    fr = await db.execute(select(models.OaFlowCc.role_code).where(
+        models.OaFlowCc.department_id == body.department_id,
+        models.OaFlowCc.doc_type == body.doc_type))
+    cc_roles = [x for (x,) in fr.all()]
+    if cc_roles:
+        rids = [r for (r,) in (await db.execute(select(models.Role.id).where(
+            models.Role.code.in_(cc_roles)))).all()]
+        if rids:
+            sub = select(models.UserRole.user_id).where(models.UserRole.role_id.in_(rids))
+            aur = await db.execute(select(models.User.id).where(
+                models.User.is_active == True,  # noqa: E712
+                or_(models.User.role_id.in_(rids), models.User.id.in_(sub))))
+            for uid in aur.scalars().all():
+                if uid != current.id and uid not in cc_ids:
+                    cc_ids.append(uid)
+                    db.add(models.OaRequestCc(request_id=req.id, user_id=uid))
     await db.commit()
     req = await _fetch_request(db, req.id)
     await push_message(db, to_role=steps_cfg[0].approver_role, kind="info",
@@ -455,6 +516,35 @@ async def _led_department_ids(db: AsyncSession, current: models.User) -> list[in
         return []
     r = await db.execute(select(models.Department.id).where(models.Department.lead_role.in_(current.role_codes)))
     return [x for (x,) in r.all()]
+
+
+@router.delete("/requests/{rid}", response_model=schemas.Msg)
+async def delete_request(
+    rid: int,
+    current: models.User = Depends(require_roles()),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #199 管理层删除申请单（误提/测试单清理）。附件文件一并删除；
+    报销单对它的关联引用置空；审批步骤/抄送记录随级联删除。任意状态可删,操作留审计。"""
+    req = (await db.execute(select(models.OaRequest).where(
+        models.OaRequest.id == rid))).scalar_one_or_none()
+    if not req:
+        raise HTTPException(404, "申请不存在")
+    no, st = req.request_no, req.status
+    # 解除其它单(报销↔业务)对本单的引用
+    await db.execute(sa_update(models.OaRequest).where(
+        models.OaRequest.related_request_id == rid).values(related_request_id=None))
+    # 删附件(文件+记录)
+    ars = (await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "oa_request",
+        models.Attachment.biz_id == rid))).scalars().all()
+    for a in ars:
+        await delete_attachment_file(db, a)
+    await db.delete(req)
+    await db.commit()
+    await write_audit(db, user=current, action="oa_delete", target_type="oa_request",
+                      target_id=rid, detail=f"{no}(原状态:{st})")
+    return schemas.Msg(message=f"已删除申请 {no}")
 
 
 @router.get("/requests", response_model=list[schemas.OaRequestOut])

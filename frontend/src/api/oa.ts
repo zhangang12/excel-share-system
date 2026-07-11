@@ -60,6 +60,13 @@ export const oaApi = {
   chainSteps: (departmentId: number, docType: string) =>
     http.get<OaApprovalStep[]>('/oa/chains', { params: { department_id: departmentId, doc_type: docType } }).then(r => r.data),
   chainsOverview: () => http.get<OaChainOverviewRow[]>('/oa/chains/overview').then(r => r.data),
+  // 🆕 #200 流程级固定抄送(角色)
+  flowCc: (departmentId: number, docType: string) =>
+    http.get<{ roles: string[] }>('/oa/flow-cc', { params: { department_id: departmentId, doc_type: docType } }).then(r => r.data),
+  saveFlowCc: (departmentId: number, docType: string, roles: string[]) =>
+    http.put('/oa/flow-cc', { department_id: departmentId, doc_type: docType, roles }).then(r => r.data),
+  // 🆕 #199 管理层删除申请单
+  deleteRequest: (id: number) => http.delete(`/oa/requests/${id}`).then(r => r.data),
   createChainStep: (body: Partial<OaApprovalStep>) => http.post<OaApprovalStep>('/oa/chains', body).then(r => r.data),
   updateChainStep: (id: number, body: Partial<OaApprovalStep>) =>
     http.put<OaApprovalStep>(`/oa/chains/${id}`, body).then(r => r.data),

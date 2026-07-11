@@ -330,7 +330,38 @@ async function loadChainSteps() {
   try { chainSteps.value = await oaApi.chainSteps(chainDeptId.value as number, chainDocType.value) }
   finally { chainLoading.value = false }
 }
-watch([chainDeptId, chainDocType], loadChainSteps)
+// 🆕 #200 流程级固定抄送(角色):随部门+单据类型联动
+const flowCcRoles = ref<string[]>([])
+const flowCcSaving = ref(false)
+async function loadFlowCc() {
+  if (!chainDeptId.value || !chainDocType.value) { flowCcRoles.value = []; return }
+  try { flowCcRoles.value = (await oaApi.flowCc(chainDeptId.value as number, chainDocType.value)).roles }
+  catch { flowCcRoles.value = [] }
+}
+async function saveFlowCc() {
+  if (!chainDeptId.value || !chainDocType.value) { ElMessage.warning('请先选择部门和单据类型'); return }
+  flowCcSaving.value = true
+  try {
+    const r: any = await oaApi.saveFlowCc(chainDeptId.value as number, chainDocType.value, flowCcRoles.value)
+    ElMessage.success(r.message || '已保存')
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '保存失败') }
+  finally { flowCcSaving.value = false }
+}
+// 🆕 #199 管理层删除申请单
+async function deleteRequest(row: any) {
+  try {
+    await ElMessageBox.confirm(
+      `删除申请 ${row.request_no}（${row.requester_name} · ${STATUS_TEXT[row.status] || row.status}）？附件一并删除，不可恢复。`,
+      '删除申请单', { type: 'warning', confirmButtonText: '删除' })
+  } catch { return }
+  try {
+    const r: any = await oaApi.deleteRequest(row.id)
+    ElMessage.success(r.message || '已删除')
+    await loadList()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '删除失败') }
+}
+
+watch([chainDeptId, chainDocType], () => { loadChainSteps(); loadFlowCc() })
 // 🆕 已配置流程一览
 const chainOverview = ref<OaChainOverviewRow[]>([])
 async function loadChainOverview() {
@@ -486,8 +517,12 @@ onMounted(async () => {
           <el-table-column label="金额" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
           <el-table-column label="状态" width="100"><template #default="{ row }"><StatusPill :text="STATUS_TEXT[row.status]" :variant="STATUS_VARIANT[row.status]" /></template></el-table-column>
           <el-table-column label="当前环节" width="110"><template #default="{ row }">{{ curStepLabel(row) }}</template></el-table-column>
-          <el-table-column label="操作" width="90" fixed="right" :show-overflow-tooltip="false">
-            <template #default="{ row }"><el-button size="small" link type="primary" @click="openDetail(row.id)">查看</el-button></template>
+          <el-table-column label="操作" width="130" fixed="right" :show-overflow-tooltip="false">
+            <template #default="{ row }">
+              <el-button size="small" link type="primary" @click="openDetail(row.id)">查看</el-button>
+              <!-- 🆕 #199 管理层删除(误提/测试单清理) -->
+              <el-button size="small" link type="danger" @click="deleteRequest(row)">删除</el-button>
+            </template>
           </el-table-column>
           <template #empty><EmptyHint text="暂无申请记录" /></template>
         </el-table>
@@ -639,6 +674,19 @@ onMounted(async () => {
             </el-table-column>
             <template #empty><EmptyHint text="该部门/单据类型尚未配置审批流程" size="sm" /></template>
           </el-table>
+          <!-- 🆕 #200 流程级固定抄送:该部门+单据类型的申请提交时自动抄送这些角色(与手选抄送合并) -->
+          <div class="form-section-title" style="margin-top:16px">自动抄送（选填）</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <el-select v-model="flowCcRoles" multiple filterable clearable collapse-tags collapse-tags-tooltip
+                       :disabled="!chainDeptId || !chainDocType"
+                       placeholder="选择自动抄送的角色（提交时通知其在职用户,不参与审批）" style="flex:1;max-width:520px">
+              <el-option v-for="r in rolesList" :key="r.code" :label="r.name" :value="r.code" />
+            </el-select>
+            <el-button type="primary" plain :loading="flowCcSaving" :disabled="!chainDeptId || !chainDocType"
+                       @click="saveFlowCc">保存抄送</el-button>
+            <span class="muted small">改配置只影响之后提交的申请</span>
+          </div>
+
           <div class="form-section-title" style="margin-top:16px">{{ stepEditId ? '编辑步骤' : '新增步骤' }}</div>
           <el-form :model="stepForm" label-position="top">
             <el-row :gutter="16">

@@ -869,6 +869,18 @@ class OaApprovalStep(Base):
     department: Mapped["Department"] = relationship(lazy="joined")
 
 
+class OaFlowCc(Base):
+    """🆕 #200 审批流程级固定抄送：某部门+单据类型 的申请提交时，自动抄送给这些角色的
+    在职用户（与提交时手选的抄送人合并去重）。管理层在「审批流程配置」维护。"""
+    __tablename__ = "oa_flow_cc"
+    __table_args__ = (UniqueConstraint("department_id", "doc_type", "role_code", name="uq_oa_flow_cc"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"), index=True)
+    doc_type: Mapped[str] = mapped_column(String(24), index=True)
+    role_code: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class OaRequest(Base):
     """OA 申请单（业务申请/报销申请/采购申请，共用一张表，type-specific 字段落 detail JSON）。"""
     __tablename__ = "oa_requests"
