@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>财务部新功能说明 · 同辉项目管理系统</title>
+<style>
+  :root { --ink:#1f2937; --muted:#6b7280; --faint:#9ca3af; --line:#e5e7eb;
+          --blue:#2563eb; --green:#059669; --red:#dc2626; --amber:#b45309; --bg:#f3f5f9; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; max-width: 980px;
+         margin: 24px auto; padding: 0 16px; color: var(--ink); background: var(--bg); line-height: 1.7; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 0; display: flex; align-items: center; gap: 8px; }
+  h3 { font-size: 15.5px; margin: 18px 0 6px; color: var(--ink); }
+  .meta { color: var(--faint); font-size: 13px; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 18px 22px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .card > header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+                   border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 12px; }
+  .tab-chip { font-size: 12px; font-weight: 600; color: var(--blue); background: #eff6ff;
+              border: 1px solid #bfdbfe; padding: 2px 10px; border-radius: 999px; white-space: nowrap; }
+  .oneliner { color: var(--muted); font-size: 13.5px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 8px 0; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: #f8fafc; font-weight: 600; white-space: nowrap; }
+  td.k { white-space: nowrap; font-weight: 600; color: var(--muted); width: 120px; }
+  ul, ol { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+  .warn { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+          padding: 10px 14px; font-size: 13.5px; color: var(--amber); margin: 10px 0; }
+  .tip  { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
+          padding: 10px 14px; font-size: 13.5px; color: #166534; margin: 10px 0; }
+  .formula { background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;
+             padding: 10px 14px; font-size: 14px; margin: 10px 0; font-weight: 600; text-align: center; }
+  .red { color: var(--red); font-weight: 600; }
+  .green { color: var(--green); font-weight: 600; }
+  code { background: #f3f4f6; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; color: #4b5563; }
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+  .toc a { font-size: 13px; color: var(--blue); text-decoration: none; background: #fff;
+           border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; }
+  .toc a:hover { border-color: var(--blue); }
+  footer { color: var(--faint); font-size: 12.5px; text-align: center; margin: 24px 0 12px; }
+  @media print { body { background: #fff; margin: 0; } .card { box-shadow: none; page-break-inside: avoid; } .toc { display: none; } }
+</style>
+</head>
+<body>
+
+<h1>💼 财务部新功能说明</h1>
+<div class="meta">同辉项目管理系统 · 2026-07-11 · 适用对象：财务部 / 管理层</div>
+
+<div class="card" style="padding:14px 22px">
+  <b>一句话总览：</b>财务部这次新增了 4 个页签，回答四个一直答不上来的问题——
+  <b>钱花哪了</b>（支出总览）、<b>哪个项目赚钱哪个亏钱</b>（项目毛利）、
+  <b>成本数字可不可信</b>（成本审计）、<b>现金会不会断</b>（资金面板）。
+  全部基于系统里已有的数据自动计算，<b>不需要任何额外录入</b>。
+  <div class="toc">
+    <a href="#expense">💸 支出总览</a>
+    <a href="#pnl">📈 项目毛利</a>
+    <a href="#audit">🕳️ 成本审计</a>
+    <a href="#fund">💰 资金面板</a>
+    <a href="#due">🏷️ 账期到期标签</a>
+    <a href="#alerts">🔔 自动提醒</a>
+    <a href="#perm">🔐 权限与准备</a>
+  </div>
+</div>
+
+<!-- ═══════════════ 支出总览 ═══════════════ -->
+<article class="card" id="expense">
+  <header>
+    <h2>💸 支出总览</h2>
+    <span class="tab-chip">财务部 → 支出总览</span>
+    <span class="oneliner">全公司的钱花在哪，按月一张表看全</span>
+  </header>
+  <table>
+    <tr><td class="k">看什么</td><td>选定年份的 <b>4 个合计</b>（年总支出 / 采购付款 / 安装售后费用 / OA 业务报销）+ <b>逐月明细表</b>。</td></tr>
+    <tr><td class="k">口径</td><td>采购付款按<b>付款日期</b>归月 + 安装/售后费用（售后部<b>已审批</b>的）+ OA 业务/报销费用（<b>已审批</b>，财务核定金额优先于申请金额）。</td></tr>
+    <tr><td class="k">防重复</td><td>OA 里的「采购申请」大类<b>不计</b>（钱已经在采购付款里）；仓库材料领用也不重复计（钱在采购付款里，领用是项目成本口径，见项目毛利）。</td></tr>
+  </table>
+  <div class="tip">表格下方如出现黄色提示「另有 ¥X 已付款但未记付款日期」——说明有采购付款没填付款日期，进不了月份表。到采购明细补上付款日期即可。</div>
+</article>
+
+<!-- ═══════════════ 项目毛利 ═══════════════ -->
+<article class="card" id="pnl">
+  <header>
+    <h2>📈 项目毛利（红黑榜）</h2>
+    <span class="tab-chip">财务部 → 项目毛利</span>
+    <span class="oneliner">哪个项目赚钱、哪个项目亏钱，一屏排出来</span>
+  </header>
+  <div class="formula">毛利 = 合同额 − 材料领料成本 − 直发/外协采购 − 安装/售后费用</div>
+  <table>
+    <tr><th>成本腿</th><th>怎么算</th></tr>
+    <tr><td>材料领料成本</td><td>仓库出库到该项目的数量 × 物料<b>入库加权平均价</b></td></tr>
+    <tr><td>直发/外协采购</td><td>没经过仓库过账的采购收货金额，按订单编号挂到项目（外协加工费、直发件都在这条腿）</td></tr>
+    <tr><td>安装/售后费用</td><td>售后部<b>已审批</b>的安装/售后费用</td></tr>
+  </table>
+  <p style="font-size:13.5px;color:var(--muted);margin:6px 0">
+    ▸ 同一笔钱只走一条腿：经仓库收货的采购走「领料」腿，不会和「直发采购」重复计算。</p>
+  <h3>怎么用</h3>
+  <ul>
+    <li><b>默认亏得最多的排最前</b>（红榜在上），<span class="red">亏损行整行淡红</span>；点列头可按合同额/成本/毛利/毛利率重新排序。</li>
+    <li>左上角下拉可切换 <b>按客户 / 客户类型 / 销售员 / 订单类型 / 机型 / 年份 汇总</b>——比如按机型看哪类设备总是亏。</li>
+    <li>每行带「<b>成本完整度</b>」标签：<span class="green">完整</span> = 数字可信；
+        <b>领料缺价 N 项</b> = 有物料没入库价格，成本被低估（去成本审计页清理）；
+        <b>无销售台账 / 合同额为 0</b> = 收入侧缺数。</li>
+    <li>表格下方「<b>售后侵蚀 Top5</b>」：售后费 ÷ 合同额 排名（可切机型/客户），定位返修高发的设备和客户。</li>
+  </ul>
+  <div class="warn">⚠️ 口径必读：这是「<b>材料边际贡献</b>」，<b>不含人工工资、运费</b>等系统外成本。
+    排名用于<b>项目之间比较</b>非常可靠，但绝对值 ≠ 净利润——费工不费料的深度定制项目，实际盈利会比榜上显示的差。</div>
+</article>
+
+<!-- ═══════════════ 成本审计 ═══════════════ -->
+<article class="card" id="audit">
+  <header>
+    <h2>🕳️ 成本审计</h2>
+    <span class="tab-chip">财务部 → 成本审计</span>
+    <span class="oneliner">毛利榜可信度的前提：三张"漏钱清单"不清零，毛利就系统性虚高</span>
+  </header>
+  <p style="font-size:13.5px">页面顶部常驻两个数：<b>本月未归集到项目的成本</b> 和 <b>累计未归集</b>。目标是把它们清到零。</p>
+  <table>
+    <tr><th>清单</th><th>是什么</th><th>怎么修</th></tr>
+    <tr>
+      <td>🕳 无主领料</td>
+      <td>出库时没挂项目的领料——这部分材料钱不进任何项目成本，在全系统"蒸发"</td>
+      <td>每行右侧直接<b>补选项目 → 点「归集」</b>，成本立即回到该项目毛利</td>
+    </tr>
+    <tr>
+      <td>💸 无价入库</td>
+      <td>仓库收货时没填价格的流水——压低库存金额和项目材料成本</td>
+      <td>标「可回填」的（采购后来补了价）点顶部「<b>⚡ 一键回填</b>」；标「采购也没价」的先去采购明细补单价（现在补价会<b>自动同步</b>到收货流水）</td>
+    </tr>
+    <tr>
+      <td>👻 孤儿采购</td>
+      <td>订单编号既不是项目编号、也不在字典里的采购——成本挂空</td>
+      <td>到采购明细把订单编号改对（下单入口已改为只能下拉选择，<b>新的不会再产生</b>）</td>
+    </tr>
+    <tr>
+      <td>⚖️ 双口径对账</td>
+      <td>逐项目对比「采购收货金额」vs「仓库领料成本」，差异倒序</td>
+      <td>差异大 = 漏归集重灾区：材料还压在库存没领，或者领了没挂项目</td>
+    </tr>
+  </table>
+  <h3>配套的三个"堵漏"机制（自动生效）</h3>
+  <ul>
+    <li>仓库<b>出库必须选项目</b>；确属非项目领用（车间耗材等）要勾选「非项目领用」并填原因。</li>
+    <li>采购<b>补价自动回写</b>收货流水——不再产生新的无价入库。</li>
+    <li>冲红口径修正：被冲红的单据不再计入加权价和项目成本。</li>
+  </ul>
+</article>
+
+<!-- ═══════════════ 资金面板 ═══════════════ -->
+<article class="card" id="fund">
+  <header>
+    <h2>💰 资金面板</h2>
+    <span class="tab-chip">财务部 → 资金面板</span>
+    <span class="oneliner">账面有利润、银行没有钱？四个现金盲区一屏看清</span>
+  </header>
+  <p style="font-size:13.5px">顶部 4 个数：<span class="red">逾期应收</span> / 预付敞口 / <span class="red">逾期应付</span> / 呆滞库存。下设五个子页：</p>
+
+  <h3>⏰ 逾期应收 —— 该找谁催钱</h3>
+  <ul>
+    <li>尾款按约定日、发货款按发货日计龄，<b>30 / 60 / 90 / 90+ 天</b>分档；按<b>客户</b>和<b>销售</b>各排 Top10。</li>
+    <li>系统会<b>自动每周催办</b>逾期尾款并逐级升级（见下方「自动提醒」）。</li>
+  </ul>
+
+  <h3>💳 预付敞口 —— 押在供应商那里的钱</h3>
+  <ul><li>已付款但货未到的采购，按供应商列出押款金额和已押天数（超 30 天标红）——照着催交货。</li></ul>
+
+  <h3>📆 应付账期 —— 有账期别提前付，逾期未付防断供</h3>
+  <ul>
+    <li>到期日 = <b>到货日期 + 供应商账期天数</b>。左边「逾期未付」（断供风险），右边「14 天内到期」（排程付款）。</li>
+    <li>「历史提前付」统计：有账期却提前付掉的金额 + 平均白白放弃了多少天免息——这是纯送给供应商的资金占用。</li>
+    <li>下方黄条提示哪些供应商<b>没维护账期天数</b>（算不了到期日），请在供应商档案补上。</li>
+  </ul>
+
+  <h3>🧊 呆滞库存 —— 被锁死的现金</h3>
+  <ul>
+    <li>超过 <b>90 / 180 / 365 天</b>没有出库动销的存货 × 加权均价，从大到小排；「从未出库」单独标红。</li>
+    <li>每行带<b>采购回溯</b>：这批货当初是谁、为哪个项目买的。</li>
+    <li>附「安全库存体检」：安全库存定得远超月均用量的（压钱型）、现存常年低于安全线的（常报警型）。</li>
+  </ul>
+
+  <h3>📉 13 周现金排程 —— 未来三个月的钱够不够</h3>
+  <ul>
+    <li><b>预计流入</b> = 有约定日期的尾款按周排（已逾期的记在「已到期/随时」行）；
+        <b>预计流出</b> = 已批未付请款 + 应付到期 + OA 待付款（已进请款单的应付不重复计）。</li>
+    <li><b>累计净额为负的周整行标红并打「缺口」标签</b>——提前看到哪一周可能断，要么提前催收，要么把付款往后排。</li>
+    <li>表下另列：没有约定日期的已发货应收（催回即是流入）。</li>
+  </ul>
+  <div class="warn">⚠️ 局限：系统目前没有「实际到账流水」登记（属规划第三档），流入侧是按合同约定日的<b>应</b>收，不是实收。约定日期不填、流入就排不进来。</div>
+</article>
+
+<!-- ═══════════════ 账期到期标签 ═══════════════ -->
+<article class="card" id="due">
+  <header>
+    <h2>🏷️ 请款审批 / 付款页的「账期到期」标签</h2>
+    <span class="tab-chip">财务部 → 请款审批 · 付款</span>
+    <span class="oneliner">按到期日排程付款，不用去翻供应商档案心算</span>
+  </header>
+  <p style="font-size:13.5px">每张请款单现在多一列「账期到期」（= 明细最早到货日 + 该供应商账期天数）：</p>
+  <table>
+    <tr><th>标签</th><th>含义</th><th>建议动作</th></tr>
+    <tr><td><span class="red">逾期 N 天</span></td><td>已过应付到期日</td><td>优先付，防断供</td></tr>
+    <tr><td><span style="color:var(--amber);font-weight:600">距到期 ≤ 7 天 / 今天到期</span></td><td>快到了</td><td>安排进本周付款</td></tr>
+    <tr><td><span class="green">距到期 N 天（&gt;7）</span></td><td>还有账期</td><td>不必提前付——免息资金先留在手里</td></tr>
+    <tr><td>未维护账期</td><td>供应商档案没填账期天数</td><td>补档案后自动出现倒计时</td></tr>
+  </table>
+</article>
+
+<!-- ═══════════════ 自动提醒 ═══════════════ -->
+<article class="card" id="alerts">
+  <header>
+    <h2>🔔 两个自动提醒（不用人盯）</h2>
+    <span class="oneliner">系统后台自动扫描，推送到站内消息 / 企业微信</span>
+  </header>
+  <table>
+    <tr><th>提醒</th><th>触发规则</th><th>推给谁</th></tr>
+    <tr>
+      <td>尾款逾期<b>每周升级催办</b></td>
+      <td>尾款过了约定日仍未收：每 7 天催一次</td>
+      <td>逾期第 1 周 → 销售本人；第 2 周 → 加抄销售主管；第 3 周起 → 加抄管理层，收回为止<br>
+          <span style="color:var(--muted);font-size:12.5px">（到期前 14 天的一次性提前提醒保持不变）</span></td>
+    </tr>
+    <tr>
+      <td>售后侵蚀预警</td>
+      <td>售后费用审批通过时，该项目<b>累计售后费 ÷ 合同额 &gt; 5%</b></td>
+      <td>管理层（提示关注该项目/机型的质量成本）</td>
+    </tr>
+  </table>
+</article>
+
+<!-- ═══════════════ 权限与准备 ═══════════════ -->
+<article class="card" id="perm">
+  <header>
+    <h2>🔐 谁能看 & 用前准备</h2>
+  </header>
+  <h3>权限</h3>
+  <ul>
+    <li>四个新页签对 <b>财务 / 财务主管</b> 角色开放，<b>管理层</b>（admin/manager）全部可见。</li>
+    <li>管理员可在「用户管理 → 二级菜单权限」按账号精细控制某人能看哪几个页签。</li>
+  </ul>
+  <h3>数字要准，四件事要做到（数据质量清单）</h3>
+  <ol>
+    <li><b>供应商档案补「账期天数」</b>——应付到期、账期标签、13 周排程都靠它（一次性补齐即可）。</li>
+    <li><b>采购付款要填付款日期</b>——不填进不了支出总览月份表。</li>
+    <li><b>出库必须挂项目</b>（系统已强制）——历史无主领料在成本审计页尽快归集。</li>
+    <li><b>销售台账的尾款约定日期要填</b>——不填就没有账龄、没有催办、进不了现金排程。</li>
+  </ol>
+  <div class="tip">建议节奏：每周一打开「资金面板」过一遍逾期应收和 14 天内到期应付；每月初看「项目毛利」和「支出总览」；「成本审计」清单清到零后，毛利榜数字才完全可信。</div>
+</article>
+
+<footer>同辉智能装备（无锡）有限公司 · 项目管理系统 · 财务部功能说明 · 更新于 2026-07-11</footer>
+</body>
+</html>
