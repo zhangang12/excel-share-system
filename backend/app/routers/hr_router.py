@@ -166,6 +166,32 @@ async def list_employees(
     return RosterOut(rows=[_emp_out(e, users) for e in emps], stats=stats)
 
 
+class BindableUserOut(BaseModel):
+    id: int
+    label: str                       # 显示名：姓名（用户名）
+    username: str
+    bound_to: Optional[str] = None   # 已被别的员工绑定 → 前端禁选
+
+
+@router.get("/bindable-users", response_model=List[BindableUserOut])
+async def bindable_users(
+    _: models.User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+):
+    """可绑定的系统登录账号（供员工表单「登录账号」选择器）；标注已被别的员工绑定的账号。"""
+    urs = list((await db.execute(select(models.User).where(
+        models.User.is_active == True).order_by(models.User.id))).scalars().all())  # noqa: E712
+    bemps = list((await db.execute(select(models.Employee).where(
+        models.Employee.user_id.isnot(None)))).scalars().all())
+    bound = {e.user_id: e.name for e in bemps}
+    out: List[BindableUserOut] = []
+    for u in urs:
+        nm = u.full_name or u.username
+        label = f"{nm}（{u.username}）" if (u.full_name and u.full_name != u.username) else u.username
+        out.append(BindableUserOut(id=u.id, label=label, username=u.username, bound_to=bound.get(u.id)))
+    return out
+
+
 async def _apply_emp(db: AsyncSession, e: models.Employee, body: EmployeeIn,
                      current: models.User) -> None:
     """公共赋值 + 离职联动：状态改离职且挂了登录账号 → 提醒 admin 停用账号。"""
@@ -184,12 +210,25 @@ async def _apply_emp(db: AsyncSession, e: models.Employee, body: EmployeeIn,
                            biz_type="employee", biz_id=e.id)
 
 
+async def _check_user_unique(db: AsyncSession, user_id: Optional[int], exclude_eid: Optional[int]) -> None:
+    """🆕 登录账号唯一：一个系统账号只能绑一个员工。在员工写入前调用（避免半成品被 autoflush）。"""
+    if user_id is None:
+        return
+    dq = select(models.Employee).where(models.Employee.user_id == user_id)
+    if exclude_eid is not None:
+        dq = dq.where(models.Employee.id != exclude_eid)
+    dup = (await db.execute(dq)).scalars().first()
+    if dup:
+        raise HTTPException(400, f"该登录账号已绑定到员工「{dup.name}」，一个账号只能绑一个员工")
+
+
 @router.post("/employees", response_model=EmployeeOut)
 async def create_employee(
     body: EmployeeIn,
     current: models.User = Depends(require_roles(*_HR)),
     db: AsyncSession = Depends(get_db),
 ):
+    await _check_user_unique(db, body.user_id, None)
     e = models.Employee(emp_no=await _next_emp_no(db))   # 🆕 #202 自动分配工号
     db.add(e)
     await _apply_emp(db, e, body, current)
@@ -209,6 +248,7 @@ async def update_employee(
         models.Employee.id == eid))).scalar_one_or_none()
     if not e:
         raise HTTPException(404, "员工不存在")
+    await _check_user_unique(db, body.user_id, eid)
     await _apply_emp(db, e, body, current)
     await write_audit(db, user=current, action="hr_emp_update", target_type="employee",
                       target_id=e.id, detail=e.name)

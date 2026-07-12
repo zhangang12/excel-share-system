@@ -28,6 +28,14 @@ async function loadDepts() {
   catch { depts.value = [] }
 }
 
+// 🆕 可绑定的系统登录账号（员工↔账号）：给员工表单「登录账号」选择器用
+interface BindableUser { id: number; label: string; username: string; bound_to?: string | null }
+const bindableUsers = ref<BindableUser[]>([])
+async function loadBindableUsers() {
+  try { bindableUsers.value = (await http.get<BindableUser[]>('/hr/bindable-users')).data }
+  catch { bindableUsers.value = [] }
+}
+
 // ===== 花名册 =====
 const emps = ref<Emp[]>([])
 const stats = ref<RosterStats | null>(null)
@@ -213,7 +221,7 @@ function onTab(name: string) {
   else if (name === 'salary') loadSalary()
 }
 
-onMounted(async () => { await loadDepts(); await loadEmps() })
+onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers() })
 </script>
 
 <template>
@@ -413,6 +421,15 @@ onMounted(async () => { await loadDepts(); await loadEmps() })
           <el-form-item label="紧急联系人" style="flex:1"><el-input v-model="empForm.emergency_contact" maxlength="64" placeholder="姓名/关系" /></el-form-item>
           <el-form-item label="紧急联系人电话" style="flex:1"><el-input v-model="empForm.emergency_contact_phone" maxlength="32" placeholder="联系电话" /></el-form-item>
         </div>
+        <el-form-item label="登录账号（绑定系统账号：离职自动提醒停用；将来可让本人登录自助查考勤/工资）">
+          <el-select v-model="empForm.user_id" filterable clearable placeholder="选择该员工的系统登录账号（选填，未登录系统的车间工人可不绑）" style="width:100%">
+            <el-option v-for="u in bindableUsers" :key="u.id" :label="u.label" :value="u.id"
+                       :disabled="!!u.bound_to && u.id !== empForm.user_id">
+              <span>{{ u.label }}</span>
+              <span v-if="u.bound_to && u.id !== empForm.user_id" style="float:right;color:var(--el-text-color-secondary);font-size:12px">已绑 {{ u.bound_to }}</span>
+            </el-option>
+          </el-select>
+        </el-form-item>
         <el-form-item label="备注"><el-input v-model="empForm.note" type="textarea" :rows="2" /></el-form-item>
       </el-form>
       <template #footer>
