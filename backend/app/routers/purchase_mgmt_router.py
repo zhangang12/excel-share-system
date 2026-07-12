@@ -1464,6 +1464,10 @@ async def receive_item(
         raise HTTPException(400, "请填写到货日期")
     item.delivery_note_no = body.delivery_note_no
     item.arrival_date = body.arrival_date
+    # 🆕 #204 库位改由仓库收货时填（取代采购下单填）；填了才写，不覆盖已有为空
+    _loc = (body.stock_location or "").strip() or None
+    if _loc:
+        item.stock_location = _loc
     if body.unit_price is not None:
         item.unit_price = body.unit_price
     if body.received_amount is not None:
@@ -1522,9 +1526,12 @@ async def receive_batch(
                 it.received_amount = ln.received_amount
             elif it.qty and it.unit_price:
                 it.received_amount = round(it.qty * it.unit_price, 4)
+    _loc = (body.stock_location or "").strip() or None   # 🆕 #204 整批一个库位,仓库收货时填
     for it in ordered:
         it.delivery_note_no = body.delivery_note_no
         it.arrival_date = body.arrival_date
+        if _loc:
+            it.stock_location = _loc
         await _finish_receive(db, it, body.arrival_date, current)
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids)))

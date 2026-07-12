@@ -157,6 +157,7 @@ class OrderOut(BaseModel):
     output_files: list[AttachmentOut] = []
     produce_groups: Optional[list[ProduceGroupBrief]] = None  # 🆕 仅生产单：钣金/装配两组预计完成
     standard_datasheet_id: Optional[int] = None  # 🆕 #6 所属项目「标准件清单」数据表 id（电工部只读引用）
+    material_locations: list[str] = []  # 🆕 #204 本项目材料所在库位（仓库收货入库时填,同步到设计/电工工作台）
 
 
 class OrderOptionUser(BaseModel):
@@ -1194,6 +1195,7 @@ class PurchaseReceiveIn(BaseModel):
     arrival_date: Optional[str] = None
     unit_price: Optional[float] = None
     received_amount: Optional[float] = None
+    stock_location: Optional[str] = None  # 🆕 #204 库位改由仓库收货时填（取代采购下单填）
 
 
 class BatchReceiveLine(BaseModel):
@@ -1209,6 +1211,7 @@ class BatchReceiveIn(BaseModel):
     arrival_date: str
     total_amount: Optional[float] = None
     lines: list[BatchReceiveLine] = Field(default_factory=list)
+    stock_location: Optional[str] = None  # 🆕 #204 库位改由仓库收货时填（整批一个）
 
 
 class PurchaseItemOut(BaseModel):

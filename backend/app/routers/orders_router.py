@@ -233,7 +233,8 @@ def _order_to_out(o: models.DeptOrder, files: dict[str, list],
                   notify_name: Optional[str] = None,
                   produce_groups: Optional[list] = None,
                   standard_datasheet_id: Optional[int] = None,
-                  packlist_status: Optional[str] = None) -> schemas.OrderOut:
+                  packlist_status: Optional[str] = None,
+                  material_locations: Optional[list] = None) -> schemas.OrderOut:
     eff, on_time, _od = compute_efficiency(o.start_date, o.due_date, o.done_date)
     today_s = date.today().isoformat()
     overdue = bool(
@@ -261,6 +262,7 @@ def _order_to_out(o: models.DeptOrder, files: dict[str, list],
         produce_groups=produce_groups,
         standard_datasheet_id=standard_datasheet_id,
         packlist_status=packlist_status,
+        material_locations=material_locations or [],
     )
 
 
@@ -366,9 +368,22 @@ async def list_orders(
         for pid_, st_ in plr.all():
             packlist_map[pid_] = st_
 
+    # 🆕 #204 各项目材料库位（入库流水去过的库位,去重保序）→ 同步到设计/电工/生产任务跟踪表
+    loc_map: dict[int, list[str]] = {}
+    if proj_ids:
+        lr = await db.execute(select(models.WhTxn.project_id, models.WhTxn.location).where(
+            models.WhTxn.project_id.in_(proj_ids), models.WhTxn.direction == "in",
+            models.WhTxn.is_reversal == False,  # noqa: E712
+            models.WhTxn.location.isnot(None)).order_by(models.WhTxn.id))
+        for pid_, loc_ in lr.all():
+            loc_ = (loc_ or "").strip()
+            if loc_ and loc_ not in loc_map.setdefault(pid_, []):
+                loc_map[pid_].append(loc_)
+
     return [
         _order_to_out(o, files[o.id], names.get(o.notify_user_id), pg_map.get(o.id),
-                      std_map.get(o.project_id), packlist_map.get(o.project_id))
+                      std_map.get(o.project_id), packlist_map.get(o.project_id),
+                      loc_map.get(o.project_id))
         for o in orders
     ]
 

@@ -409,6 +409,7 @@ async function uploadReceipt(itemId: number, file: File) {
 }
 async function submitReceive() {
   if (!recvForm.arrival_date) { ElMessage.warning('请填写到货日期'); return }
+  if (!recvForm.stock_location) { ElMessage.warning('请选择库位（这批货放到哪个库；会同步到采购明细/装配/钣金/设计/电工）'); return }
   recvSaving.value = true
   try {
     await http.put(`/purchase-mgmt/items/${recvForm.id}/receive`, {
@@ -416,6 +417,7 @@ async function submitReceive() {
       arrival_date: recvForm.arrival_date,
       unit_price: recvForm.unit_price,
       received_amount: recvForm.received_amount,
+      stock_location: recvForm.stock_location || null,   // 🆕 #204 库位改由收货时填
     })
     if (recvReceiptFile.value) await uploadReceipt(recvForm.id, recvReceiptFile.value)
     ElMessage.success('已确认收货')
@@ -439,7 +441,7 @@ function onRecvSelect(rows: RecvItem[]) { recvSelected.value = rows }
 const batchRecvVisible = ref(false)
 const batchRecvSaving = ref(false)
 const batchRecvMode = ref<'total' | 'lines'>('lines')   // #1：去掉「合并总价按数量分摊」，只逐行填价
-const batchRecvForm = reactive({ delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null as number | null })
+const batchRecvForm = reactive({ delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null as number | null, stock_location: '' as string | null })
 const batchRecvLines = ref<{ item_id: number; item_name: string; spec?: string | null; qty: number | null; unit_price: number | null; received_amount: number | null }[]>([])
 const batchReceiptFile = ref<File | null>(null)
 function pickBatchReceipt() {
@@ -458,7 +460,7 @@ function splitShare(line: { qty: number | null }): number {
 function openBatchReceive() {
   if (recvSelected.value.length < 1) { ElMessage.info('请先在列表勾选要合并收货的明细'); return }
   batchRecvMode.value = 'lines'
-  Object.assign(batchRecvForm, { delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null })
+  Object.assign(batchRecvForm, { delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null, stock_location: null })
   batchReceiptFile.value = null
   batchRecvLines.value = recvSelected.value.map(i => ({
     item_id: i.id, item_name: i.item_name, spec: i.spec, qty: i.qty ?? null,
@@ -473,7 +475,8 @@ function openBatchReceiveGroup(row: any) {
   batchRecvMode.value = 'lines'
   const dnote = row.delivery_note_no && row.delivery_note_no !== '多个' ? row.delivery_note_no : ''
   const adate = row.arrival_date && row.arrival_date !== '多个' ? row.arrival_date : new Date().toISOString().slice(0, 10)
-  Object.assign(batchRecvForm, { delivery_note_no: dnote, arrival_date: adate, total_amount: null })
+  const rloc = row.stock_location && row.stock_location !== '多个' ? row.stock_location : null
+  Object.assign(batchRecvForm, { delivery_note_no: dnote, arrival_date: adate, total_amount: null, stock_location: rloc })
   batchReceiptFile.value = null
   batchRecvLines.value = children.map(i => ({
     item_id: i.id, item_name: i.item_name, spec: i.spec, qty: i.qty ?? null,
@@ -483,12 +486,14 @@ function openBatchReceiveGroup(row: any) {
 }
 async function submitBatchReceive() {
   if (!batchRecvForm.arrival_date) { ElMessage.warning('请填写到货日期'); return }
+  if (!batchRecvForm.stock_location) { ElMessage.warning('请选择库位（整批放到哪个库；会同步到采购明细/装配/钣金/设计/电工）'); return }
   batchRecvSaving.value = true
   try {
     const body: any = {
       item_ids: batchRecvLines.value.map(l => l.item_id),
       delivery_note_no: batchRecvForm.delivery_note_no || null,
       arrival_date: batchRecvForm.arrival_date,
+      stock_location: batchRecvForm.stock_location || null,   // 🆕 #204 整批一个库位,收货时填
     }
     body.lines = batchRecvLines.value.map(l => ({ item_id: l.item_id, unit_price: l.unit_price, received_amount: l.received_amount }))
     await http.post('/purchase-mgmt/items/receive-batch', body)
@@ -1319,7 +1324,6 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         <div><span class="k">供应商</span>{{ recvForm.supplier_name }}</div>
         <div><span class="k">物料</span>{{ recvForm.item_name }}<span v-if="recvForm.spec"> · {{ recvForm.spec }}</span></div>
         <div><span class="k">数量</span>{{ recvForm.qty ?? '—' }}</div>
-        <div><span class="k">库位</span><b v-if="recvForm.stock_location" style="color:var(--el-color-primary)">{{ recvForm.stock_location }}</b><span v-else class="muted">未填（采购下单未指定）</span></div>
       </div>
       <el-form label-position="top" style="margin-top:6px">
         <div class="frow">
@@ -1330,6 +1334,12 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-date-picker v-model="recvForm.arrival_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
           </el-form-item>
         </div>
+        <!-- 🆕 #204 库位统一在收货时填(取代采购下单填);填后同步采购明细/装配/钣金/设计/电工 -->
+        <el-form-item label="库位（放到哪个库）" required>
+          <el-select v-model="recvForm.stock_location" filterable clearable placeholder="选择库位（库位管理里维护）" style="width:100%">
+            <el-option v-for="l in enabledLocations" :key="l.id" :label="l.name" :value="l.name" />
+          </el-select>
+        </el-form-item>
         <div class="frow">
           <el-form-item label="单价（后填价格在此补）">
             <el-input-number v-model="recvForm.unit_price" :min="0" :precision="4" :controls="false" style="width:100%" @change="onRecvCalc" />
@@ -1361,6 +1371,12 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-date-picker v-model="batchRecvForm.arrival_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
           </el-form-item>
         </div>
+        <!-- 🆕 #204 库位统一在收货时填(整批一个);填后同步采购明细/装配/钣金/设计/电工 -->
+        <el-form-item label="库位（整批放到哪个库）" required>
+          <el-select v-model="batchRecvForm.stock_location" filterable clearable placeholder="选择库位（库位管理里维护）" style="width:100%">
+            <el-option v-for="l in enabledLocations" :key="l.id" :label="l.name" :value="l.name" />
+          </el-select>
+        </el-form-item>
         <div class="muted small" style="margin:2px 0 8px">逐行填单价/收货金额（单价可留空，货到再补）。</div>
       </el-form>
       <el-table show-overflow-tooltip :data="batchRecvLines" size="small" border max-height="34vh">

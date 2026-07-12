@@ -658,7 +658,6 @@ function onLineCalc(l: OrderLine) {
 
 async function saveOrder() {
   if (!orderForm.supplier_id) { ElMessage.error('请选择供应商'); return }
-  if (!orderForm.stock_location.trim()) { ElMessage.error('请填写库位（这批货收货后放到哪个库）'); return }
   const lines = orderForm.lines.filter(l => l.item_name.trim())
   if (!lines.length) { ElMessage.error('请至少填写一行零件（名称必填）'); return }
   orderSaving.value = true
@@ -668,7 +667,7 @@ async function saveOrder() {
       delivery_date: orderForm.delivery_date || null,
       contract_no: orderForm.contract_no || null,
       project_code: orderForm.project_code || null,
-      stock_location: orderForm.stock_location.trim() || null,
+      stock_location: null,   // 🆕 #204 采购下单不再填库位,改由仓库收货时填
       payment_method: orderForm.payment_method || null,
       prepay_ratio: isPrepayMethod(orderForm.payment_method) ? orderForm.prepay_ratio : null,
       lines: lines.map(l => ({
@@ -1086,7 +1085,6 @@ async function submitListOrder() {
     return
   }
   // 🆕 A5：勾选了却没选供应商的行，直接拦截报错
-  if (!listOrderForm.stock_location.trim()) { ElMessage.error('请填写库位（这批货收货后放到哪个库）'); return }
   const noSup = sel.filter(r => !r._supplier_id)
   if (noSup.length) {
     ElMessage.error(`有 ${noSup.length} 行未选供应商：${noSup.map(b => b.item_name).slice(0, 3).join('、')}${noSup.length > 3 ? ' 等' : ''}。请逐行选好供应商再生成`)
@@ -1122,7 +1120,7 @@ async function submitListOrder() {
         supplier_id: sid,
         delivery_date: listOrderForm.delivery_date || null,
         project_code: listOrderForm.project_code || null,
-        stock_location: listOrderForm.stock_location.trim() || null,
+        stock_location: null,   // 🆕 #204 采购下单不再填库位,改由仓库收货时填
         lines: rows.map(r => ({
           source_sheet_id: r.sheet_id, source_record_id: r.record_id,
           item_name: r.item_name, spec: foldDrawingSpec(r), brand: r._brand || null,
@@ -1166,7 +1164,7 @@ async function submitKitFromList() {
       supplier_id: kitSet.supplier_id,
       delivery_date: listOrderForm.delivery_date || null,
       project_code: listOrderForm.project_code || null,
-      stock_location: listOrderForm.stock_location.trim() || null,
+      stock_location: null,   // 🆕 #204 采购下单不再填库位,改由仓库收货时填
       payment_method: kitSet.payment_method || null,
       prepay_ratio: isPrepayMethod(kitSet.payment_method) ? kitSet.prepay_ratio : null,
       source_sheet_id: sel[0]?.sheet_id ?? null,
@@ -2421,13 +2419,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-date-picker v-model="listOrderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <el-col :xs="12" :sm="6" :md="5">
-            <el-form-item label="库位 *（收货放哪个库）">
-              <el-select v-model="listOrderForm.stock_location" filterable clearable placeholder="选择库位(仓库维护)" style="width:100%">
-                <el-option v-for="l in whLocations" :key="l.id" :label="l.name" :value="l.name" />
-              </el-select>
-            </el-form-item>
-          </el-col>
+          <!-- 🆕 #204 库位不再由采购下单填,统一改由仓库收货时填 -->
         </el-row>
       </el-form>
 
@@ -2623,14 +2615,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </el-select>
             </el-form-item>
           </el-col>
-          <!-- 🆕 库位管理批次:「是否备货」开关已取消——收货一律只入库,出库统一走仓库领料 -->
-          <el-col :xs="12" :sm="8" :md="5">
-            <el-form-item label="库位 *（收货放哪个库）">
-              <el-select v-model="orderForm.stock_location" filterable clearable placeholder="选择库位(仓库维护)" style="width:100%">
-                <el-option v-for="l in whLocations" :key="l.id" :label="l.name" :value="l.name" />
-              </el-select>
-            </el-form-item>
-          </el-col>
+          <!-- 🆕 #204 库位不再由采购下单填(收货一律只入库,出库统一走仓库领料);库位统一改由仓库收货时填 -->
         </el-row>
 
         <div class="order-lines-head">

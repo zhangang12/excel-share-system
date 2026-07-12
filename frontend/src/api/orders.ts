@@ -40,6 +40,7 @@ export interface DeptOrder {
   output_files: OrderAttachment[]
   produce_groups?: { group: string; name: string; due_date?: string | null; done_date?: string | null }[] | null
   standard_datasheet_id?: number | null   // 🆕 #6 电工部只读引用标准件清单
+  material_locations?: string[]   // 🆕 #204 本项目材料所在库位(收货入库时填,同步到设计/电工/生产任务跟踪)
 }
 
 export interface OptionUser { id: number; name: string }
