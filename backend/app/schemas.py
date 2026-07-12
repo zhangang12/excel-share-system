@@ -411,6 +411,7 @@ class WhMaterialOut(BaseModel):
     id: int
     code: Optional[str] = None
     category_id: Optional[int] = None   # 🆕 编码分类
+    category_path: Optional[str] = None # 🆕 编码文字说明:大类/中类/细分 名称路径(每个编码的含义)
     name: str
     spec: Optional[str] = None
     category: Optional[str] = None

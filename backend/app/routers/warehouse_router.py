@@ -55,10 +55,27 @@ async def _stock_map(db: AsyncSession, material_ids: Optional[list[int]] = None,
     return stock
 
 
-def _mat_out(m: models.WhMaterial, stock: float) -> schemas.WhMaterialOut:
+async def _category_path_map(db: AsyncSession) -> dict[int, str]:
+    """🆕 编码文字说明:category_id → 「大类/中类/细分」名称路径。给每个物料编码一句人话解释。"""
+    cats = {c.id: c for c in (await db.execute(select(models.MaterialCategory))).scalars().all()}
+    out: dict[int, str] = {}
+    for cid, c in cats.items():
+        names: list[str] = []
+        cur = c
+        seen: set[int] = set()
+        while cur is not None and cur.id not in seen:
+            seen.add(cur.id)
+            names.append(cur.name)
+            cur = cats.get(cur.parent_id) if cur.parent_id else None
+        out[cid] = "/".join(reversed(names))
+    return out
+
+
+def _mat_out(m: models.WhMaterial, stock: float, cat_path: Optional[str] = None) -> schemas.WhMaterialOut:
     up = m.unit_price
     return schemas.WhMaterialOut(
-        id=m.id, code=m.code, category_id=m.category_id, name=m.name, spec=m.spec, category=m.category,
+        id=m.id, code=m.code, category_id=m.category_id, category_path=cat_path,
+        name=m.name, spec=m.spec, category=m.category,
         material_grade=m.material_grade,
         unit=m.unit, unit_price=up, location=m.location, safety_stock=m.safety_stock or 0,
         init_stock=m.init_stock or 0, status=m.status, stock=stock,
@@ -82,7 +99,8 @@ async def list_materials(
         k = kw.strip()
         mats = [m for m in mats if k in (m.name or "") or k in (m.spec or "") or k in (m.code or "")]
     stock = await _stock_map(db, [m.id for m in mats])
-    outs = [_mat_out(m, stock.get(m.id, m.init_stock or 0)) for m in mats]
+    cat_paths = await _category_path_map(db)   # 🆕 编码文字说明
+    outs = [_mat_out(m, stock.get(m.id, m.init_stock or 0), cat_paths.get(m.category_id)) for m in mats]
     return schemas.WhStockOut(materials=outs, total=len(outs),
                               low_count=sum(1 for o in outs if o.low))
 

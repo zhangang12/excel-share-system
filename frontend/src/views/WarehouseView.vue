@@ -702,6 +702,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                避免数字列被拉伸出大空隙（此前 #140 把数字列也设 min-width 导致宽屏爆宽） -->
           <el-table show-overflow-tooltip :data="materials" stripe size="small" max-height="calc(100vh - 240px)">
             <el-table-column prop="code" label="编码" width="120"><template #header><span>编码</span><el-tooltip placement="top" effect="dark"><template #content>物料编码 = 大类(1位) - 中类+细分(4位) - 流水号(4位)<br/>选「编码分类」到细分类时自动生成,如 1-0101-0001</template><el-icon style="vertical-align:-2px;margin-left:3px;color:var(--text-3);cursor:help;font-size:13px"><QuestionFilled /></el-icon></el-tooltip></template><template #default="{ row }"><span v-if="row.code" class="code">{{ fmtMatCode(row.code) }}</span><span v-else class="muted">—</span></template></el-table-column>
+            <el-table-column prop="category_path" label="编码说明" min-width="150" show-overflow-tooltip><template #default="{ row }"><span v-if="row.category_path">{{ row.category_path }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
             <el-table-column prop="spec" label="规格型号" min-width="140"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <!-- 🆕 弃用「物料类别」列(与编码分类树重复,改由编码分类统一);字段保留不删 -->
@@ -794,6 +795,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <el-button v-if="canClear" type="danger" plain :icon="Delete" @click="clearAll" style="margin-bottom:10px;margin-left:8px">一键清空</el-button>
           <el-table show-overflow-tooltip :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="code" label="编码" width="120"><template #header><span>编码</span><el-tooltip placement="top" effect="dark"><template #content>物料编码 = 大类(1位) - 中类+细分(4位) - 流水号(4位)<br/>选「编码分类」到细分类时自动生成,如 1-0101-0001</template><el-icon style="vertical-align:-2px;margin-left:3px;color:var(--text-3);cursor:help;font-size:13px"><QuestionFilled /></el-icon></el-tooltip></template><template #default="{ row }"><span v-if="row.code" class="code">{{ fmtMatCode(row.code) }}</span><span v-else class="muted">—</span></template></el-table-column>
+            <el-table-column prop="category_path" label="编码说明" min-width="150" show-overflow-tooltip><template #default="{ row }"><span v-if="row.category_path">{{ row.category_path }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="name" label="名称" min-width="120" />
             <el-table-column prop="spec" label="规格型号" min-width="120"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <!-- 🆕 弃用「物料类别」列(与编码分类树重复);字段保留不删 -->
