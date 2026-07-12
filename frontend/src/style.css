@@ -239,6 +239,17 @@ a:hover { text-decoration: none; opacity: .85; }
   font-weight: 600;
   color: var(--text-1);
   letter-spacing: .3px;
+  position: relative;
+  padding-left: 14px;
+}
+/* 🆕 品牌金色标题条(重构签名元素,全站页头统一) */
+.page-header h1::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 50%; transform: translateY(-50%);
+  width: 4px; height: 21px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--primary), var(--primary-dark));
 }
 .page-header .desc {
   color: var(--text-3);
@@ -375,6 +386,15 @@ a:hover { text-decoration: none; opacity: .85; }
 
 /* Tabs 头与内容间距收紧 */
 .el-tabs__header { margin-bottom: 12px !important; }
+/* 🆕 选中标签:用可读深金(#9a7220,金色 #c8a24f 在白底上太浅) + 金色下划线,全站交易页头统一 */
+.el-tabs__item.is-active { color: var(--link) !important; font-weight: 600; }
+.el-tabs__item:not(.is-disabled):hover { color: var(--link) !important; }
+.el-tabs__active-bar { background-color: var(--primary) !important; }
+/* 卡片式 tabs 选中:金色描边 + 浅金底 */
+.el-tabs--card > .el-tabs__header .el-tabs__item.is-active {
+  border-bottom-color: var(--primary-light) !important;
+  background: var(--primary-light) !important;
+}
 
 /* 表格内操作按钮：清晰但不占行高——小按钮收紧内边距，link 按钮加字重醒目 */
 .el-table .el-button--small:not(.is-link) { padding: 3px 10px !important; font-size: 12.5px !important; }
