@@ -560,10 +560,22 @@ async def list_locations(
         select(models.WhMaterial.location, func.count(models.WhMaterial.id))
         .where(models.WhMaterial.location.isnot(None))
         .group_by(models.WhMaterial.location))).all())
+    # 🆕 #204 占用/空闲：库位上有物料且现存>0 = 占用（跟着出入库流水的库存净值走）。
+    stock = await _stock_map(db)
+    occ: dict = {}
+    for m in (await db.execute(select(models.WhMaterial).where(
+            models.WhMaterial.location.isnot(None)))).scalars().all():
+        st = stock.get(m.id, m.init_stock or 0)
+        if m.location and st > 0:
+            occ.setdefault(m.location, []).append(
+                {"name": m.name, "spec": m.spec, "stock": st})
     out = []
     for l in locs:
         o = schemas.WhLocationOut.model_validate(l)
         o.mat_count = cnt.get(l.name, 0)
+        items = occ.get(l.name, [])
+        o.occupied = len(items) > 0
+        o.occupied_items = items[:20]
         out.append(o)
     return out
 

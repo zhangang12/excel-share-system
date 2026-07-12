@@ -816,11 +816,27 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         <el-tab-pane v-if="tv('loc')" label="库位管理" name="loc">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
             <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openLoc()">新增库位</el-button>
-            <span class="muted small">采购下单选库位、物料库位、出入库登记都从这里取值；在用的库位删不掉，可停用。</span>
+            <span class="muted small">采购下单选库位、物料库位、出入库登记都从这里取值；「占用/空闲」跟着出入库走——有货入=占用，出库腾空=空闲；在用的库位删不掉，可停用。</span>
           </div>
           <el-table show-overflow-tooltip :data="locations" stripe size="small" class="compact-tbl" max-height="calc(100vh - 260px)">
             <el-table-column prop="name" label="库位" min-width="140"><template #default="{ row }"><b style="color:var(--el-color-primary)">{{ row.name }}</b></template></el-table-column>
-            <el-table-column prop="note" label="备注" min-width="160"><template #default="{ row }">{{ row.note || '—' }}</template></el-table-column>
+            <!-- 🆕 #204 占用/空闲:由库存(出入库流水)驱动;占用时悬停看里面放了什么 -->
+            <el-table-column label="占用状态" width="140">
+              <template #default="{ row }">
+                <el-tooltip v-if="row.occupied && row.occupied_items?.length" placement="top">
+                  <template #content>
+                    <div style="max-width:280px">
+                      <div v-for="(it, i) in row.occupied_items" :key="i" style="line-height:1.7">
+                        {{ it.name }}{{ it.spec ? '·' + it.spec : '' }} <b>×{{ it.stock }}</b>
+                      </div>
+                    </div>
+                  </template>
+                  <el-tag size="small" type="warning" effect="dark" style="cursor:default">占用（{{ row.occupied_items.length }} 项）</el-tag>
+                </el-tooltip>
+                <el-tag v-else size="small" type="success" effect="plain">空闲</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="note" label="备注" min-width="150"><template #default="{ row }">{{ row.note || '—' }}</template></el-table-column>
             <el-table-column prop="mat_count" label="在用物料数" width="100" align="center" />
             <el-table-column prop="sort_order" label="排序" width="70" align="center" />
             <el-table-column label="状态" width="80">

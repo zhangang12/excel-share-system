@@ -464,6 +464,9 @@ class WhLocationOut(BaseModel):
     sort_order: int
     enabled: bool
     mat_count: int = 0     # 当前挂在该库位的物料数(删除保护提示用)
+    # 🆕 #204 占用/空闲：由库存(出入库流水净值)驱动——库位上有物料现存>0=占用,空=空闲
+    occupied: bool = False
+    occupied_items: list[dict] = Field(default_factory=list)  # 占用内容 [{name,spec,stock}]
 
 
 class WhTxnIn(BaseModel):

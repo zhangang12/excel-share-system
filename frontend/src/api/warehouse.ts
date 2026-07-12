@@ -27,6 +27,9 @@ export interface WhTxn {
 export interface WhLocation {
   id: number; name: string; note?: string | null
   sort_order: number; enabled: boolean; mat_count: number
+  // 🆕 #204 占用/空闲(由库存驱动)
+  occupied?: boolean
+  occupied_items?: { name: string; spec?: string | null; stock: number }[]
 }
 export interface WhSummaryRow {
   material_id: number; name: string; spec?: string | null; unit: string
