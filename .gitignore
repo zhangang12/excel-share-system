@@ -29,6 +29,9 @@ data/
 !.env.example
 !.env.prod.example
 
+# ===== 本地发版配置（服务器地址/端口，保留 .deploy.local.example 模板）=====
+.deploy.local
+
 # ===== IDE / 工具 =====
 .idea/
 .vscode/

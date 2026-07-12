@@ -13,6 +13,7 @@ sudo bash ops/setup-cron.sh        # 装好每日备份 + 5 分钟健康检查
 
 | 脚本 | 作用 | 典型用法 |
 |---|---|---|
+| `release.sh` | **本地一键发版**（在你自己电脑跑）：SSH 进服务器自动执行 `upgrade.sh` | `bash ops/release.sh` |
 | `backup.sh` | 备份 DB + uploads 到 `/backup/`，按天滚动 | `bash ops/backup.sh` |
 | `restore.sh` | 从备份恢复（先快照当前 → 重建 db → 写入） | `bash ops/restore.sh /backup/pms-db-20260514.sql.gz` |
 | `health-check.sh` | 检查：4 个容器、pg、API、磁盘、内存、错误日志 | `bash ops/health-check.sh` |
@@ -25,11 +26,31 @@ sudo bash ops/setup-cron.sh        # 装好每日备份 + 5 分钟健康检查
 | `db-shell.sh` | 进 psql | `bash ops/db-shell.sh` |
 | `logs.sh` | 跟容器日志 | `bash ops/logs.sh backend` |
 
+## 本地一键发版（release.sh）
+
+`release.sh` 跑在**你自己的电脑**上（不是服务器），通过 SSH 触发服务器端的 `upgrade.sh`，
+一条命令完成「(可选)推代码 → SSH 进服务器 → 备份 → 拉码 → 重建 → 健康检查 → 失败自动回滚」。
+
+```bash
+# 首次：填服务器信息（该文件已 gitignore，不入库；用 SSH 密钥免密登录）
+cp .deploy.local.example .deploy.local && nano .deploy.local
+ssh-copy-id user@服务器            # 若还没配免密登录
+
+# 之后每次发版：
+bash ops/release.sh               # 部署 GitHub 上最新 main
+bash ops/release.sh --push        # 先把本地提交推到 main 再部署
+bash ops/release.sh --logs        # 部署成功后跟随后端日志
+bash ops/release.sh --health      # 只在服务器跑一次健康检查
+bash ops/release.sh --dry-run     # 只看会执行什么，不真跑
+```
+
+发版失败时服务器会自动回滚（线上仍是旧版可用），`release.sh` 会把退出码含义打印出来。
+
 ## 退出码约定
 
 - `0` — 正常
-- `1` — 业务失败（备份失败、健康检查不过）
-- `2` — 系统失败（依赖工具缺失、回滚也失败）
+- `1` — 业务失败（备份失败、健康检查不过；upgrade.sh 已自动回滚）
+- `2` — 系统失败（依赖工具缺失、回滚也失败，需人工介入）
 
 ## 配置
 
