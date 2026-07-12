@@ -43,6 +43,7 @@ class EmployeeIn(BaseModel):
     id_card: Optional[str] = None
     phone: Optional[str] = None
     emergency_contact: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
     user_id: Optional[int] = None
     note: Optional[str] = None
 
@@ -85,6 +86,7 @@ def _emp_out(e: models.Employee, users: dict) -> EmployeeOut:
         position=e.position, hire_date=e.hire_date, regular_date=e.regular_date,
         contract_end=e.contract_end, status=e.status, leave_date=e.leave_date,
         id_card=e.id_card, phone=e.phone, emergency_contact=e.emergency_contact,
+        emergency_contact_phone=e.emergency_contact_phone,
         user_id=e.user_id, user_name=users.get(e.user_id), note=e.note)
 
 
@@ -205,7 +207,7 @@ async def delete_employee(
 
 # ==================== 花名册 Excel 导入 ====================
 _EMP_IMPORT_COLS = ["姓名*", "部门", "岗位", "入职日期", "转正日期", "合同到期日",
-                    "身份证", "电话", "紧急联系人", "状态", "备注"]
+                    "身份证", "电话", "紧急联系人", "紧急联系人电话", "状态", "备注"]
 
 
 def _norm_str(v) -> Optional[str]:
@@ -314,6 +316,7 @@ async def import_employees(
             hire_date=_norm_date(cell(row, "入职日期")), regular_date=_norm_date(cell(row, "转正日期")),
             contract_end=_norm_date(cell(row, "合同到期日")), id_card=_norm_str(cell(row, "身份证")),
             phone=_norm_str(cell(row, "电话")), emergency_contact=_norm_str(cell(row, "紧急联系人")),
+            emergency_contact_phone=_norm_str(cell(row, "紧急联系人电话")),
             note=_norm_str(cell(row, "备注")))
         e = existing.get(name)
         if e is None:

@@ -17,7 +17,7 @@ interface Emp {
   id: number; emp_no?: string | null; name: string; department_id?: number | null; department_name?: string | null
   position?: string | null; hire_date?: string | null; regular_date?: string | null
   contract_end?: string | null; status: string; leave_date?: string | null
-  id_card?: string | null; phone?: string | null; emergency_contact?: string | null
+  id_card?: string | null; phone?: string | null; emergency_contact?: string | null; emergency_contact_phone?: string | null
   user_id?: number | null; user_name?: string | null; note?: string | null
 }
 interface RosterStats { active: number; probation: number; expiring30: number; joined_month: number; left_month: number }
@@ -57,13 +57,13 @@ const empSaving = ref(false)
 const empForm = reactive<any>({
   id: null, name: '', department_id: null, position: '', hire_date: '', regular_date: '',
   contract_end: '', status: '在职', leave_date: '', id_card: '', phone: '',
-  emergency_contact: '', user_id: null, note: '',
+  emergency_contact: '', emergency_contact_phone: '', user_id: null, note: '',
 })
 function openEmp(row?: Emp) {
   if (row) Object.assign(empForm, { ...row })
   else Object.assign(empForm, { id: null, name: '', department_id: null, position: '', hire_date: '',
     regular_date: '', contract_end: '', status: '在职', leave_date: '', id_card: '', phone: '',
-    emergency_contact: '', user_id: null, note: '' })
+    emergency_contact: '', emergency_contact_phone: '', user_id: null, note: '' })
   empVisible.value = true
 }
 async function submitEmp() {
@@ -216,7 +216,10 @@ onMounted(async () => { await loadDepts(); await loadEmps() })
               <template #default="{ row }"><b :class="contractClass(row)">{{ row.contract_end || '—' }}</b></template>
             </el-table-column>
             <el-table-column prop="phone" label="电话" width="115"><template #default="{ row }">{{ row.phone || '—' }}</template></el-table-column>
-            <el-table-column prop="emergency_contact" label="紧急联系人" min-width="120"><template #default="{ row }">{{ row.emergency_contact || '—' }}</template></el-table-column>
+            <el-table-column prop="emergency_contact" label="紧急联系人" min-width="150"><template #default="{ row }">
+              <span>{{ row.emergency_contact || '—' }}</span>
+              <span v-if="row.emergency_contact_phone" style="color:var(--text-3);margin-left:6px">{{ row.emergency_contact_phone }}</span>
+            </template></el-table-column>
             <el-table-column prop="user_name" label="登录账号" width="90"><template #default="{ row }">{{ row.user_name || '—' }}</template></el-table-column>
             <el-table-column prop="leave_date" label="离职日期" width="100"><template #default="{ row }">{{ row.leave_date || '—' }}</template></el-table-column>
             <el-table-column prop="note" label="备注" min-width="120"><template #default="{ row }">{{ row.note || '—' }}</template></el-table-column>
@@ -305,7 +308,10 @@ onMounted(async () => { await loadDepts(); await loadEmps() })
         </div>
         <div class="frow">
           <el-form-item label="身份证(选填,仅人事/管理层可见)" style="flex:1"><el-input v-model="empForm.id_card" maxlength="32" /></el-form-item>
-          <el-form-item label="紧急联系人" style="flex:1"><el-input v-model="empForm.emergency_contact" maxlength="64" /></el-form-item>
+        </div>
+        <div class="frow">
+          <el-form-item label="紧急联系人" style="flex:1"><el-input v-model="empForm.emergency_contact" maxlength="64" placeholder="姓名/关系" /></el-form-item>
+          <el-form-item label="紧急联系人电话" style="flex:1"><el-input v-model="empForm.emergency_contact_phone" maxlength="32" placeholder="联系电话" /></el-form-item>
         </div>
         <el-form-item label="备注"><el-input v-model="empForm.note" type="textarea" :rows="2" /></el-form-item>
       </el-form>

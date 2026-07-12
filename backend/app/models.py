@@ -807,6 +807,7 @@ class Employee(Base):
     id_card: Mapped[Optional[str]] = mapped_column(String(32))           # 身份证(选填)
     phone: Mapped[Optional[str]] = mapped_column(String(32))
     emergency_contact: Mapped[Optional[str]] = mapped_column(String(64))
+    emergency_contact_phone: Mapped[Optional[str]] = mapped_column(String(32))  # 🆕 紧急联系人电话(与姓名分列)
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))  # 可选关联登录账号
     note: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -66,6 +66,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "employees": [
         ("emp_no", "VARCHAR(16)"),              # 🆕 #202 企业工号(自增,离职不回收)
+        ("emergency_contact_phone", "VARCHAR(32)"),  # 🆕 紧急联系人电话
     ],
     "purchase_items": [                            # 🆕 采购单号（同一供应商多零件行共享一个采购单）
         ("po_no", "VARCHAR(32)"),
