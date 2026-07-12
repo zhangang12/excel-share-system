@@ -209,6 +209,19 @@ a:hover { text-decoration: none; opacity: .85; }
   font-size: 17px !important;
   font-weight: 600 !important;
 }
+/* 🆕 弹窗/表单标题:金色小竖条,与页头标题条呼应,让表单弹窗也带品牌感 */
+.el-dialog__title {
+  position: relative;
+  padding-left: 12px;
+}
+.el-dialog__title::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 15px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--primary), var(--primary-dark));
+}
 .el-dialog__body { padding: 12px 24px 8px !important; }
 .el-dialog__footer { padding: 16px 24px 22px !important; border-top: 1px solid var(--border-light); }
 
