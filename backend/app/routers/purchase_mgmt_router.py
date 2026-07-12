@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -2451,19 +2451,32 @@ async def create_purchase_request(
             request_id=pr.id, item_name=l.item_name.strip(), spec=l.spec,
             qty=l.qty, project_code=l.project_code, notes=l.notes))
     await db.commit()
-    # #2：推送给指定的采购员；没指定则退回推给全体采购员/主管
+    # 🆕 #205：采购申请对全体采购员开放——通知也发给全体采购员/主管（此前只推给「指定采购员」
+    #   那一个人，其他采购员收不到、就以为看不到；而列表本就全员可见）。指定的那位在文案里点名。
+    #   原查询只按「主角色」找采购员，会漏掉以副角色持有 buyer 的用户（如王芹 buyer+finance），
+    #   这里改为主/副角色并集并去重。
     try:
-        text = f"采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理"
+        bname = None
         if body.buyer_id:
-            db.add(models.Message(to_user_id=body.buyer_id, kind="info", text=text,
+            bu = (await db.execute(select(models.User).where(
+                models.User.id == body.buyer_id))).scalar_one_or_none()
+            bname = _uname(bu) if bu else None
+        text = (f"采购申请：{_uname(current)} 提交 {len(lines)} 项，指派给 {bname}，请处理" if bname
+                else f"采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理")
+        rids = [r for (r,) in (await db.execute(select(models.Role.id).where(
+            models.Role.code.in_(("buyer", "buyer_lead", "buyer_standard", "buyer_outsource"))))).all()]
+        uids: set = set()
+        if rids:
+            sub = select(models.UserRole.user_id).where(models.UserRole.role_id.in_(rids))
+            urs = await db.execute(select(models.User.id).where(
+                models.User.is_active == True,  # noqa: E712
+                or_(models.User.role_id.in_(rids), models.User.id.in_(sub))))
+            uids = {u for (u,) in urs.all()}
+        if body.buyer_id:
+            uids.add(body.buyer_id)   # 指定的一定收到
+        for uid in uids:
+            db.add(models.Message(to_user_id=uid, kind="info", text=text,
                                   biz_type="purchase_request", biz_id=pr.id))
-        else:
-            br = await db.execute(
-                select(models.User).join(models.Role, models.User.role_id == models.Role.id)
-                .where(models.Role.code.in_(("buyer", "buyer_lead")), models.User.is_active == True))  # noqa: E712
-            for u in br.scalars().all():
-                db.add(models.Message(to_user_id=u.id, kind="info", text=text,
-                                      biz_type="purchase_request", biz_id=pr.id))
         await db.commit()
     except Exception:
         pass
