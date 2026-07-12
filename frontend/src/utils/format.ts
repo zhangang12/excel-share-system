@@ -66,3 +66,13 @@ export function fmtPercent(n?: number | null, digits = 0, dash = '—'): string 
   if (n == null || Number.isNaN(n)) return dash
   return Number(n).toFixed(digits) + '%'
 }
+
+/** 🆕 物料编码显示格式化: 存储值为 9 位数字(大类1+中类2+细分2+流水4),
+ *  显示为「大类-中类细分-流水」加短横线,如 101010001 → 1-0101-0001。
+ *  仅格式化标准 9 位纯数字编码;手工填的/历史非标编码原样返回(向后兼容、零风险,不改存储值)。 */
+export function fmtMatCode(code?: string | null, dash = ''): string {
+  if (!code) return dash
+  const s = String(code).trim()
+  if (/^\d{9}$/.test(s)) return `${s.slice(0, 1)}-${s.slice(1, 5)}-${s.slice(5)}`
+  return s
+}
