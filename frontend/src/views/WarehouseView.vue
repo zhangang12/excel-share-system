@@ -503,7 +503,7 @@ async function submitBatchReceive() {
 
 // ===== 🆕 项目物料需求（清单→仓库）=====
 interface DemandRow {
-  item_name: string; spec?: string | null; material_id?: number | null
+  item_name: string; spec?: string | null; material_id?: number | null; location?: string | null
   demand_qty?: number | null; stock: number; suggest_purchase: number
   purchase_status: string; in_stock: boolean; issued_qty: number
 }
@@ -893,6 +893,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-table-column label="现有库存" width="100" align="right">
               <template #default="{ row }"><b :class="{ bad: row.stock <= 0 }">{{ row.stock }}</b></template>
             </el-table-column>
+            <el-table-column prop="location" label="库位" width="96"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
             <el-table-column label="建议采购" width="100" align="right">
               <template #default="{ row }"><span :class="{ bad: row.suggest_purchase > 0 }">{{ row.suggest_purchase }}</span></template>
             </el-table-column>

@@ -1130,6 +1130,7 @@ class WarehouseDemandRow(BaseModel):
     item_name: str
     spec: Optional[str] = None
     material_id: Optional[int] = None        # 🆕 需求二：命中的物料 id（有则可一键领用出库）
+    location: Optional[str] = None           # 🆕 #204 材料库位（命中物料的库位,供各组知道去哪拿）
     demand_qty: Optional[float] = None      # 需求量（清单数量）
     stock: float = 0                         # 现有库存
     suggest_purchase: float = 0              # 建议采购量 = 需求 - 库存

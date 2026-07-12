@@ -920,6 +920,7 @@ async def _demand_rows(db: AsyncSession, project_id: int, *, stock=None, mats=No
         status = "未下单" if not pis else ("已到货" if all(p.arrival_date for p in pis) else "已下单")
         out.append(schemas.WarehouseDemandRow(
             item_name=name, spec=spec, material_id=(m.id if m else None),
+            location=(m.location if m else None),
             demand_qty=demand, stock=st,
             suggest_purchase=suggest, purchase_status=status, in_stock=st > 0,
             issued_qty=(issued_map.get(m.id, 0) if m else 0)))
