@@ -2,8 +2,8 @@
   --font-base: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "PingFang SC",
                "Helvetica Neue", Arial, "Segoe UI", sans-serif;
 
-  /* 色彩系统 */
-  --bg-page: #f3f5f9;
+  /* 色彩系统 —— 🆕 品牌重构：navy + 金 (设计稿 2026-07-12) */
+  --bg-page: #eef1f5;
   --bg-card: #ffffff;
   --text-1: #1f2937;
   --text-2: #4b5563;
@@ -12,10 +12,14 @@
   --border: #e5e7eb;
   --border-light: #f3f4f6;
 
-  --primary: #2563eb;
-  --primary-dark: #1d4ed8;
-  --primary-light: #eff6ff;
-  --primary-soft: rgba(37, 99, 235, .08);
+  /* --primary = 品牌金，用于「填充」(按钮底/选中态/进度/标题条/图标底)。
+     金做白底「文字」不可读 → 文字/链接/编号统一用 --link(深琥珀,对比达标)。 */
+  --primary: #c8a24f;
+  --primary-dark: #a8842f;
+  --primary-light: #faf4e6;
+  --primary-soft: rgba(200, 162, 79, .12);
+  --link: #9a7220;            /* 可读的金色文字/链接色(白底对比≈4.3:1) */
+  --brand-navy: #16293f;      /* 深 navy：侧栏 / 表头 / 深色面 */
   --success: #10b981;
   --warning: #f59e0b;
   --danger: #ef4444;
@@ -24,22 +28,21 @@
   /* 侧边栏 */
   --sidebar-w: 232px;
   --sidebar-w-collapsed: 64px;
-  --sidebar-bg: #1e293b;
-  --sidebar-bg-hover: #334155;
-  --sidebar-bg-active: #2563eb;
+  --sidebar-bg: #16293f;
+  --sidebar-bg-hover: #223751;
+  --sidebar-bg-active: rgba(200, 162, 79, .15);
   --sidebar-text: #cbd5e1;
   --sidebar-text-light: #94a3b8;
-  --sidebar-text-active: #ffffff;
+  --sidebar-text-active: #f0d99a;
 
-  /* 🆕 Element Plus 主色对齐品牌蓝（修复 EP 默认 #409EFF 与品牌 #2563eb 两套蓝并存：
-     按钮/链接/选中态/分页等全部走品牌色；light-N 为 #2563eb 与白的对应比例混色） */
+  /* 🆕 Element Plus 主色对齐品牌金；light-N 为金与白的对应比例混色 */
   --el-color-primary: var(--primary);
   --el-color-primary-dark-2: var(--primary-dark);
-  --el-color-primary-light-3: #6692f1;
-  --el-color-primary-light-5: #92b1f5;
-  --el-color-primary-light-7: #bed0f9;
-  --el-color-primary-light-8: #d3e0fb;
-  --el-color-primary-light-9: #e9effd;
+  --el-color-primary-light-3: #d6bd83;
+  --el-color-primary-light-5: #e3d0a3;
+  --el-color-primary-light-7: #efe3c8;
+  --el-color-primary-light-8: #f4ecda;
+  --el-color-primary-light-9: #faf5ea;
 
   /* 圆角 / 阴影 */
   --radius-sm: 6px;
@@ -65,7 +68,7 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-a { color: var(--primary); text-decoration: none; }
+a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: none; opacity: .85; }
 
 /* ===== Element Plus 整体打磨 ===== */
@@ -97,14 +100,21 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-button.is-link { padding: 3px 6px !important; height: auto !important; }
 .el-button.is-link + .el-button.is-link { margin-left: 2px !important; }
 .el-button--large { padding: 10px 20px !important; font-size: 15.5px !important; }
-.el-button--primary {
-  box-shadow: 0 2px 8px rgba(37, 99, 235, .25);
+/* 🆕 主按钮：金底 + 深字（白字在金底对比差；设计稿即深字金底 CTA）。link 型主按钮除外(是文字) */
+.el-button--primary:not(.is-link) {
+  color: var(--brand-navy) !important;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(200, 162, 79, .3);
 }
-.el-button--primary:hover {
-  box-shadow: 0 4px 14px rgba(37, 99, 235, .35);
+.el-button--primary:not(.is-link):hover {
+  box-shadow: 0 4px 14px rgba(200, 162, 79, .4);
   transform: translateY(-1px);
 }
 .el-button--primary:active { transform: translateY(0); }
+/* 🆕 link 型主按钮(编辑/删除/查看等) & 编号 .code：金做白底文字不可读 → 用可读深琥珀 --link */
+.el-button.is-link.el-button--primary { color: var(--link) !important; }
+.el-button.is-link.el-button--primary:hover { color: var(--primary-dark) !important; }
+.code { color: var(--link) !important; }
 .el-button--danger { box-shadow: 0 2px 8px rgba(239, 68, 68, .2); }
 
 .el-input__wrapper { border-radius: var(--radius-sm) !important; box-shadow: 0 0 0 1px var(--border) inset !important; }
@@ -123,12 +133,22 @@ a:hover { text-decoration: none; opacity: .85; }
   font-size: 13.5px !important;
   --el-table-border-color: var(--border-light);
 }
+/* 🆕 表头：深 navy + 浅字（对齐设计稿深色表头） */
 .el-table th.el-table__cell {
-  background: #fafbfc !important;
-  color: var(--text-2) !important;
+  background: var(--brand-navy) !important;
+  color: #e2e7ef !important;
   font-weight: 600;
   font-size: 13px;
+  border-bottom: none !important;
 }
+.el-table th.el-table__cell .cell { color: #e2e7ef; }
+/* 排序箭头在深色表头上保持可见：未激活浅灰、激活金色 */
+.el-table .caret-wrapper .sort-caret.ascending { border-bottom-color: #8a97ac; }
+.el-table .caret-wrapper .sort-caret.descending { border-top-color: #8a97ac; }
+.el-table .ascending .sort-caret.ascending { border-bottom-color: var(--primary); }
+.el-table .descending .sort-caret.descending { border-top-color: var(--primary); }
+/* 深表头下的列筛选/表头 hover 图标也用浅色 */
+.el-table th.el-table__cell .el-table__column-filter-trigger .el-icon { color: #b7c0d0; }
 /* 🆕 紧凑：更小行高，让更多数据一屏显示 */
 .el-table td.el-table__cell { padding: 7px 0 !important; }
 /* 🆕 紧凑布局：表格单元格一律不换行、单行省略(…)，长内容悬停看 tooltip；

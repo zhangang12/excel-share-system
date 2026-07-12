@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import logoUrl from '@/assets/logo.png'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   Fold, Expand,
@@ -134,7 +135,7 @@ onUnmounted(() => {
       <!-- 顶部 brand + 折叠按钮 -->
       <div class="brand">
         <div class="brand-logo">
-          <el-icon><Grid /></el-icon>
+          <img :src="logoUrl" alt="同辉智能" />
         </div>
         <span v-if="!collapsed" class="brand-text">同辉项目管理</span>
         <button
@@ -285,13 +286,14 @@ onUnmounted(() => {
   min-height: 76px;
 }
 .brand-logo {
-  width: 36px; height: 36px; flex-shrink: 0;
-  background: linear-gradient(135deg, var(--primary) 0%, #6366f1 100%);
+  width: 38px; height: 38px; flex-shrink: 0;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.12);
   border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
-  color: white; font-size: 20px;
-  box-shadow: 0 4px 12px rgba(37,99,235,.3);
+  box-shadow: 0 4px 12px rgba(0,0,0,.25);
 }
+.brand-logo img { width: 28px; height: 28px; object-fit: contain; }
 .brand-text {
   flex: 1;
   font-size: 17px; font-weight: 600; color: white;
@@ -323,7 +325,7 @@ onUnmounted(() => {
   right: -14px;
 }
 .layout.collapsed .brand .collapse-btn:hover {
-  background: var(--primary); color: white;
+  background: var(--primary); color: var(--brand-navy);
 }
 
 /* Nav */
@@ -346,7 +348,7 @@ nav a:hover {
 nav a.active {
   background: var(--sidebar-bg-active);
   color: var(--sidebar-text-active);
-  box-shadow: 0 4px 12px rgba(37,99,235,.25);
+  box-shadow: inset 3px 0 0 0 var(--primary);
 }
 .nav-icon { font-size: 18px !important; flex-shrink: 0; }
 
@@ -378,11 +380,11 @@ nav a.active {
 .user-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .avatar {
   width: 38px; height: 38px; flex-shrink: 0;
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  color: white;
+  background: linear-gradient(135deg, #d8b45f 0%, #c8a24f 55%, #b8862f 100%);
+  color: var(--brand-navy);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-weight: 600; font-size: 15px;
+  font-weight: 700; font-size: 15px;
 }
 .user-info { flex: 1; overflow: hidden; }
 .uname {
@@ -399,7 +401,7 @@ nav a.active {
   background: var(--sidebar-bg-hover);
   color: var(--sidebar-text);
 }
-.badge.primary { background: rgba(37,99,235,.2); color: #60a5fa; }
+.badge.primary { background: rgba(200,162,79,.22); color: #f0d99a; }
 
 .footer-actions { display: flex; gap: 8px; }
 .footer-actions.collapsed { flex-direction: column; align-items: center; }
