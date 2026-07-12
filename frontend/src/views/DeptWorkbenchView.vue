@@ -1207,6 +1207,14 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
             <el-table-column label="设计师" min-width="90" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="材料库位" min-width="130">
+              <template #default="{ row }">
+                <span v-if="row.material_locations && row.material_locations.length">
+                  <el-tag v-for="l in row.material_locations" :key="l" size="small" type="warning" effect="plain" style="margin:1px 3px 1px 0">{{ l }}</el-tag>
+                </span>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="派给" min-width="130" align="center">
               <template #default="{ row }">
                 {{ row.worker_name || '—' }}

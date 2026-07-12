@@ -152,6 +152,7 @@ export interface GroupProjectRow {
   sheetmetal_done: boolean
   standard_ready?: boolean | null    // 仅装配组
   outsource_ready?: boolean | null   // 仅装配组
+  material_locations?: string[]      // 🆕 #204 本项目材料所在库位
 }
 
 export interface DispatchOptions {

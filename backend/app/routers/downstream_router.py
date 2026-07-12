@@ -35,6 +35,7 @@ class SheetMetalRow(BaseModel):
     sheetmetal_datasheet_id: Optional[int] = None   # 钣金装配表（只读引用）
     sheetmetal_done: bool = False                    # 钣金装配是否已标记完成
     pkg_files: list[schemas.AttachmentOut] = []      # PDF 图纸包
+    material_locations: list[str] = []               # 🆕 #204 本项目材料所在库位(入库流水去重)
 
 
 @router.get("/sheetmetal/projects", response_model=List[SheetMetalRow])
@@ -78,6 +79,17 @@ async def sheetmetal_projects(
         models.Datasheet.project_id.in_(pids), models.Datasheet.name == "钣金装配"))
     bj_by_pid: dict[int, models.Datasheet] = {d.project_id: d for d in res.scalars().all()}
 
+    # 🆕 #204 项目材料库位：入库流水(非冲红)去过的库位,去重保序
+    loc_rows = (await db.execute(select(models.WhTxn.project_id, models.WhTxn.location).where(
+        models.WhTxn.project_id.in_(pids), models.WhTxn.direction == "in",
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.location.isnot(None)).order_by(models.WhTxn.id))).all()
+    loc_by_pid: dict[int, list[str]] = {}
+    for pid, loc in loc_rows:
+        loc = (loc or "").strip()
+        if loc and loc not in loc_by_pid.setdefault(pid, []):
+            loc_by_pid[pid].append(loc)
+
     rows = []
     for p in projects:
         extra = p.extra or {}
@@ -88,6 +100,7 @@ async def sheetmetal_projects(
             sheetmetal_datasheet_id=bj.id if bj else None,
             sheetmetal_done=bool(bj.done_flag) if bj else False,
             pkg_files=pkg_by_pid.get(p.id, []),
+            material_locations=loc_by_pid.get(p.id, []),
         ))
     return rows
 

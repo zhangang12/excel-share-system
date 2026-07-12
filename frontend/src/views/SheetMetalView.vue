@@ -10,6 +10,7 @@ import SheetmetalGrid from '@/components/SheetmetalGrid.vue'
 interface Row {
   project_id: number; code: string; name: string; designer?: string | null
   sheetmetal_datasheet_id?: number | null; sheetmetal_done: boolean
+  material_locations?: string[]
 }
 
 const loading = ref(false)
@@ -70,6 +71,14 @@ function viewSheet(row: Row) {
         <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
         <el-table-column label="设计师" width="90">
           <template #default="{ row }">{{ row.designer || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="材料库位" min-width="130">
+          <template #default="{ row }">
+            <span v-if="row.material_locations && row.material_locations.length">
+              <el-tag v-for="l in row.material_locations" :key="l" size="small" type="warning" effect="plain" style="margin:1px 3px 1px 0">{{ l }}</el-tag>
+            </span>
+            <span v-else class="muted">—</span>
+          </template>
         </el-table-column>
         <el-table-column label="钣金装配表" width="150">
           <template #default="{ row }">

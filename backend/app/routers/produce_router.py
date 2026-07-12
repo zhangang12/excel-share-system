@@ -292,6 +292,7 @@ class GroupProjectRow(BaseModel):
     # 仅装配组用：标准件清单/外协加工 是否已备齐
     standard_ready: Optional[bool] = None
     outsource_ready: Optional[bool] = None
+    material_locations: List[str] = []   # 🆕 #204 本项目材料所在库位(入库流水去重,供装配/钣金知道去哪拿料)
 
 
 async def _designer_by_pid(db: AsyncSession, pids: list[int]) -> dict[int, str]:
@@ -332,6 +333,26 @@ async def _sheet_ready(db: AsyncSession, ds: Optional[models.Datasheet]) -> bool
     return all((r.values or {}).get(key) == "完成" for r in recs)
 
 
+async def _project_loc_map(db: AsyncSession, pids: list[int]) -> dict[int, list[str]]:
+    """🆕 #204 项目材料库位：该项目入库流水(非冲红)去过的库位,去重保序。
+    装配/钣金按项目一眼看到料在哪个库位。"""
+    if not pids:
+        return {}
+    rows = (await db.execute(select(models.WhTxn.project_id, models.WhTxn.location).where(
+        models.WhTxn.project_id.in_(pids), models.WhTxn.direction == "in",
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.location.isnot(None)).order_by(models.WhTxn.id))).all()
+    out: dict[int, list[str]] = {}
+    for pid, loc in rows:
+        loc = (loc or "").strip()
+        if not loc:
+            continue
+        lst = out.setdefault(pid, [])
+        if loc not in lst:
+            lst.append(loc)
+    return out
+
+
 async def _group_rows(db: AsyncSession, current: models.User, group: str,
                       year: Optional[str] = None, proj_status: Optional[str] = None) -> List[GroupProjectRow]:
     # 范围：本组组员只看派给自己的项目；生产主管/管理层看本组全部
@@ -362,6 +383,7 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
     res = await db.execute(proj_q)
     proj_by_id = {p.id: p for p in res.scalars().all()}
     designer_by_pid = await _designer_by_pid(db, pids)
+    loc_by_pid = await _project_loc_map(db, pids)   # 🆕 #204 项目材料库位
     bj_by_pid = await _sheets_by_pid(db, pids, ("钣金装配",))
     ready_by_pid = {}
     if group == "assembly":
@@ -382,6 +404,7 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
             done_date=(t.done_at + timedelta(hours=8)).strftime("%Y-%m-%d") if t.done_at else None,
             sheetmetal_datasheet_id=bj.id if bj else None,
             sheetmetal_done=bool(bj.done_flag) if bj else False,
+            material_locations=loc_by_pid.get(p.id, []),
         )
         if group == "assembly":
             sheets = ready_by_pid.get(p.id, {})
