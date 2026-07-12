@@ -78,6 +78,36 @@ class PayrollSaveIn(BaseModel):
     rows: List[PayrollRowIn]
 
 
+# 🆕 考勤(按月每人) —— 人事录入
+class AttendanceRowIn(BaseModel):
+    employee_id: int
+    should_days: float = 0      # 应出勤天数
+    actual_days: float = 0      # 实出勤天数
+    leave_days: float = 0       # 请假天数
+    overtime_hours: float = 0   # 加班工时
+    note: Optional[str] = None
+
+
+class AttendanceSaveIn(BaseModel):
+    rows: List[AttendanceRowIn]
+
+
+# 🆕 个人工资(按月每人) —— 人事录入,敏感(仅 hr+管理层)
+class SalaryRowIn(BaseModel):
+    employee_id: int
+    base: float = 0             # 基本工资
+    merit: float = 0            # 绩效/奖金
+    overtime_pay: float = 0     # 加班费
+    allowance: float = 0        # 补贴
+    social_deduct: float = 0    # 社保公积金扣款
+    other_deduct: float = 0     # 其他扣款
+    note: Optional[str] = None
+
+
+class SalarySaveIn(BaseModel):
+    rows: List[SalaryRowIn]
+
+
 # ==================== 员工花名册 ====================
 def _emp_out(e: models.Employee, users: dict) -> EmployeeOut:
     return EmployeeOut(
@@ -385,6 +415,135 @@ async def save_payroll(
     await write_audit(db, user=current, action="hr_payroll_save", target_type="payroll",
                       detail=f"{month} {n} 个部门")
     return schemas.Msg(message=f"已保存 {month} 工资总额（{n} 个部门）")
+
+
+# ==================== 🆕 考勤(按月每人,人事录入) ====================
+async def _active_emps(db: AsyncSession) -> list[models.Employee]:
+    """在职/试用员工(排除离职),按部门+工号排序,供考勤/工资逐人录入。"""
+    return list((await db.execute(select(models.Employee).where(
+        models.Employee.status != "离职").order_by(
+        models.Employee.department_id, models.Employee.emp_no))).scalars().all())
+
+
+@router.get("/attendance")
+async def get_attendance(
+    period: str = Query(..., description="YYYY-MM"),
+    _: models.User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+):
+    """指定月份的员工考勤(在职员工都返回,未填的记 0 供录入)。"""
+    emps = await _active_emps(db)
+    cur = {r.employee_id: r for r in (await db.execute(select(models.AttendanceMonthly).where(
+        models.AttendanceMonthly.period == period))).scalars().all()}
+    rows = []
+    for e in emps:
+        a = cur.get(e.id)
+        rows.append({
+            "employee_id": e.id, "emp_no": e.emp_no, "name": e.name,
+            "department_name": (e.department.name if e.department else None),
+            "should_days": (a.should_days if a else 0), "actual_days": (a.actual_days if a else 0),
+            "leave_days": (a.leave_days if a else 0), "overtime_hours": (a.overtime_hours if a else 0),
+            "note": (a.note if a else None)})
+    return {"period": period, "rows": rows}
+
+
+@router.put("/attendance/{period}", response_model=schemas.Msg)
+async def save_attendance(
+    period: str,
+    body: AttendanceSaveIn,
+    current: models.User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+):
+    if len(period) != 7 or period[4] != "-":
+        raise HTTPException(400, "period 格式应为 YYYY-MM")
+    cur = {r.employee_id: r for r in (await db.execute(select(models.AttendanceMonthly).where(
+        models.AttendanceMonthly.period == period))).scalars().all()}
+    n = 0
+    for r in body.rows:
+        row = cur.get(r.employee_id)
+        if row is None:
+            db.add(models.AttendanceMonthly(
+                employee_id=r.employee_id, period=period,
+                should_days=r.should_days or 0, actual_days=r.actual_days or 0,
+                leave_days=r.leave_days or 0, overtime_hours=r.overtime_hours or 0,
+                note=(r.note or "").strip() or None))
+        else:
+            row.should_days = r.should_days or 0
+            row.actual_days = r.actual_days or 0
+            row.leave_days = r.leave_days or 0
+            row.overtime_hours = r.overtime_hours or 0
+            row.note = (r.note or "").strip() or None
+        n += 1
+    await db.commit()
+    await write_audit(db, user=current, action="hr_attendance_save", target_type="attendance",
+                      detail=f"{period} {n} 人")
+    return schemas.Msg(message=f"已保存 {period} 考勤（{n} 人）")
+
+
+# ==================== 🆕 个人工资(按月每人,人事录入,敏感) ====================
+def _salary_net(s) -> float:
+    """实发 = 基本+绩效+加班费+补贴 − 社保公积金扣款 − 其他扣款。"""
+    return round((s.base or 0) + (s.merit or 0) + (s.overtime_pay or 0) + (s.allowance or 0)
+                 - (s.social_deduct or 0) - (s.other_deduct or 0), 2)
+
+
+@router.get("/salary")
+async def get_salary(
+    period: str = Query(..., description="YYYY-MM"),
+    _: models.User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+):
+    """指定月份的个人工资(在职员工都返回,未填的记 0 供录入)。敏感,仅人事+管理层。"""
+    emps = await _active_emps(db)
+    cur = {r.employee_id: r for r in (await db.execute(select(models.EmployeeSalaryMonthly).where(
+        models.EmployeeSalaryMonthly.period == period))).scalars().all()}
+    rows = []
+    for e in emps:
+        s = cur.get(e.id)
+        rows.append({
+            "employee_id": e.id, "emp_no": e.emp_no, "name": e.name,
+            "department_name": (e.department.name if e.department else None),
+            "base": (s.base if s else 0), "merit": (s.merit if s else 0),
+            "overtime_pay": (s.overtime_pay if s else 0), "allowance": (s.allowance if s else 0),
+            "social_deduct": (s.social_deduct if s else 0), "other_deduct": (s.other_deduct if s else 0),
+            "net": (_salary_net(s) if s else 0), "note": (s.note if s else None)})
+    return {"period": period, "rows": rows,
+            "total_net": round(sum(r["net"] or 0 for r in rows), 2)}
+
+
+@router.put("/salary/{period}", response_model=schemas.Msg)
+async def save_salary(
+    period: str,
+    body: SalarySaveIn,
+    current: models.User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+):
+    if len(period) != 7 or period[4] != "-":
+        raise HTTPException(400, "period 格式应为 YYYY-MM")
+    cur = {r.employee_id: r for r in (await db.execute(select(models.EmployeeSalaryMonthly).where(
+        models.EmployeeSalaryMonthly.period == period))).scalars().all()}
+    n = 0
+    for r in body.rows:
+        row = cur.get(r.employee_id)
+        if row is None:
+            db.add(models.EmployeeSalaryMonthly(
+                employee_id=r.employee_id, period=period,
+                base=r.base or 0, merit=r.merit or 0, overtime_pay=r.overtime_pay or 0,
+                allowance=r.allowance or 0, social_deduct=r.social_deduct or 0,
+                other_deduct=r.other_deduct or 0, note=(r.note or "").strip() or None))
+        else:
+            row.base = r.base or 0
+            row.merit = r.merit or 0
+            row.overtime_pay = r.overtime_pay or 0
+            row.allowance = r.allowance or 0
+            row.social_deduct = r.social_deduct or 0
+            row.other_deduct = r.other_deduct or 0
+            row.note = (r.note or "").strip() or None
+        n += 1
+    await db.commit()
+    await write_audit(db, user=current, action="hr_salary_save", target_type="salary",
+                      detail=f"{period} {n} 人")
+    return schemas.Msg(message=f"已保存 {period} 工资（{n} 人）")
 
 
 @router.get("/payroll-summary")

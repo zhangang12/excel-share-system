@@ -834,6 +834,43 @@ class PayrollMonthly(Base):
     department: Mapped["Department"] = relationship(lazy="joined")
 
 
+class AttendanceMonthly(Base):
+    """🆕 人事按月录入的员工考勤汇总(一人一月一行)。人事+管理层维护(整个 /api/hr 门槛)。"""
+    __tablename__ = "attendance_monthly"
+    __table_args__ = (UniqueConstraint("employee_id", "period", name="uq_attendance_emp_period"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    period: Mapped[str] = mapped_column(String(7), index=True)          # YYYY-MM
+    should_days: Mapped[float] = mapped_column(default=0)               # 应出勤天数
+    actual_days: Mapped[float] = mapped_column(default=0)              # 实出勤天数
+    leave_days: Mapped[float] = mapped_column(default=0)               # 请假天数
+    overtime_hours: Mapped[float] = mapped_column(default=0)           # 加班工时
+    note: Mapped[Optional[str]] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class EmployeeSalaryMonthly(Base):
+    """🆕 人事按月录入的个人工资(一人一月一行);敏感,仅人事+管理层。区别于 PayrollMonthly(部门汇总)。
+    实发 = 基本+绩效+加班费+补贴 − 社保公积金扣款 − 其他扣款(computed,不落库)。"""
+    __tablename__ = "employee_salary_monthly"
+    __table_args__ = (UniqueConstraint("employee_id", "period", name="uq_emp_salary_emp_period"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    period: Mapped[str] = mapped_column(String(7), index=True)          # YYYY-MM
+    base: Mapped[float] = mapped_column(default=0)                     # 基本工资
+    merit: Mapped[float] = mapped_column(default=0)                    # 绩效/奖金
+    overtime_pay: Mapped[float] = mapped_column(default=0)             # 加班费
+    allowance: Mapped[float] = mapped_column(default=0)               # 补贴
+    social_deduct: Mapped[float] = mapped_column(default=0)            # 社保公积金扣款
+    other_deduct: Mapped[float] = mapped_column(default=0)             # 其他扣款
+    note: Mapped[Optional[str]] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Department(Base):
     """OA 部门字典（与角色分组独立、手动维护）。lead_role 设置后，持有该角色的人
     可查看本部门全部 OA 申请（部门负责人视角），不设则无该项额外可见性。"""

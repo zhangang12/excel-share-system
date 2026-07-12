@@ -154,8 +154,63 @@ async function loadSummary() {
     sumRows.value = r.rows; sumTotal.value = r.total
   } catch { sumRows.value = [] }
 }
+// ===== 🆕 考勤(按月每人,人事录入) =====
+interface AttRow { employee_id: number; emp_no?: string; name: string; department_name?: string | null
+  should_days: number; actual_days: number; leave_days: number; overtime_hours: number; note?: string | null }
+const aMonth = ref(new Date().toISOString().slice(0, 7))
+const aRows = ref<AttRow[]>([])
+const aLoading = ref(false); const aSaving = ref(false)
+async function loadAttendance() {
+  aLoading.value = true
+  try { aRows.value = (await http.get<{ rows: AttRow[] }>('/hr/attendance', { params: { period: aMonth.value } })).data.rows }
+  finally { aLoading.value = false }
+}
+async function saveAttendance() {
+  aSaving.value = true
+  try {
+    const r: any = (await http.put(`/hr/attendance/${aMonth.value}`, {
+      rows: aRows.value.map(x => ({ employee_id: x.employee_id, should_days: Number(x.should_days) || 0,
+        actual_days: Number(x.actual_days) || 0, leave_days: Number(x.leave_days) || 0,
+        overtime_hours: Number(x.overtime_hours) || 0, note: x.note })),
+    })).data
+    ElMessage.success(r.message || '已保存')
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '保存失败') }
+  finally { aSaving.value = false }
+}
+
+// ===== 🆕 个人工资(按月每人,人事录入,敏感——仅人事/管理层) =====
+interface SalRow { employee_id: number; emp_no?: string; name: string; department_name?: string | null
+  base: number; merit: number; overtime_pay: number; allowance: number; social_deduct: number; other_deduct: number
+  net?: number; note?: string | null }
+const sMonth = ref(new Date().toISOString().slice(0, 7))
+const sRows = ref<SalRow[]>([])
+const sLoading = ref(false); const sSaving = ref(false)
+// 实发 = 基本+绩效+加班费+补贴 − 社保公积金 − 其他扣款(与后端 _salary_net 一致)
+const salNet = (r: SalRow) => (Number(r.base) || 0) + (Number(r.merit) || 0) + (Number(r.overtime_pay) || 0)
+  + (Number(r.allowance) || 0) - (Number(r.social_deduct) || 0) - (Number(r.other_deduct) || 0)
+const sTotalNet = computed(() => sRows.value.reduce((s, r) => s + salNet(r), 0))
+async function loadSalary() {
+  sLoading.value = true
+  try { sRows.value = (await http.get<{ rows: SalRow[] }>('/hr/salary', { params: { period: sMonth.value } })).data.rows }
+  finally { sLoading.value = false }
+}
+async function saveSalary() {
+  sSaving.value = true
+  try {
+    const r: any = (await http.put(`/hr/salary/${sMonth.value}`, {
+      rows: sRows.value.map(x => ({ employee_id: x.employee_id, base: Number(x.base) || 0, merit: Number(x.merit) || 0,
+        overtime_pay: Number(x.overtime_pay) || 0, allowance: Number(x.allowance) || 0,
+        social_deduct: Number(x.social_deduct) || 0, other_deduct: Number(x.other_deduct) || 0, note: x.note })),
+    })).data
+    ElMessage.success(r.message || '已保存')
+  } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '保存失败') }
+  finally { sSaving.value = false }
+}
+
 function onTab(name: string) {
   if (name === 'payroll') { loadPayroll(); loadSummary() }
+  else if (name === 'attendance') loadAttendance()
+  else if (name === 'salary') loadSalary()
 }
 
 onMounted(async () => { await loadDepts(); await loadEmps() })
@@ -271,6 +326,51 @@ onMounted(async () => { await loadDepts(); await loadEmps() })
               </el-table>
             </el-col>
           </el-row>
+        </el-tab-pane>
+
+        <!-- ===== 🆕 考勤(按月每人) ===== -->
+        <el-tab-pane v-if="tv('attendance')" label="🗓️ 考勤" name="attendance">
+          <el-alert type="info" :closable="false" style="margin-bottom:10px"
+            title="人事按月录入每人考勤（应出勤 / 实出勤 / 请假 / 加班工时）。在职、试用员工都在列，离职不在列。" />
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+            <el-date-picker v-model="aMonth" type="month" value-format="YYYY-MM" :clearable="false" style="width:130px" @change="loadAttendance" />
+            <el-button type="primary" :loading="aSaving" @click="saveAttendance">保存本月</el-button>
+          </div>
+          <el-table show-overflow-tooltip :data="aRows" v-loading="aLoading" stripe size="small" class="compact-tbl" max-height="calc(100vh - 300px)">
+            <el-table-column prop="emp_no" label="工号" width="76" fixed="left"><template #default="{ row }"><span class="code">{{ row.emp_no || '—' }}</span></template></el-table-column>
+            <el-table-column prop="name" label="姓名" width="90" fixed="left"><template #default="{ row }"><b>{{ row.name }}</b></template></el-table-column>
+            <el-table-column prop="department_name" label="部门" width="100"><template #default="{ row }">{{ row.department_name || '—' }}</template></el-table-column>
+            <el-table-column label="应出勤(天)" width="112"><template #default="{ row }"><el-input-number v-model="row.should_days" :min="0" :max="31" :precision="1" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="实出勤(天)" width="112"><template #default="{ row }"><el-input-number v-model="row.actual_days" :min="0" :max="31" :precision="1" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="请假(天)" width="100"><template #default="{ row }"><el-input-number v-model="row.leave_days" :min="0" :max="31" :precision="1" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="加班(工时)" width="112"><template #default="{ row }"><el-input-number v-model="row.overtime_hours" :min="0" :precision="1" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="备注" min-width="140"><template #default="{ row }"><el-input v-model="row.note" size="small" placeholder="选填" maxlength="255" /></template></el-table-column>
+          </el-table>
+          <EmptyHint v-if="!aLoading && !aRows.length" text="没有在职员工——请先在员工花名册维护" size="sm" />
+        </el-tab-pane>
+
+        <!-- ===== 🆕 个人工资(按月每人,敏感) ===== -->
+        <el-tab-pane v-if="tv('salary')" label="🧾 工资" name="salary">
+          <el-alert type="warning" :closable="false" style="margin-bottom:10px"
+            title="个人工资明细，敏感数据——本页仅人事 / 管理层可见。实发 = 基本 + 绩效 + 加班费 + 补贴 − 社保公积金 − 其他扣款（自动计算）。" />
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+            <el-date-picker v-model="sMonth" type="month" value-format="YYYY-MM" :clearable="false" style="width:130px" @change="loadSalary" />
+            <span>本月实发合计 <b class="amt">¥{{ fmtMoney(sTotalNet) }}</b></span>
+            <el-button type="primary" :loading="sSaving" @click="saveSalary">保存本月</el-button>
+          </div>
+          <el-table show-overflow-tooltip :data="sRows" v-loading="sLoading" stripe size="small" class="compact-tbl" max-height="calc(100vh - 300px)">
+            <el-table-column prop="emp_no" label="工号" width="72" fixed="left"><template #default="{ row }"><span class="code">{{ row.emp_no || '—' }}</span></template></el-table-column>
+            <el-table-column prop="name" label="姓名" width="86" fixed="left"><template #default="{ row }"><b>{{ row.name }}</b></template></el-table-column>
+            <el-table-column label="基本工资" width="118"><template #default="{ row }"><el-input-number v-model="row.base" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="绩效/奖金" width="118"><template #default="{ row }"><el-input-number v-model="row.merit" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="加班费" width="112"><template #default="{ row }"><el-input-number v-model="row.overtime_pay" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="补贴" width="110"><template #default="{ row }"><el-input-number v-model="row.allowance" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="社保公积金" width="120"><template #default="{ row }"><el-input-number v-model="row.social_deduct" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="其他扣款" width="112"><template #default="{ row }"><el-input-number v-model="row.other_deduct" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="实发" width="112" align="right" fixed="right"><template #default="{ row }"><b class="amt">{{ fmtMoney(salNet(row)) }}</b></template></el-table-column>
+            <el-table-column label="备注" min-width="120"><template #default="{ row }"><el-input v-model="row.note" size="small" placeholder="选填" maxlength="255" /></template></el-table-column>
+          </el-table>
+          <EmptyHint v-if="!sLoading && !sRows.length" text="没有在职员工——请先在员工花名册维护" size="sm" />
         </el-tab-pane>
       </el-tabs>
     </el-card>
