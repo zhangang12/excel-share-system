@@ -176,6 +176,10 @@ router.beforeEach((to) => {
       && auth.menus !== null && !auth.canViewDetail) {
     return fallbackRoute(auth)
   }
+  // 🆕 反馈#208：概览=项目目录页，无 catalog 菜单者(如纯人事/售后)不落在概览，跳其首个可见菜单
+  if (to.name === 'overview' && auth.menus !== null && !auth.hasMenu('catalog')) {
+    return fallbackRoute(auth)
+  }
   return true
 })
 

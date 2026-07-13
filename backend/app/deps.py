@@ -89,7 +89,7 @@ def ensure_can_export(user: models.User) -> None:
 
 
 # 🆕 项目目录/一览行级可见性：仅这些岗位"只看自己经手的项目"（被派单 worker_id / 下单 sales_uid）
-_DIR_RESTRICTED_CODES = {"designer", "electrician", "assembler", "sheetmetal", "sales"}
+_DIR_RESTRICTED_CODES = {"designer", "electrician", "assembler", "sheetmetal", "sealing", "sales"}
 
 
 async def restricted_dir_pids(db: AsyncSession, user: models.User):
@@ -113,8 +113,8 @@ async def restricted_dir_pids(db: AsyncSession, user: models.User):
         r = await db.execute(
             select(models.DeptOrder.project_id).where(models.DeptOrder.worker_id == user.id))
         my_pids |= {x[0] for x in r.all()}
-    # 装配组(assembler)/钣金组(sheetmetal)通过 ProduceGroupTask 派发，DeptOrder.worker_id 始终为 NULL
-    if codes & {"assembler", "sheetmetal"}:
+    # 装配组(assembler)/钣金组(sheetmetal)/封板组(sealing)通过 ProduceGroupTask 派发，DeptOrder.worker_id 始终为 NULL
+    if codes & {"assembler", "sheetmetal", "sealing"}:
         r = await db.execute(
             select(models.ProduceGroupTask.project_id).where(
                 models.ProduceGroupTask.worker_id == user.id))

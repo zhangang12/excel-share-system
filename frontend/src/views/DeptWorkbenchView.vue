@@ -43,9 +43,10 @@ const LEAD_ROLES: Record<string, string> = { design: 'design_lead', electric: 'e
 const isMgr = computed(() => auth.isAdmin)
 const isLead = computed(() => auth.hasRole(LEAD_ROLES[dept.value]))
 const isWorker = computed(() => auth.hasRole(WORKER_ROLES[dept.value]))
-// 🆕 生产部分组（钣金组/装配组）；钣金组角色 sheetmetal、装配组角色 assembler
+// 🆕 生产部分组（钣金组/装配组/封板组）；钣金组角色 sheetmetal、装配组 assembler、封板组 sealing
 const isSheetmetal = computed(() => auth.hasRole('sheetmetal'))
 const isAssembler = computed(() => auth.hasRole('assembler'))
+const isSealing = computed(() => auth.hasRole('sealing'))   // 🆕 反馈#209 封板组
 const isProduce = computed(() => dept.value === 'produce')
 
 // 🆕 备机下单：仅设计部工作台、且 设计部负责人/管理层 可见
@@ -93,16 +94,20 @@ const loading = ref(false)
 const orders = ref<DeptOrder[]>([])
 const options = ref<DeptOptions | null>(null)
 const activeTab = ref('')
-// 🆕 生产部两组项目列表
+// 🆕 生产部三组项目列表（钣金/装配/封板）
 const sheetmetalRows = ref<GroupProjectRow[]>([])
 const assemblyRows = ref<GroupProjectRow[]>([])
-// 🆕 #1 钣金/装配组 人员筛选
+const sealingRows = ref<GroupProjectRow[]>([])   // 🆕 反馈#209 封板组
+// 🆕 #1 钣金/装配/封板组 人员筛选
 const smWorkerFilter = ref('')
 const asmWorkerFilter = ref('')
+const sealWorkerFilter = ref('')
 const smWorkers = computed(() => Array.from(new Set(sheetmetalRows.value.map(r => r.worker_name).filter((n): n is string => !!n))))
 const asmWorkers = computed(() => Array.from(new Set(assemblyRows.value.map(r => r.worker_name).filter((n): n is string => !!n))))
+const sealWorkers = computed(() => Array.from(new Set(sealingRows.value.map(r => r.worker_name).filter((n): n is string => !!n))))
 const smRowsView = computed(() => smWorkerFilter.value ? sheetmetalRows.value.filter(r => (r.worker_name || '') === smWorkerFilter.value) : sheetmetalRows.value)
 const asmRowsView = computed(() => asmWorkerFilter.value ? assemblyRows.value.filter(r => (r.worker_name || '') === asmWorkerFilter.value) : assemblyRows.value)
+const sealRowsView = computed(() => sealWorkerFilter.value ? sealingRows.value.filter(r => (r.worker_name || '') === sealWorkerFilter.value) : sealingRows.value)
 
 const curYear = String(new Date().getFullYear())
 const yearFilter = ref(curYear)
@@ -134,13 +139,16 @@ async function load() {
         tasks.push(ordersApi.options('produce').then((o) => { options.value = o }))
         tasks.push(produceApi.sheetmetalProjects(yearFilter.value, projStatusFilter.value).then((r) => { sheetmetalRows.value = r }))
         tasks.push(produceApi.assemblyProjects(yearFilter.value, projStatusFilter.value).then((r) => { assemblyRows.value = r }))
+        tasks.push(produceApi.sealingProjects(yearFilter.value, projStatusFilter.value).then((r) => { sealingRows.value = r }))   // 🆕 反馈#209
       } else {
         if (isSheetmetal.value) tasks.push(produceApi.sheetmetalProjects(yearFilter.value, projStatusFilter.value).then((r) => { sheetmetalRows.value = r }))
         if (isAssembler.value) tasks.push(produceApi.assemblyProjects(yearFilter.value, projStatusFilter.value).then((r) => { assemblyRows.value = r }))
+        if (isSealing.value) tasks.push(produceApi.sealingProjects(yearFilter.value, projStatusFilter.value).then((r) => { sealingRows.value = r }))   // 🆕 反馈#209
       }
       await Promise.all(tasks)
       if (!activeTab.value) {
-        activeTab.value = (isLead.value || isMgr.value) ? 'assign' : (isSheetmetal.value ? 'sm' : 'asm')
+        activeTab.value = (isLead.value || isMgr.value) ? 'assign'
+          : (isSheetmetal.value ? 'sm' : (isAssembler.value ? 'asm' : 'seal'))
       }
       return
     }
@@ -166,25 +174,27 @@ async function load() {
 // 🆕 生产派发（主管手动）：分别选钣金组、装配组各一名人员（两组都必选）
 const dispatchVisible = ref(false)
 const dispatchOrder = ref<DeptOrder | null>(null)
-const dispatchOpts = ref<DispatchOptions>({ sheetmetal: [], assembly: [] })
+const dispatchOpts = ref<DispatchOptions>({ sheetmetal: [], assembly: [], sealing: [] })
 const dispatchSmWid = ref<number | null>(null)
 const dispatchAsmWid = ref<number | null>(null)
+const dispatchSealWid = ref<number | null>(null)   // 🆕 反馈#209 封板组
 const dispatching = ref(false)
 async function openDispatch(o: DeptOrder) {
   dispatchOrder.value = o
   dispatchSmWid.value = null
   dispatchAsmWid.value = null
+  dispatchSealWid.value = null
   dispatchVisible.value = true
   try { dispatchOpts.value = await produceApi.dispatchOptions() } catch { /* 忽略 */ }
 }
 async function doDispatch() {
   const o = dispatchOrder.value
   if (!o) return
-  if (!dispatchSmWid.value && !dispatchAsmWid.value) { ElMessage.warning('至少选择一组（钣金组或装配组）'); return }
+  if (!dispatchSmWid.value && !dispatchAsmWid.value && !dispatchSealWid.value) { ElMessage.warning('至少选择一组（钣金组/装配组/封板组）'); return }
   dispatching.value = true
   try {
-    await produceApi.dispatch(o.id, dispatchSmWid.value, dispatchAsmWid.value)
-    const label = [dispatchSmWid.value && '钣金组', dispatchAsmWid.value && '装配组'].filter(Boolean).join('、')
+    await produceApi.dispatch(o.id, dispatchSmWid.value, dispatchAsmWid.value, dispatchSealWid.value)
+    const label = [dispatchSmWid.value && '钣金组', dispatchAsmWid.value && '装配组', dispatchSealWid.value && '封板组'].filter(Boolean).join('、')
     ElMessage.success(`已派发到${label}`)
     dispatchVisible.value = false
     await load()
@@ -239,9 +249,9 @@ function importTemplateTables(o: DeptOrder) {
 // 🆕 #194 组任务换人（主管/管理层）：从派发人选里挑新负责人
 const grpReVisible = ref(false)
 const grpReRow = ref<GroupProjectRow | null>(null)
-const grpReGroup = ref<'sheetmetal' | 'assembly'>('assembly')
+const grpReGroup = ref<'sheetmetal' | 'assembly' | 'sealing'>('assembly')
 const grpReWid = ref<number | null>(null)
-async function openGroupReassign(row: GroupProjectRow, group: 'sheetmetal' | 'assembly') {
+async function openGroupReassign(row: GroupProjectRow, group: 'sheetmetal' | 'assembly' | 'sealing') {
   grpReRow.value = row; grpReGroup.value = group; grpReWid.value = null
   if (!dispatchOpts.value.sheetmetal.length && !dispatchOpts.value.assembly.length) {
     try { dispatchOpts.value = await produceApi.dispatchOptions() } catch { /* 忽略 */ }
@@ -287,6 +297,10 @@ function pgDue(row: DeptOrder, group: string): string {
 function pgDone(row: DeptOrder, group: string): string {
   const b = (row.produce_groups || []).find(g => g.group === group)
   return b && b.done_date ? fmtDate(b.done_date) : '—'
+}
+// 🆕 反馈#209：该生产单是否派了某组(封板组为可选,派了才在任务跟踪里显示行)
+function hasGroup(row: DeptOrder, group: string): boolean {
+  return (row.produce_groups || []).some(g => g.group === group)
 }
 
 // 🆕 #9 任务跟踪：资料预览 + 打包下载（复用 AttachmentPackDialog）
@@ -464,6 +478,17 @@ function viewSheet(row: GroupProjectRow) {
   viewTitle.value = `${row.code} · 钣金装配表`
   viewRow.value = row
   viewVisible.value = true
+}
+
+// 🆕 反馈#209 封板组「推送激光图」：只读查看激光件清单
+const laserVisible = ref(false)
+const laserTitle = ref('')
+const laserRow = ref<GroupProjectRow | null>(null)
+function viewLaserSheet(row: GroupProjectRow) {
+  if (!row.laser_datasheet_id) { ElMessage.info('该项目暂无激光件清单'); return }
+  laserTitle.value = `${row.code} · 激光件清单（只读）`
+  laserRow.value = row
+  laserVisible.value = true
 }
 watch(dept, () => { activeTab.value = ''; load() })
 onMounted(load)
@@ -794,7 +819,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     </el-dialog>
 
     <!-- ===== 部门工作台：负责人(待分派/跟踪) + 工人(待办/已完成) 并存；多角色用户全部显示 ===== -->
-    <template v-if="isWorker || isLead || isMgr || isSheetmetal">
+    <template v-if="isWorker || isLead || isMgr || isSheetmetal || isSealing">
       <el-tabs v-model="activeTab">
         <!-- ===== 待接单 tab ===== -->
         <el-tab-pane v-if="isWorker && !isProduce" :label="`📩 我的订单（待接单 ${myPending.length}）`" name="pending">
@@ -1044,7 +1069,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
               </div>
               <!-- 🆕 生产部：派发到钣金组+装配组（取代单人分派） -->
               <div v-if="isProduce" class="assign-bar">
-                <el-button type="primary" size="small" :icon="Promotion" @click="openDispatch(o)">派发钣金/装配</el-button>
+                <el-button type="primary" size="small" :icon="Promotion" @click="openDispatch(o)">派发钣金/装配/封板</el-button>
                 <el-button size="small" @click="doVoid(o)">作废单号</el-button>
               </div>
               <div v-else class="assign-bar">
@@ -1109,6 +1134,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <div v-if="isProduce" style="display:flex;flex-direction:column;gap:2px;font-size:12px;line-height:1.35;">
                   <span>钣金 {{ pgDue(row, 'sheetmetal') }}</span>
                   <span>装配 {{ pgDue(row, 'assembly') }}</span>
+                  <span v-if="hasGroup(row, 'sealing')">封板 {{ pgDue(row, 'sealing') }}</span>
                 </div>
                 <!-- 🆕 设计/电工：管理层可直接改预计完成(不受本人锁定) -->
                 <el-date-picker v-else-if="isMgr" :model-value="row.due_date || ''" type="date"
@@ -1122,6 +1148,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <div v-if="isProduce" style="display:flex;flex-direction:column;gap:2px;font-size:12px;line-height:1.35;">
                   <span>钣金 {{ pgDone(row, 'sheetmetal') }}</span>
                   <span>装配 {{ pgDone(row, 'assembly') }}</span>
+                  <span v-if="hasGroup(row, 'sealing')">封板 {{ pgDone(row, 'sealing') }}</span>
                 </div>
                 <template v-else>{{ row.done_date ? fmtDate(row.done_date) : '—' }}</template>
               </template>
@@ -1272,6 +1299,64 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           <!-- grp-filter 样式 -->
         </el-tab-pane>
 
+        <!-- ===== 🆕 反馈#209 生产部-封板组 tab（被派发项目 + 激光件清单/CAD激光图纸 = 推送激光图） ===== -->
+        <el-tab-pane v-if="isProduce && (isSealing || isLead || isMgr)" :label="`🧰 封板组 (${sealingRows.length})`" name="seal">
+          <div class="grp-filter">
+            <span class="muted small">按人员筛选：</span>
+            <el-select v-model="sealWorkerFilter" placeholder="全部人员" clearable filterable size="small" style="width:160px">
+              <el-option v-for="w in sealWorkers" :key="w" :label="w" :value="w" />
+            </el-select>
+            <span class="muted small">共 {{ sealRowsView.length }} 项</span>
+          </div>
+          <el-table show-overflow-tooltip :data="sealRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
+            <el-table-column type="index" label="#" width="56" align="center" />
+            <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+            <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
+            <el-table-column label="设计师" min-width="90" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="材料库位" min-width="130">
+              <template #default="{ row }">
+                <span v-if="row.material_locations && row.material_locations.length">
+                  <el-tag v-for="l in row.material_locations" :key="l" size="small" type="warning" effect="plain" style="margin:1px 3px 1px 0">{{ l }}</el-tag>
+                </span>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="派给" min-width="130" align="center">
+              <template #default="{ row }">
+                {{ row.worker_name || '—' }}
+                <el-button v-if="(isLead || isMgr) && !row.group_done" size="small" link type="primary"
+                           @click="openGroupReassign(row, 'sealing')">换人</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="激光图" min-width="230" align="center">
+              <template #default="{ row }">
+                <el-button v-if="row.laser_datasheet_id" size="small" link type="primary" :icon="Document" @click="viewLaserSheet(row)">激光件清单</el-button>
+                <template v-if="row.laser_files && row.laser_files.length">
+                  <el-button v-for="f in row.laser_files" :key="f.id" size="small" link type="success" :icon="Download"
+                             @click="downloadAttachment(f)">{{ f.name }}</el-button>
+                </template>
+                <span v-if="!row.laser_datasheet_id && !(row.laser_files && row.laser_files.length)" class="muted">暂无</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="预计完成" min-width="150" align="center">
+              <template #default="{ row }">
+                <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
+                  size="small" placeholder="设置" style="width:132px" :clearable="false"
+                  :disabled="!!row.due_date && !isMgr" @change="(v: string | null) => setGroupDue(row, v)" />
+              </template>
+            </el-table-column>
+            <el-table-column label="封板完成" min-width="180" align="center">
+              <template #default="{ row }">
+                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
+                <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
+                  {{ row.group_done ? '撤销' : '标记完成' }}
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <EmptyHint v-if="!loading && !sealingRows.length" text="暂无派发给封板组的项目" size="sm" />
+        </el-tab-pane>
+
         <!-- 🆕 设计师请购单：列清单推给采购员（与仓库采购申请同一流程） -->
         <el-tab-pane v-if="dept === 'design' || dept === 'electric' || dept === 'produce'" label="🛒 请购单" name="preq">
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
@@ -1417,11 +1502,11 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     </el-dialog>
 
     <!-- ===== 🆕 #194 组任务换人弹窗 ===== -->
-    <el-dialog v-model="grpReVisible" :title="`🔁 换人 · ${grpReRow?.code || ''}（${grpReGroup === 'sheetmetal' ? '钣金组' : '装配组'}）`" width="380px">
+    <el-dialog v-model="grpReVisible" :title="`🔁 换人 · ${grpReRow?.code || ''}（${grpReGroup === 'sheetmetal' ? '钣金组' : (grpReGroup === 'assembly' ? '装配组' : '封板组')}）`" width="380px">
       <el-form label-position="top">
         <el-form-item :label="`当前负责人：${grpReRow?.worker_name || '—'}，改派给`" required>
           <el-select v-model="grpReWid" filterable placeholder="选择新负责人" style="width:100%">
-            <el-option v-for="w in (grpReGroup === 'sheetmetal' ? dispatchOpts.sheetmetal : dispatchOpts.assembly)"
+            <el-option v-for="w in (grpReGroup === 'sheetmetal' ? dispatchOpts.sheetmetal : (grpReGroup === 'assembly' ? dispatchOpts.assembly : dispatchOpts.sealing))"
                        :key="w.id" :label="w.name" :value="w.id" />
           </el-select>
         </el-form-item>
@@ -1435,7 +1520,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     <!-- ===== 🆕 生产派发弹窗（派给钣金组+装配组） ===== -->
     <el-dialog v-model="dispatchVisible" :title="`🚀 派发生产任务 · ${dispatchOrder?.project_code || ''}`" width="460px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
-                title="钣金组、装配组可各自选派，至少选择一组；各组标记完成后即视为生产完成（可发货）。" />
+                title="钣金组、装配组、封板组可各自选派，至少选择一组；钣金/装配两组完成即视为生产完成（可发货），封板组为可选组，派了则也须完成。" />
       <el-form label-position="top">
         <el-form-item label="派给 · 生产部-钣金组（可不选）">
           <el-select v-model="dispatchSmWid" placeholder="不派发钣金组则留空" clearable style="width: 100%">
@@ -1445,6 +1530,12 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         <el-form-item label="派给 · 生产部-装配组（可不选）">
           <el-select v-model="dispatchAsmWid" placeholder="不派发装配组则留空" clearable style="width: 100%">
             <el-option v-for="w in dispatchOpts.assembly" :key="w.id" :label="w.name" :value="w.id" />
+          </el-select>
+        </el-form-item>
+        <!-- 🆕 反馈#209 封板组（可选） -->
+        <el-form-item label="派给 · 生产部-封板组（可不选，激光图会推送给该组）">
+          <el-select v-model="dispatchSealWid" placeholder="不派发封板组则留空" clearable style="width: 100%">
+            <el-option v-for="w in dispatchOpts.sealing" :key="w.id" :label="w.name" :value="w.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -1461,6 +1552,16 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         :datasheetId="viewRow.sheetmetal_datasheet_id"
         :projectCode="viewRow.code"
         :canEdit="canEditSheet"
+      />
+    </el-dialog>
+
+    <!-- ===== 🆕 反馈#209 封板组：激光件清单只读预览（推送激光图） ===== -->
+    <el-dialog v-model="laserVisible" :title="laserTitle" width="90vw" destroy-on-close>
+      <SheetmetalGrid
+        v-if="laserRow?.laser_datasheet_id"
+        :datasheetId="laserRow.laser_datasheet_id"
+        :projectCode="laserRow.code"
+        :canEdit="false"
       />
     </el-dialog>
 
@@ -1501,7 +1602,8 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           </div>
         </div>
         <!-- 🆕 发货清单：上传发货清单 -> 推送仓库备货 -> 仓库备货完成 -> 物流可见 -->
-        <div v-if="resMode === 'shipprep'" class="up-sec">
+        <!-- 反馈#211：电工发货准备只传电路图,不需要发货清单(发货清单由设计部上传) -->
+        <div v-if="resMode === 'shipprep' && dept !== 'electric'" class="up-sec">
           <div class="up-h"><el-icon><Van /></el-icon> 发货清单（上传后推送仓库备货）</div>
           <div class="up-b">
             <div class="tc-hint" style="margin:0 0 2px">上传发货清单文件，自动推送到仓库；仓库可下载/打印并备货，备货完成后物流即可见。可重复上传替换。</div>

@@ -226,7 +226,7 @@ async def _files_of(db: AsyncSession, order_ids: list[int]) -> dict[int, dict[st
     return out
 
 
-_PG_NAME = {"sheetmetal": "钣金", "assembly": "装配"}  # 任务跟踪父视图短标签
+_PG_NAME = {"sheetmetal": "钣金", "assembly": "装配", "sealing": "封板"}  # 任务跟踪父视图短标签(🆕 反馈#209)
 
 
 def _order_to_out(o: models.DeptOrder, files: dict[str, list],

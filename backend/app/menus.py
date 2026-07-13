@@ -57,7 +57,8 @@ ROLE_MENUS: dict[str, list[str]] = {
     "warehouse":        ["catalog", "list", "warehouse"],
     "buyer_standard":   ["catalog", "list", "purchase_mgmt"],
     "buyer_outsource":  ["catalog", "list", "purchase_mgmt"],
-    "hr":               ["catalog", "list", "hr"],   # 🆕 人事部一期
+    # 🆕 反馈#208：人事只需人事部,不看项目目录/项目详单(纯 hr 用户收窄;多角色仍取并集)
+    "hr":               ["hr"],
     # ---- 🆕 v3 角色 ----
     "sales":            ["catalog", "sales", "leads"],        # 无详单，编号不可点；🆕 销售线索
     "sales_lead":       ["catalog", "sales", "leads"],
@@ -67,6 +68,7 @@ ROLE_MENUS: dict[str, list[str]] = {
     "assembler":        ["catalog", "produce"],               # 无详单；装配组 tab 在生产部菜单内
     "pm_lead":          ["catalog", "list", "produce"],
     "sheetmetal":       ["catalog", "produce"],                 # 🆕 钣金组并入生产部菜单(tab)；无详单（同 assembler 口径）
+    "sealing":          ["catalog", "produce"],                 # 🆕 反馈#209 封板组并入生产部菜单(tab)；无详单（同装配/钣金口径）
     "buyer":            ["catalog", "list", "purchase_mgmt"],
     "buyer_lead":       ["catalog", "list", "purchase_mgmt"],  # 🆕 采购主管
     "warehouse_lead":   ["catalog", "list", "warehouse"],

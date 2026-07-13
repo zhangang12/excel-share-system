@@ -108,11 +108,16 @@ async def my_projects(
     current: models.User = Depends(require_roles("assembler")),
     db: AsyncSession = Depends(get_db),
 ):
-    """在手项目列表：返回所有进行中的项目供提交问题反馈时选择。"""
+    """在手项目列表：仅返回派给本装配工(装配组)且进行中的项目供提交问题反馈时选择。
+    🆕 反馈#210「对应不上」：下拉与提交校验同源(ProduceGroupTask 装配组派单)，
+    避免过去下拉列全部在手项目、提交却被「只能对自己在手的项目提交反馈」拦下的错配。"""
     r = await db.execute(
         select(models.Project.id, models.Project.code, models.Project.name)
-        .where(models.Project.status == "进行中", models.Project.is_deleted == False)
-        .order_by(models.Project.code)
+        .join(models.ProduceGroupTask, models.ProduceGroupTask.project_id == models.Project.id)
+        .where(models.ProduceGroupTask.group == "assembly",
+               models.ProduceGroupTask.worker_id == current.id,
+               models.Project.status == "进行中", models.Project.is_deleted == False)
+        .distinct().order_by(models.Project.code)
     )
     return [schemas.FeedbackProjOption(id=i, code=c, name=n) for i, c, n in r.all()]
 
@@ -129,12 +134,13 @@ async def create_feedback(
     🆕 #193 改 multipart：可附现场照片(多张,选填)，主管审批/设计师接收时可查看。"""
     if not content.strip():
         raise HTTPException(400, "请填写问题内容")
-    # 校验是本人在手项目
-    r = await db.execute(select(models.DeptOrder).where(
-        models.DeptOrder.project_id == project_id,
-        models.DeptOrder.dept == "produce",
-        models.DeptOrder.worker_id == current.id,
-        models.DeptOrder.status != "voided",
+    # 校验是本人在手(装配组)项目——与 /projects 下拉同源(ProduceGroupTask 装配组派单)。
+    # 🆕 反馈#210：装配工的在手项目走分组派单(worker_id 在 ProduceGroupTask,非 DeptOrder),
+    #   过去这里查 DeptOrder.worker_id 恒为空 → 与下拉对不上,一提交就被拦。
+    r = await db.execute(select(models.ProduceGroupTask).where(
+        models.ProduceGroupTask.project_id == project_id,
+        models.ProduceGroupTask.group == "assembly",
+        models.ProduceGroupTask.worker_id == current.id,
     ))
     if not r.scalars().first():
         raise HTTPException(403, "只能对自己在手的项目提交反馈")

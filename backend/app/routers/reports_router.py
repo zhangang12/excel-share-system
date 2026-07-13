@@ -89,9 +89,9 @@ def _agg_workers(orders: list[models.DeptOrder]) -> tuple[list[WorkerStat], list
 
 # ==================== 生产部专用聚合（钣金组 + 装配组分组任务） ====================
 # 生产部不走 DeptOrder.worker_id（父生产单 worker_id 恒为空），实际工人与完成都在
-# ProduceGroupTask（每项目最多 2 条：钣金组 + 装配组）。报表须按分组任务统计，否则
+# ProduceGroupTask（每项目最多 3 条：钣金组 + 装配组 + 🆕封板组）。报表须按分组任务统计，否则
 # 「已完成」永远为 0、人员明细缺失。完成时效以父生产单的 start/due + 本组 done_at 计算。
-GROUP_NAMES = {"sheetmetal": "钣金组", "assembly": "装配组"}
+GROUP_NAMES = {"sheetmetal": "钣金组", "assembly": "装配组", "sealing": "封板组"}  # 🆕 反馈#209
 
 
 def _china_date_str(dt: Optional[datetime]) -> Optional[str]:

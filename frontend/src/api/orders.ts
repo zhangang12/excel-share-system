@@ -154,19 +154,22 @@ export interface GroupProjectRow {
   standard_ready?: boolean | null    // 仅装配组
   outsource_ready?: boolean | null   // 仅装配组
   material_locations?: string[]      // 🆕 #204 本项目材料所在库位
+  laser_datasheet_id?: number | null           // 🆕 反馈#209 封板组：激光件清单(只读表)
+  laser_files?: { id: number; name: string }[] // 🆕 反馈#209 封板组：CAD激光图纸(可下载)
 }
 
 export interface DispatchOptions {
   sheetmetal: OptionUser[]
   assembly: OptionUser[]
+  sealing: OptionUser[]              // 🆕 反馈#209 封板组
 }
 
 export const produceApi = {
   dispatchOptions: () =>
     http.get<DispatchOptions>('/produce/dispatch-options').then((r) => r.data),
-  dispatch: (orderId: number, sheetmetalWorkerId: number | null, assemblyWorkerId: number | null) =>
+  dispatch: (orderId: number, sheetmetalWorkerId: number | null, assemblyWorkerId: number | null, sealingWorkerId: number | null = null) =>
     http.post(`/produce/dispatch/${orderId}`,
-      { sheetmetal_worker_id: sheetmetalWorkerId, assembly_worker_id: assemblyWorkerId }).then((r) => r.data),
+      { sheetmetal_worker_id: sheetmetalWorkerId, assembly_worker_id: assemblyWorkerId, sealing_worker_id: sealingWorkerId }).then((r) => r.data),
   groupDone: (taskId: number, done: boolean) =>
     http.post(`/produce/group/${taskId}/done`, { done }).then((r) => r.data),
   setGroupDue: (taskId: number, dueDate: string) =>
@@ -178,6 +181,8 @@ export const produceApi = {
     http.get<GroupProjectRow[]>('/produce/sheetmetal-projects', { params: { year, proj_status } }).then((r) => r.data),
   assemblyProjects: (year?: string, proj_status?: string) =>
     http.get<GroupProjectRow[]>('/produce/assembly-projects', { params: { year, proj_status } }).then((r) => r.data),
+  sealingProjects: (year?: string, proj_status?: string) =>   // 🆕 反馈#209 封板组
+    http.get<GroupProjectRow[]>('/produce/sealing-projects', { params: { year, proj_status } }).then((r) => r.data),
 }
 
 // 附件下载（带鉴权的 blob 下载，沿用现有 fetch+blob 模式）
