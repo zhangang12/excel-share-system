@@ -392,7 +392,7 @@ function onRecvCalc() {   // 填单价 → 算总价（收货金额）
 }
 function onRecvAmountCalc() {   // #186 填总价(收货金额) → 按数量均分算单价
   if (recvForm.qty && recvForm.qty > 0 && recvForm.received_amount != null) {
-    recvForm.unit_price = Number((recvForm.received_amount / recvForm.qty).toFixed(4))
+    recvForm.unit_price = Number((recvForm.received_amount / recvForm.qty).toFixed(2))
   }
 }
 // 🆕 需求十四：单条收货时可上传收货单（图片/PDF）
@@ -896,12 +896,12 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                     max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column prop="item_name" label="名称" min-width="150" />
             <el-table-column prop="spec" label="规格型号" min-width="150"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
-            <el-table-column label="需求量" width="90" align="right"><template #default="{ row }">{{ row.demand_qty ?? '—' }}</template></el-table-column>
-            <el-table-column label="现有库存" width="100" align="right">
+            <el-table-column label="需求量" width="104" align="right"><template #default="{ row }">{{ row.demand_qty ?? '—' }}</template></el-table-column>
+            <el-table-column label="现有库存" width="112" align="right">
               <template #default="{ row }"><b :class="{ bad: row.stock <= 0 }">{{ row.stock }}</b></template>
             </el-table-column>
-            <el-table-column prop="location" label="库位" width="96"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
-            <el-table-column label="建议采购" width="100" align="right">
+            <el-table-column prop="location" label="库位" min-width="130"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
+            <el-table-column label="建议采购" width="112" align="right">
               <template #default="{ row }"><span :class="{ bad: row.suggest_purchase > 0 }">{{ row.suggest_purchase }}</span></template>
             </el-table-column>
             <el-table-column label="库存" width="90" align="center">
@@ -1342,7 +1342,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-form-item>
         <div class="frow">
           <el-form-item label="单价（后填价格在此补）">
-            <el-input-number v-model="recvForm.unit_price" :min="0" :precision="4" :controls="false" style="width:100%" @change="onRecvCalc" />
+            <el-input-number v-model="recvForm.unit_price" :min="0" :precision="2" :controls="false" style="width:100%" @change="onRecvCalc" />
           </el-form-item>
           <el-form-item label="收货金额（总价，填此按数量算单价）">
             <el-input-number v-model="recvForm.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" @change="onRecvAmountCalc" />
@@ -1385,7 +1385,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-table-column>
         <el-table-column label="数量" width="80" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
         <el-table-column label="单价" width="130" align="right">
-          <template #default="{ row }"><el-input-number v-model="row.unit_price" :min="0" :precision="4" :controls="false" style="width:110px" /></template>
+          <template #default="{ row }"><el-input-number v-model="row.unit_price" :min="0" :precision="2" :controls="false" style="width:110px" /></template>
         </el-table-column>
         <el-table-column label="收货金额" width="140" align="right">
           <template #default="{ row }"><el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:120px" /></template>

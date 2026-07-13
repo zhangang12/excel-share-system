@@ -2400,7 +2400,7 @@ async def report_supplier_trend(
 # 🆕 请购申请人角色：仓库 + 设计师(设计师请购单,与仓库同一流程/推送)
 # 🆕 #198 电工部、🆕 生产部 也可提请购单（与仓库/设计同一流程：指定采购员→推送→行级隔离）
 _PREQ_WAREHOUSE = ("warehouse", "warehouse_lead", "designer", "design_lead", "electrician", "electric_lead",
-                   "pm_lead", "production_clerk", "assembler", "sheetmetal")
+                   "pm_lead", "production_clerk", "assembler", "sheetmetal", "sealing")  # 🆕 #223 封板组漏加→请购单403
 _PREQ_VIEW = _PREQ_WAREHOUSE + ("buyer", "buyer_lead", "buyer_standard", "buyer_outsource",
                                 "finance", "finance_lead")
 
