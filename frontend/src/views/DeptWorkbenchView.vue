@@ -1328,14 +1328,17 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            @click="openGroupReassign(row, 'sealing')">换人</el-button>
               </template>
             </el-table-column>
-            <el-table-column label="激光图" min-width="230" align="center">
+            <el-table-column label="推送资料" min-width="300" align="left">
               <template #default="{ row }">
-                <el-button v-if="row.laser_datasheet_id" size="small" link type="primary" :icon="Document" @click="viewLaserSheet(row)">激光件清单</el-button>
-                <template v-if="row.laser_files && row.laser_files.length">
-                  <el-button v-for="f in row.laser_files" :key="f.id" size="small" link type="success" :icon="Download"
+                <div style="display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center">
+                  <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" :icon="Document" @click="viewSheet(row)">钣金装配表</el-button>
+                  <el-button v-if="row.laser_datasheet_id" size="small" link type="primary" :icon="Document" @click="viewLaserSheet(row)">激光件清单</el-button>
+                  <el-button v-for="f in (row.laser_files || [])" :key="'l' + f.id" size="small" link type="success" :icon="Download"
                              @click="downloadAttachment(f)">{{ f.name }}</el-button>
-                </template>
-                <span v-if="!row.laser_datasheet_id && !(row.laser_files && row.laser_files.length)" class="muted">暂无</span>
+                  <el-button v-for="f in (row.sealing_files || [])" :key="'s' + f.id" size="small" link type="warning" :icon="Download"
+                             @click="downloadAttachment(f)">封板·{{ f.name }}</el-button>
+                  <span v-if="!row.sheetmetal_datasheet_id && !row.laser_datasheet_id && !(row.laser_files || []).length && !(row.sealing_files || []).length" class="muted">暂无</span>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="预计完成" min-width="150" align="center">

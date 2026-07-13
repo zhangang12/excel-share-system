@@ -19,6 +19,8 @@ DEPTS: dict[str, dict] = {
         "start_outputs": [
             {"k": "sheetpkg", "label": "CAD激光图纸", "to_role": "buyer"},
             {"k": "outsource_img", "label": "外购附图", "to_role": "buyer"},
+            # 🆕 封板文件(机架图/横梁图)→推送封板组(sealing);封板组 tab 里可下载
+            {"k": "sealing_pkg", "label": "封板文件(机架图/横梁图)", "to_role": "sealing"},
         ],
         "outputs": [
             {"k": "manual",    "label": "说明书 (Word)", "to_role": "logistics", "required": False},

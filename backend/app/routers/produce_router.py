@@ -308,6 +308,8 @@ class GroupProjectRow(BaseModel):
     # 🆕 反馈#209 封板组「推送激光图」：激光件清单(只读表)+ CAD激光图纸文件(设计产出,可下载)
     laser_datasheet_id: Optional[int] = None
     laser_files: List[dict] = []
+    # 🆕 封板文件(机架图/横梁图)：设计推送给封板组的产出(order_start_output kind=sealing_pkg,可下载)
+    sealing_files: List[dict] = []
 
 
 async def _designer_by_pid(db: AsyncSession, pids: list[int]) -> dict[int, str]:
@@ -348,9 +350,9 @@ async def _sheet_ready(db: AsyncSession, ds: Optional[models.Datasheet]) -> bool
     return all((r.values or {}).get(key) == "完成" for r in recs)
 
 
-async def _laser_files_by_pid(db: AsyncSession, pids: list[int]) -> dict[int, list[dict]]:
-    """🆕 反馈#209「推送激光图」：项目的 CAD激光图纸文件(设计任务产出 order_start_output kind=sheetpkg)。
-    封板组 tab 里可直接下载,相当于把激光图推送给封板组。"""
+async def _laser_files_by_pid(db: AsyncSession, pids: list[int], kind: str = "sheetpkg") -> dict[int, list[dict]]:
+    """🆕 反馈#209「推送设计产物」：项目的设计任务产出文件(order_start_output)。
+    kind=sheetpkg→CAD激光图纸;kind=sealing_pkg→封板文件(机架图/横梁图)。封板组 tab 里可直接下载。"""
     if not pids:
         return {}
     dord = await db.execute(select(models.DeptOrder.id, models.DeptOrder.project_id).where(
@@ -360,7 +362,7 @@ async def _laser_files_by_pid(db: AsyncSession, pids: list[int]) -> dict[int, li
         return {}
     ar = await db.execute(select(models.Attachment).where(
         models.Attachment.biz_type == "order_start_output",
-        models.Attachment.kind == "sheetpkg",
+        models.Attachment.kind == kind,
         models.Attachment.biz_id.in_(list(oid2pid.keys()))).order_by(models.Attachment.id))
     out: dict[int, list[dict]] = {}
     for a in ar.scalars().all():
@@ -428,9 +430,11 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
     # 🆕 反馈#209 封板组「推送激光图」：激光件清单(数据表)+ CAD激光图纸(设计产出文件)
     laser_ds_by_pid: dict = {}
     laser_files_by_pid: dict = {}
+    sealing_files_by_pid: dict = {}   # 🆕 封板文件(机架图/横梁图)
     if group == "sealing":
         laser_ds_by_pid = await _sheets_by_pid(db, pids, ("激光件清单",))
         laser_files_by_pid = await _laser_files_by_pid(db, pids)
+        sealing_files_by_pid = await _laser_files_by_pid(db, pids, "sealing_pkg")
 
     rows: List[GroupProjectRow] = []
     for t, _o in pairs:
@@ -457,6 +461,7 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
             ld = laser_ds_by_pid.get(p.id, {}).get("激光件清单")
             row.laser_datasheet_id = ld.id if ld else None
             row.laser_files = laser_files_by_pid.get(p.id, [])
+            row.sealing_files = sealing_files_by_pid.get(p.id, [])
         rows.append(row)
     rows.sort(key=lambda x: x.code, reverse=True)
     return rows
