@@ -54,9 +54,21 @@ async function loadList() {
 function onTabChange(name: string | number) {
   if (['mine', 'pending_me', 'cc_me', 'dept', 'all'].includes(String(name))) {
     activeTab.value = name as Scope
+    filterAllDoc.value = ''; filterAllRequester.value = ''   // 换 tab 清筛选
     loadList()
   }
 }
+
+// 🆕 反馈#218：全部申请 加「单据类型 / 申请人」筛选(客户端过滤当前已加载列表)
+const filterAllDoc = ref('')
+const filterAllRequester = ref('')
+const allRequesters = computed(() =>
+  Array.from(new Set(rows.value.map(r => r.requester_name).filter((n): n is string => !!n))))
+const allDocOptions = computed(() =>
+  Array.from(new Set(rows.value.map(r => r.doc_type))).map(k => ({ key: k, label: docLabel(k) })))
+const allRowsView = computed(() => rows.value.filter(r =>
+  (!filterAllDoc.value || r.doc_type === filterAllDoc.value) &&
+  (!filterAllRequester.value || r.requester_name === filterAllRequester.value)))
 
 const STATUS_VARIANT: Record<string, 'success' | 'warn' | 'info' | 'danger' | 'muted'> = {
   pending: 'warn', pending_payment: 'info', approved: 'success', rejected: 'danger', withdrawn: 'muted',
@@ -68,6 +80,9 @@ const STATUS_TEXT: Record<string, string> = {
 const DETAIL_FIELD_LABELS: Record<string, string> = {
   destination: '目的地/对象', start_date: '开始日期', end_date: '结束日期', notes: '事由/备注',
   transport: '交通方式', items: '物品清单', purpose: '用途',
+  // 🆕 反馈#217 销售提成申请字段
+  project_code: '项目编号', customer_name: '客户名称', equipment_name: '设备名称',
+  payback_amount: '回款金额', payback_type: '回款类型', commission_rate: '提成点(%)', commission_amount: '提成金额',
 }
 function detailFieldLabel(k: string): string { return DETAIL_FIELD_LABELS[k] || k }
 function curStepLabel(r: OaRequest): string {
@@ -86,6 +101,9 @@ const subForm = reactive({
   doc_type: '', department_id: '' as number | '', title: '', amount: null as number | null,
   related_request_id: null as number | '' | null,
   d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
+  // 🆕 反馈#217 销售提成申请专用字段
+  c_project_code: '', c_customer: '', c_equipment: '', c_payback_type: '',
+  c_payback_amount: null as number | null, c_commission_rate: null as number | null,
   expense_items: [] as ExpenseItem[],   // 🆕 #149 报销费用明细
   cc_user_ids: [] as number[],   // 🆕 抄送人
 })
@@ -117,6 +135,11 @@ const showPurchaseFields = computed(() => subCategory.value === 'purchase')
 const showRelatedTrip = computed(() => subForm.doc_type === 'travel_expense')
 const showTripFields = computed(() => subForm.doc_type === 'trip')   // 🆕 出差申请专属：交通方式
 const TRANSPORT_OPTIONS = ['高铁', '飞机', '火车', '私车公用', '公车']
+// 🆕 反馈#217 销售提成申请：专用表单 + 提成金额=回款金额×提成点% 自动算
+const showCommissionFields = computed(() => subForm.doc_type === 'sales_commission')
+const PAYBACK_TYPES = ['预付款', '进度款', '到货款', '尾款', '质保金', '全款']
+const commissionAmount = computed(() =>
+  Math.round((Number(subForm.c_payback_amount) || 0) * (Number(subForm.c_commission_rate) || 0)) / 100)
 const myApprovedTrips = ref<OaRequest[]>([])
 async function loadMyApprovedTrips() {
   try { myApprovedTrips.value = await oaApi.listRequests({ scope: 'mine', doc_type: 'trip', status: 'approved' }) }
@@ -131,6 +154,7 @@ function resetSubForm() {
   Object.assign(subForm, {
     doc_type: '', department_id: '', title: '', amount: null, related_request_id: null,
     d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
+    c_project_code: '', c_customer: '', c_equipment: '', c_payback_type: '', c_payback_amount: null, c_commission_rate: null,
     expense_items: [],
     cc_user_ids: [],
   })
@@ -145,7 +169,16 @@ async function submitNew() {
   if (!subForm.doc_type) { ElMessage.warning('请选择单据类型'); return }
   if (!subForm.department_id) { ElMessage.warning('请选择部门'); return }
   let detail: Record<string, any> = {}
-  if (showBusinessFields.value) {
+  if (showCommissionFields.value) {
+    // 🆕 反馈#217 销售提成申请
+    if (!subForm.c_project_code.trim() && !subForm.c_customer.trim()) { ElMessage.warning('请填写项目编号或客户名称'); return }
+    detail = {
+      project_code: subForm.c_project_code.trim(), customer_name: subForm.c_customer.trim(),
+      equipment_name: subForm.c_equipment.trim(), payback_amount: Number(subForm.c_payback_amount) || 0,
+      payback_type: subForm.c_payback_type || '', commission_rate: Number(subForm.c_commission_rate) || 0,
+      commission_amount: commissionAmount.value, notes: subForm.d_notes || '',
+    }
+  } else if (showBusinessFields.value) {
     detail = { destination: subForm.d_destination, start_date: subForm.d_start_date, end_date: subForm.d_end_date, notes: subForm.d_notes }
     if (showTripFields.value) detail.transport = subForm.d_transport
   } else if (showReimburseFields.value) {
@@ -167,7 +200,7 @@ async function submitNew() {
     const r = await oaApi.createRequest({
       category: subCategory.value, doc_type: subForm.doc_type, department_id: subForm.department_id as number,
       title: subForm.title || undefined,
-      amount: showReimburseFields.value ? expenseTotal.value : subForm.amount,
+      amount: showReimburseFields.value ? expenseTotal.value : (showCommissionFields.value ? commissionAmount.value : subForm.amount),
       detail, related_request_id: showRelatedTrip.value && subForm.related_request_id ? (subForm.related_request_id as number) : null,
       cc_user_ids: subForm.cc_user_ids,
     })
@@ -507,8 +540,18 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane v-if="canViewAll" label="全部申请" name="all">
-        <div class="toolbar"><el-button :icon="RefreshLeft" @click="loadList">刷新</el-button></div>
-        <el-table show-overflow-tooltip :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
+        <div class="toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <el-button :icon="RefreshLeft" @click="loadList">刷新</el-button>
+          <!-- 🆕 反馈#218 单据类型 / 申请人 筛选 -->
+          <el-select v-model="filterAllDoc" clearable filterable placeholder="单据类型(全部)" size="default" style="width:150px">
+            <el-option v-for="d in allDocOptions" :key="d.key" :label="d.label" :value="d.key" />
+          </el-select>
+          <el-select v-model="filterAllRequester" clearable filterable placeholder="申请人(全部)" size="default" style="width:140px">
+            <el-option v-for="n in allRequesters" :key="n" :label="n" :value="n" />
+          </el-select>
+          <span class="muted" style="font-size:13px">共 {{ allRowsView.length }} 条</span>
+        </div>
+        <el-table show-overflow-tooltip :data="allRowsView" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
           <el-table-column prop="request_no" label="单号" width="150" />
           <el-table-column label="单据类型" width="120"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
           <el-table-column prop="department_name" label="部门" width="100" />
@@ -731,13 +774,35 @@ onMounted(async () => {
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12"><el-form-item label="标题"><el-input v-model="subForm.title" placeholder="留空则用单据类型名" /></el-form-item></el-col>
-          <el-col :xs="24" :sm="12" v-if="!showReimburseFields">
+          <el-col :xs="24" :sm="12" v-if="!showReimburseFields && !showCommissionFields">
             <el-form-item :label="showPurchaseFields ? '预估采购金额' : '预估金额（选填）'">
               <el-input-number v-model="subForm.amount" :min="0" :precision="2" :controls="false" style="width:100%" />
             </el-form-item>
           </el-col>
 
-          <template v-if="showBusinessFields">
+          <!-- 🆕 反馈#217 销售提成申请专用表单 -->
+          <template v-if="showCommissionFields">
+            <el-col :xs="24" :sm="12"><el-form-item label="项目编号"><el-input v-model="subForm.c_project_code" placeholder="如 2026-061M" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item label="客户名称"><el-input v-model="subForm.c_customer" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item label="设备名称"><el-input v-model="subForm.c_equipment" /></el-form-item></el-col>
+            <el-col :xs="12" :sm="6">
+              <el-form-item label="回款类型">
+                <el-select v-model="subForm.c_payback_type" filterable allow-create default-first-option clearable placeholder="选/填" style="width:100%">
+                  <el-option v-for="t in PAYBACK_TYPES" :key="t" :label="t" :value="t" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :xs="12" :sm="6"><el-form-item label="回款金额(元)"><el-input-number v-model="subForm.c_payback_amount" :min="0" :precision="2" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :xs="12" :sm="6"><el-form-item label="提成点(%)"><el-input-number v-model="subForm.c_commission_rate" :min="0" :precision="3" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :xs="12" :sm="6">
+              <el-form-item label="提成金额(自动)">
+                <el-input :model-value="fmtMoney(commissionAmount)" readonly />
+              </el-form-item>
+            </el-col>
+            <el-col :span="24"><el-form-item label="备注（选填）"><el-input v-model="subForm.d_notes" type="textarea" :rows="2" placeholder="选填" /></el-form-item></el-col>
+          </template>
+
+          <template v-if="showBusinessFields && !showCommissionFields">
             <el-col :xs="24" :sm="12"><el-form-item label="目的地/对象"><el-input v-model="subForm.d_destination" /></el-form-item></el-col>
             <el-col :xs="12" :sm="6"><el-form-item label="开始日期"><el-date-picker v-model="subForm.d_start_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item></el-col>
             <el-col :xs="12" :sm="6"><el-form-item label="结束日期"><el-date-picker v-model="subForm.d_end_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item></el-col>

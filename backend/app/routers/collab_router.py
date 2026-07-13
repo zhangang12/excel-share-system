@@ -6,7 +6,7 @@
   供生产部工作台展示（§十七）
 - PUT /api/datasheets/{did}/done-flag：标记/取消装配前置表"已完成"（管理层/生产主管/设计师）
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,6 +25,20 @@ router = APIRouter(prefix="/api", tags=["部门协作"])
 
 
 # ==================== 工作流聚合 ====================
+# 🆕 反馈#219/#220：生产部走分组派单(钣金/装配/封板),父生产单 worker_id 恒空——
+#   全流程图里生产部节点得展开成三组,否则显示"负责人—/效率—"且看不到装配组。
+_PRODUCE_GROUP_NAME = {"sheetmetal": "钣金组", "assembly": "装配组", "sealing": "封板组"}
+
+
+class WfGroup(BaseModel):
+    group: str
+    name: str
+    worker_name: Optional[str] = None
+    done: bool = False
+    due_date: Optional[str] = None
+    done_date: Optional[str] = None
+
+
 class WfDept(BaseModel):
     dept: str
     name: str
@@ -33,6 +47,7 @@ class WfDept(BaseModel):
     due_date: Optional[str] = None
     done_date: Optional[str] = None
     eff_pct: Optional[int] = None
+    groups: list[WfGroup] = []   # 🆕 反馈#219/#220 生产部钣金/装配/封板组明细
 
 
 class WfOut(BaseModel):
@@ -101,11 +116,30 @@ async def project_workflow(
         # 取最新一单代表（一般一个项目一部门一单）
         o = ds[-1]
         eff, _ot, _od = compute_efficiency(o.start_date, o.due_date, o.done_date)
+        # 🆕 反馈#219/#220：生产部展开钣金/装配/封板三组(负责人+完成),否则节点空且缺装配组
+        groups: list[WfGroup] = []
+        if dept == "produce":
+            gr = await db.execute(select(models.ProduceGroupTask).where(
+                models.ProduceGroupTask.order_id == o.id))
+            for t in gr.scalars().all():
+                w = None
+                if t.worker_id:
+                    wu = (await db.execute(select(models.User).where(
+                        models.User.id == t.worker_id))).scalar_one_or_none()
+                    w = (wu.full_name or wu.username) if wu else None
+                groups.append(WfGroup(
+                    group=t.group, name=_PRODUCE_GROUP_NAME.get(t.group, t.group),
+                    worker_name=w, done=(t.status == "done"), due_date=t.due_date,
+                    done_date=(t.done_at + timedelta(hours=8)).strftime("%Y-%m-%d") if t.done_at else None,
+                ))
+            groups.sort(key=lambda g: ["sheetmetal", "assembly", "sealing"].index(g.group)
+                        if g.group in ("sheetmetal", "assembly", "sealing") else 9)
         depts_out.append(WfDept(
             dept=dept, name=cfg["name"], status=o.status,
             worker_name=(o.worker.full_name or o.worker.username) if o.worker else None,
             due_date=o.due_date, done_date=o.done_date,
             eff_pct=eff if o.status == "done" else None,
+            groups=groups,
         ))
 
     # 下游产物计数

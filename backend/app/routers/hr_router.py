@@ -128,8 +128,9 @@ async def list_employees(
     _: models.User = Depends(require_roles(*_HR)),
     db: AsyncSession = Depends(get_db),
 ):
+    # 🆕 反馈#214：花名册按工号(emp_no)升序;无工号的排最后,再按 id 兜底
     q = select(models.Employee).order_by(
-        models.Employee.status, models.Employee.department_id, models.Employee.id)
+        models.Employee.emp_no.is_(None), models.Employee.emp_no, models.Employee.id)
     if status:
         q = q.where(models.Employee.status == status)
     if department_id:

@@ -1754,6 +1754,7 @@ async def backfill_oa_doc_types(db: AsyncSession) -> dict:
         ("trip", "business", "出差申请"), ("hospitality", "business", "招待申请"),
         ("company_car", "business", "公车申请"), ("private_car", "business", "私车公用申请"),
         ("other_biz", "business", "其他申请"),
+        ("sales_commission", "business", "销售提成申请"),   # 🆕 反馈#217 销售提成申请(专用表单)
         ("travel_expense", "reimbursement", "差旅费用报销"), ("expense", "reimbursement", "费用报销"),
         ("purchase", "purchase", "采购申请"),
     ]

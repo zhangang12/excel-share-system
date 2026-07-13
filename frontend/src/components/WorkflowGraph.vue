@@ -37,10 +37,23 @@ const shipTxt = computed(() =>
       <div class="wf-parallel-nodes">
         <div v-for="d in wf.depts" :key="d.dept" class="wf-node" :class="STATUS_CLS[d.status] || 'idle'">
           <div class="wf-h">{{ d.name }} <span class="wf-pill">{{ STATUS_TXT[d.status] || d.status }}</span></div>
-          <div class="wf-kv">负责人：{{ d.worker_name || '—' }}</div>
-          <div class="wf-kv">预计完成：{{ d.due_date || '—' }}</div>
-          <div class="wf-kv">实际完成：{{ d.done_date || '—' }}</div>
-          <div class="wf-kv">效率：<span v-if="d.eff_pct != null" :class="d.eff_pct >= 100 ? 'good' : 'bad'">{{ d.eff_pct }}%</span><span v-else>—</span></div>
+          <!-- 🆕 反馈#219/#220：生产部展开钣金/装配/封板三组(负责人+完成),不再显示空的"负责人—" -->
+          <template v-if="d.dept === 'produce' && d.groups && d.groups.length">
+            <div v-for="g in d.groups" :key="g.group" class="wf-grp">
+              <span class="wf-grp-n">{{ g.name }}</span>
+              <span class="wf-grp-w">{{ g.worker_name || '未派' }}</span>
+              <span class="wf-grp-s" :class="g.done ? 'good' : ''">{{ g.done ? '已完成' : '进行中' }}</span>
+            </div>
+          </template>
+          <template v-else-if="d.dept === 'produce'">
+            <div class="wf-kv">尚未派发钣金/装配组</div>
+          </template>
+          <template v-else>
+            <div class="wf-kv">负责人：{{ d.worker_name || '—' }}</div>
+            <div class="wf-kv">预计完成：{{ d.due_date || '—' }}</div>
+            <div class="wf-kv">实际完成：{{ d.done_date || '—' }}</div>
+            <div class="wf-kv">效率：<span v-if="d.eff_pct != null" :class="d.eff_pct >= 100 ? 'good' : 'bad'">{{ d.eff_pct }}%</span><span v-else>—</span></div>
+          </template>
         </div>
       </div>
     </div>
@@ -48,7 +61,7 @@ const shipTxt = computed(() =>
 
     <!-- 下游 -->
     <div class="wf-node" :class="wf.sheetpkg_count ? 'done' : 'idle'">
-      <div class="wf-h">🔧 钣金组</div>
+      <div class="wf-h">🔧 钣金图纸包</div>
       <div class="wf-kv">图纸包：{{ wf.sheetpkg_count }} 个</div>
     </div>
     <div class="wf-node" :class="wf.purchase_list_count ? 'done' : 'idle'">
@@ -89,6 +102,12 @@ const shipTxt = computed(() =>
 .wf-kv { font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; }
 .wf-kv .good { color: #16a34a; font-weight: 600; }
 .wf-kv .bad, .wf-kv.bad { color: #dc2626; }
+/* 🆕 反馈#219/#220 生产部分组行 */
+.wf-grp { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 1.7; }
+.wf-grp-n { color: var(--el-text-color-primary); font-weight: 500; min-width: 44px; }
+.wf-grp-w { color: var(--el-text-color-secondary); }
+.wf-grp-s { margin-left: auto; color: var(--el-text-color-secondary); }
+.wf-grp-s.good { color: #16a34a; font-weight: 600; }
 .wf-arr { align-self: center; color: var(--el-text-color-secondary); font-size: 18px; }
 .wf-parallel { border: 1px dashed var(--el-border-color); border-radius: 10px; padding: 8px; background: #fafafa; }
 .wf-parallel-label { font-size: 11px; color: var(--el-text-color-secondary); margin-bottom: 6px; }

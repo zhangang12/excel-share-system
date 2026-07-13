@@ -1,6 +1,14 @@
 import { http } from './index'
 
 // 🆕 v3 M12 部门协作：工作流聚合 / 装配前置三表 / 数据表完成标记
+export interface WfGroup {
+  group: string
+  name: string
+  worker_name?: string | null
+  done: boolean
+  due_date?: string | null
+  done_date?: string | null
+}
 export interface WfDept {
   dept: string
   name: string
@@ -9,6 +17,7 @@ export interface WfDept {
   due_date?: string | null
   done_date?: string | null
   eff_pct?: number | null
+  groups?: WfGroup[]   // 🆕 反馈#219/#220 生产部钣金/装配/封板组
 }
 
 export interface Workflow {
