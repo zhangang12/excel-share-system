@@ -407,6 +407,8 @@ async def delete_record(
 # ══════════════════════════════════════════════════════════
 
 SHEETMETAL_DS_NAME = "钣金装配"
+# 🆕 反馈#224：封板组照抄钣金组模板——封板组可编辑「激光件清单」(同钣金组编辑「钣金装配」)。
+PRODUCE_EDITABLE_DS = {"钣金装配", "激光件清单"}
 
 
 async def _produce_edit_check(
@@ -414,10 +416,10 @@ async def _produce_edit_check(
     current: models.User,
     db: AsyncSession,
 ) -> models.Datasheet:
-    """验证数据表是「钣金装配」且用户有生产组编辑权，返回 Datasheet 对象。"""
+    """验证数据表是生产组可编辑表(钣金装配/激光件清单)且用户有生产组编辑权，返回 Datasheet 对象。"""
     d = await _get_datasheet_or_404(db, did)
-    if d.name != SHEETMETAL_DS_NAME:
-        raise HTTPException(403, "此端点仅限编辑「钣金装配」数据表")
+    if d.name not in PRODUCE_EDITABLE_DS:
+        raise HTTPException(403, "此端点仅限编辑「钣金装配 / 激光件清单」数据表")
     if not current.has_role("admin", "manager"):
         r = await db.execute(
             select(models.ProduceGroupTask).where(
@@ -434,7 +436,7 @@ async def _produce_edit_check(
 async def produce_update_cell(
     did: int, rid: int,
     data: schemas.RecordCellUpdate,
-    current: models.User = Depends(require_roles("sheetmetal", "assembler")),
+    current: models.User = Depends(require_roles("sheetmetal", "assembler", "sealing")),
     db: AsyncSession = Depends(get_db),
 ):
     """生产组（钣金/装配）编辑钣金装配表单元格，绕开详单闸门。"""
@@ -464,7 +466,7 @@ async def produce_update_cell(
 async def produce_create_record(
     did: int,
     data: schemas.RecordCreate,
-    current: models.User = Depends(require_roles("sheetmetal", "assembler")),
+    current: models.User = Depends(require_roles("sheetmetal", "assembler", "sealing")),
     db: AsyncSession = Depends(get_db),
 ):
     """生产组新增钣金装配表行。"""
@@ -486,7 +488,7 @@ async def produce_create_record(
 @router.delete("/datasheets/{did}/produce-edit/records/{rid}", response_model=schemas.Msg)
 async def produce_delete_record(
     did: int, rid: int,
-    current: models.User = Depends(require_roles("sheetmetal", "assembler")),
+    current: models.User = Depends(require_roles("sheetmetal", "assembler", "sealing")),
     db: AsyncSession = Depends(get_db),
 ):
     """生产组删除钣金装配表行。"""

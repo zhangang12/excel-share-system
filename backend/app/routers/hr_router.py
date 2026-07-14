@@ -460,10 +460,11 @@ async def save_payroll(
 
 # ==================== 🆕 考勤(按月每人,人事录入) ====================
 async def _active_emps(db: AsyncSession) -> list[models.Employee]:
-    """在职/试用员工(排除离职),按部门+工号排序,供考勤/工资逐人录入。"""
+    """在职/试用员工(排除离职),按工号(emp_no)升序,供考勤/工资逐人录入。
+    🆕 反馈#225：与花名册(#214)一致,考勤/工资也按工号排,无工号排最后。"""
     return list((await db.execute(select(models.Employee).where(
         models.Employee.status != "离职").order_by(
-        models.Employee.department_id, models.Employee.emp_no))).scalars().all())
+        models.Employee.emp_no.is_(None), models.Employee.emp_no, models.Employee.id))).scalars().all())
 
 
 @router.get("/attendance")

@@ -472,7 +472,7 @@ async function submitRevision() {
 const viewVisible = ref(false)
 const viewTitle = ref('')
 const viewRow = ref<GroupProjectRow | null>(null)
-const canEditSheet = computed(() => isSheetmetal.value || isAssembler.value || isLead.value || isMgr.value)
+const canEditSheet = computed(() => isSheetmetal.value || isAssembler.value || isSealing.value || isLead.value || isMgr.value)
 function viewSheet(row: GroupProjectRow) {
   if (!row.sheetmetal_datasheet_id) { ElMessage.info('该项目暂无钣金装配表'); return }
   viewTitle.value = `${row.code} · 钣金装配表`
@@ -480,13 +480,13 @@ function viewSheet(row: GroupProjectRow) {
   viewVisible.value = true
 }
 
-// 🆕 反馈#209 封板组「推送激光图」：只读查看激光件清单
+// 🆕 反馈#209 封板组「推送激光图」；反馈#224 照抄钣金组：封板组可编辑激光件清单
 const laserVisible = ref(false)
 const laserTitle = ref('')
 const laserRow = ref<GroupProjectRow | null>(null)
 function viewLaserSheet(row: GroupProjectRow) {
   if (!row.laser_datasheet_id) { ElMessage.info('该项目暂无激光件清单'); return }
-  laserTitle.value = `${row.code} · 激光件清单（只读）`
+  laserTitle.value = `${row.code} · 激光件清单${canEditSheet.value ? '' : '（只读）'}`
   laserRow.value = row
   laserVisible.value = true
 }
@@ -1328,16 +1328,39 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            @click="openGroupReassign(row, 'sealing')">换人</el-button>
               </template>
             </el-table-column>
-            <el-table-column label="推送资料" min-width="300" align="left">
+            <!-- 🆕 反馈#224 照抄钣金组：主表列=激光件清单(可编辑,同钣金组编辑装配表) -->
+            <el-table-column label="激光件清单" min-width="200" align="center">
               <template #default="{ row }">
-                <div style="display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center">
-                  <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" :icon="Document" @click="viewSheet(row)">钣金装配表</el-button>
-                  <el-button v-if="row.laser_datasheet_id" size="small" link type="primary" :icon="Document" @click="viewLaserSheet(row)">激光件清单</el-button>
+                <template v-if="row.laser_datasheet_id">
+                  <el-button size="small" link type="primary" @click="viewLaserSheet(row)">{{ canEditSheet ? '编辑激光件清单' : '查看激光件清单' }}</el-button>
+                </template>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <!-- 🆕 反馈#224 设计推送资料分列：钣金装配表 / CAD激光图纸(待推送-已推送N) / 机架横梁图 -->
+            <el-table-column label="钣金装配表" min-width="120" align="center">
+              <template #default="{ row }">
+                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" :icon="Document" @click="viewSheet(row)">查看</el-button>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="CAD激光图纸" min-width="150" align="center">
+              <template #default="{ row }">
+                <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+                  <StatusPill :text="(row.laser_files || []).length ? `已推送 ${(row.laser_files || []).length}` : '待推送'"
+                              :variant="(row.laser_files || []).length ? 'success' : 'muted'" />
                   <el-button v-for="f in (row.laser_files || [])" :key="'l' + f.id" size="small" link type="success" :icon="Download"
                              @click="downloadAttachment(f)">{{ f.name }}</el-button>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="机架 / 横梁图" min-width="150" align="center">
+              <template #default="{ row }">
+                <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+                  <StatusPill :text="(row.sealing_files || []).length ? `已推送 ${(row.sealing_files || []).length}` : '待推送'"
+                              :variant="(row.sealing_files || []).length ? 'success' : 'muted'" />
                   <el-button v-for="f in (row.sealing_files || [])" :key="'s' + f.id" size="small" link type="warning" :icon="Download"
-                             @click="downloadAttachment(f)">封板·{{ f.name }}</el-button>
-                  <span v-if="!row.sheetmetal_datasheet_id && !row.laser_datasheet_id && !(row.laser_files || []).length && !(row.sealing_files || []).length" class="muted">暂无</span>
+                             @click="downloadAttachment(f)">{{ f.name }}</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -1564,7 +1587,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         v-if="laserRow?.laser_datasheet_id"
         :datasheetId="laserRow.laser_datasheet_id"
         :projectCode="laserRow.code"
-        :canEdit="false"
+        :canEdit="canEditSheet"
       />
     </el-dialog>
 
