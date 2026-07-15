@@ -38,6 +38,7 @@ export interface SalesLedgerRow {
   ship_receivable: number
   balance: number
   balance_date?: string | null
+  balance_note?: string | null   // 🆕 反馈#233 尾款到账批注
   ship_date?: string | null
   order_type?: string | null  // 调货订单 / 工厂制作订单
   revision_open?: boolean      // 🆕 #1 有未处理的技术资料修订意见
@@ -134,7 +135,7 @@ export const salesApi = {
   },
 
   // 🆕 收款批注（预付/发货前付）独立更新，销售本人即可记录
-  paymentNote: (id: number, field: 'prepay' | 'before_ship', note: string) =>
+  paymentNote: (id: number, field: 'prepay' | 'before_ship' | 'balance', note: string) =>
     http.put(`/sales/ledger/${id}/payment-note`, { field, note }).then((r) => r.data),
 
   uploadContract: (id: number, file: File, signDate: string, deliverDate: string) => {

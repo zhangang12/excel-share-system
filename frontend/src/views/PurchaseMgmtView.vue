@@ -1684,6 +1684,16 @@ async function rejectIncoming(row: IncomingReq) {
   ElMessage.success('已驳回')
   await loadIncomingReqs()
 }
+// 🆕 反馈#232：采购申请 → 新标签打开正式采购申请单 PDF(可查看+打印)
+async function viewPreqPdf(prid: number) {
+  const w = window.open('', '_blank')
+  try {
+    const res = await http.get(`/purchase-mgmt/purchase-requests/${prid}/pdf`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    if (w) { w.location.href = url } else { window.open(url, '_blank') }
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch { if (w) w.close(); ElMessage.error('打开采购申请单失败') }
+}
 function preqStatusTag(s: string): 'warning' | 'success' | 'danger' | 'info' {
   return s === 'done' ? 'success' : s === 'rejected' ? 'danger' : 'warning'
 }
@@ -1916,8 +1926,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column label="物料" min-width="220"><template #default="{ row }">{{ row.lines.map((l: any) => l.item_name).slice(0, 3).join('、') }}{{ row.lines.length > 3 ? ` 等${row.lines.length}项` : '' }}</template></el-table-column>
             <el-table-column label="状态" width="90" align="center"><template #default="{ row }"><el-tag :type="preqStatusTag(row.status)" size="small">{{ PREQ_STATUS[row.status] || row.status }}</el-tag></template></el-table-column>
             <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
-            <el-table-column label="操作" width="160" fixed="right" :show-overflow-tooltip="false">
+            <el-table-column label="操作" width="230" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
+                <!-- 🆕 反馈#232：查看/打印成正式采购申请单 -->
+                <el-button size="small" link type="primary" @click="viewPreqPdf(row.id)">查看/打印申请单</el-button>
                 <template v-if="row.status === 'pending' && canWrite">
                   <el-button size="small" type="primary" @click="handleIncoming(row)">已处理</el-button>
                   <el-button size="small" type="danger" link @click="rejectIncoming(row)">驳回</el-button>

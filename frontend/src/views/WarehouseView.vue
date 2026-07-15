@@ -440,6 +440,17 @@ async function submitReceive() {
   } catch { /* handled */ } finally { recvSaving.value = false }
 }
 
+// 🆕 反馈#234/#235：点采购单号 → 新标签打开采购单 PDF(可查看+打印)
+async function viewPoPdf(poNo?: string | null) {
+  if (!poNo) return
+  const w = window.open('', '_blank')   // 先开窗口(避免异步后被拦截)
+  try {
+    const res = await http.get(`/purchase-mgmt/orders/${encodeURIComponent(poNo)}/pdf`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    if (w) { w.location.href = url } else { window.open(url, '_blank') }
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch { if (w) w.close(); ElMessage.error('打开采购单失败') }
+}
 // 🆕 查看某明细的收货单（预览最新一张）
 async function viewReceipts(item: RecvItem) {
   try {
@@ -963,10 +974,12 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                       :row-class-name="grpRowClass"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column type="selection" width="40" :selectable="(row: any) => !row._isGroup" />
-              <el-table-column prop="po_no" label="采购单号" width="150">
+              <el-table-column prop="po_no" label="采购单号" width="160">
                 <template #default="{ row }">
                   <el-tag v-if="row._isGroup" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row._count }}</el-tag>
-                  <span class="code">{{ row.po_no || '—' }}</span>
+                  <!-- 🆕 反馈#234/#235：点采购单号查看/打印采购单 -->
+                  <el-button v-if="row.po_no" link type="primary" class="code" style="padding:0" @click="viewPoPdf(row.po_no)">{{ row.po_no }}</el-button>
+                  <span v-else class="code">—</span>
                 </template>
               </el-table-column>
               <el-table-column prop="supplier_name" label="供应商" min-width="130" />

@@ -130,8 +130,8 @@ async def create_feedback(
     current: models.User = Depends(require_roles("assembler")),
     db: AsyncSession = Depends(get_db),
 ):
-    """装配工人提交问题反馈（限本人在手项目）→ 待生产主管审批。
-    🆕 #193 改 multipart：可附现场照片(多张,选填)，主管审批/设计师接收时可查看。"""
+    """装配工人提交问题反馈（限本人在手项目）→ 🆕 反馈#228 直达设计接收（不再经生产主管审批）。
+    🆕 #193 改 multipart：可附现场照片(多张,选填)，设计师接收时可查看。"""
     if not content.strip():
         raise HTTPException(400, "请填写问题内容")
     # 校验是本人在手(装配组)项目——与 /projects 下拉同源(ProduceGroupTask 装配组派单)。
@@ -147,8 +147,10 @@ async def create_feedback(
     rp = await db.execute(select(models.Project).where(models.Project.id == project_id))
     proj = rp.scalar_one()
     p_code, p_name = proj.code, proj.name
+    # 🆕 反馈#228：装配反馈直达设计接收——建单即 pending_design,推给该项目设计师(无在岗设计师降级推 design_lead)。
+    designer_uid = await _designer_uid(db, project_id)
     fb = models.Feedback(project_id=project_id, content=content.strip(),
-                         status="pending_pm", created_by=current.id)
+                         status="pending_design", created_by=current.id, designer_uid=designer_uid)
     db.add(fb)
     await db.flush()
     fid = fb.id
@@ -160,12 +162,17 @@ async def create_feedback(
                           kind="img", project_id=project_id, user=current)
         n_img += 1
     await db.commit()
-    await push_message(db, to_role="pm_lead", kind="info",
-                       text=f"【问题反馈待审批】{p_code} {p_name}：{content[:24]}…"
-                            + (f"（附图{n_img}张）" if n_img else ""),
-                       biz_type="feedback", biz_id=fid)
+    img_note = f"（附图{n_img}张）" if n_img else ""
+    if designer_uid:
+        await push_message(db, to_user_id=designer_uid, kind="info",
+                           text=f"【问题反馈待接收】{p_code} {p_name}：{content[:24]}…{img_note}，请接收或驳回。",
+                           biz_type="feedback", biz_id=fid)
+    else:
+        await push_message(db, to_role="design_lead", kind="warn",
+                           text=f"【问题反馈】{p_code} 无在岗设计师，请设计负责人指派处理：{content[:24]}…{img_note}",
+                           biz_type="feedback", biz_id=fid)
     await write_audit(db, user=current, action="create", target_type="feedback", target_id=fid)
-    return schemas.Msg(message="已提交，等待生产主管审批")
+    return schemas.Msg(message="已提交，已直接推送设计师接收")
 
 
 @router.post("/{fid}/pm-approve", response_model=schemas.Msg)

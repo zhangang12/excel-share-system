@@ -472,7 +472,7 @@ async function submitRevision() {
 const viewVisible = ref(false)
 const viewTitle = ref('')
 const viewRow = ref<GroupProjectRow | null>(null)
-const canEditSheet = computed(() => isSheetmetal.value || isAssembler.value || isSealing.value || isLead.value || isMgr.value)
+const canEditSheet = computed(() => isSheetmetal.value || isAssembler.value || isLead.value || isMgr.value)
 function viewSheet(row: GroupProjectRow) {
   if (!row.sheetmetal_datasheet_id) { ElMessage.info('该项目暂无钣金装配表'); return }
   viewTitle.value = `${row.code} · 钣金装配表`
@@ -480,16 +480,7 @@ function viewSheet(row: GroupProjectRow) {
   viewVisible.value = true
 }
 
-// 🆕 反馈#209 封板组「推送激光图」；反馈#224 照抄钣金组：封板组可编辑激光件清单
-const laserVisible = ref(false)
-const laserTitle = ref('')
-const laserRow = ref<GroupProjectRow | null>(null)
-function viewLaserSheet(row: GroupProjectRow) {
-  if (!row.laser_datasheet_id) { ElMessage.info('该项目暂无激光件清单'); return }
-  laserTitle.value = `${row.code} · 激光件清单${canEditSheet.value ? '' : '（只读）'}`
-  laserRow.value = row
-  laserVisible.value = true
-}
+// 反馈#230：封板组不再单列「激光件清单」(工人反馈不要),原查看/编辑激光件清单入口已移除。
 watch(dept, () => { activeTab.value = ''; load() })
 onMounted(load)
 
@@ -1328,15 +1319,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            @click="openGroupReassign(row, 'sealing')">换人</el-button>
               </template>
             </el-table-column>
-            <!-- 🆕 反馈#224 照抄钣金组：主表列=激光件清单(可编辑,同钣金组编辑装配表) -->
-            <el-table-column label="激光件清单" min-width="200" align="center">
-              <template #default="{ row }">
-                <template v-if="row.laser_datasheet_id">
-                  <el-button size="small" link type="primary" @click="viewLaserSheet(row)">{{ canEditSheet ? '编辑激光件清单' : '查看激光件清单' }}</el-button>
-                </template>
-                <span v-else class="muted">—</span>
-              </template>
-            </el-table-column>
+            <!-- 反馈#230：封板组工人反馈「激光件清单(编辑)」列不要,已去掉;保留下面设计推送资料分列 -->
             <!-- 🆕 反馈#224 设计推送资料分列：钣金装配表 / CAD激光图纸(待推送-已推送N) / 机架横梁图 -->
             <el-table-column label="钣金装配表" min-width="120" align="center">
               <template #default="{ row }">
@@ -1581,15 +1564,6 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
       />
     </el-dialog>
 
-    <!-- ===== 🆕 反馈#209 封板组：激光件清单只读预览（推送激光图） ===== -->
-    <el-dialog v-model="laserVisible" :title="laserTitle" width="90vw" destroy-on-close>
-      <SheetmetalGrid
-        v-if="laserRow?.laser_datasheet_id"
-        :datasheetId="laserRow.laser_datasheet_id"
-        :projectCode="laserRow.code"
-        :canEdit="canEditSheet"
-      />
-    </el-dialog>
 
     <!-- 🆕 #9 任务跟踪：资料预览 + 打包下载 -->
     <AttachmentPackDialog v-model="packVisible" :title="packTitle" :zipname="packZipname" :groups="packGroups" />

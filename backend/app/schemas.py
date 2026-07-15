@@ -203,6 +203,7 @@ class SalesLedgerRow(BaseModel):
     ship_receivable: float = 0
     balance: float = 0
     balance_date: Optional[str] = None
+    balance_note: Optional[str] = None       # 🆕 反馈#233 尾款到账批注
     ship_date: Optional[str] = None
     order_type: Optional[str] = None       # 🆕 调货订单 / 工厂制作订单
     revision_open: bool = False            # 🆕 #1 是否有未处理的技术资料修订意见

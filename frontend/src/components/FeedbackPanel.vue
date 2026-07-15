@@ -12,7 +12,7 @@ import StatusPill from '@/components/StatusPill.vue'
 const auth = useAuthStore()
 // 多角色：按并集判断（任一角色命中即显示对应能力）
 const isAssembler = computed(() => auth.hasRole('assembler'))
-const isPm = computed(() => auth.hasRole('pm_lead', 'manager', 'admin'))
+// 🆕 反馈#227/#228：装配反馈直达设计,取消生产主管审批环节——不再显示"问题反馈审批"面板
 const isDesigner = computed(() => auth.hasRole('designer'))
 
 const list = ref<Feedback[]>([])
@@ -26,7 +26,6 @@ onMounted(load)
 
 const title = computed(() => {
   if (isAssembler.value) return '📝 我的问题反馈'
-  if (isPm.value) return '📝 问题反馈审批'
   if (isDesigner.value) return '📥 待接收的问题反馈'
   return '问题反馈'
 })
@@ -71,8 +70,8 @@ async function submit() {
 }
 
 const actingId = ref<number | null>(null)
-async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' | 'designReject') {
-  if (fn === 'pmReject' || fn === 'designReject') {
+async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
+  if (fn === 'designReject') {
     try {
       await ElMessageBox.confirm('确认驳回该问题反馈？提交人将收到驳回通知。', '驳回反馈', { type: 'warning' })
     } catch { return }
@@ -87,7 +86,7 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
 </script>
 
 <template>
-  <el-card v-if="isAssembler || isPm || isDesigner" shadow="never" class="fb-card">
+  <el-card v-if="isAssembler || isDesigner" shadow="never" class="fb-card">
     <template #header>
       <div class="fb-head">
         <span>{{ title }} <el-tag v-if="list.length" size="small" type="warning">{{ list.length }}</el-tag></span>
@@ -115,11 +114,7 @@ async function act(fb: Feedback, fn: 'pmApprove' | 'pmReject' | 'designAccept' |
       </el-table-column>
       <el-table-column label="操作" width="160">
         <template #default="{ row }">
-          <template v-if="isPm && row.status === 'pending_pm'">
-            <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="act(row, 'pmApprove')">通过</el-button>
-            <el-button size="small" :loading="actingId === row.id" @click="act(row, 'pmReject')">驳回</el-button>
-          </template>
-          <template v-else-if="isDesigner && row.status === 'pending_design'">
+          <template v-if="isDesigner && row.status === 'pending_design'">
             <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="act(row, 'designAccept')">接收存档</el-button>
             <el-button size="small" :loading="actingId === row.id" @click="act(row, 'designReject')">驳回</el-button>
           </template>

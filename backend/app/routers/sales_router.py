@@ -205,6 +205,7 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
             invoice_file_name=names.get(l.invoice_file_id),
             prepay=l.prepay or 0, before_ship=l.before_ship or 0,
             prepay_note=l.prepay_note, before_ship_note=l.before_ship_note,
+            balance_note=l.balance_note,   # 🆕 反馈#233 尾款到账批注
             ship_receivable=l.ship_receivable or 0, balance=l.balance or 0,
             balance_date=l.balance_date, ship_date=l.ship_date,
             order_type=l.order_type,
@@ -593,13 +594,14 @@ async def update_payment_note(
 ):
     """🆕 收款批注（预付 / 发货前付）独立更新——销售本人即可记录收款时间等，
     不受开票流程金额锁限制。行级隔离：销售员仅本人台账行。"""
-    if data.field not in ("prepay", "before_ship"):
-        raise HTTPException(400, "field 仅支持 prepay / before_ship")
+    if data.field not in ("prepay", "before_ship", "balance"):
+        raise HTTPException(400, "field 仅支持 prepay / before_ship / balance")
     led = await _ledger_or_404(db, lid)
     # 销售员仅可批注本人台账行（主管/管理层全量）
     if not _all_view(current) and led.sales_uid != current.id:
         raise HTTPException(403, "只能批注本人负责的台账行")
-    col = "prepay_note" if data.field == "prepay" else "before_ship_note"
+    # 🆕 反馈#233 尾款到账批注(balance)
+    col = {"prepay": "prepay_note", "before_ship": "before_ship_note", "balance": "balance_note"}[data.field]
     note_val = (data.note or "").strip() or None
     setattr(led, col, note_val)
     # 🆕 发货前付批注=货款已在发货前收讫 → 发货款应收清零；删除批注=未收 → 应收恢复为发货前付金额

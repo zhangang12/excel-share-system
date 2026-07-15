@@ -301,6 +301,7 @@ class SalesLedger(Base):
     ship_receivable: Mapped[float] = mapped_column(default=0)         # 发货款应收
     balance: Mapped[float] = mapped_column(default=0)                 # 尾款
     balance_date: Mapped[Optional[str]] = mapped_column(String(10))   # 尾款日期
+    balance_note: Mapped[Optional[str]] = mapped_column(Text)         # 🆕 反馈#233 尾款到账批注(支持插入时间戳;有批注则尾款日期显示"/")
     ship_date: Mapped[Optional[str]] = mapped_column(String(10))      # 发货日期（物流回传只读）
     order_type: Mapped[Optional[str]] = mapped_column(String(16))    # 🆕 调货订单 / 工厂制作订单
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

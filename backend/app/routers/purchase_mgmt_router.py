@@ -479,14 +479,77 @@ def _render_po_pdf(po_no: str, supplier_name: str, rows: list) -> bytes:
     return buf.getvalue()
 
 
+def _render_preq_pdf(pr: models.PurchaseRequest, requester_name: str, buyer_name: str) -> bytes:
+    """🆕 反馈#232：把采购申请渲染成正式「采购申请单」A4 PDF(可查看/打印)。
+    抬头(申请编号/申请人/申请日期/指定采购员/备注) + 物料明细表。"""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    FONT = "STSong-Light"
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("pr_h1", parent=styles["Title"], fontName=FONT, fontSize=20,
+                        alignment=TA_CENTER, spaceAfter=10)
+    cell = ParagraphStyle("pr_cell", parent=styles["Normal"], fontName=FONT, fontSize=8, leading=11)
+
+    def P(t):
+        return Paragraph(("" if t is None else str(t)).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), cell)
+
+    no = f"SQ{pr.id:05d}"
+    created = pr.created_at.strftime("%Y-%m-%d") if pr.created_at else ""
+    meta = [
+        [P("申请编号"), P(no), P("申请日期"), P(created)],
+        [P("申请人"), P(requester_name or ""), P("指定采购员"), P(buyer_name or "（未指定）")],
+        [P("备注"), P(pr.notes or ""), "", ""],
+    ]
+    meta_tbl = Table(meta, colWidths=[22 * mm, 60 * mm, 24 * mm, 58 * mm])
+    meta_tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+        ("SPAN", (1, 2), (3, 2)),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f2f2f2")),
+        ("BACKGROUND", (2, 0), (2, 1), colors.HexColor("#f2f2f2")),
+    ]))
+
+    header = ["序号", "名称", "规格型号", "数量", "项目编号", "备注"]
+    data = [[P(h) for h in header]]
+    for i, l in enumerate(pr.lines, 1):
+        data.append([P(i), P(l.item_name or ""), P(l.spec or ""),
+                     P("" if l.qty is None else f"{l.qty:g}"), P(l.project_code or ""), P(l.notes or "")])
+    col_w = [12 * mm, 44 * mm, 40 * mm, 16 * mm, 26 * mm, 30 * mm]
+    items_tbl = Table(data, colWidths=col_w, repeatRows=1)
+    items_tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8f5ee")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=16 * mm, bottomMargin=16 * mm,
+                            leftMargin=16 * mm, rightMargin=16 * mm, title=f"采购申请单 {no}")
+    doc.build([
+        Paragraph("采购申请单", h1), meta_tbl, Spacer(1, 6 * mm), items_tbl,
+        Spacer(1, 16 * mm),
+        Paragraph("申请（签字）：____________　　　　　采购（签字）：____________", cell),
+    ])
+    return buf.getvalue()
+
+
 @router.get("/orders/{po_no}/pdf")
 async def download_order_pdf(
     po_no: str,
-    current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES, "warehouse", "warehouse_lead")),
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 采购单直接下载 PDF：服务端渲染返回真正的 PDF 文件，替代原来靠浏览器
-    弹窗 + window.print 的方式（移动端/微信浏览器经常无响应）。"""
+    弹窗 + window.print 的方式（移动端/微信浏览器经常无响应）。
+    🆕 反馈#234/#235：仓库(采购收货)也可查看/打印采购单,故放开 warehouse 角色。"""
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
                          .order_by(models.PurchaseItem.id))
     rows = list(r.scalars().all())
@@ -2437,6 +2500,25 @@ async def list_buyers(
 def _preq_warehouse_only(u: models.User) -> bool:
     return u.has_role(*_PREQ_WAREHOUSE) and not u.has_role(
         "buyer", "buyer_lead", "buyer_standard", "buyer_outsource", "admin", "manager")
+
+
+@router.get("/purchase-requests/{prid}/pdf")
+async def download_purchase_request_pdf(
+    prid: int,
+    current: models.User = Depends(require_roles(*_PREQ_VIEW)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#232：采购申请查看/打印成正式采购申请单 PDF。仓库/设计师(非采购)只能看自己提的。"""
+    r = await db.execute(select(models.PurchaseRequest).where(models.PurchaseRequest.id == prid))
+    pr = r.scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "采购申请不存在")
+    if _preq_warehouse_only(current) and pr.requester_id != current.id:
+        raise HTTPException(403, "只能查看自己提交的采购申请")
+    pdf_bytes = _render_preq_pdf(pr, _uname(pr.requester), _uname(pr.buyer))
+    fname = quote(f"采购申请单_SQ{pr.id:05d}.pdf")
+    return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
 
 
 @router.post("/purchase-requests", response_model=schemas.PurchaseRequestOut)

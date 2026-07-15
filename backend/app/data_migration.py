@@ -47,6 +47,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "sales_ledger": [                              # 🆕 预付/发货前付收款批注(支持插入时间戳)
         ("prepay_note", "TEXT"),
         ("before_ship_note", "TEXT"),
+        ("balance_note", "TEXT"),                  # 🆕 反馈#233 尾款到账批注
+
         ("invoice_batch_id", "INTEGER"),           # 🆕 合并开票批次号(同客户多项目合并)
         ("void_state", "VARCHAR(20)"),             # 🆕 订单作废流: applying/voided
         ("void_reason", "TEXT"),                   # 🆕 作废原因
@@ -1322,6 +1324,28 @@ async def backfill_elec_po_from_uploaded(db: AsyncSession) -> dict:
     return {"filled": filled}
 
 
+async def route_pending_pm_feedbacks_to_design(db: AsyncSession) -> dict:
+    """🆕 反馈#228：装配问题反馈不再经生产主管审批,直达设计接收。
+    存量卡在 pending_pm 的反馈一次性转 pending_design(补 designer_uid=该项目当前设计任务负责人)。幂等。"""
+    r = await db.execute(select(models.Feedback).where(models.Feedback.status == "pending_pm"))
+    fbs = list(r.scalars().all())
+    n = 0
+    for fb in fbs:
+        if not fb.designer_uid:
+            dr = await db.execute(select(models.DeptOrder).where(
+                models.DeptOrder.project_id == fb.project_id,
+                models.DeptOrder.dept == "design",
+                models.DeptOrder.status != "voided").order_by(models.DeptOrder.id.desc()))
+            o = dr.scalars().first()
+            fb.designer_uid = o.worker_id if o else None
+        fb.status = "pending_design"
+        n += 1
+    if n:
+        await db.commit()
+    log.info("[route_pending_pm_feedbacks_to_design] 转设计接收 %d 条", n)
+    return {"routed": n}
+
+
 async def close_legacy_electric_done_orders(db: AsyncSession) -> dict:
     """🆕 #197 止损迁移：「接线完成即完成」上线时，把此前已点过接线完成、还卡在
     进行中等发货准备的存量电工单直接置为完成（完成日期=本次部署日）——
@@ -2155,3 +2179,7 @@ async def run_all(db: AsyncSession) -> None:
         await split_mixed_supplier_po(db)
     except Exception as e:
         log.warning("split_mixed_supplier_po failed: %s", e)
+    try:
+        await route_pending_pm_feedbacks_to_design(db)   # 🆕 反馈#228 装配反馈不再经主管审批,存量 pending_pm 直转设计接收
+    except Exception as e:
+        log.warning("route_pending_pm_feedbacks_to_design failed: %s", e)

@@ -399,16 +399,16 @@ function replaceTechFiles() {
 // ===== 🆕 收款批注（预付 / 发货前付，支持插入时间戳） =====
 const noteVisible = ref(false)
 const noteRow = ref<SalesLedgerRow | null>(null)
-const noteField = ref<'prepay' | 'before_ship'>('prepay')
+const noteField = ref<'prepay' | 'before_ship' | 'balance'>('prepay')
 const noteText = ref('')
 const noteSaving = ref(false)
 const noteInputRef = ref<any>(null)
-const noteFieldLabel = computed(() => (noteField.value === 'prepay' ? '预付' : '发货前付'))
+const noteFieldLabel = computed(() => (noteField.value === 'prepay' ? '预付' : noteField.value === 'before_ship' ? '发货前付' : '尾款到账'))
 
-function openNote(r: SalesLedgerRow, field: 'prepay' | 'before_ship') {
+function openNote(r: SalesLedgerRow, field: 'prepay' | 'before_ship' | 'balance') {
   noteRow.value = r
   noteField.value = field
-  noteText.value = (field === 'prepay' ? r.prepay_note : r.before_ship_note) || ''
+  noteText.value = (field === 'prepay' ? r.prepay_note : field === 'before_ship' ? r.before_ship_note : r.balance_note) || ''
   noteVisible.value = true
 }
 function nowStamp(): string {
@@ -441,6 +441,8 @@ async function saveNote() {
     const v = noteText.value.trim() || null
     if (noteField.value === 'prepay') {
       noteRow.value.prepay_note = v
+    } else if (noteField.value === 'balance') {
+      noteRow.value.balance_note = v   // 🆕 反馈#233：有到账批注→尾款日期显示"/"
     } else {
       noteRow.value.before_ship_note = v
       // 与后端一致：发货前付有批注=货款收讫→发货款应收清零；删批注=未收→应收恢复为发货前付金额
@@ -915,8 +917,21 @@ async function openReport() {
         <el-table-column label="发货款应收" :width="cw(100, 78)" align="right">
           <template #default="{ row }">{{ fmtPay(row.ship_receivable) }}</template>
         </el-table-column>
-        <el-table-column label="尾款" :width="cw(92, 70)" align="right">
-          <template #default="{ row }">{{ fmtPay(row.balance) }}</template>
+        <el-table-column label="尾款" :width="cw(106, 82)" align="right">
+          <template #default="{ row }">
+            <div class="pay-cell">
+              <span>{{ fmtPay(row.balance) }}</span>
+              <!-- 🆕 反馈#233：尾款到账批注(可插入时间);有批注→尾款日期显示"/" -->
+              <el-tooltip placement="top" :show-after="150">
+                <template #content>
+                  <div class="note-pop">{{ row.balance_note || '点击添加尾款到账批注（可插入时间）' }}</div>
+                </template>
+                <el-icon class="note-ico" :class="{ 'has-note': row.balance_note }" @click="openNote(row, 'balance')">
+                  <ChatLineSquare />
+                </el-icon>
+              </el-tooltip>
+            </div>
+          </template>
         </el-table-column>
         <el-table-column :label="fitScreen ? '发货日期' : '发货日期 📦'" :width="cw(105, 80)">
           <template #default="{ row }">
@@ -926,7 +941,11 @@ async function openReport() {
           </template>
         </el-table-column>
         <el-table-column label="尾款日期" :width="cw(118, 80)">
-          <template #default="{ row }">{{ fmtDate(row.balance_date) }}</template>
+          <!-- 🆕 反馈#233：尾款已到账(有到账批注)则尾款日期显示"/" -->
+          <template #default="{ row }">
+            <span v-if="row.balance_note" class="muted" title="尾款已到账（见尾款批注）">/</span>
+            <span v-else>{{ fmtDate(row.balance_date) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="操作" :width="(fitScreen || opCompact) ? 52 : 150" fixed="right" align="center" :show-overflow-tooltip="false">
           <template #default="{ row }">
