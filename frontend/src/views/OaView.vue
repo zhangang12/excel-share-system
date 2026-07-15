@@ -170,6 +170,10 @@ function addCommissionRow() {
     payback_amount: null, payback_type: '', rate: null })
 }
 function delCommissionRow(i: number) { subForm.commission_items.splice(i, 1) }
+// 🆕 #236 提成明细 8 列合计约 930px，680px 弹窗装不下会横向滚动（回款类型/提成点被挤没）——
+//   提成表单时把弹窗放宽到 1060px；窄屏仍由 96vw 兜底，表格自身横向滚动。
+const subDialogWidth = computed(() =>
+  showCommissionFields.value ? 'min(1060px, 96vw)' : 'min(680px, 96vw)')
 // 🆕 #236 部门固定销售部、不给选
 const SALES_DEPT_NAME = '销售部'
 const salesDeptId = computed(() => departments.value.find(d => d.name === SALES_DEPT_NAME)?.id ?? '')
@@ -832,7 +836,7 @@ onMounted(async () => {
     </el-tabs>
 
     <!-- ==================== 新建申请 ==================== -->
-    <el-dialog v-model="subVisible" title="新建OA申请" width="min(680px, 96vw)" class="v3-scroll-dialog">
+    <el-dialog v-model="subVisible" title="新建OA申请" :width="subDialogWidth" class="v3-scroll-dialog">
       <el-form :model="subForm" label-position="top">
         <el-row :gutter="16">
           <el-col :xs="24" :sm="12">
