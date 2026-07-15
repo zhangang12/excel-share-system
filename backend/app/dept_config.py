@@ -65,6 +65,14 @@ DEPTS: dict[str, dict] = {
 # 任务状态枚举（入库存英文；中文映射由前端做）
 ORDER_STATUS = ("pending_assign", "assigned", "in_progress", "done", "voided")
 
+# 🆕 外协人员（按登录账号 username 配置，dept -> [username]）：
+#   这些人的任务单在部门工作台单列一个「外协订单」tab，供负责人/管理层集中监控其订单状态；
+#   **本人看不到该 tab**（他只看自己的「我的订单」三个 tab，与普通工人无差别）。
+#   —— 改这里即可增减外协人员，不要把账号名写进路由/前端。
+OUTSOURCE_WORKERS: dict[str, list[str]] = {
+    "electric": ["zhourui"],
+}
+
 
 def compute_efficiency(start: str | None, due: str | None, done: str | None):
     """效率/按时口径（C1-C3，供完成流/逾期推送/报表共用单一实现）：

@@ -547,6 +547,8 @@ class FinanceInvoiceRow(BaseModel):
 
 class OrderOptionsOut(BaseModel):
     workers: list[OrderOptionUser]
+    # 🆕 外协人员（dept_config.OUTSOURCE_WORKERS）：其任务单在工作台单列「外协订单」tab
+    outsource_workers: list[OrderOptionUser] = Field(default_factory=list)
     notify_pool: list[OrderOptionUser]
     notify_label: str
     dept_name: str

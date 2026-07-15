@@ -501,6 +501,15 @@ const myDone     = computed(() => orders.value.filter(o => o.status === 'done'  
 // ---- 负责人视角数据 ----
 const pendingAssign = computed(() => orders.value.filter(o => o.status === 'pending_assign' && matchSearch(o)))
 
+// ---- 🆕 外协订单：外协人员(后端 dept_config.OUTSOURCE_WORKERS 按账号配置)的任务单单列一个 tab，
+//      供负责人/管理层集中监控其订单状态；外协人员本人看不到该 tab（只看自己的「我的订单」）。
+const outsourceUids = computed(() => new Set((options.value?.outsource_workers || []).map(u => u.id)))
+const isOutsourceSelf = computed(() => !!myUid.value && outsourceUids.value.has(myUid.value))
+const outsourceOrders = computed(() =>
+  orders.value.filter(o => o.worker_id != null && outsourceUids.value.has(o.worker_id) && matchSearch(o)))
+// 有配置外协人员 + 是负责人/管理层 + 自己不是外协人员
+const showOutsourceTab = computed(() => (isLead.value || isMgr.value) && !isOutsourceSelf.value && outsourceUids.value.size > 0)
+
 // ---- 接单（填时间开始） ----
 const startDates = ref<Record<number, { start: string; due: string }>>({})
 function dateOf(o: DeptOrder) {
@@ -1170,6 +1179,51 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         </el-tab-pane>
 
         <!-- ===== 🆕 生产部-钣金组 tab（被派发项目；只读钣金装配表引用） ===== -->
+        <!-- 🆕 外协订单：只看外协人员的任务单(数据同任务跟踪，只读监控)；外协人员本人不可见 -->
+        <el-tab-pane v-if="showOutsourceTab" :label="`🔗 外协订单 (${outsourceOrders.length})`" name="outsource">
+          <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
+            <span class="muted" style="font-size:13px">
+              外协人员（{{ (options?.outsource_workers || []).map(u => u.name).join('、') }}）的订单状态，仅本部门负责人/管理层可见。
+            </span>
+          </div>
+          <EmptyHint v-if="!loading && !outsourceOrders.length" text="该外协人员暂无订单" />
+          <el-table v-else show-overflow-tooltip :data="outsourceOrders" stripe v-loading="loading"
+                    max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
+            <el-table-column label="项目编号" min-width="112">
+              <template #default="{ row }"><b>{{ row.project_code }}</b></template>
+            </el-table-column>
+            <el-table-column prop="project_name" label="项目名称" min-width="180" show-overflow-tooltip />
+            <el-table-column label="负责人" min-width="100">
+              <template #default="{ row }">{{ row.worker_name || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="状态" min-width="100" align="center">
+              <template #default="{ row }">
+                <StatusPill :text="ORDER_STATUS_TEXT[row.status]" :variant="PILL_VARIANT[ORDER_STATUS_TAG[row.status]] || 'muted'" />
+              </template>
+            </el-table-column>
+            <el-table-column :label="options?.start_label" min-width="118">
+              <template #default="{ row }">{{ row.start_date ? fmtDate(row.start_date) : '—' }}</template>
+            </el-table-column>
+            <el-table-column :label="options?.end_label" min-width="118">
+              <template #default="{ row }">{{ row.due_date ? fmtDate(row.due_date) : '—' }}</template>
+            </el-table-column>
+            <el-table-column :label="options?.done_label" min-width="118">
+              <template #default="{ row }">{{ row.done_date ? fmtDate(row.done_date) : '—' }}</template>
+            </el-table-column>
+            <el-table-column label="完成效率" min-width="100">
+              <template #default="{ row }">
+                <span v-if="row.eff_pct != null" :class="effClass(row)">{{ row.eff_pct }}%</span>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="资料" min-width="104" align="center">
+              <template #default="{ row }">
+                <el-button size="small" link type="primary" @click="openPack(row)">预览/下载</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+
         <el-tab-pane v-if="isProduce && (isSheetmetal || isLead || isMgr)" :label="`🔧 钣金组 (${sheetmetalRows.length})`" name="sm">
           <div class="grp-filter">
             <span class="muted small">按人员筛选：</span>

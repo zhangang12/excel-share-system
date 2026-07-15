@@ -47,6 +47,7 @@ export interface OptionUser { id: number; name: string }
 
 export interface DeptOptions {
   workers: OptionUser[]
+  outsource_workers?: OptionUser[]   // 🆕 外协人员(后端 dept_config 配置)：其任务单单列「外协订单」tab
   notify_pool: OptionUser[]
   notify_label: string
   dept_name: string

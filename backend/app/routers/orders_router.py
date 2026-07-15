@@ -22,7 +22,7 @@ from sqlalchemy import select, update, or_, delete
 from ..database import get_db
 from .. import models, schemas
 from ..deps import get_current_user, require_roles
-from ..dept_config import DEPTS, compute_efficiency
+from ..dept_config import DEPTS, OUTSOURCE_WORKERS, compute_efficiency
 from ..notify import push_message
 from ..utils import write_audit
 from ..sheet_templates import SHEET_TEMPLATES, OVERVIEW_HEADER_ALIAS
@@ -413,8 +413,19 @@ async def order_options(
         )
         return [schemas.OrderOptionUser(id=u.id, name=_uname(u)) for u in res.scalars().all()]
 
+    async def _outsource_users() -> list[schemas.OrderOptionUser]:
+        """🆕 外协人员（dept_config 按 username 配置）→ 前端据此筛出「外协订单」tab 的数据。"""
+        names = OUTSOURCE_WORKERS.get(dept, [])
+        if not names:
+            return []
+        res = await db.execute(
+            select(models.User).where(models.User.username.in_(names)).order_by(models.User.id)
+        )
+        return [schemas.OrderOptionUser(id=u.id, name=_uname(u)) for u in res.scalars().all()]
+
     return schemas.OrderOptionsOut(
         workers=await _role_users(cfg["worker_role"]),
+        outsource_workers=await _outsource_users(),
         notify_pool=await _role_users(cfg["notify_pool"]),
         notify_label=cfg["notify_label"],
         dept_name=cfg["name"],
