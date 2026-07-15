@@ -71,8 +71,10 @@ async def _category_path_map(db: AsyncSession) -> dict[int, str]:
     return out
 
 
-def _mat_out(m: models.WhMaterial, stock: float, cat_path: Optional[str] = None) -> schemas.WhMaterialOut:
+def _mat_out(m: models.WhMaterial, stock: float, cat_path: Optional[str] = None,
+             proj: Optional[tuple] = None) -> schemas.WhMaterialOut:
     up = m.unit_price
+    pid, pcode = proj if proj else (None, None)
     return schemas.WhMaterialOut(
         id=m.id, code=m.code, category_id=m.category_id, category_path=cat_path,
         name=m.name, spec=m.spec, category=m.category,
@@ -82,7 +84,32 @@ def _mat_out(m: models.WhMaterial, stock: float, cat_path: Optional[str] = None)
         stock_value=round(stock * up, 2) if up is not None else None,  # 🆕 需求三：库存总价
         low=stock < (m.safety_stock or 0),
         custom_values=m.custom_values or {},
+        project_id=pid, project_code=pcode,   # 🆕 出库反显关联项目
     )
+
+
+async def _material_projects(db: AsyncSession, material_ids: list[int]) -> dict[int, tuple]:
+    """🆕 出库反显：物料的关联项目(取入库流水的 project_id)。
+    仅当该物料的所有入库(非冲红)都指向**同一个**项目时才反显该项目——
+    多项目/无项目入库的物料不反显,走现有手填逻辑。返回 {material_id: (project_id, project_code)}。"""
+    if not material_ids:
+        return {}
+    rows = (await db.execute(
+        select(models.WhTxn.material_id, models.WhTxn.project_id)
+        .where(models.WhTxn.material_id.in_(material_ids),
+               models.WhTxn.direction == "in",
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.project_id.isnot(None)).distinct())).all()
+    by_mat: dict[int, set] = {}
+    for mid, pid in rows:
+        by_mat.setdefault(mid, set()).add(pid)
+    single = {mid: next(iter(pids)) for mid, pids in by_mat.items() if len(pids) == 1}
+    if not single:
+        return {}
+    pr = (await db.execute(select(models.Project.id, models.Project.code)
+          .where(models.Project.id.in_(set(single.values()))))).all()
+    code_by_pid = {i: c for i, c in pr}
+    return {mid: (pid, code_by_pid.get(pid)) for mid, pid in single.items()}
 
 
 # ==================== 物料主数据 ====================
@@ -100,7 +127,9 @@ async def list_materials(
         mats = [m for m in mats if k in (m.name or "") or k in (m.spec or "") or k in (m.code or "")]
     stock = await _stock_map(db, [m.id for m in mats])
     cat_paths = await _category_path_map(db)   # 🆕 编码文字说明
-    outs = [_mat_out(m, stock.get(m.id, m.init_stock or 0), cat_paths.get(m.category_id)) for m in mats]
+    proj_by_mat = await _material_projects(db, [m.id for m in mats])   # 🆕 出库反显关联项目
+    outs = [_mat_out(m, stock.get(m.id, m.init_stock or 0), cat_paths.get(m.category_id),
+                     proj_by_mat.get(m.id)) for m in mats]
     return schemas.WhStockOut(materials=outs, total=len(outs),
                               low_count=sum(1 for o in outs if o.low))
 

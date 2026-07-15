@@ -8,6 +8,7 @@ export interface WhMaterial {
   stock_value?: number | null           // 🆕 需求三：库存总价=现存×单价
   safety_stock: number; init_stock: number; status: string; stock: number; low: boolean
   custom_values?: Record<string, any>   // 🆕 自定义字段值
+  project_id?: number | null; project_code?: string | null  // 🆕 出库反显：按项目入库的关联项目
 }
 // 🆕 仓库物料自定义字段定义（跟采购 R6 同一套）
 export interface WhCustomField {

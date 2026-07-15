@@ -101,6 +101,20 @@ const ioForm = reactive({ material_id: undefined as number | undefined, directio
   non_project: false, non_project_reason: '' })   // 🆕 盈利改善1b：出库必选项目或明确非项目领用
 const ioMatLocation = computed(() =>
   materials.value.find(m => m.id === ioForm.material_id)?.location || '')   // 🆕 出库显示物料当前库位
+// 🆕 出库反显：选中物料若按项目入库(有唯一关联项目),自动带出项目/数量/单价,并隐藏领用方
+const ioMat = computed(() => materials.value.find(m => m.id === ioForm.material_id))
+const ioProjectMat = computed(() => ioForm.direction === 'out' && !!ioMat.value?.project_code)
+watch(() => ioForm.material_id, (mid) => {
+  if (ioForm.direction !== 'out' || !mid) return
+  const m = materials.value.find(x => x.id === mid)
+  if (m && m.project_id && m.project_code) {
+    ioForm.project_id = m.project_id       // 反显领用项目=入库时的关联项目
+    ioForm.non_project = false; ioForm.non_project_reason = ''
+    if (m.stock > 0) ioForm.qty = m.stock  // 反显数量=现存(可改)
+    if (m.unit_price != null) ioForm.unit_price = m.unit_price   // 反显单价→金额
+    ioForm.party = ''                      // 项目物料不需要领用方
+  }
+})
 function openIo(dir: string) {
   Object.assign(ioForm, { material_id: undefined, direction: dir, qty: 1, unit_price: null,
     biz_date: new Date().toISOString().slice(0, 10), source: '', party: '', project_id: undefined,
@@ -126,7 +140,7 @@ async function submitIo() {
     await Promise.all([loadMaterials(), loadTxns()])
   } catch { /* 超量等错误由拦截器提示 */ } finally { ioSubmitting.value = false }
 }
-function matLabel(m: WhMaterial) { return `${m.name}${m.spec ? '·' + m.spec : ''}（现存 ${m.stock}）` }
+function matLabel(m: WhMaterial) { return `${m.name}${m.spec ? '·' + m.spec : ''}（现存 ${m.stock}）${m.project_code ? ' 【' + m.project_code + '】' : ''}` }
 
 // ===== 流水 =====
 const txns = ref<WhTxn[]>([])
@@ -1143,6 +1157,9 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <el-select v-model="ioForm.material_id" filterable placeholder="选择物料" style="width:100%">
             <el-option v-for="m in materials" :key="m.id" :label="matLabel(m)" :value="m.id" />
           </el-select>
+          <div v-if="ioProjectMat" class="muted" style="font-size:12px;margin-top:4px;color:var(--el-color-primary)">
+            该物料按项目【{{ ioMat?.project_code }}】入库，已自动带出领用项目 / 数量 / 金额（可改），无需填领用方。
+          </div>
         </el-form-item>
         <div class="frow">
           <el-form-item label="数量" required style="flex:1"><el-input-number v-model="ioForm.qty" :min="1" :controls="false" style="width:100%" /></el-form-item>
@@ -1160,7 +1177,8 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <el-form-item :label="ioForm.direction === 'in' ? '来源' : '用途'" style="flex:1">
             <el-input v-model="ioForm.source" :placeholder="ioForm.direction === 'in' ? '采购入库' : '领料出库'" />
           </el-form-item>
-          <el-form-item :label="ioForm.direction === 'in' ? '供应商' : '领用方'" style="flex:1"><el-input v-model="ioForm.party" /></el-form-item>
+          <!-- 🆕 项目物料出库不需要领用方(领用方=项目);其余照常 -->
+          <el-form-item v-if="!ioProjectMat" :label="ioForm.direction === 'in' ? '供应商' : '领用方'" style="flex:1"><el-input v-model="ioForm.party" /></el-form-item>
         </div>
         <!-- 🆕 库位:入库=放到哪(选填,默认物料当前库位,选了会更新物料库位);出库=从物料当前库位领 -->
         <div class="frow">

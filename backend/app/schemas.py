@@ -427,6 +427,9 @@ class WhMaterialOut(BaseModel):
     stock_value: Optional[float] = None   # 🆕 需求三：库存总价=现存×单价
     low: bool = False         # 是否低于安全库存
     custom_values: dict = Field(default_factory=dict)   # 🆕 自定义字段值
+    # 🆕 出库反显：物料按项目入库时的关联项目(入库流水唯一项目才反显)
+    project_id: Optional[int] = None
+    project_code: Optional[str] = None
 
 
 class WhMaterialCustomFieldIn(BaseModel):
