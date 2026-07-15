@@ -10,6 +10,7 @@ export interface Feedback {
   status: string
   created_by_name?: string | null
   designer_name?: string | null
+  designer_uid?: number | null   // 空=无在岗设计师(死信)，设计负责人可指派
   created_at: string
   images?: { id: number; name: string }[]   // 🆕 #193 反馈附图
 }
@@ -45,4 +46,7 @@ export const feedbackApi = {
   pmReject: (id: number) => http.post(`/feedbacks/${id}/pm-reject`).then((r) => r.data),
   designAccept: (id: number) => http.post(`/feedbacks/${id}/design-accept`).then((r) => r.data),
   designReject: (id: number) => http.post(`/feedbacks/${id}/design-reject`).then((r) => r.data),
+  // 🆕 #29 设计负责人指派死信反馈（后端早有接口，此前前端未接入）
+  assign: (id: number, worker_id: number) =>
+    http.post(`/feedbacks/${id}/assign`, null, { params: { worker_id } }).then((r) => r.data),
 }

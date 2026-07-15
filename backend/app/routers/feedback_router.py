@@ -62,6 +62,7 @@ async def _rows(db: AsyncSession, items: list[models.Feedback]) -> list[schemas.
         code=f.project.code if f.project else "", name=f.project.name if f.project else "",
         content=f.content, status=f.status,
         created_by_name=_uname(f.creator), designer_name=_uname(f.designer),
+        designer_uid=f.designer_uid,
         created_at=f.created_at, images=imgs.get(f.id, []),
     ) for f in items]
 
@@ -85,6 +86,10 @@ async def list_feedbacks(
     if mine:
         # 多角色取并集：合并各角色「待我处理」的条件（OR）
         conds = []
+        if codes & {"admin", "manager"}:
+            # 🆕 管理层全量：与 require_roles(admin/manager 始终放行) 口径对齐，
+            #   否则设计部工作台的反馈面板对管理层永远空白
+            conds.append(models.Feedback.status == "pending_design")
         if "assembler" in codes:
             conds.append(models.Feedback.created_by == current.id)
         if "pm_lead" in codes:

@@ -363,6 +363,7 @@ class FeedbackRow(BaseModel):
     status: str
     created_by_name: Optional[str] = None
     designer_name: Optional[str] = None
+    designer_uid: Optional[int] = None   # 空=无在岗设计师(死信)，供前端判断是否可指派
     created_at: datetime
     images: list[dict] = Field(default_factory=list)   # 🆕 #193 反馈附图 [{id,name}]
 

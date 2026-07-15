@@ -2,9 +2,10 @@
 // 🆕 v3 M13 问题反馈面板（按角色显示：装配提交 / 生产主管审批 / 设计师接收驳回）
 import { ref, onMounted, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Check } from '@element-plus/icons-vue'
+import { Plus, Check, UserFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
+import { ordersApi, type OptionUser } from '@/api/orders'
 import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -14,6 +15,10 @@ const auth = useAuthStore()
 const isAssembler = computed(() => auth.hasRole('assembler'))
 // 🆕 反馈#227/#228：装配反馈直达设计,取消生产主管审批环节——不再显示"问题反馈审批"面板
 const isDesigner = computed(() => auth.hasRole('designer'))
+// 🆕 #29 断链修复：设计负责人/管理层此前看不到本面板，死信反馈(无在岗设计师)无处可指派
+const isDesignLead = computed(() => auth.hasRole('design_lead'))
+const isMgr = computed(() => auth.hasRole('admin', 'manager'))
+const canAssign = computed(() => isDesignLead.value || isMgr.value)
 
 const list = ref<Feedback[]>([])
 const loading = ref(false)
@@ -27,6 +32,8 @@ onMounted(load)
 const title = computed(() => {
   if (isAssembler.value) return '📝 我的问题反馈'
   if (isDesigner.value) return '📥 待接收的问题反馈'
+  if (isDesignLead.value) return '📥 待指派的问题反馈'
+  if (isMgr.value) return '📥 待处理的问题反馈'
   return '问题反馈'
 })
 
@@ -63,10 +70,36 @@ async function submit() {
   submitting.value = true
   try {
     await feedbackApi.create(form.project_id, form.content, fbImages.value)
-    ElMessage.success('已提交，等待生产主管审批')
+    // 🆕 #227/#228 已取消生产主管审批，反馈直达设计师
+    ElMessage.success('已提交，已推送设计师接收')
     submitVisible.value = false
     await load()
   } finally { submitting.value = false }
+}
+
+// 🆕 #29 指派：死信反馈(designer_uid 为空)由设计负责人/管理层指定设计师
+const assignVisible = ref(false)
+const assignTarget = ref<Feedback | null>(null)
+const assignUid = ref<number | undefined>(undefined)
+const designers = ref<OptionUser[]>([])
+const assigning = ref(false)
+async function openAssign(fb: Feedback) {
+  assignTarget.value = fb
+  assignUid.value = undefined
+  if (!designers.value.length) {
+    designers.value = (await ordersApi.options('design')).workers
+  }
+  assignVisible.value = true
+}
+async function doAssign() {
+  if (!assignUid.value) { ElMessage.warning('请选择设计师'); return }
+  assigning.value = true
+  try {
+    const r: any = await feedbackApi.assign(assignTarget.value!.id, assignUid.value)
+    ElMessage.success(r.message || '已指派')
+    assignVisible.value = false
+    await load()
+  } finally { assigning.value = false }
 }
 
 const actingId = ref<number | null>(null)
@@ -86,7 +119,7 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
 </script>
 
 <template>
-  <el-card v-if="isAssembler || isDesigner" shadow="never" class="fb-card">
+  <el-card v-if="isAssembler || isDesigner || canAssign" shadow="never" class="fb-card">
     <template #header>
       <div class="fb-head">
         <span>{{ title }} <el-tag v-if="list.length" size="small" type="warning">{{ list.length }}</el-tag></span>
@@ -109,15 +142,27 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
         </template>
       </el-table-column>
       <el-table-column v-if="!isAssembler" label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>
+      <!-- 🆕 #29 指派视角：谁在处理一目了然，未指派=死信 -->
+      <el-table-column v-if="canAssign" label="设计师" width="100">
+        <template #default="{ row }">
+          <span v-if="row.designer_name">{{ row.designer_name }}</span>
+          <el-tag v-else size="small" type="danger" effect="plain">未指派</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="100" align="center">
         <template #default="{ row }"><StatusPill :text="FB_STATUS_TXT[row.status]" :variant="FB_STATUS_TAG[row.status]" /></template>
       </el-table-column>
-      <el-table-column label="操作" width="160">
+      <el-table-column label="操作" width="200">
         <template #default="{ row }">
-          <template v-if="isDesigner && row.status === 'pending_design'">
+          <!-- 设计师：处理回馈给自己的（未指派的死信也可直接接收，与后端 design-accept 校验一致） -->
+          <template v-if="isDesigner && row.status === 'pending_design'
+                          && (!row.designer_uid || row.designer_uid === auth.user?.id)">
             <el-button size="small" type="success" :icon="Check" :loading="actingId === row.id" @click="act(row, 'designAccept')">接收存档</el-button>
             <el-button size="small" :loading="actingId === row.id" @click="act(row, 'designReject')">驳回</el-button>
           </template>
+          <!-- 🆕 #29 设计负责人/管理层：给死信反馈指派设计师 -->
+          <el-button v-else-if="canAssign && row.status === 'pending_design' && !row.designer_uid"
+                     size="small" type="primary" :icon="UserFilled" @click="openAssign(row)">指派</el-button>
           <span v-else class="muted small">—</span>
         </template>
       </el-table-column>
@@ -131,7 +176,7 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
           </el-select>
         </el-form-item>
         <el-form-item label="问题内容" required>
-          <el-input v-model="form.content" type="textarea" :rows="3" placeholder="描述装配中发现的问题，提交后经生产主管审批回馈设计师" />
+          <el-input v-model="form.content" type="textarea" :rows="3" placeholder="描述装配中发现的问题，提交后直接推送设计师接收" />
         </el-form-item>
         <!-- 🆕 #193 现场照片(选填,多张) -->
         <el-form-item label="现场照片（选填，可多张）">
@@ -146,6 +191,24 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
         <el-button type="primary" :loading="submitting" @click="submit">提交</el-button>
       </template>
     </el-dialog>
+
+    <!-- 🆕 #29 指派死信反馈给设计师 -->
+    <el-dialog v-model="assignVisible" title="👤 指派设计师" width="420px">
+      <div v-if="assignTarget" class="assign-tip">
+        <b class="code">{{ assignTarget.code }}</b> · {{ assignTarget.content }}
+      </div>
+      <el-form label-position="top">
+        <el-form-item label="指派给" required>
+          <el-select v-model="assignUid" filterable placeholder="选择设计师" style="width: 100%">
+            <el-option v-for="d in designers" :key="d.id" :label="d.name" :value="d.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="assignVisible = false">取消</el-button>
+        <el-button type="primary" :loading="assigning" @click="doAssign">确定指派</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -155,4 +218,5 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }
+.assign-tip { margin-bottom: 12px; font-size: 13px; color: var(--el-text-color-regular); }
 </style>
