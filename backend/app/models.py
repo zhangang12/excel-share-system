@@ -846,6 +846,10 @@ class AttendanceMonthly(Base):
     actual_days: Mapped[float] = mapped_column(default=0)              # 实出勤天数
     leave_days: Mapped[float] = mapped_column(default=0)               # 请假天数
     overtime_hours: Mapped[float] = mapped_column(default=0)           # 加班工时
+    # 🆕 #239 迟到/早退/缺卡次数（是否全勤由这几项自动推导，不单独存，避免与明细打架）
+    late_count: Mapped[int] = mapped_column(default=0)                 # 迟到次数
+    early_leave_count: Mapped[int] = mapped_column(default=0)          # 早退次数
+    missing_card_count: Mapped[int] = mapped_column(default=0)         # 缺卡次数
     note: Mapped[Optional[str]] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

@@ -549,7 +549,7 @@ async def delete_request(
 
 @router.get("/requests", response_model=list[schemas.OaRequestOut])
 async def list_requests(
-    scope: str = Query("mine", description="mine/pending_me/acted_by_me/cc_me/dept/all"),
+    scope: str = Query("mine", description="mine/pending_me/pending_pay/acted_by_me/cc_me/dept/all"),
     department_id: Optional[int] = Query(None),
     doc_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
@@ -565,6 +565,14 @@ async def list_requests(
                               StepT.status == "pending",
                               StepT.approver_role.in_(current.role_codes or [""]))
         q = q.where(models.OaRequest.status == "pending", cond)
+    elif scope == "pending_pay":
+        # 🆕 反馈#238：末环节是财务审批的单据审完即转「待付款」且 current_step_order 置空，
+        #   于是既不在 pending_me(要求 status=pending)、也不在任何环节队列里——单据"消失"，
+        #   财务想点「标记已付款」都找不到入口，只有 admin/manager 能去「全部申请」里翻。
+        #   这里给财务一个明确的待付款队列。
+        if not current.has_role("finance", "admin", "manager"):
+            raise HTTPException(403, "无权查看待付款队列")
+        q = q.where(models.OaRequest.status == "pending_payment")
     elif scope == "acted_by_me":
         cond = exists().where(StepT.request_id == models.OaRequest.id, StepT.acted_by == current.id)
         q = q.where(cond)

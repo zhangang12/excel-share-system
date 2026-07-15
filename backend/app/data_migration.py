@@ -66,6 +66,11 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("freight_payer", "VARCHAR(8)"),        # 🆕 #201 我方/到付
         ("freight_note", "VARCHAR(128)"),
     ],
+    "attendance_monthly": [                     # 🆕 #239 迟到/早退/缺卡次数(是否全勤由三者+请假/出勤自动推导)
+        ("late_count", "INTEGER DEFAULT 0"),
+        ("early_leave_count", "INTEGER DEFAULT 0"),
+        ("missing_card_count", "INTEGER DEFAULT 0"),
+    ],
     "employees": [
         ("emp_no", "VARCHAR(16)"),              # 🆕 #202 企业工号(自增,离职不回收)
         ("emergency_contact_phone", "VARCHAR(32)"),  # 🆕 紧急联系人电话

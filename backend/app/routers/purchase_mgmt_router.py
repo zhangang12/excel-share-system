@@ -2106,6 +2106,10 @@ async def approve_payment_request(
         raise HTTPException(404, "请款单不存在")
     if pr.status != "pending":
         raise HTTPException(400, "只有待审状态的请款单可审批")
+    # 🆕 反馈#237 内控：不能审批自己提交的请款单（兼任采购+财务的账号最容易踩，如采购员兼开票）。
+    #   与下方付款端点的「审批人不能给自己审过的单付款」同属职责分离，一并对管理层生效（不留后门）。
+    if pr.requester_id and pr.requester_id == current.id:
+        raise HTTPException(400, "职责分离：不能审批自己提交的请款单，请由另一位财务审批")
     pr.status = "approved"
     pr.finance_approver_id = current.id
     pr.approved_at = datetime.now(timezone.utc)

@@ -291,6 +291,9 @@ const paymentCounts = computed(() => ({
 const filteredPaymentReqs = computed(() =>
   paymentTab.value === 'all' ? paymentReqs.value : paymentReqs.value.filter(r => r.status === paymentTab.value))
 
+// 🆕 #237 内控：不能审批自己提交的请款单（兼任采购+财务的账号最容易踩）
+function isMyPayReq(row: PaymentRequestOut) { return !!row.requester_id && row.requester_id === auth.user?.id }
+
 async function approvePayReq(id: number) {
   try {
     await ElMessageBox.confirm('确认审批通过此请款申请？', '审批确认', { type: 'info' })
@@ -608,7 +611,7 @@ async function revokeInvoice(row: ViewRow) {
               <el-radio-button value="rejected">已拒绝 ({{ prCounts.rejected }})</el-radio-button>
             </el-radio-group>
             <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
-            <span class="muted small">💡 内控职责分离：审批通过后到「付款」tab 付款，审批人不能给自己审过的单付款。</span>
+            <span class="muted small">💡 内控职责分离：不能审批自己提交的请款单；审批通过后到「付款」tab 付款，审批人不能给自己审过的单付款。</span>
           </div>
           <el-table show-overflow-tooltip :data="filteredPayReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
             <el-table-column prop="id" label="申请编号" width="80" />
@@ -654,7 +657,11 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column label="操作" width="200" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <template v-if="row.status === 'pending'">
-                  <el-button size="small" type="primary" @click="approvePayReq(row.id)">审批通过</el-button>
+                  <!-- 🆕 #237 内控：自己提的单自己不能审(后端同样硬校验),按钮直接禁掉并说明原因 -->
+                  <el-tooltip v-if="isMyPayReq(row)" content="职责分离：这是你自己提交的请款单，需由另一位财务审批" placement="top">
+                    <span><el-button size="small" type="primary" disabled>审批通过</el-button></span>
+                  </el-tooltip>
+                  <el-button v-else size="small" type="primary" @click="approvePayReq(row.id)">审批通过</el-button>
                   <el-button size="small" type="danger" link @click="openReject(row.id)">拒绝</el-button>
                 </template>
                 <el-button size="small" type="danger" link @click="deletePayReq(row)">删除</el-button>

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_, and_
 
 from ..database import get_db
 from .. import models, schemas
@@ -85,6 +85,9 @@ class AttendanceRowIn(BaseModel):
     actual_days: float = 0      # 实出勤天数
     leave_days: float = 0       # 请假天数
     overtime_hours: float = 0   # 加班工时
+    late_count: int = 0             # 🆕 #239 迟到次数
+    early_leave_count: int = 0      # 🆕 #239 早退次数
+    missing_card_count: int = 0     # 🆕 #239 缺卡次数
     note: Optional[str] = None
 
 
@@ -459,12 +462,38 @@ async def save_payroll(
 
 
 # ==================== 🆕 考勤(按月每人,人事录入) ====================
-async def _active_emps(db: AsyncSession) -> list[models.Employee]:
-    """在职/试用员工(排除离职),按工号(emp_no)升序,供考勤/工资逐人录入。
-    🆕 反馈#225：与花名册(#214)一致,考勤/工资也按工号排,无工号排最后。"""
-    return list((await db.execute(select(models.Employee).where(
-        models.Employee.status != "离职").order_by(
+async def _active_emps(db: AsyncSession, period: Optional[str] = None) -> list[models.Employee]:
+    """某月在册员工(在职/试用 + 该月仍在职的离职者),按工号(emp_no)升序,供考勤/工资逐人录入。
+    🆕 反馈#225：与花名册(#214)一致,考勤/工资也按工号排,无工号排最后。
+    🆕 反馈#229：离职当月仍要发工资/记考勤 —— 原先一标离职就整个从表里消失,
+      最后一个月工资没法发。改为按离职日期判断：离职日期所在月(及之前)仍在列,之后不在。
+      离职但没填离职日期的按老口径排除(数据不全,无法判断哪个月离的)。
+      period=None(不传)时退化为老口径(仅在职/试用),供不按月的场景用。"""
+    q = select(models.Employee)
+    if period:
+        q = q.where(or_(
+            models.Employee.status != "离职",
+            and_(models.Employee.leave_date.is_not(None),
+                 func.substr(models.Employee.leave_date, 1, 7) >= period),
+        ))
+    else:
+        q = q.where(models.Employee.status != "离职")
+    return list((await db.execute(q.order_by(
         models.Employee.emp_no.is_(None), models.Employee.emp_no, models.Employee.id))).scalars().all())
+
+
+def _is_full_attendance(a) -> bool:
+    """🆕 #239 是否全勤——自动推导，不单独存字段(避免与明细打架)：
+    迟到/早退/缺卡次数全为 0 且 请假 0 天 且 实出勤 ≥ 应出勤(且应出勤已填)。
+    口径唯一：前端只展示，导入/导出/列表都走这里。"""
+    if a is None:
+        return False
+    return bool((a.should_days or 0) > 0
+                and (a.actual_days or 0) >= (a.should_days or 0)
+                and (a.leave_days or 0) == 0
+                and (a.late_count or 0) == 0
+                and (a.early_leave_count or 0) == 0
+                and (a.missing_card_count or 0) == 0)
 
 
 @router.get("/attendance")
@@ -473,8 +502,9 @@ async def get_attendance(
     _: models.User = Depends(require_roles(*_HR)),
     db: AsyncSession = Depends(get_db),
 ):
-    """指定月份的员工考勤(在职员工都返回,未填的记 0 供录入)。"""
-    emps = await _active_emps(db)
+    """指定月份的员工考勤(该月在册员工都返回,未填的记 0 供录入)。
+    🆕 #229 离职当月仍在列；🆕 #239 迟到/早退/缺卡 + 是否全勤(自动推导)。"""
+    emps = await _active_emps(db, period)
     cur = {r.employee_id: r for r in (await db.execute(select(models.AttendanceMonthly).where(
         models.AttendanceMonthly.period == period))).scalars().all()}
     rows = []
@@ -485,6 +515,12 @@ async def get_attendance(
             "department_name": (e.department.name if e.department else None),
             "should_days": (a.should_days if a else 0), "actual_days": (a.actual_days if a else 0),
             "leave_days": (a.leave_days if a else 0), "overtime_hours": (a.overtime_hours if a else 0),
+            "late_count": (a.late_count if a else 0),
+            "early_leave_count": (a.early_leave_count if a else 0),
+            "missing_card_count": (a.missing_card_count if a else 0),
+            "full_attendance": _is_full_attendance(a),
+            "left_this_month": bool(e.status == "离职" and (e.leave_date or "")[:7] == period),
+            "leave_date": e.leave_date,
             "note": (a.note if a else None)})
     return {"period": period, "rows": rows}
 
@@ -508,18 +544,152 @@ async def save_attendance(
                 employee_id=r.employee_id, period=period,
                 should_days=r.should_days or 0, actual_days=r.actual_days or 0,
                 leave_days=r.leave_days or 0, overtime_hours=r.overtime_hours or 0,
+                late_count=r.late_count or 0, early_leave_count=r.early_leave_count or 0,
+                missing_card_count=r.missing_card_count or 0,
                 note=(r.note or "").strip() or None))
         else:
             row.should_days = r.should_days or 0
             row.actual_days = r.actual_days or 0
             row.leave_days = r.leave_days or 0
             row.overtime_hours = r.overtime_hours or 0
+            row.late_count = r.late_count or 0
+            row.early_leave_count = r.early_leave_count or 0
+            row.missing_card_count = r.missing_card_count or 0
             row.note = (r.note or "").strip() or None
         n += 1
     await db.commit()
     await write_audit(db, user=current, action="hr_attendance_save", target_type="attendance",
                       detail=f"{period} {n} 人")
     return schemas.Msg(message=f"已保存 {period} 考勤（{n} 人）")
+
+
+# 🆕 #240 考勤批量导入：表头即模板列（顺序=界面列顺序，人事对着填）
+_ATT_IMPORT_COLS = ["工号*", "姓名", "应出勤(天)", "实出勤(天)", "请假(天)",
+                    "加班(工时)", "迟到(次)", "早退(次)", "缺卡(次)", "备注"]
+
+
+@router.get("/attendance/import-template")
+async def attendance_import_template(
+    _: models.User = Depends(require_roles(*_HR)),
+):
+    """🆕 #240 下载考勤导入模板（.xlsx，含表头 + 示例行 + 填写说明）。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "考勤导入"
+    ws.append(_ATT_IMPORT_COLS)
+    hfill = PatternFill("solid", fgColor="E8F0FE")
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = hfill
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.append(["00015", "张明宇（仅参考，导入按工号匹配）", 21.5, 21.5, 0, 8, 0, 0, 0, "示例行，导入前请删除"])
+    for i, w in enumerate([10, 24, 12, 12, 10, 12, 10, 10, 10, 24], start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    ws.freeze_panes = "A2"
+    ws2 = wb.create_sheet("填写说明")
+    for line in [
+        ["考勤导入说明"],
+        [""],
+        ["1. 按「工号」匹配员工——工号必填且必须已在花名册存在，姓名列仅供人工核对，不参与匹配。"],
+        ["2. 导入哪个月，由页面上选的月份决定（不在表里填月份），导入前请先确认页面月份选对。"],
+        ["3. 同一工号在该月已有考勤 → 整行覆盖；没有 → 新建。表里没出现的人保持原样，不会被清空。"],
+        ["4. 「是否全勤」不用填，系统自动算：迟到/早退/缺卡/请假都为 0 且 实出勤 ≥ 应出勤。"],
+        ["5. 数字列留空按 0 处理。第 2 行为示例，导入前请删除。"],
+        ["6. 离职员工：离职当月仍可导入（末月工资/考勤要发得出来），之后的月份不在名单里。"],
+    ]:
+        ws2.append(line)
+    ws2["A1"].font = Font(bold=True, size=13)
+    ws2.column_dimensions["A"].width = 84
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = "考勤导入模板.xlsx"
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
+@router.post("/attendance/{period}/import")
+async def import_attendance(
+    period: str,
+    file: UploadFile = File(...),
+    current: models.User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #240 批量导入某月考勤：按工号匹配，已有则整行覆盖，未出现的人不动。"""
+    if len(period) != 7 or period[4] != "-":
+        raise HTTPException(400, "period 格式应为 YYYY-MM")
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(BytesIO(await file.read()), data_only=True, read_only=True)
+    except Exception:
+        raise HTTPException(400, "无法解析该文件，请使用模板导出的 .xlsx")
+    rows = list(wb.active.iter_rows(values_only=True))
+    if len(rows) < 2:
+        raise HTTPException(400, "文件为空或只有表头")
+    header = [(str(c).strip().replace("*", "") if c is not None else "") for c in rows[0]]
+    col = {name: idx for idx, name in enumerate(header) if name}
+    if "工号" not in col:
+        raise HTTPException(400, "表头缺少必填列「工号」，请用模板")
+
+    def cell(row, name):
+        i = col.get(name)
+        return row[i] if (i is not None and i < len(row)) else None
+
+    def num(v) -> float:
+        if v is None or str(v).strip() == "":
+            return 0.0
+        try:
+            return float(str(v).strip())
+        except ValueError:
+            return 0.0
+
+    # 该月在册员工(含当月离职)：工号 -> 员工
+    emp_by_no = {(e.emp_no or "").strip(): e for e in await _active_emps(db, period) if e.emp_no}
+    cur = {r.employee_id: r for r in (await db.execute(select(models.AttendanceMonthly).where(
+        models.AttendanceMonthly.period == period))).scalars().all()}
+
+    created = updated = 0
+    skipped: list[str] = []
+    for row in rows[1:]:
+        raw_no = cell(row, "工号")
+        if raw_no is None or str(raw_no).strip() == "":
+            continue
+        # Excel 常把 00015 读成数字 15 → 补零回 5 位再匹配
+        no = str(raw_no).strip()
+        if no.isdigit() and no not in emp_by_no:
+            no = no.zfill(5)
+        e = emp_by_no.get(no)
+        if not e:
+            skipped.append(str(raw_no).strip())
+            continue
+        vals = dict(
+            should_days=num(cell(row, "应出勤(天)")), actual_days=num(cell(row, "实出勤(天)")),
+            leave_days=num(cell(row, "请假(天)")), overtime_hours=num(cell(row, "加班(工时)")),
+            late_count=int(num(cell(row, "迟到(次)"))), early_leave_count=int(num(cell(row, "早退(次)"))),
+            missing_card_count=int(num(cell(row, "缺卡(次)"))),
+            note=(str(cell(row, "备注")).strip() if cell(row, "备注") not in (None, "") else None),
+        )
+        a = cur.get(e.id)
+        if a is None:
+            db.add(models.AttendanceMonthly(employee_id=e.id, period=period, **vals))
+            created += 1
+        else:
+            for k, v in vals.items():
+                setattr(a, k, v)
+            updated += 1
+    await db.commit()
+    await write_audit(db, user=current, action="hr_attendance_import", target_type="attendance",
+                      detail=f"{period} 新增{created} 覆盖{updated} 跳过{len(skipped)}")
+    msg = f"导入完成：新增 {created} 人，覆盖 {updated} 人"
+    if skipped:
+        head = "、".join(skipped[:5]) + ("…" if len(skipped) > 5 else "")
+        msg += f"；{len(skipped)} 个工号在该月名单里找不到，已跳过（{head}）"
+    return {"message": msg, "created": created, "updated": updated, "skipped": skipped}
 
 
 # ==================== 🆕 个人工资(按月每人,人事录入,敏感) ====================
@@ -535,8 +705,9 @@ async def get_salary(
     _: models.User = Depends(require_roles(*_HR)),
     db: AsyncSession = Depends(get_db),
 ):
-    """指定月份的个人工资(在职员工都返回,未填的记 0 供录入)。敏感,仅人事+管理层。"""
-    emps = await _active_emps(db)
+    """指定月份的个人工资(该月在册员工都返回,未填的记 0 供录入)。敏感,仅人事+管理层。
+    🆕 #229：离职当月仍在列——最后一个月工资要发得出来。"""
+    emps = await _active_emps(db, period)
     cur = {r.employee_id: r for r in (await db.execute(select(models.EmployeeSalaryMonthly).where(
         models.EmployeeSalaryMonthly.period == period))).scalars().all()}
     rows = []
@@ -548,7 +719,10 @@ async def get_salary(
             "base": (s.base if s else 0), "merit": (s.merit if s else 0),
             "overtime_pay": (s.overtime_pay if s else 0), "allowance": (s.allowance if s else 0),
             "social_deduct": (s.social_deduct if s else 0), "other_deduct": (s.other_deduct if s else 0),
-            "net": (_salary_net(s) if s else 0), "note": (s.note if s else None)})
+            "net": (_salary_net(s) if s else 0), "note": (s.note if s else None),
+            # 🆕 #229 当月离职：人事需要一眼看出这是末月工资(否则容易照上月全额发)
+            "left_this_month": bool(e.status == "离职" and (e.leave_date or "")[:7] == period),
+            "leave_date": e.leave_date})
     return {"period": period, "rows": rows,
             "total_net": round(sum(r["net"] or 0 for r in rows), 2)}
 

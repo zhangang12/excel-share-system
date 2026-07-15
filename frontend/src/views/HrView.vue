@@ -164,10 +164,24 @@ async function loadSummary() {
 }
 // ===== 🆕 考勤(按月每人,人事录入) =====
 interface AttRow { employee_id: number; emp_no?: string; name: string; department_name?: string | null
-  should_days: number; actual_days: number; leave_days: number; overtime_hours: number; note?: string | null }
+  should_days: number; actual_days: number; leave_days: number; overtime_hours: number
+  // 🆕 #239 迟到/早退/缺卡；full_attendance 后端也算一份，前端为了随录入实时变用 isFullAttendance()
+  late_count: number; early_leave_count: number; missing_card_count: number; full_attendance?: boolean
+  left_this_month?: boolean; leave_date?: string | null   // 🆕 #229 当月离职标记
+  note?: string | null }
 const aMonth = ref(new Date().toISOString().slice(0, 7))
 const aRows = ref<AttRow[]>([])
-const aLoading = ref(false); const aSaving = ref(false)
+const aLoading = ref(false); const aSaving = ref(false); const aImporting = ref(false)
+// 🆕 #239 是否全勤：与后端 hr_router._is_full_attendance 同口径（改一处两处都要改）
+function isFullAttendance(r: AttRow) {
+  return (Number(r.should_days) || 0) > 0
+    && (Number(r.actual_days) || 0) >= (Number(r.should_days) || 0)
+    && (Number(r.leave_days) || 0) === 0
+    && (Number(r.late_count) || 0) === 0
+    && (Number(r.early_leave_count) || 0) === 0
+    && (Number(r.missing_card_count) || 0) === 0
+}
+const aFullCount = computed(() => aRows.value.filter(isFullAttendance).length)
 async function loadAttendance() {
   aLoading.value = true
   try { aRows.value = (await http.get<{ rows: AttRow[] }>('/hr/attendance', { params: { period: aMonth.value } })).data.rows }
@@ -179,16 +193,53 @@ async function saveAttendance() {
     const r: any = (await http.put(`/hr/attendance/${aMonth.value}`, {
       rows: aRows.value.map(x => ({ employee_id: x.employee_id, should_days: Number(x.should_days) || 0,
         actual_days: Number(x.actual_days) || 0, leave_days: Number(x.leave_days) || 0,
-        overtime_hours: Number(x.overtime_hours) || 0, note: x.note })),
+        overtime_hours: Number(x.overtime_hours) || 0,
+        late_count: Number(x.late_count) || 0, early_leave_count: Number(x.early_leave_count) || 0,
+        missing_card_count: Number(x.missing_card_count) || 0, note: x.note })),
     })).data
     ElMessage.success(r.message || '已保存')
   } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '保存失败') }
   finally { aSaving.value = false }
 }
 
+// ===== 🆕 #240 考勤批量导入(按工号匹配，导入到当前所选月份) =====
+async function downloadAttendanceTemplate() {
+  try {
+    const r = await http.get('/hr/attendance/import-template', { responseType: 'blob' })
+    const url = URL.createObjectURL(r.data as Blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = '考勤导入模板.xlsx'; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch { ElMessage.error('模板下载失败') }
+}
+function pickAttendanceFile() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.xlsx'
+  input.onchange = async () => {
+    const f = input.files?.[0]
+    if (!f) return
+    try {
+      await ElMessageBox.confirm(
+        `将把《${f.name}》导入到 ${aMonth.value} 的考勤：按工号匹配，该月已有考勤的人整行覆盖，表里没出现的人不动。`,
+        '确认导入', { type: 'warning' })
+    } catch { return }
+    aImporting.value = true
+    try {
+      const fd = new FormData()
+      fd.append('file', f)
+      const r: any = (await http.post(`/hr/attendance/${aMonth.value}/import`, fd)).data
+      ElMessage.success({ message: r.message || '导入完成', duration: 6000 })
+      await loadAttendance()
+    } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '导入失败') }
+    finally { aImporting.value = false }
+  }
+  input.click()
+}
+
 // ===== 🆕 个人工资(按月每人,人事录入,敏感——仅人事/管理层) =====
 interface SalRow { employee_id: number; emp_no?: string; name: string; department_name?: string | null
   base: number; merit: number; overtime_pay: number; allowance: number; social_deduct: number; other_deduct: number
+  left_this_month?: boolean; leave_date?: string | null   // 🆕 #229 当月离职标记
   net?: number; note?: string | null }
 const sMonth = ref(new Date().toISOString().slice(0, 7))
 const sRows = ref<SalRow[]>([])
@@ -339,22 +390,44 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
         <!-- ===== 🆕 考勤(按月每人) ===== -->
         <el-tab-pane v-if="tv('attendance')" label="🗓️ 考勤" name="attendance">
           <el-alert type="info" :closable="false" style="margin-bottom:10px"
-            title="人事按月录入每人考勤（应出勤 / 实出勤 / 请假 / 加班工时）。在职、试用员工都在列，离职不在列。" />
+            title="人事按月录入每人考勤（应出勤 / 实出勤 / 请假 / 加班 / 迟到 / 早退 / 缺卡）。在职、试用员工都在列；离职员工离职当月仍在列，之后不在。「是否全勤」自动算，不用填。" />
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
             <el-date-picker v-model="aMonth" type="month" value-format="YYYY-MM" :clearable="false" style="width:130px" @change="loadAttendance" />
             <el-button type="primary" :loading="aSaving" @click="saveAttendance">保存本月</el-button>
+            <!-- 🆕 #240 批量导入 -->
+            <el-button :icon="Upload" :loading="aImporting" @click="pickAttendanceFile">批量导入</el-button>
+            <el-button link type="primary" :icon="Download" @click="downloadAttendanceTemplate">下载模板</el-button>
+            <span style="flex:1" />
+            <span class="muted" style="font-size:12.5px">全勤 {{ aFullCount }} / {{ aRows.length }} 人</span>
           </div>
           <el-table show-overflow-tooltip :data="aRows" v-loading="aLoading" stripe size="small" class="compact-tbl" max-height="calc(100vh - 300px)">
             <el-table-column prop="emp_no" label="工号" width="76" fixed="left"><template #default="{ row }"><span class="code">{{ row.emp_no || '—' }}</span></template></el-table-column>
-            <el-table-column prop="name" label="姓名" width="90" fixed="left"><template #default="{ row }"><b>{{ row.name }}</b></template></el-table-column>
+            <el-table-column prop="name" label="姓名" width="112" fixed="left">
+              <template #default="{ row }">
+                <b>{{ row.name }}</b>
+                <!-- 🆕 #229 当月离职：末月考勤/工资照发，但要一眼看出来 -->
+                <el-tag v-if="row.left_this_month" size="small" type="info" effect="plain" style="margin-left:4px">离职</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="department_name" label="部门" width="100"><template #default="{ row }">{{ row.department_name || '—' }}</template></el-table-column>
             <el-table-column label="应出勤(天)" width="112"><template #default="{ row }"><el-input-number v-model="row.should_days" :min="0" :max="31" :precision="1" :controls="false" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="实出勤(天)" width="112"><template #default="{ row }"><el-input-number v-model="row.actual_days" :min="0" :max="31" :precision="1" :controls="false" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="请假(天)" width="100"><template #default="{ row }"><el-input-number v-model="row.leave_days" :min="0" :max="31" :precision="1" :controls="false" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="加班(工时)" width="112"><template #default="{ row }"><el-input-number v-model="row.overtime_hours" :min="0" :precision="1" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <!-- 🆕 #239 迟到/早退/缺卡次数 -->
+            <el-table-column label="迟到(次)" width="96"><template #default="{ row }"><el-input-number v-model="row.late_count" :min="0" :precision="0" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="早退(次)" width="96"><template #default="{ row }"><el-input-number v-model="row.early_leave_count" :min="0" :precision="0" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="缺卡(次)" width="96"><template #default="{ row }"><el-input-number v-model="row.missing_card_count" :min="0" :precision="0" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <!-- 🆕 #239 是否全勤：自动算(与后端 _is_full_attendance 同口径)，随上面几列实时变 -->
+            <el-table-column label="是否全勤" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag v-if="isFullAttendance(row)" size="small" type="success" effect="light">全勤</el-tag>
+                <span v-else class="muted small">—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="备注" min-width="140"><template #default="{ row }"><el-input v-model="row.note" size="small" placeholder="选填" maxlength="255" /></template></el-table-column>
           </el-table>
-          <EmptyHint v-if="!aLoading && !aRows.length" text="没有在职员工——请先在员工花名册维护" size="sm" />
+          <EmptyHint v-if="!aLoading && !aRows.length" text="该月没有在册员工——请先在员工花名册维护" size="sm" />
         </el-tab-pane>
 
         <!-- ===== 🆕 个人工资(按月每人,敏感) ===== -->
@@ -368,7 +441,14 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
           </div>
           <el-table show-overflow-tooltip :data="sRows" v-loading="sLoading" stripe size="small" class="compact-tbl" max-height="calc(100vh - 300px)">
             <el-table-column prop="emp_no" label="工号" width="72" fixed="left"><template #default="{ row }"><span class="code">{{ row.emp_no || '—' }}</span></template></el-table-column>
-            <el-table-column prop="name" label="姓名" width="86" fixed="left"><template #default="{ row }"><b>{{ row.name }}</b></template></el-table-column>
+            <el-table-column prop="name" label="姓名" width="108" fixed="left">
+              <template #default="{ row }">
+                <b>{{ row.name }}</b>
+                <!-- 🆕 #229 当月离职：末月工资要发，但别照上月全额发 -->
+                <el-tag v-if="row.left_this_month" size="small" type="info" effect="plain"
+                        :title="`离职日期 ${row.leave_date || '—'}`" style="margin-left:4px">离职</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column label="基本工资" width="118"><template #default="{ row }"><el-input-number v-model="row.base" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="绩效/奖金" width="118"><template #default="{ row }"><el-input-number v-model="row.merit" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="加班费" width="112"><template #default="{ row }"><el-input-number v-model="row.overtime_pay" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>

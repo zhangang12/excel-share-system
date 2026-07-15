@@ -2,7 +2,7 @@
 // 🆕 OA 审批：部门字典 + 可配置多级审批链 + 业务/报销/采购三类共8种申请单。
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Check, Close, Download, Upload, RefreshLeft } from '@element-plus/icons-vue'
+import { Plus, Check, Close, Download, Upload, RefreshLeft, Delete } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { oaApi, type Department, type OaDocType, type OaApprovalStep, type OaRequest, type OaSummaryRow, type OaChainOverviewRow } from '@/api/oa'
 import { adminApi } from '@/api/admin'
@@ -39,10 +39,12 @@ const docTypesByCategory = computed(() => {
 })
 const docLabel = (key: string) => docTypes.value.find(d => d.key === key)?.label || key
 const isDeptLead = computed(() => departments.value.some(d => d.lead_role && auth.hasRole(d.lead_role)))
+// 🆕 #238 待付款队列：与后端 scope=pending_pay 的门槛一致
+const canPay = computed(() => auth.hasRole('finance', 'admin', 'manager'))
 
 // ===== 列表 tab =====
 const mainTab = ref('mine')
-type Scope = 'mine' | 'pending_me' | 'cc_me' | 'dept' | 'all'
+type Scope = 'mine' | 'pending_me' | 'pending_pay' | 'cc_me' | 'dept' | 'all'
 const activeTab = ref<Scope>('mine')
 const rows = ref<OaRequest[]>([])
 const listLoading = ref(false)
@@ -52,7 +54,7 @@ async function loadList() {
   finally { listLoading.value = false }
 }
 function onTabChange(name: string | number) {
-  if (['mine', 'pending_me', 'cc_me', 'dept', 'all'].includes(String(name))) {
+  if (['mine', 'pending_me', 'pending_pay', 'cc_me', 'dept', 'all'].includes(String(name))) {
     activeTab.value = name as Scope
     filterAllDoc.value = ''; filterAllRequester.value = ''   // 换 tab 清筛选
     loadList()
@@ -83,8 +85,19 @@ const DETAIL_FIELD_LABELS: Record<string, string> = {
   // 🆕 反馈#217 销售提成申请字段
   project_code: '项目编号', customer_name: '客户名称', equipment_name: '设备名称',
   payback_amount: '回款金额', payback_type: '回款类型', commission_rate: '提成点(%)', commission_amount: '提成金额',
+  // 🆕 反馈#236 按月 + 多项目明细
+  period: '提成月份', payback_total: '回款合计', commission_total: '提成总计',
 }
 function detailFieldLabel(k: string): string { return DETAIL_FIELD_LABELS[k] || k }
+// 🆕 #236 详情里提成明细的「总计」行：只对回款金额/提成两列求和
+function commissionSummary({ columns, data }: { columns: any[]; data: any[] }) {
+  return columns.map((_c, i) => {
+    if (i === 0) return '总计'
+    if (i === 4) return fmtMoney(data.reduce((s, r) => s + (Number(r.payback_amount) || 0), 0))
+    if (i === 7) return fmtMoney(data.reduce((s, r) => s + (Number(r.commission_amount) || 0), 0))
+    return ''
+  })
+}
 function curStepLabel(r: OaRequest): string {
   if (r.status !== 'pending') return '—'
   return r.steps.find(s => s.step_order === r.current_step_order)?.step_label || '—'
@@ -97,13 +110,18 @@ function fmtMoney(n?: number | null): string {
 const subVisible = ref(false)
 const subSaving = ref(false)
 interface ExpenseItem { category: string; note: string; amount: number | null; invoice_file_id: number | null; invoice_file_name: string }
+// 🆕 反馈#236 销售提成明细行：一次申请可含多个项目（提成按月提交）
+interface CommissionItem {
+  project_code: string; deal_date: string; customer: string
+  payback_amount: number | null; payback_type: string; rate: number | null
+}
 const subForm = reactive({
   doc_type: '', department_id: '' as number | '', title: '', amount: null as number | null,
   related_request_id: null as number | '' | null,
   d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
-  // 🆕 反馈#217 销售提成申请专用字段
-  c_project_code: '', c_customer: '', c_equipment: '', c_payback_type: '',
-  c_payback_amount: null as number | null, c_commission_rate: null as number | null,
+  // 🆕 反馈#236 销售提成申请：改为「按月 + 多项目明细」，原单项目平铺字段(#217)已废弃
+  c_period: '' as string,
+  commission_items: [] as CommissionItem[],
   expense_items: [] as ExpenseItem[],   // 🆕 #149 报销费用明细
   cc_user_ids: [] as number[],   // 🆕 抄送人
 })
@@ -135,11 +153,36 @@ const showPurchaseFields = computed(() => subCategory.value === 'purchase')
 const showRelatedTrip = computed(() => subForm.doc_type === 'travel_expense')
 const showTripFields = computed(() => subForm.doc_type === 'trip')   // 🆕 出差申请专属：交通方式
 const TRANSPORT_OPTIONS = ['高铁', '飞机', '火车', '私车公用', '公车']
-// 🆕 反馈#217 销售提成申请：专用表单 + 提成金额=回款金额×提成点% 自动算
+// 🆕 反馈#217/#236 销售提成申请：按月提交 + 多项目明细，每行提成=回款金额×提成点%，底部总计
 const showCommissionFields = computed(() => subForm.doc_type === 'sales_commission')
 const PAYBACK_TYPES = ['预付款', '进度款', '到货款', '尾款', '质保金', '全款']
-const commissionAmount = computed(() =>
-  Math.round((Number(subForm.c_payback_amount) || 0) * (Number(subForm.c_commission_rate) || 0)) / 100)
+// 单行提成（分转整，避免浮点误差）
+function rowCommission(r: CommissionItem) {
+  return Math.round((Number(r.payback_amount) || 0) * (Number(r.rate) || 0)) / 100
+}
+// 总计：本次申请的提成合计 = 各行之和（= 提交时的申请金额）
+const commissionTotal = computed(() =>
+  Math.round(subForm.commission_items.reduce((s, r) => s + rowCommission(r) * 100, 0)) / 100)
+const commissionPaybackTotal = computed(() =>
+  Math.round(subForm.commission_items.reduce((s, r) => s + (Number(r.payback_amount) || 0) * 100, 0)) / 100)
+function addCommissionRow() {
+  subForm.commission_items.push({ project_code: '', deal_date: '', customer: '',
+    payback_amount: null, payback_type: '', rate: null })
+}
+function delCommissionRow(i: number) { subForm.commission_items.splice(i, 1) }
+// 🆕 #236 部门固定销售部、不给选
+const SALES_DEPT_NAME = '销售部'
+const salesDeptId = computed(() => departments.value.find(d => d.name === SALES_DEPT_NAME)?.id ?? '')
+// 切到销售提成申请：部门锁成销售部并起一行明细；切走时把锁上的部门清掉，避免残留
+watch(showCommissionFields, (on) => {
+  if (on) {
+    subForm.department_id = salesDeptId.value
+    if (!subForm.c_period) subForm.c_period = new Date().toISOString().slice(0, 7)
+    if (!subForm.commission_items.length) addCommissionRow()
+  } else if (subForm.department_id === salesDeptId.value) {
+    subForm.department_id = ''
+  }
+})
 const myApprovedTrips = ref<OaRequest[]>([])
 async function loadMyApprovedTrips() {
   try { myApprovedTrips.value = await oaApi.listRequests({ scope: 'mine', doc_type: 'trip', status: 'approved' }) }
@@ -154,7 +197,8 @@ function resetSubForm() {
   Object.assign(subForm, {
     doc_type: '', department_id: '', title: '', amount: null, related_request_id: null,
     d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
-    c_project_code: '', c_customer: '', c_equipment: '', c_payback_type: '', c_payback_amount: null, c_commission_rate: null,
+    c_period: new Date().toISOString().slice(0, 7),   // 🆕 #236 提成按月提交，默认本月
+    commission_items: [],
     expense_items: [],
     cc_user_ids: [],
   })
@@ -170,13 +214,23 @@ async function submitNew() {
   if (!subForm.department_id) { ElMessage.warning('请选择部门'); return }
   let detail: Record<string, any> = {}
   if (showCommissionFields.value) {
-    // 🆕 反馈#217 销售提成申请
-    if (!subForm.c_project_code.trim() && !subForm.c_customer.trim()) { ElMessage.warning('请填写项目编号或客户名称'); return }
+    // 🆕 反馈#236 销售提成申请：按月 + 多项目明细 + 总计
+    if (!subForm.c_period) { ElMessage.warning('请选择提成月份'); return }
+    const items = subForm.commission_items.filter(
+      r => r.project_code.trim() || r.customer.trim() || (Number(r.payback_amount) || 0) > 0)
+    if (!items.length) { ElMessage.warning('请至少添加一条项目明细'); return }
+    const bad = items.findIndex(r => !r.project_code.trim() && !r.customer.trim())
+    if (bad >= 0) { ElMessage.warning(`第 ${bad + 1} 行请至少填写项目编号或客户名称`); return }
     detail = {
-      project_code: subForm.c_project_code.trim(), customer_name: subForm.c_customer.trim(),
-      equipment_name: subForm.c_equipment.trim(), payback_amount: Number(subForm.c_payback_amount) || 0,
-      payback_type: subForm.c_payback_type || '', commission_rate: Number(subForm.c_commission_rate) || 0,
-      commission_amount: commissionAmount.value, notes: subForm.d_notes || '',
+      period: subForm.c_period,
+      commission_items: items.map(r => ({
+        project_code: r.project_code.trim(), deal_date: r.deal_date || '', customer_name: r.customer.trim(),
+        payback_amount: Number(r.payback_amount) || 0, payback_type: r.payback_type || '',
+        commission_rate: Number(r.rate) || 0, commission_amount: rowCommission(r),
+      })),
+      payback_total: commissionPaybackTotal.value,
+      commission_total: commissionTotal.value,
+      notes: subForm.d_notes || '',
     }
   } else if (showBusinessFields.value) {
     detail = { destination: subForm.d_destination, start_date: subForm.d_start_date, end_date: subForm.d_end_date, notes: subForm.d_notes }
@@ -200,7 +254,7 @@ async function submitNew() {
     const r = await oaApi.createRequest({
       category: subCategory.value, doc_type: subForm.doc_type, department_id: subForm.department_id as number,
       title: subForm.title || undefined,
-      amount: showReimburseFields.value ? expenseTotal.value : (showCommissionFields.value ? commissionAmount.value : subForm.amount),
+      amount: showReimburseFields.value ? expenseTotal.value : (showCommissionFields.value ? commissionTotal.value : subForm.amount),
       detail, related_request_id: showRelatedTrip.value && subForm.related_request_id ? (subForm.related_request_id as number) : null,
       cc_user_ids: subForm.cc_user_ids,
     })
@@ -504,6 +558,30 @@ onMounted(async () => {
         </el-table>
       </el-tab-pane>
 
+      <!-- 🆕 #238 待付款：末环节财务审批通过后单据转「待付款」且不再属于任何审批环节，
+           以前哪个队列都不显示=单据"消失"。财务在这里付款收口。 -->
+      <el-tab-pane v-if="canPay" label="待付款" name="pending_pay">
+        <div class="toolbar">
+          <el-button :icon="RefreshLeft" @click="loadList">刷新</el-button>
+          <span class="muted" style="font-size:12.5px;margin-left:10px">审批已走完、等财务实际付钱的单据。付完点「处理」里的标记已付款。</span>
+        </div>
+        <el-table show-overflow-tooltip :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
+          <el-table-column prop="request_no" label="单号" width="150" />
+          <el-table-column label="单据类型" width="120"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
+          <el-table-column prop="department_name" label="部门" width="100" />
+          <el-table-column prop="requester_name" label="申请人" width="100" />
+          <el-table-column prop="title" label="标题" min-width="150" show-overflow-tooltip />
+          <el-table-column label="金额" width="110" align="right">
+            <template #default="{ row }">{{ fmtMoney(row.settle_amount ?? row.amount) }}</template>
+          </el-table-column>
+          <el-table-column label="提交时间" width="150"><template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template></el-table-column>
+          <el-table-column label="操作" width="90" fixed="right" :show-overflow-tooltip="false">
+            <template #default="{ row }"><el-button size="small" link type="primary" @click="openDetail(row.id)">处理</el-button></template>
+          </el-table-column>
+          <template #empty><EmptyHint text="没有待付款的单据" /></template>
+        </el-table>
+      </el-tab-pane>
+
       <el-tab-pane label="抄送我的" name="cc_me">
         <div class="toolbar"><el-button :icon="RefreshLeft" @click="loadList">刷新</el-button></div>
         <el-table show-overflow-tooltip :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
@@ -767,10 +845,21 @@ onMounted(async () => {
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12">
+            <!-- 🆕 #236 销售提成申请：部门固定销售部，不给选 -->
             <el-form-item label="部门 *">
-              <el-select v-model="subForm.department_id" filterable style="width:100%" placeholder="选择部门">
+              <el-input v-if="showCommissionFields" :model-value="SALES_DEPT_NAME" disabled>
+                <template #suffix><span class="muted small">提成固定销售部</span></template>
+              </el-input>
+              <el-select v-else v-model="subForm.department_id" filterable style="width:100%" placeholder="选择部门">
                 <el-option v-for="d in departments.filter(x => x.enabled)" :key="d.id" :label="d.name" :value="d.id" />
               </el-select>
+            </el-form-item>
+          </el-col>
+          <!-- 🆕 #236 提成按月提交 -->
+          <el-col :xs="24" :sm="12" v-if="showCommissionFields">
+            <el-form-item label="提成月份 *">
+              <el-date-picker v-model="subForm.c_period" type="month" value-format="YYYY-MM"
+                              placeholder="选择月份" :clearable="false" style="width:100%" />
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12"><el-form-item label="标题"><el-input v-model="subForm.title" placeholder="留空则用单据类型名" /></el-form-item></el-col>
@@ -780,23 +869,61 @@ onMounted(async () => {
             </el-form-item>
           </el-col>
 
-          <!-- 🆕 反馈#217 销售提成申请专用表单 -->
+          <!-- 🆕 反馈#217/#236 销售提成申请：按月 + 多项目明细 + 总计 -->
           <template v-if="showCommissionFields">
-            <el-col :xs="24" :sm="12"><el-form-item label="项目编号"><el-input v-model="subForm.c_project_code" placeholder="如 2026-061M" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item label="客户名称"><el-input v-model="subForm.c_customer" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item label="设备名称"><el-input v-model="subForm.c_equipment" /></el-form-item></el-col>
-            <el-col :xs="12" :sm="6">
-              <el-form-item label="回款类型">
-                <el-select v-model="subForm.c_payback_type" filterable allow-create default-first-option clearable placeholder="选/填" style="width:100%">
-                  <el-option v-for="t in PAYBACK_TYPES" :key="t" :label="t" :value="t" />
-                </el-select>
-              </el-form-item>
-            </el-col>
-            <el-col :xs="12" :sm="6"><el-form-item label="回款金额(元)"><el-input-number v-model="subForm.c_payback_amount" :min="0" :precision="2" :controls="false" style="width:100%" /></el-form-item></el-col>
-            <el-col :xs="12" :sm="6"><el-form-item label="提成点(%)"><el-input-number v-model="subForm.c_commission_rate" :min="0" :precision="3" :controls="false" style="width:100%" /></el-form-item></el-col>
-            <el-col :xs="12" :sm="6">
-              <el-form-item label="提成金额(自动)">
-                <el-input :model-value="fmtMoney(commissionAmount)" readonly />
+            <el-col :span="24">
+              <el-form-item label="项目明细 *">
+                <div style="width:100%">
+                  <el-table :data="subForm.commission_items" size="small" border class="cm-tbl">
+                    <el-table-column type="index" label="序号" width="56" align="center" />
+                    <el-table-column label="项目编号" min-width="120">
+                      <template #default="{ row }"><el-input v-model="row.project_code" size="small" placeholder="如 2026-061M" /></template>
+                    </el-table-column>
+                    <el-table-column label="成单日期" width="140">
+                      <template #default="{ row }">
+                        <el-date-picker v-model="row.deal_date" type="date" value-format="YYYY-MM-DD"
+                                        size="small" placeholder="选择" style="width:100%" />
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="客户名称" min-width="130">
+                      <template #default="{ row }"><el-input v-model="row.customer" size="small" /></template>
+                    </el-table-column>
+                    <el-table-column label="回款金额" width="120" align="right">
+                      <template #default="{ row }">
+                        <el-input-number v-model="row.payback_amount" :min="0" :precision="2" :controls="false" size="small" style="width:100%" />
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="回款类型" width="118">
+                      <template #default="{ row }">
+                        <el-select v-model="row.payback_type" filterable allow-create default-first-option clearable
+                                   size="small" placeholder="选/填" style="width:100%">
+                          <el-option v-for="t in PAYBACK_TYPES" :key="t" :label="t" :value="t" />
+                        </el-select>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="提成点(%)" width="96">
+                      <template #default="{ row }">
+                        <el-input-number v-model="row.rate" :min="0" :precision="3" :controls="false" size="small" style="width:100%" />
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="提成" width="104" align="right">
+                      <template #default="{ row }"><b class="amt">{{ fmtMoney(rowCommission(row)) }}</b></template>
+                    </el-table-column>
+                    <el-table-column label="" width="46" align="center" :show-overflow-tooltip="false">
+                      <template #default="{ $index }">
+                        <el-button size="small" link type="danger" :icon="Delete" @click="delCommissionRow($index)" />
+                      </template>
+                    </el-table-column>
+                    <template #empty><span class="muted small">还没有明细，点下面「添加项目」</span></template>
+                  </el-table>
+                  <!-- 总计 -->
+                  <div class="cm-foot">
+                    <el-button size="small" :icon="Plus" @click="addCommissionRow">添加项目</el-button>
+                    <span style="flex:1" />
+                    <span class="muted">回款合计 <b>{{ fmtMoney(commissionPaybackTotal) }}</b></span>
+                    <span style="margin-left:16px">总计提成 <b class="amt" style="font-size:15px">{{ fmtMoney(commissionTotal) }}</b></span>
+                  </div>
+                </div>
               </el-form-item>
             </el-col>
             <el-col :span="24"><el-form-item label="备注（选填）"><el-input v-model="subForm.d_notes" type="textarea" :rows="2" placeholder="选填" /></el-form-item></el-col>
@@ -902,9 +1029,29 @@ onMounted(async () => {
           <el-tag v-for="u in detailReq.cc_users" :key="u.id" size="small" effect="plain" style="margin-right:6px">{{ u.name }}</el-tag>
         </div>
         <div v-if="detailReq.detail && Object.keys(detailReq.detail).length" class="detail-json">
-          <div v-for="(v, k) in detailReq.detail" :key="k" v-show="v && k !== 'expense_items'">
+          <!-- 明细数组单独用表格渲染(见下)，平铺这里跳过 -->
+          <div v-for="(v, k) in detailReq.detail" :key="k"
+               v-show="v && k !== 'expense_items' && k !== 'commission_items'">
             <span class="muted">{{ detailFieldLabel(k) }}</span>：{{ v }}
           </div>
+        </div>
+        <!-- 🆕 #236：销售提成明细（按月多项目）+ 总计 -->
+        <div v-if="detailReq.detail && detailReq.detail.commission_items && detailReq.detail.commission_items.length"
+             style="margin:6px 0 12px">
+          <div class="form-section-title" style="margin-top:0">
+            项目提成明细<span v-if="detailReq.detail.period" class="muted small">（{{ detailReq.detail.period }}）</span>
+          </div>
+          <el-table show-overflow-tooltip :data="detailReq.detail.commission_items" size="small" border
+                    show-summary :summary-method="commissionSummary">
+            <el-table-column type="index" label="序号" width="56" align="center" />
+            <el-table-column label="项目编号" min-width="110"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>
+            <el-table-column label="成单日期" width="106"><template #default="{ row }">{{ row.deal_date || '—' }}</template></el-table-column>
+            <el-table-column label="客户名称" min-width="120"><template #default="{ row }">{{ row.customer_name || '—' }}</template></el-table-column>
+            <el-table-column label="回款金额" width="112" align="right"><template #default="{ row }">{{ fmtMoney(row.payback_amount) }}</template></el-table-column>
+            <el-table-column label="回款类型" width="92"><template #default="{ row }">{{ row.payback_type || '—' }}</template></el-table-column>
+            <el-table-column label="提成点(%)" width="90" align="right"><template #default="{ row }">{{ row.commission_rate ?? '—' }}</template></el-table-column>
+            <el-table-column label="提成" width="112" align="right"><template #default="{ row }"><b class="amt">{{ fmtMoney(row.commission_amount) }}</b></template></el-table-column>
+          </el-table>
         </div>
         <!-- 🆕 #149：报销费用明细 + 逐行发票下载 -->
         <div v-if="detailReq.detail && detailReq.detail.expense_items && detailReq.detail.expense_items.length" style="margin:6px 0 12px">
@@ -981,6 +1128,9 @@ onMounted(async () => {
 .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 16px; margin-bottom: 14px; }
 .detail-json { background: var(--el-fill-color-light); border-radius: 6px; padding: 10px 14px; font-size: 13px; line-height: 1.8; margin-bottom: 14px; }
 .cc-line { margin-bottom: 14px; font-size: 13px; }
+/* 🆕 #236 销售提成明细行 + 总计 */
+.cm-tbl :deep(.el-table__cell) { padding: 4px 0; }
+.cm-foot { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; }
 .chain-step { display: inline-flex; align-items: center; }
 .chain-arrow { margin: 0 5px; color: var(--el-text-color-secondary); }
 .reject-box { background: var(--el-color-danger-light-9); color: var(--el-color-danger); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
