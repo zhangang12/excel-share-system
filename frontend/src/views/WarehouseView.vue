@@ -802,14 +802,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-tab-pane>
 
         <!-- 出入库登记 -->
-        <el-tab-pane v-if="tv('io')" label="出入库登记" name="io">
-          <EmptyHint v-if="!canWrite" text="仅仓库角色可登记出入库" :icon="Lock" />
-          <template v-else>
-            <el-button type="primary" :icon="Plus" @click="openIo('in')">入库登记</el-button>
-            <el-button type="warning" :icon="Plus" @click="openIo('out')">出库登记</el-button>
-            <div class="muted small" style="margin-top:10px">入库单号 RK+日期+序号；出库单号 CK…；出库超现存将被拦截。</div>
-          </template>
-        </el-tab-pane>
+        <!-- 「出入库登记」tab 已合并进「出入库 / 物料需求」(见 demand tab 顶部两个按钮) -->
 
         <!-- 收发存汇总 -->
         <el-tab-pane v-if="tv('sum')" label="收发存汇总" name="sum">
@@ -933,7 +926,14 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           <EmptyHint v-if="!locations.length" text="暂无库位，点「新增库位」开始（如 A区-1排 / 1号库）" size="sm" />
         </el-tab-pane>
 
-        <el-tab-pane v-if="tv('demand')" label="物料需求" name="demand">
+        <!-- 🆕 出入库登记 + 物料需求 合并：顶部两个登记按钮(逻辑不变)，下方物料需求(按项目汇总在库物料+复选出库) -->
+        <el-tab-pane v-if="tv('demand')" label="出入库 / 物料需求" name="demand">
+          <!-- 顶部：出入库登记两个按钮，逻辑独立不变；可对任意物料手工登记（含非项目领用） -->
+          <div v-if="canWrite" class="io-bar">
+            <el-button type="primary" :icon="Plus" @click="openIo('in')">入库登记</el-button>
+            <el-button type="warning" :icon="Plus" @click="openIo('out')">出库登记</el-button>
+            <span class="muted small">入库单号 RK+日期+序号；出库单号 CK…；出库超现存将被拦截。手工登记走这里；按项目批量领用走下方需求表。</span>
+          </div>
           <!-- #157：默认直接列出有清单的项目 + 待出库/已出库条数，不用先从下拉选项目 -->
           <template v-if="!demandProj">
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -1523,6 +1523,12 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
 
 <style scoped>
 .bad { color: var(--danger); }
+/* 🆕 出入库+物料需求合并：顶部登记按钮条 */
+.io-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 12px; padding-bottom: 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
 /* 采购收货 待收货/已收货 切换：字体更大、按钮更大更醒目（用户要求）*/
 .recv-toggle :deep(.el-radio-button__inner) {
   font-size: 18px; font-weight: 700; padding: 15px 34px; line-height: 1.2; min-width: 150px;

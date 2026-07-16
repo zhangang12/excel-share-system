@@ -95,8 +95,9 @@ TAB_REGISTRY: list[dict] = [
     {"menu_key": "hr", "menu_label": "人事部", "tabs": [
         ("roster", "员工花名册"), ("payroll", "工资总额")]},
     {"menu_key": "warehouse", "menu_label": "仓库", "tabs": [
-        ("ov", "库存总览"), ("io", "出入库登记"), ("sum", "收发存汇总"), ("txn", "出入库流水"),
-        ("mat", "物料主数据"), ("loc", "库位管理"), ("demand", "物料需求"), ("recv", "采购收货"),
+        # 🆕 「出入库登记」(io) 已并入「出入库/物料需求」(demand)；旧 io 的 hidden_tabs 记录失效无害
+        ("ov", "库存总览"), ("sum", "收发存汇总"), ("txn", "出入库流水"),
+        ("mat", "物料主数据"), ("loc", "库位管理"), ("demand", "出入库/物料需求"), ("recv", "采购收货"),
         ("ship", "发货清单"), ("preq", "采购申请")]},
 ]
 
