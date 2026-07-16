@@ -1079,8 +1079,10 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                   <span v-else class="muted small">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="112" align="center" fixed="right" :show-overflow-tooltip="false">
+              <el-table-column label="操作" width="168" align="center" fixed="right" :show-overflow-tooltip="false">
                 <template #default="{ row }">
+                  <!-- 🆕 固定列直达采购单：合并/单行都能一键点开采购单PDF，不再依赖会被截断的采购单号链接 -->
+                  <el-button v-if="row.po_no" size="small" link type="primary" @click="viewPoPdf(row.po_no)">采购单</el-button>
                   <el-button v-if="row._isGroup" size="small" :type="recvReceived ? 'default' : 'primary'" plain @click="openBatchReceiveGroup(row)">
                     {{ recvReceived ? '合并修改' : '合并收货' }}
                   </el-button>
