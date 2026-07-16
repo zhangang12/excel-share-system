@@ -691,7 +691,8 @@ const stockVisible = ref(false)
 interface PreqLine { item_name: string; spec: string; qty: number | null; project_code: string; notes: string }
 interface PreqRow { id: number; status: string; notes?: string | null; created_at: string
   buyer_name?: string | null; handler_name?: string | null; reject_reason?: string | null
-  lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[] }
+  lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[]
+  attachments?: { id: number; name: string }[] }   // 🆕 #245/#246 直传文件
 const PREQ_STATUS: Record<string, string> = { pending: '待处理', done: '已处理', rejected: '已驳回' }
 const preqList = ref<PreqRow[]>([])
 const preqLoading = ref(false)
@@ -704,6 +705,10 @@ function blankPreqLine(): PreqLine { return { item_name: '', spec: '', qty: null
 const preqVisible = ref(false)
 const preqSaving = ref(false)
 const preqForm = reactive({ buyer_id: '' as number | '', notes: '', lines: [blankPreqLine()] as PreqLine[] })
+// 🆕 #245/#246 请购单二选一：'lines'=逐行填明细，'file'=直接上传文件（电气清单等）
+const preqMode = ref<'lines' | 'file'>('lines')
+const preqFiles = ref<{ id: number; name: string }[]>([])
+const preqUploading = ref(false)
 const preqBuyers = ref<{ id: number; name: string }[]>([])
 async function loadPreqBuyers() {
   try { preqBuyers.value = (await http.get<{ id: number; name: string }[]>('/purchase-mgmt/buyers')).data }
@@ -711,21 +716,45 @@ async function loadPreqBuyers() {
 }
 function openPurchReq() {
   preqForm.buyer_id = ''; preqForm.notes = ''; preqForm.lines = [blankPreqLine()]
+  preqMode.value = 'lines'; preqFiles.value = []
   if (!preqBuyers.value.length) loadPreqBuyers()
   preqVisible.value = true
 }
 function addPreqLine() { preqForm.lines.push(blankPreqLine()) }
 function removePreqLine(i: number) { preqForm.lines.splice(i, 1); if (!preqForm.lines.length) preqForm.lines.push(blankPreqLine()) }
+// 🆕 #245/#246 上传文件（可多个）——先传附件拿 id，提交时随请购单带上
+function pickPreqFile() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.xls,.xlsx,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.csv'; input.multiple = true
+  input.onchange = async () => {
+    const files = Array.from(input.files || [])
+    if (!files.length) return
+    preqUploading.value = true
+    try {
+      for (const f of files) {
+        const fd = new FormData()
+        fd.append('file', f); fd.append('biz_type', 'purchase_request')
+        const r = await http.post<{ id: number; name: string }>('/attachments', fd)
+        preqFiles.value.push({ id: r.data.id, name: r.data.name })
+      }
+    } catch { /* 拦截器已提示 */ } finally { preqUploading.value = false }
+  }
+  input.click()
+}
+function removePreqFile(i: number) { preqFiles.value.splice(i, 1) }
 async function submitPurchReq() {
-  const lines = preqForm.lines.filter(l => l.item_name.trim())
-  if (!lines.length) { ElMessage.error('请至少填写一行要采购的物料（名称必填）'); return }
+  const payload: any = { buyer_id: preqForm.buyer_id || null, notes: preqForm.notes || null, lines: [], attachment_ids: [] }
+  if (preqMode.value === 'file') {
+    if (!preqFiles.value.length) { ElMessage.error('请先上传采购文件'); return }
+    payload.attachment_ids = preqFiles.value.map(f => f.id)
+  } else {
+    const lines = preqForm.lines.filter(l => l.item_name.trim())
+    if (!lines.length) { ElMessage.error('请至少填写一行要采购的物料（名称必填）'); return }
+    payload.lines = lines.map(l => ({ item_name: l.item_name.trim(), spec: l.spec || null, qty: l.qty, project_code: l.project_code || null, notes: l.notes || null }))
+  }
   preqSaving.value = true
   try {
-    await http.post('/purchase-mgmt/purchase-requests', {
-      buyer_id: preqForm.buyer_id || null,
-      notes: preqForm.notes || null,
-      lines: lines.map(l => ({ item_name: l.item_name.trim(), spec: l.spec || null, qty: l.qty, project_code: l.project_code || null, notes: l.notes || null })),
-    })
+    await http.post('/purchase-mgmt/purchase-requests', payload)
     ElMessage.success(preqForm.buyer_id ? '请购单已提交，已通知该采购员' : '请购单已提交，采购部会收到通知')
     preqVisible.value = false
     await loadPurchReqs()
@@ -1430,7 +1459,12 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           <el-table show-overflow-tooltip :data="preqList" v-loading="preqLoading" stripe size="small" max-height="calc(100vh - 320px)" :scrollbar-always-on="true">
             <el-table-column type="expand">
               <template #default="{ row }">
-                <el-table show-overflow-tooltip :data="row.lines" size="small" border style="margin:6px 12px">
+                <!-- 🆕 #245/#246 直传文件（可下载） -->
+                <div v-if="row.attachments && row.attachments.length" style="margin:6px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <span class="muted small">采购文件：</span>
+                  <el-button v-for="a in row.attachments" :key="a.id" size="small" link type="primary" @click="downloadAttachment(a)">📎 {{ a.name }}</el-button>
+                </div>
+                <el-table v-if="row.lines && row.lines.length" show-overflow-tooltip :data="row.lines" size="small" border style="margin:6px 12px">
                   <el-table-column type="index" label="#" width="44" />
                   <el-table-column label="名称" prop="item_name" min-width="140" />
                   <el-table-column label="规格" min-width="120"><template #default="{ row: l }">{{ l.spec || '—' }}</template></el-table-column>
@@ -1441,7 +1475,11 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
               </template>
             </el-table-column>
             <el-table-column label="申请编号" width="90"><template #default="{ row }">#{{ row.id }}</template></el-table-column>
-            <el-table-column label="物料" min-width="200"><template #default="{ row }">{{ row.lines.map((l: any) => l.item_name).slice(0, 3).join('、') }}{{ row.lines.length > 3 ? ` 等${row.lines.length}项` : '' }}</template></el-table-column>
+            <el-table-column label="物料" min-width="200"><template #default="{ row }">
+              <span v-if="row.lines && row.lines.length">{{ row.lines.map((l: any) => l.item_name).slice(0, 3).join('、') }}{{ row.lines.length > 3 ? ` 等${row.lines.length}项` : '' }}</span>
+              <span v-else-if="row.attachments && row.attachments.length" class="muted">📎 上传文件（{{ row.attachments.length }}）</span>
+              <span v-else class="muted">—</span>
+            </template></el-table-column>
             <el-table-column label="指定采购员" width="100"><template #default="{ row }"><b v-if="row.buyer_name">{{ row.buyer_name }}</b><span v-else class="muted">未指定</span></template></el-table-column>
             <el-table-column label="状态" width="96" align="center"><template #default="{ row }"><StatusPill :text="PREQ_STATUS[row.status] || row.status" :variant="preqStatusVariant(row.status)" /></template></el-table-column>
             <el-table-column label="处理" min-width="150"><template #default="{ row }"><span v-if="row.status === 'done'" class="muted">{{ row.handler_name }} 已处理</span><span v-else-if="row.status === 'rejected'" style="color:var(--el-color-danger)">驳回：{{ row.reject_reason || '—' }}</span><span v-else class="muted">等待采购处理</span></template></el-table-column>
@@ -1688,7 +1726,6 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
   </div>
     <!-- 🆕 设计师提请购单弹窗 -->
     <el-dialog v-model="preqVisible" title="提请购单" width="min(880px, 96vw)" top="5vh">
-      <el-alert type="info" :closable="false" style="margin-bottom:12px" title="列出要采购的物料（名称必填，规格/数量/项目/备注选填）→ 指定采购员后提交，该采购员会收到通知。" />
       <el-form label-position="top" style="margin-bottom:6px">
         <el-form-item label="指定采购员（推送给他；不选则通知全体采购员）">
           <el-select v-model="preqForm.buyer_id" filterable clearable placeholder="选择采购员" style="width:320px">
@@ -1696,19 +1733,40 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           </el-select>
         </el-form-item>
       </el-form>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin:4px 0 8px">
-        <span style="font-weight:600;font-size:14px">采购物料（{{ preqForm.lines.length }} 行）</span>
-        <el-button size="small" :icon="Plus" @click="addPreqLine">添加一行</el-button>
-      </div>
-      <el-table show-overflow-tooltip :data="preqForm.lines" size="small" border max-height="46vh">
-        <el-table-column type="index" label="#" width="44" align="center" />
-        <el-table-column label="名称 *" min-width="160"><template #default="{ row }"><el-input v-model="row.item_name" placeholder="物料名称" /></template></el-table-column>
-        <el-table-column label="规格型号" min-width="140"><template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template></el-table-column>
-        <el-table-column label="数量" width="110"><template #default="{ row }"><el-input-number v-model="row.qty" :min="0" :controls="false" style="width:100%" /></template></el-table-column>
-        <el-table-column label="项目编号" width="120"><template #default="{ row }"><el-input v-model="row.project_code" placeholder="选填" /></template></el-table-column>
-        <el-table-column label="备注" min-width="120"><template #default="{ row }"><el-input v-model="row.notes" placeholder="选填" /></template></el-table-column>
-        <el-table-column label="操作" width="60" align="center" fixed="right" :show-overflow-tooltip="false"><template #default="{ $index }"><el-button size="small" link type="danger" :icon="Delete" @click="removePreqLine($index)" /></template></el-table-column>
-      </el-table>
+      <!-- 🆕 #245/#246 二选一：逐行填 或 直接上传文件 -->
+      <el-radio-group v-model="preqMode" style="margin-bottom:10px">
+        <el-radio-button value="lines">逐行填写</el-radio-button>
+        <el-radio-button value="file">上传文件</el-radio-button>
+      </el-radio-group>
+
+      <template v-if="preqMode === 'lines'">
+        <el-alert type="info" :closable="false" style="margin-bottom:10px" title="列出要采购的物料（名称必填，规格/数量/项目/备注选填）。" />
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:4px 0 8px">
+          <span style="font-weight:600;font-size:14px">采购物料（{{ preqForm.lines.length }} 行）</span>
+          <el-button size="small" :icon="Plus" @click="addPreqLine">添加一行</el-button>
+        </div>
+        <el-table show-overflow-tooltip :data="preqForm.lines" size="small" border max-height="46vh">
+          <el-table-column type="index" label="#" width="44" align="center" />
+          <el-table-column label="名称 *" min-width="160"><template #default="{ row }"><el-input v-model="row.item_name" placeholder="物料名称" /></template></el-table-column>
+          <el-table-column label="规格型号" min-width="140"><template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template></el-table-column>
+          <el-table-column label="数量" width="110"><template #default="{ row }"><el-input-number v-model="row.qty" :min="0" :controls="false" style="width:100%" /></template></el-table-column>
+          <el-table-column label="项目编号" width="120"><template #default="{ row }"><el-input v-model="row.project_code" placeholder="选填" /></template></el-table-column>
+          <el-table-column label="备注" min-width="120"><template #default="{ row }"><el-input v-model="row.notes" placeholder="选填" /></template></el-table-column>
+          <el-table-column label="操作" width="60" align="center" fixed="right" :show-overflow-tooltip="false"><template #default="{ $index }"><el-button size="small" link type="danger" :icon="Delete" @click="removePreqLine($index)" /></template></el-table-column>
+        </el-table>
+      </template>
+
+      <template v-else>
+        <el-alert type="info" :closable="false" style="margin-bottom:10px" title="直接上传采购文件（电气清单等 Excel/PDF/图片，可多个），不用逐行填。采购员在采购申请里能下载。" />
+        <el-button :icon="UploadFilled" :loading="preqUploading" @click="pickPreqFile">选择文件</el-button>
+        <div v-if="preqFiles.length" style="margin-top:10px;display:flex;flex-direction:column;gap:6px">
+          <div v-for="(f, i) in preqFiles" :key="f.id" style="display:flex;align-items:center;gap:8px">
+            <el-tag type="success" effect="plain">📎 {{ f.name }}</el-tag>
+            <el-button size="small" link type="danger" :icon="Delete" @click="removePreqFile(i)" />
+          </div>
+        </div>
+      </template>
+
       <el-input v-model="preqForm.notes" type="textarea" :rows="2" placeholder="整单备注（选填）" style="margin-top:12px" />
       <template #footer>
         <el-button @click="preqVisible = false">取消</el-button>

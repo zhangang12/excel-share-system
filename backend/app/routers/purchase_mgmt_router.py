@@ -2472,7 +2472,7 @@ _PREQ_VIEW = _PREQ_WAREHOUSE + ("buyer", "buyer_lead", "buyer_standard", "buyer_
                                 "finance", "finance_lead")
 
 
-def _preq_out(pr: models.PurchaseRequest) -> schemas.PurchaseRequestOut:
+def _preq_out(pr: models.PurchaseRequest, atts: Optional[list[dict]] = None) -> schemas.PurchaseRequestOut:
     return schemas.PurchaseRequestOut(
         id=pr.id, requester_id=pr.requester_id, requester_name=_uname(pr.requester),
         buyer_id=pr.buyer_id, buyer_name=_uname(pr.buyer),
@@ -2481,7 +2481,21 @@ def _preq_out(pr: models.PurchaseRequest) -> schemas.PurchaseRequestOut:
         lines=[schemas.PurchaseRequestLineOut(
             id=l.id, item_name=l.item_name, spec=l.spec, qty=l.qty,
             project_code=l.project_code, notes=l.notes) for l in pr.lines],
+        attachments=atts or [],
     )
+
+
+async def _preq_atts(db: AsyncSession, pr_ids: list[int]) -> dict[int, list[dict]]:
+    """🆕 #245/#246 批量取请购单直传附件 {pr_id: [{id,name}]}。"""
+    if not pr_ids:
+        return {}
+    rows = (await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "purchase_request",
+        models.Attachment.biz_id.in_(pr_ids)).order_by(models.Attachment.id))).scalars().all()
+    out: dict[int, list[dict]] = {}
+    for a in rows:
+        out.setdefault(a.biz_id, []).append({"id": a.id, "name": a.name})
+    return out
 
 
 @router.get("/buyers")
@@ -2533,8 +2547,9 @@ async def create_purchase_request(
 ):
     """仓库/设计师发起采购申请（列出要买什么）→ 推送指定采购员(未指定则全体)，采购部处理。"""
     lines = [l for l in body.lines if (l.item_name or "").strip()]
-    if not lines:
-        raise HTTPException(400, "请至少填写一行要采购的物料")
+    # 🆕 #245/#246 二选一：逐行填明细 或 直接上传文件——两者至少有其一
+    if not lines and not body.attachment_ids:
+        raise HTTPException(400, "请至少填写一行要采购的物料，或上传采购文件")
     pr = models.PurchaseRequest(requester_id=current.id, buyer_id=body.buyer_id,
                                 status="pending", notes=body.notes)
     db.add(pr)
@@ -2543,30 +2558,42 @@ async def create_purchase_request(
         db.add(models.PurchaseRequestLine(
             request_id=pr.id, item_name=l.item_name.strip(), spec=l.spec,
             qty=l.qty, project_code=l.project_code, notes=l.notes))
+    # 🆕 #245/#246 把预上传的附件（biz_id 尚为空）绑定到本单——只认自己刚传的 purchase_request 附件
+    if body.attachment_ids:
+        atts = (await db.execute(select(models.Attachment).where(
+            models.Attachment.id.in_(body.attachment_ids),
+            models.Attachment.biz_type == "purchase_request",
+            models.Attachment.biz_id.is_(None),
+            models.Attachment.uploaded_by == current.id))).scalars().all()
+        for a in atts:
+            a.biz_id = pr.id
     await db.commit()
-    # 🆕 #205：采购申请对全体采购员开放——通知也发给全体采购员/主管（此前只推给「指定采购员」
-    #   那一个人，其他采购员收不到、就以为看不到；而列表本就全员可见）。指定的那位在文案里点名。
-    #   原查询只按「主角色」找采购员，会漏掉以副角色持有 buyer 的用户（如王芹 buyer+finance），
-    #   这里改为主/副角色并集并去重。
+    # 🆕 反馈#242：指定了采购员 → 只推给他本人（他人的任务单不该骚扰无关采购员，
+    #   尤其王芹这类兼任 buyer 副角色的账号）。未指定 → 才推给全体采购员/主管。
+    #   —— 这半是回退 #205「一律推全体」的推送口径；列表可见性不动（仍全员可见）。
+    #   （#205 原意是"列表全员可见，所以也通知全员"，但用户反馈指派后仍全员通知太吵。）
     try:
         bname = None
         if body.buyer_id:
             bu = (await db.execute(select(models.User).where(
                 models.User.id == body.buyer_id))).scalar_one_or_none()
             bname = _uname(bu) if bu else None
-        text = (f"采购申请：{_uname(current)} 提交 {len(lines)} 项，指派给 {bname}，请处理" if bname
-                else f"采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理")
-        rids = [r for (r,) in (await db.execute(select(models.Role.id).where(
-            models.Role.code.in_(("buyer", "buyer_lead", "buyer_standard", "buyer_outsource"))))).all()]
         uids: set = set()
-        if rids:
-            sub = select(models.UserRole.user_id).where(models.UserRole.role_id.in_(rids))
-            urs = await db.execute(select(models.User.id).where(
-                models.User.is_active == True,  # noqa: E712
-                or_(models.User.role_id.in_(rids), models.User.id.in_(sub))))
-            uids = {u for (u,) in urs.all()}
         if body.buyer_id:
-            uids.add(body.buyer_id)   # 指定的一定收到
+            # 指定了采购员：只推给他一人
+            text = f"采购申请：{_uname(current)} 提交 {len(lines)} 项，指派给你，请处理"
+            uids = {body.buyer_id}
+        else:
+            # 未指定：推给全体采购员/主管（主/副角色并集去重——含以副角色持有 buyer 的用户）
+            text = f"采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理"
+            rids = [r for (r,) in (await db.execute(select(models.Role.id).where(
+                models.Role.code.in_(("buyer", "buyer_lead", "buyer_standard", "buyer_outsource"))))).all()]
+            if rids:
+                sub = select(models.UserRole.user_id).where(models.UserRole.role_id.in_(rids))
+                urs = await db.execute(select(models.User.id).where(
+                    models.User.is_active == True,  # noqa: E712
+                    or_(models.User.role_id.in_(rids), models.User.id.in_(sub))))
+                uids = {u for (u,) in urs.all()}
         for uid in uids:
             db.add(models.Message(to_user_id=uid, kind="info", text=text,
                                   biz_type="purchase_request", biz_id=pr.id))
@@ -2574,7 +2601,8 @@ async def create_purchase_request(
     except Exception:
         pass
     r = await db.execute(select(models.PurchaseRequest).where(models.PurchaseRequest.id == pr.id))
-    return _preq_out(r.scalar_one())
+    atts = await _preq_atts(db, [pr.id])
+    return _preq_out(r.scalar_one(), atts.get(pr.id))
 
 
 @router.get("/purchase-requests", response_model=List[schemas.PurchaseRequestOut])
@@ -2590,7 +2618,9 @@ async def list_purchase_requests(
     if _preq_warehouse_only(current):
         stmt = stmt.where(models.PurchaseRequest.requester_id == current.id)
     r = await db.execute(stmt)
-    return [_preq_out(pr) for pr in r.scalars().all()]
+    prs = list(r.scalars().all())
+    atts = await _preq_atts(db, [pr.id for pr in prs])
+    return [_preq_out(pr, atts.get(pr.id)) for pr in prs]
 
 
 @router.put("/purchase-requests/{prid}/handle")

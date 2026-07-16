@@ -4,6 +4,7 @@ import { ref, computed, onMounted, onBeforeUnmount, reactive, watch, nextTick } 
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, ArrowDown, ArrowLeft, Search, Tickets, EditPen, Setting, Collection, Box, Lock, QuestionFilled } from '@element-plus/icons-vue'
 import { http } from '@/api'
+import { downloadAttachment } from '@/api/orders'   // 🆕 #245/#246 请购单直传文件下载
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -1661,7 +1662,8 @@ async function loadPayReqs() {
 // 🆕 #167 采购申请处理（仓库提 → 采购部处理/驳回）
 interface IncomingReq { id: number; status: string; notes?: string | null; created_at: string
   requester_name?: string | null; buyer_name?: string | null; handler_name?: string | null; reject_reason?: string | null
-  lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[] }
+  lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[]
+  attachments?: { id: number; name: string }[] }   // 🆕 #245/#246 直传文件
 const PREQ_STATUS: Record<string, string> = { pending: '待处理', done: '已处理', rejected: '已驳回' }
 const incomingReqs = ref<IncomingReq[]>([])
 const incomingLoading = ref(false)
@@ -1910,7 +1912,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-table show-overflow-tooltip :data="incomingReqs" v-loading="incomingLoading" stripe size="small" max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column type="expand" width="36">
               <template #default="{ row }">
-                <el-table show-overflow-tooltip :data="row.lines" size="small" border style="margin:6px 12px">
+                <!-- 🆕 #245/#246 直传文件（可下载） -->
+                <div v-if="row.attachments && row.attachments.length" style="margin:6px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <span class="muted small">采购文件：</span>
+                  <el-button v-for="a in row.attachments" :key="a.id" size="small" link type="primary" @click="downloadAttachment(a)">📎 {{ a.name }}</el-button>
+                </div>
+                <el-table v-if="row.lines && row.lines.length" show-overflow-tooltip :data="row.lines" size="small" border style="margin:6px 12px">
                   <el-table-column type="index" label="#" width="44" />
                   <el-table-column label="名称" prop="item_name" min-width="140" />
                   <el-table-column label="规格" min-width="120"><template #default="{ row: l }">{{ l.spec || '—' }}</template></el-table-column>
@@ -1923,16 +1930,21 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column label="申请编号" width="90"><template #default="{ row }">#{{ row.id }}</template></el-table-column>
             <el-table-column label="申请人" width="90"><template #default="{ row }">{{ row.requester_name || '—' }}</template></el-table-column>
             <el-table-column label="指定采购员" width="100"><template #default="{ row }"><b v-if="row.buyer_name">{{ row.buyer_name }}</b><span v-else class="muted small">未指定</span></template></el-table-column>
-            <el-table-column label="物料" min-width="220"><template #default="{ row }">{{ row.lines.map((l: any) => l.item_name).slice(0, 3).join('、') }}{{ row.lines.length > 3 ? ` 等${row.lines.length}项` : '' }}</template></el-table-column>
+            <el-table-column label="物料" min-width="220"><template #default="{ row }">
+              <span v-if="row.lines && row.lines.length">{{ row.lines.map((l: any) => l.item_name).slice(0, 3).join('、') }}{{ row.lines.length > 3 ? ` 等${row.lines.length}项` : '' }}</span>
+              <span v-else-if="row.attachments && row.attachments.length" class="muted">📎 上传文件（{{ row.attachments.length }}）</span>
+              <span v-else class="muted">—</span>
+            </template></el-table-column>
             <el-table-column label="状态" width="90" align="center"><template #default="{ row }"><el-tag :type="preqStatusTag(row.status)" size="small">{{ PREQ_STATUS[row.status] || row.status }}</el-tag></template></el-table-column>
             <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
-            <el-table-column label="操作" width="230" fixed="right" :show-overflow-tooltip="false">
+            <!-- 🆕 反馈#241：原 width=230 装不下「查看/打印+已处理+驳回」，驳回被裁成「…」采购员找不到——加宽 -->
+            <el-table-column label="操作" width="320" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <!-- 🆕 反馈#232：查看/打印成正式采购申请单 -->
                 <el-button size="small" link type="primary" @click="viewPreqPdf(row.id)">查看/打印申请单</el-button>
                 <template v-if="row.status === 'pending' && canWrite">
                   <el-button size="small" type="primary" @click="handleIncoming(row)">已处理</el-button>
-                  <el-button size="small" type="danger" link @click="rejectIncoming(row)">驳回</el-button>
+                  <el-button size="small" type="danger" plain @click="rejectIncoming(row)">驳回</el-button>
                 </template>
                 <span v-else-if="row.status === 'done'" class="muted small">{{ row.handler_name }} 已处理</span>
                 <span v-else-if="row.status === 'rejected'" class="danger small" :title="row.reject_reason || ''">已驳回</span>

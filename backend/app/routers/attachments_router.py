@@ -38,6 +38,7 @@ ALLOWED_BIZ_TYPES = {
     "install_mat",  # 🆕 需求一 安装清单
     "receipt_doc",  # 🆕 需求十四 采购收货单（图片）
     "feedback",  # 🆕 #193 生产问题反馈现场照片
+    "purchase_request",  # 🆕 #245/#246 请购单直接上传文件（电气清单等，替代逐行手填）
 }
 
 # 统一允许的扩展名（按业务需要可在端点层再细化）

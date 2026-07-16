@@ -1298,6 +1298,8 @@ class PurchaseRequestCreate(BaseModel):
     buyer_id: Optional[int] = None   # 🆕 #2 指定采购员（推送给他）
     notes: Optional[str] = None
     lines: list[PurchaseRequestLineIn] = Field(default_factory=list)
+    # 🆕 #245/#246 二选一：可不填明细行，改为直接上传文件（先传 /attachments 拿 id 再带进来）
+    attachment_ids: list[int] = Field(default_factory=list)
 
 
 class PurchaseRequestLineOut(PurchaseRequestLineIn):
@@ -1317,6 +1319,8 @@ class PurchaseRequestOut(BaseModel):
     reject_reason: Optional[str] = None
     created_at: datetime
     lines: list[PurchaseRequestLineOut] = Field(default_factory=list)
+    # 🆕 #245/#246 直接上传的文件（电气清单等）——采购员可下载
+    attachments: list[dict] = Field(default_factory=list)   # [{id,name}]
 
 
 class PurchaseItemSummary(BaseModel):
