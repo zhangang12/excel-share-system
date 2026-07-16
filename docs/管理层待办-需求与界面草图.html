@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>管理层待办 · 需求与界面草图</title>
+<style>
+  :root{--pri:#2563eb;--warn:#e6a23c;--ok:#27ae60;--bad:#e74c3c;--line:#e5e7eb;--head:#1f2d3d;--muted:#9ca3af;}
+  body{font-family:-apple-system,"Microsoft YaHei",sans-serif;max-width:1080px;margin:20px auto;padding:0 16px;color:#1f2937;background:#f5f6f8;}
+  h1{font-size:21px;margin:0 0 4px} h2{font-size:16px;margin:22px 0 8px;border-left:4px solid var(--pri);padding-left:10px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:8px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .flow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13px}
+  .flow .n{background:#eef4ff;border:1px solid #cddffb;border-radius:8px;padding:8px 12px;line-height:1.5}
+  .flow .n b{color:var(--pri)} .flow .arw{color:var(--muted);font-weight:700}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 14px;font-size:13px;cursor:pointer;display:inline-flex;gap:5px;align-items:center}
+  .btn.pri{background:var(--pri);color:#fff;border-color:var(--pri)} .btn.warn{background:var(--warn);color:#fff;border-color:var(--warn)}
+  .btn.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{border-bottom:1px solid var(--line);padding:7px 10px;text-align:left}
+  th{background:var(--head);color:#fff;font-weight:600;white-space:nowrap} td.c,th.c{text-align:center}
+  .pill{display:inline-block;border-radius:10px;padding:1px 9px;font-size:12px}
+  .pill.ok{background:#e8f8ef;color:var(--ok)} .pill.warn{background:#fdf3e3;color:var(--warn)} .pill.bad{background:#fdecec;color:var(--bad)} .pill.mut{background:#f0f1f3;color:var(--muted)} .pill.pri{background:#eaf1fe;color:var(--pri)}
+  .muted{color:var(--muted)} .small{font-size:12px}
+  .field{display:flex;gap:10px;margin-bottom:8px;font-size:13px;align-items:flex-start}
+  .field label{width:96px;color:#555;padding-top:6px;flex-shrink:0}
+  .inp{flex:1;border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:#fafbfc}
+  .icons{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-end}
+  .icon-opt{text-align:center;font-size:12.5px;color:#555}
+  .icon-box{width:76px;height:76px;border-radius:16px;background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;margin-bottom:6px;box-shadow:0 2px 6px rgba(0,0,0,.05)}
+  .icon-opt.pick .icon-box{border:2px solid var(--pri);box-shadow:0 3px 10px rgba(37,99,235,.2)}
+  /* 浮动挂件 */
+  .stage{position:relative;height:250px;background:#eceff3;border:1px dashed #c8ccd2;border-radius:10px;overflow:hidden}
+  .stage .hint{position:absolute;top:12px;left:14px;color:var(--muted);font-size:12.5px}
+  .fab{position:absolute;right:22px;bottom:26px;width:56px;height:56px;border-radius:50%;background:var(--pri);box-shadow:0 6px 18px rgba(37,99,235,.4);display:flex;align-items:center;justify-content:center;cursor:pointer}
+  .fab .badge{position:absolute;top:-4px;right:-4px;background:var(--bad);color:#fff;font-size:12px;min-width:20px;height:20px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 5px;border:2px solid #fff}
+  .fab2{position:absolute;right:22px;bottom:92px;width:44px;height:44px;border-radius:50%;background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:18px}
+  .panel{position:absolute;right:22px;bottom:92px;width:330px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);overflow:hidden}
+  .panel .ph{background:var(--pri);color:#fff;padding:9px 14px;font-size:14px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .panel .item{padding:10px 14px;border-bottom:1px solid var(--line);font-size:12.5px}
+  .panel .item .t{font-weight:600;margin-bottom:3px} .panel .item .m{color:#666;line-height:1.5}
+  .q{background:#eef4ff;border:1px solid #cddffb;border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.9;margin-top:8px}
+  .q b{color:var(--pri)}
+  .foot{color:var(--muted);font-size:12px;margin-top:22px;line-height:1.7;border-top:1px dashed var(--line);padding-top:12px}
+  .rec{background:#f0f9ff;border-left:3px solid var(--pri);padding:2px 8px;font-size:12px;border-radius:0 4px 4px 0;display:inline-block}
+</style></head>
+<body>
+  <h1>管理层待办 · 需求与界面草图</h1>
+  <div class="sub">管理层派待办 → 每个人收到并回复承诺完成时间 → 到期未反馈则每日逾期提醒。全局浮动入口带角标。先确认设计，再写代码。</div>
+
+  <!-- ============ 一、流程 ============ -->
+  <h2>一、流程（我的理解，请核对）</h2>
+  <div class="card">
+    <div class="flow">
+      <div class="n"><b>①管理层</b> 新建待办<br>标题/内容/收件人/期望完成日</div>
+      <span class="arw">→</span>
+      <div class="n"><b>②每个收件人</b> 收到<br>站内消息 + 企微推送 + 浮动角标 +1</div>
+      <span class="arw">→</span>
+      <div class="n"><b>③收件人回复</b><br>承诺完成时间（必填）</div>
+      <span class="arw">→</span>
+      <div class="n"><b>④进行中</b><br>可写进展 / 标记完成</div>
+      <span class="arw">→</span>
+      <div class="n" style="background:#fdecec;border-color:#f5b5b5"><b style="color:#c0392b">⑤逾期</b><br>承诺日到、仍未完成<br>→ 系统<b style="color:#c0392b">每日</b>推逾期提醒</div>
+    </div>
+    <div class="small muted" style="margin-top:10px">逾期扫描复用现有 <code>overdue_scheduler</code>（每 12h 跑一次的每日提醒器），推送给收件人本人 + 抄送管理层，每条待办每天最多提醒一次。</div>
+  </div>
+
+  <!-- ============ 二、图标 ============ -->
+  <h2>二、图标设计（三选一，或让我再改）</h2>
+  <div class="card">
+    <div class="icons">
+      <div class="icon-opt pick">
+        <div class="icon-box">
+          <svg viewBox="0 0 48 48" width="46" height="46">
+            <rect x="9" y="9" width="30" height="33" rx="5" fill="#fff" stroke="#2563eb" stroke-width="2.6"/>
+            <rect x="17" y="5" width="14" height="8" rx="2.5" fill="#2563eb"/>
+            <polyline points="16,27 22,33 33,21" fill="none" stroke="#27ae60" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        A · 清单打勾 <span class="rec">推荐</span>
+      </div>
+      <div class="icon-opt">
+        <div class="icon-box">
+          <svg viewBox="0 0 48 48" width="46" height="46">
+            <path d="M24 7 a9 9 0 0 1 9 9 v6 l3 6 h-24 l3 -6 v-6 a9 9 0 0 1 9 -9 z" fill="#fff" stroke="#2563eb" stroke-width="2.6" stroke-linejoin="round"/>
+            <path d="M20 37 a4 4 0 0 0 8 0" fill="none" stroke="#2563eb" stroke-width="2.6" stroke-linecap="round"/>
+            <circle cx="34" cy="12" r="5" fill="#e74c3c"/>
+          </svg>
+        </div>
+        B · 提醒铃铛
+      </div>
+      <div class="icon-opt">
+        <div class="icon-box">
+          <svg viewBox="0 0 48 48" width="46" height="46">
+            <line x1="13" y1="6" x2="13" y2="43" stroke="#2563eb" stroke-width="3.2" stroke-linecap="round"/>
+            <path d="M13 8 h23 l-5.5 7 l5.5 7 h-23 z" fill="#2563eb" fill-opacity=".14" stroke="#2563eb" stroke-width="2.2" stroke-linejoin="round"/>
+            <polyline points="18,15 21.5,18.5 28,11.5" fill="none" stroke="#27ae60" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        C · 任务旗帜
+      </div>
+    </div>
+    <div class="small muted" style="margin-top:10px">图标同时用于：左侧「管理层待办」菜单 + 右下角浮动按钮。角标显示未完成待办数。</div>
+  </div>
+
+  <!-- ============ 三、全局浮动入口 ============ -->
+  <h2>三、全局浮动入口（所有页面右下角）</h2>
+  <div class="card">
+    <div class="stage">
+      <div class="hint">↓ 任意页面右下角常驻。角标=我未完成的待办数。点开=我的待办面板。（与已有「反馈」浮标错开高度，不重叠）</div>
+      <!-- 收起态：浮动按钮 -->
+      <div class="fab" title="我的待办">
+        <svg viewBox="0 0 48 48" width="30" height="30">
+          <rect x="9" y="9" width="30" height="33" rx="5" fill="#fff" stroke="#fff" stroke-width="2.6"/>
+          <rect x="17" y="5" width="14" height="8" rx="2.5" fill="#fff"/>
+          <polyline points="16,27 22,33 33,21" fill="none" stroke="#2563eb" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="badge">3</span>
+      </div>
+      <!-- 展开态：面板（示意，实际点击才展开） -->
+      <div class="panel">
+        <div class="ph"><span>📋 我的待办 · 3 项待办</span><span style="cursor:pointer">▾</span></div>
+        <div class="item">
+          <div class="t">Q3 供应商对账全部清一遍 <span class="pill bad">逾期2天</span></div>
+          <div class="m">承诺 2026-07-14 · 老板派 · <span style="color:var(--pri);cursor:pointer">写进展 / 标记完成</span></div>
+        </div>
+        <div class="item">
+          <div class="t">整理仓库呆滞料清单 <span class="pill warn">今天到期</span></div>
+          <div class="m">承诺 2026-07-16 · 杨坛派 · <span style="color:var(--pri);cursor:pointer">写进展 / 标记完成</span></div>
+        </div>
+        <div class="item" style="background:#fffdf5">
+          <div class="t">新客户报价模板评审 <span class="pill pri">待回复完成时间</span></div>
+          <div class="m">老板派 · <span style="color:var(--pri);cursor:pointer">回复承诺完成时间 →</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 四、管理层视角 ============ -->
+  <h2>四、管理层视角 · 新建 + 监控台（左侧菜单「管理层待办」）</h2>
+  <div class="card">
+    <div style="display:flex;gap:8px;margin-bottom:10px"><button class="btn pri">＋ 新建待办</button><span class="muted small" style="align-self:center">建完自动推给收件人 + 企微</span></div>
+    <div style="border:1px dashed var(--line);border-radius:8px;padding:12px;margin-bottom:12px;background:#fafbfc">
+      <div class="small muted" style="margin-bottom:8px">新建待办弹窗：</div>
+      <div class="field"><label>标题 *</label><div class="inp">Q3 供应商对账全部清一遍</div></div>
+      <div class="field"><label>内容</label><div class="inp" style="min-height:38px">把 8 家主要供应商的账目核对无误，有出入的标注…</div></div>
+      <div class="field"><label>收件人 *</label><div class="inp">王芹、李新新 <span class="pill mut">＋ 选人</span> <span class="pill mut">全体</span> <span class="pill mut">按部门</span></div></div>
+      <div class="field"><label>期望完成日</label><div class="inp" style="max-width:180px">2026-07-14（选填，管理层期望）</div></div>
+    </div>
+    <div class="small muted" style="margin-bottom:4px">监控台：一条待办派给多人，逐人看承诺时间与进展。</div>
+    <table>
+      <thead><tr><th>待办</th><th>收件人</th><th>承诺完成时间</th><th class="c">状态</th><th>最新进展</th><th class="c">操作</th></tr></thead>
+      <tbody>
+        <tr><td>Q3 供应商对账</td><td>王芹</td><td>2026-07-14</td><td class="c"><span class="pill bad">逾期2天</span></td><td class="muted small">—</td><td class="c"><span style="color:var(--pri)">催办</span></td></tr>
+        <tr><td>Q3 供应商对账</td><td>李新新</td><td>2026-07-18</td><td class="c"><span class="pill warn">进行中</span></td><td class="small">已对完 5 家</td><td class="c"><span style="color:var(--pri)">详情</span></td></tr>
+        <tr><td>呆滞料清单</td><td>王利利</td><td>2026-07-20</td><td class="c"><span class="pill ok">已完成</span></td><td class="small">附表已交</td><td class="c"><span style="color:var(--pri)">详情</span></td></tr>
+        <tr><td>报价模板评审</td><td>赵仁辉</td><td class="muted">未回复</td><td class="c"><span class="pill pri">待回复时间</span></td><td class="muted small">—</td><td class="c"><span style="color:var(--pri)">催办</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============ 五、确认点 ============ -->
+  <h2>五、请你确认（决定怎么写）</h2>
+  <div class="q">
+    <b>①收件人范围</b>：管理层每次<b>自己勾选</b>收件人（一个/多个/全体/按部门），对吧？还是固定广播全体？<br>
+    <b>②谁能建待办</b>：只有 admin/manager（老板+经理）？还是部门主管也能给本部门派？<br>
+    <b>③「反馈进展」怎么算</b>：承诺日到了还没<b>点「已完成」</b>就算逾期、开始每日提醒 —— 中途「写进展」只是留记录、<u>不</u>停提醒（除非顺延承诺日）。这样合理吗？还是写了进展就当天不再提醒？<br>
+    <b>④承诺时间能不能改</b>：收件人回复后，遇到情况能否<b>申请顺延</b>承诺日（需管理层同意 / 还是自己就能改+留痕）？<br>
+    <b>⑤图标</b>：A（清单打勾，推荐）/ B（铃铛）/ C（旗帜）选哪个？<br>
+    <b>⑥浮动挂件对谁显示</b>：只对<b>收到过待办的人</b>显示？管理层是否也在浮标里看自己派出去的（还是只在左侧菜单监控台看）？
+  </div>
+
+  <div class="foot">
+    — 界面草图，仅确认布局/流程/图标，不是最终样式（真实用 Element Plus + 内嵌 SVG 图标）。<br>
+    预估落地：后端新增 <code>ManagementTodo</code> + <code>ManagementTodoTarget</code>（一对多收件人，各自承诺时间/状态/进展）两张表 + 路由；逾期扫描挂进现有 <code>overdue.py</code>；推送复用 <code>push_message</code>（站内+企微）。前端新增浮动挂件组件 + 「管理层待办」菜单页，角标复用现有轮询机制。确认后我实现 + 验证 + 发版。
+  </div>
+</body></html>
