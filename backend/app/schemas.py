@@ -1622,3 +1622,83 @@ class OaSummaryRow(BaseModel):
     doc_type: str
     count: int = 0
     amount: float = 0
+
+
+# ---------- 🆕 管理层待办 ----------
+class MgmtTodoCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: Optional[str] = None
+    priority: str = "normal"                     # normal / urgent
+    recipient_ids: list[int] = Field(min_length=1)   # 勾选的收件人
+
+
+class MgmtTodoReplyIn(BaseModel):
+    """收件人回复承诺完成时间（可带进展说明）。"""
+    committed_at: str = Field(min_length=10, max_length=10)  # YYYY-MM-DD
+    progress: Optional[str] = None
+
+
+class MgmtTodoProgressIn(BaseModel):
+    progress: Optional[str] = None
+
+
+class MgmtTodoExtendIn(BaseModel):
+    """收件人申请顺延承诺日（需管理层同意）。"""
+    extend_to: str = Field(min_length=10, max_length=10)
+    reason: str = Field(min_length=1)
+
+
+class MgmtTodoExtendDecideIn(BaseModel):
+    approve: bool
+    note: Optional[str] = None
+
+
+class MgmtTodoTargetOut(BaseModel):
+    id: int
+    user_id: int
+    user_name: Optional[str] = None
+    status: str                                   # pending/committed/done
+    committed_at: Optional[str] = None
+    progress: Optional[str] = None
+    reply_at: Optional[datetime] = None
+    done_at: Optional[datetime] = None
+    overdue: bool = False                          # 承诺日已过且未完成
+    extend_status: Optional[str] = None            # None/pending/approved/rejected
+    extend_to: Optional[str] = None
+    extend_reason: Optional[str] = None
+
+
+class MgmtTodoOut(BaseModel):
+    """管理层「我发出的 / 监控」视角：一条待办 + 全部收件人处理态。"""
+    id: int
+    title: str
+    content: Optional[str] = None
+    priority: str = "normal"
+    created_by: int
+    creator_name: Optional[str] = None
+    created_at: datetime
+    targets: list[MgmtTodoTargetOut] = []
+    # 汇总
+    total: int = 0
+    done_count: int = 0
+    overdue_count: int = 0
+    pending_reply_count: int = 0
+
+
+class MyTodoRow(BaseModel):
+    """收件人「我收到的」视角：一行 = 我的一个待办处理态。"""
+    target_id: int
+    todo_id: int
+    title: str
+    content: Optional[str] = None
+    priority: str = "normal"
+    creator_name: Optional[str] = None
+    created_at: datetime
+    status: str
+    committed_at: Optional[str] = None
+    progress: Optional[str] = None
+    done_at: Optional[datetime] = None
+    overdue: bool = False
+    extend_status: Optional[str] = None
+    extend_to: Optional[str] = None
+    extend_reason: Optional[str] = None

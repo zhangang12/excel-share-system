@@ -15,6 +15,7 @@ import {
 import { messagesApi } from '@/api/messages'
 import { userFeedbackApi } from '@/api/userFeedback'
 import HelperFloating from '@/components/HelperFloating.vue'
+import ManagementTodoFloating from '@/components/ManagementTodoFloating.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -262,6 +263,8 @@ onUnmounted(() => {
 
     <!-- 🆕 全局用户反馈小助手（任意登录用户可见） -->
     <HelperFloating />
+    <!-- 🆕 管理层待办浮动挂件（全部人可见收件箱；管理层可下发/监控） -->
+    <ManagementTodoFloating />
   </div>
 </template>
 

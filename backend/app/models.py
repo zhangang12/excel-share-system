@@ -990,3 +990,50 @@ class OaRequestCc(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship(lazy="joined")
+
+
+# ==================== 🆕 管理层待办（老板/经理下达 → 收件人承诺完成时间 → 逾期每日提醒）====================
+class ManagementTodo(Base):
+    """🆕 管理层待办：admin/manager 录入一条待办，勾选若干收件人下发。
+    一条待办 → 多个收件人(ManagementTodoTarget)，每人各自承诺完成时间/回报进展/独立逾期。"""
+    __tablename__ = "management_todos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    content: Mapped[Optional[str]] = mapped_column(Text)          # 待办详情
+    priority: Mapped[str] = mapped_column(String(8), default="normal")  # normal/urgent
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    creator: Mapped["User"] = relationship(foreign_keys=[created_by], lazy="joined")
+    targets: Mapped[list["ManagementTodoTarget"]] = relationship(
+        lazy="selectin", cascade="all, delete-orphan", back_populates="todo")
+
+
+class ManagementTodoTarget(Base):
+    """🆕 管理层待办·单个收件人的处理态：一行 = 一个人对一条待办。
+    status: pending(待回复承诺时间) → committed(已承诺) → done(已完成)。
+    收件人到承诺日仍未点「已完成」→ 逾期，系统每日推送提醒。
+    顺延：收件人可申请顺延承诺日(extend_status=pending)，管理层同意后改 committed_at。"""
+    __tablename__ = "management_todo_targets"
+    __table_args__ = (UniqueConstraint("todo_id", "user_id", name="uq_mgmt_todo_target"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    todo_id: Mapped[int] = mapped_column(
+        ForeignKey("management_todos.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    committed_at: Mapped[Optional[str]] = mapped_column(String(10))   # 承诺完成日 YYYY-MM-DD
+    progress: Mapped[Optional[str]] = mapped_column(Text)             # 最近一次回报的进展说明
+    reply_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))  # 首次回复承诺时间
+    done_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # 顺延申请（收件人提交、管理层审批）
+    extend_status: Mapped[Optional[str]] = mapped_column(String(16))  # None/pending/approved/rejected
+    extend_to: Mapped[Optional[str]] = mapped_column(String(10))      # 申请顺延到的新日期
+    extend_reason: Mapped[Optional[str]] = mapped_column(Text)
+    extend_decided_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    extend_decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    todo: Mapped["ManagementTodo"] = relationship(back_populates="targets")
+    user: Mapped["User"] = relationship(foreign_keys=[user_id], lazy="joined")

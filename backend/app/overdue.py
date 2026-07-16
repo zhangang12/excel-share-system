@@ -233,9 +233,76 @@ async def scan_hr_reminders(db: AsyncSession) -> dict:
     return {"scanned": len(emps), "notified": notified}
 
 
+async def scan_management_todos(db: AsyncSession) -> dict:
+    """🆕 管理层待办·每日提醒：
+    - 承诺日已过且未「已完成」→ 每日推逾期提醒给收件人 + 抄送下达人。
+    - 一直未回复承诺时间（下发满 1 天仍 pending）→ 每日催回复承诺时间。
+    幂等键 =(biz_type='mgmt_todo_remind', biz_id=target.id, 当日)：同一待办同一人一天只推一次。"""
+    from sqlalchemy.orm import joinedload
+    today = datetime.now(_CN_TZ).date()
+    today_s = today.isoformat()
+    r = await db.execute(
+        select(models.ManagementTodoTarget)
+        .options(joinedload(models.ManagementTodoTarget.todo)
+                 .joinedload(models.ManagementTodo.creator),
+                 joinedload(models.ManagementTodoTarget.user))
+        .where(models.ManagementTodoTarget.status != "done"))
+    targets = list(r.scalars().all())
+    notified = 0
+    for t in targets:
+        todo = t.todo
+        if todo is None:
+            continue
+        overdue = False
+        if t.status == "committed" and t.committed_at:
+            try:
+                overdue = date.fromisoformat(t.committed_at) < today
+            except (ValueError, TypeError):
+                overdue = False
+        # 未回复承诺时间：下发满 1 天仍 pending 才开始催（当天不催）
+        need_reply = False
+        if t.status == "pending":
+            created_d = date.fromisoformat(_cn_date(todo.created_at))
+            need_reply = (today - created_d).days >= 1
+        if not overdue and not need_reply:
+            continue
+        # 幂等：该待办·该人今日是否已推过
+        r2 = await db.execute(
+            select(models.Message.created_at).where(
+                models.Message.biz_type == "mgmt_todo_remind",
+                models.Message.biz_id == t.id,
+            ).order_by(models.Message.created_at.desc()).limit(1))
+        last = r2.scalar_one_or_none()
+        if last is not None and _cn_date(last) == today_s:
+            continue
+
+        title = todo.title
+        if overdue:
+            over_days = (today - date.fromisoformat(t.committed_at)).days
+            text = (f"【待办逾期】你的待办「{title}」承诺 {t.committed_at} 完成，"
+                    f"已逾期 {over_days} 天，请尽快完成并点「已完成」，或申请顺延。")
+        else:
+            text = f"【待办待回复】你有一条待办「{title}」尚未回复承诺完成时间，请尽快回复。"
+        # biz_id 用 target.id 做当日去重键（与「按 order/ledger 去重」同理）
+        await push_message(db, to_user_id=t.user_id, kind="warn", text=text,
+                           biz_type="mgmt_todo_remind", biz_id=t.id)
+        # 抄送下达人（逾期才抄送，避免未回复也打扰管理层）
+        if overdue and todo.created_by:
+            cc = (f"【待办逾期·抄送】{(t.user.full_name or t.user.username) if t.user else '收件人'} "
+                  f"的待办「{title}」承诺 {t.committed_at}，已逾期。")
+            await push_message(db, to_user_id=todo.created_by, kind="warn", text=cc,
+                               biz_type="mgmt_todo_remind", biz_id=t.id)
+        notified += 1
+
+    if notified:
+        log.info("[scan_management_todos] 推送 %d 条管理层待办提醒（共扫描 %d）", notified, len(targets))
+    return {"scanned": len(targets), "notified": notified}
+
+
 async def overdue_scheduler(interval_hours: int = 12) -> None:
     """启动期周期任务：每 interval_hours 扫一次（单容器部署用 asyncio 即可）。
-    含：逾期任务提醒 + 🆕 尾款到期提醒 + 🆕 逾期尾款周催办（各用独立会话，互不影响）。"""
+    含：逾期任务提醒 + 尾款到期提醒 + 逾期尾款周催办 + 人事到期提醒
+    + 🆕 管理层待办逾期/待回复提醒（各用独立会话，互不影响）。"""
     while True:
         try:
             async with SessionLocal() as db:
@@ -257,4 +324,9 @@ async def overdue_scheduler(interval_hours: int = 12) -> None:
                 await scan_hr_reminders(db)
         except Exception as e:  # noqa: BLE001
             log.warning("scan_hr_reminders 失败: %s", e)
+        try:
+            async with SessionLocal() as db:
+                await scan_management_todos(db)
+        except Exception as e:  # noqa: BLE001
+            log.warning("scan_management_todos 失败: %s", e)
         await asyncio.sleep(interval_hours * 3600)

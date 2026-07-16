@@ -23,7 +23,7 @@ from .routers import (
     aftersales_router, finance_router, feedback_router, reports_router,
     warehouse_router, export_router, user_feedback_router,
     produce_router, leads_router, purchase_mgmt_router, oa_router,
-    hr_router,
+    hr_router, management_todo_router,
 )
 from .errors import register_exception_handlers
 from .database import get_db
@@ -119,6 +119,7 @@ def create_app() -> FastAPI:
     app.include_router(purchase_mgmt_router.router)  # 🆕 采购管理模块
     app.include_router(oa_router.router)
     app.include_router(hr_router.router)   # 🆕 人事部一期  # 🆕 OA 审批模块
+    app.include_router(management_todo_router.router)  # 🆕 管理层待办
 
     @app.get("/api/health")
     async def health():
@@ -141,6 +142,15 @@ def create_app() -> FastAPI:
     ):
         from .overdue import scan_balance_due
         return await scan_balance_due(db)
+
+    # 🆕 管理层待办逾期/待回复扫描手动/cron 触发（管理层）
+    @app.post("/api/internal/management-todo-scan")
+    async def management_todo_scan_now(
+        current=Depends(require_admin_or_manager),
+        db=Depends(get_db),
+    ):
+        from .overdue import scan_management_todos
+        return await scan_management_todos(db)
 
     # ===== 演示模式：托管前端静态资源 =====
     static_path = Path(settings.static_dir).resolve()
