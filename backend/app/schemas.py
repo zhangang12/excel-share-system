@@ -1146,6 +1146,7 @@ class WarehouseDemandRow(BaseModel):
     purchase_status: str = "未下单"          # 未下单 / 已下单 / 已到货
     in_stock: bool = False                   # 是否有货可出
     issued_qty: float = 0                    # 🆕 需求二：已领用出库到本项目的数量
+    source: str = "清单"                     # 🆕 清单=标准件清单需求；采购=采购单入库到本项目(不在清单)
 
 
 class WarehouseDemandOverviewRow(BaseModel):

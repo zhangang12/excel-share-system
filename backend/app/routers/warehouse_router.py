@@ -914,23 +914,18 @@ def _dnum(v):
 
 async def _demand_rows(db: AsyncSession, project_id: int, *, stock=None, mats=None):
     """项目物料需求逐行（供 /demand 与 /demand-overview 复用）。
-    stock/mats 可由调用方预先算好传入，避免 overview 逐项目重复扫全表。"""
-    r = await db.execute(select(models.Datasheet).where(
-        models.Datasheet.project_id == project_id, models.Datasheet.name == "标准件清单"))
-    sheet = r.scalar_one_or_none()
-    if not sheet:
-        return []
-    fr = await db.execute(select(models.Field).where(models.Field.datasheet_id == sheet.id))
-    name2id = {f.name: str(f.id) for f in fr.scalars().all()}
-    lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == sheet.id))
-    by_rec: dict = {}
-    for pi in lr.scalars().all():
-        by_rec.setdefault(pi.source_record_id, []).append(pi)
+    stock/mats 可由调用方预先算好传入，避免 overview 逐项目重复扫全表。
+
+    两个来源合并（都可勾选领用出库到本项目）：
+    ① 清单需求：读项目「标准件清单」逐行（source="清单"）；
+    ② 采购单入库：经采购收货/入库登记**关联到本项目**(WhTxn.project_id) 但不在清单里的物料
+       (source="采购")——解决"新建采购单的物料关联了项目号却无法在物料需求里汇总/出库"。"""
     if stock is None:
         stock = await _stock_map(db)
     if mats is None:
         mats = (await db.execute(select(models.WhMaterial))).scalars().all()
     mat_by_key = {(m.name, m.spec or None): m for m in mats}
+    mat_by_id = {m.id: m for m in mats}
     # 🆕 需求二：本项目各物料已领用出库数量（out 且 project_id=本项目，排除冲红）
     issued_map: dict[int, float] = defaultdict(float)
     ir = await db.execute(
@@ -941,35 +936,75 @@ async def _demand_rows(db: AsyncSession, project_id: int, *, stock=None, mats=No
         .group_by(models.WhTxn.material_id))
     for mid, tot in ir.all():
         issued_map[mid] = tot or 0
-    rr = await db.execute(select(models.Record).where(
-        models.Record.datasheet_id == sheet.id).order_by(models.Record.sort_order, models.Record.id))
-    out = []
-    for rec in rr.scalars().all():
-        v = rec.values or {}
 
-        def gv(col):
-            fid = name2id.get(col)
-            x = v.get(fid) if fid else None
-            if isinstance(x, list):
-                x = "、".join(str(i) for i in x)
-            return str(x).strip() if x not in (None, "") else None
+    out: list[schemas.WarehouseDemandRow] = []
+    bom_mat_ids: set[int] = set()
 
-        name = gv("项目")
-        if not name:
+    # ---- 一、清单需求行（标准件清单 BOM）----
+    r = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.project_id == project_id, models.Datasheet.name == "标准件清单"))
+    sheet = r.scalar_one_or_none()
+    if sheet:
+        fr = await db.execute(select(models.Field).where(models.Field.datasheet_id == sheet.id))
+        name2id = {f.name: str(f.id) for f in fr.scalars().all()}
+        lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == sheet.id))
+        by_rec: dict = {}
+        for pi in lr.scalars().all():
+            by_rec.setdefault(pi.source_record_id, []).append(pi)
+        rr = await db.execute(select(models.Record).where(
+            models.Record.datasheet_id == sheet.id).order_by(models.Record.sort_order, models.Record.id))
+        for rec in rr.scalars().all():
+            v = rec.values or {}
+
+            def gv(col):
+                fid = name2id.get(col)
+                x = v.get(fid) if fid else None
+                if isinstance(x, list):
+                    x = "、".join(str(i) for i in x)
+                return str(x).strip() if x not in (None, "") else None
+
+            name = gv("项目")
+            if not name:
+                continue
+            spec = gv("规格型号")
+            demand = _dnum(gv("数量"))
+            m = mat_by_key.get((name, spec or None))
+            if m:
+                bom_mat_ids.add(m.id)
+            st = stock.get(m.id, 0) if m else 0
+            suggest = max(0, (demand or 0) - st)
+            pis = by_rec.get(rec.id, [])
+            status = "未下单" if not pis else ("已到货" if all(p.arrival_date for p in pis) else "已下单")
+            out.append(schemas.WarehouseDemandRow(
+                item_name=name, spec=spec, material_id=(m.id if m else None),
+                location=(m.location if m else None),
+                demand_qty=demand, stock=st,
+                suggest_purchase=suggest, purchase_status=status, in_stock=st > 0,
+                issued_qty=(issued_map.get(m.id, 0) if m else 0), source="清单"))
+
+    # ---- 二、采购单入库到本项目、但不在清单里的物料 ----
+    recv_map: dict[int, float] = defaultdict(float)
+    rr2 = await db.execute(
+        select(models.WhTxn.material_id, func.sum(models.WhTxn.qty))
+        .where(models.WhTxn.direction == "in", models.WhTxn.project_id == project_id,
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False)  # noqa: E712
+        .group_by(models.WhTxn.material_id))
+    for mid, tot in rr2.all():
+        recv_map[mid] = tot or 0
+    for mid, got in recv_map.items():
+        if mid in bom_mat_ids:
+            continue  # 清单已覆盖该物料，需求量以清单为准，不重复列
+        m = mat_by_id.get(mid)
+        if not m:
             continue
-        spec = gv("规格型号")
-        demand = _dnum(gv("数量"))
-        m = mat_by_key.get((name, spec or None))
-        st = stock.get(m.id, 0) if m else 0
-        suggest = max(0, (demand or 0) - st)
-        pis = by_rec.get(rec.id, [])
-        status = "未下单" if not pis else ("已到货" if all(p.arrival_date for p in pis) else "已下单")
+        st = stock.get(mid, 0)
+        # 采购入库到本项目的量当作"需求量"，待出库 = 采购量 - 已领；已买到货，无需再采购
         out.append(schemas.WarehouseDemandRow(
-            item_name=name, spec=spec, material_id=(m.id if m else None),
-            location=(m.location if m else None),
-            demand_qty=demand, stock=st,
-            suggest_purchase=suggest, purchase_status=status, in_stock=st > 0,
-            issued_qty=(issued_map.get(m.id, 0) if m else 0)))
+            item_name=m.name, spec=m.spec, material_id=mid, location=m.location,
+            demand_qty=got, stock=st, suggest_purchase=0,
+            purchase_status="已到货", in_stock=st > 0,
+            issued_qty=issued_map.get(mid, 0), source="采购"))
     return out
 
 
@@ -988,17 +1023,24 @@ async def demand_overview(
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 #157：物料需求总览——直接列出「有标准件清单」的项目 + 待出库/已出库条数，
-    免去先从下拉选项目。待出库=有货且仍有未领需求的物料行数；已出库=已领用过的物料行数。"""
-    # 只取"有标准件清单"的项目，避免把无需求的项目也列出来
+    """🆕 #157：物料需求总览——直接列出有物料需求的项目 + 待出库/已出库条数，免去先从下拉选项目。
+    待出库=有货且仍有未领需求的物料行数；已出库=已领用过的物料行数。
+    🆕 项目来源两类并集：① 有「标准件清单」的项目；② 采购单入库**关联了项目号**的项目(哪怕没有清单)。"""
+    pids: set[int] = set()
     sr = await db.execute(
         select(models.Datasheet.project_id).where(models.Datasheet.name == "标准件清单").distinct())
-    sheet_pids = [p for (p,) in sr.all() if p is not None]
-    if not sheet_pids:
+    pids |= {p for (p,) in sr.all() if p is not None}
+    # 🆕 采购收货/入库登记关联到项目的入库(非冲红)：把这些项目也纳入总览
+    pr2 = await db.execute(
+        select(models.WhTxn.project_id).where(
+            models.WhTxn.direction == "in", models.WhTxn.project_id.isnot(None),
+            models.WhTxn.is_reversal == False).distinct())  # noqa: E712
+    pids |= {p for (p,) in pr2.all() if p is not None}
+    if not pids:
         return []
     pr = await db.execute(
         select(models.Project).where(
-            models.Project.id.in_(sheet_pids), models.Project.is_deleted == False)  # noqa: E712
+            models.Project.id.in_(pids), models.Project.is_deleted == False)  # noqa: E712
         .order_by(models.Project.code.desc()))
     projects = pr.scalars().all()
     # 预算全局 stock / mats，避免逐项目重复扫全表
