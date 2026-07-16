@@ -315,8 +315,9 @@ async def delete_wh_custom_field(
 # 树在「字典设置-物料编码分类」维护；物料主数据选到细分类，保存时自动发码。
 
 _SEG_LEN = {1: 1, 2: 2, 3: 2}   # 各级段码位数
-# 字典/编码分类的维护角色：采购主管（admin/manager 由 require_roles 自动放行）
-_DICT_ADMIN_ROLES = ("buyer_lead",)
+# 🆕 字典/编码分类（物料类别/单位/材质/供应商分类/订单编号）已放开给所有登录用户维护——
+#   增删改端点均用 get_current_user（原限 buyer_lead+管理层，用户要求全员可编辑）。
+#   仍需登录；未登录无法访问。前端菜单也已对所有人可见（MainLayout）。
 
 
 @router.get("/material-categories", response_model=List[schemas.MaterialCategoryOut])
@@ -333,7 +334,7 @@ async def list_material_categories(
 @router.post("/material-categories", response_model=schemas.MaterialCategoryOut)
 async def create_material_category(
     body: schemas.MaterialCategoryIn,
-    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    current: models.User = Depends(get_current_user),   # 🆕 字典设置放开给所有登录用户(增删改)
     db: AsyncSession = Depends(get_db),
 ):
     level = 1
@@ -365,7 +366,7 @@ async def create_material_category(
 @router.put("/material-categories/{cid}", response_model=schemas.MaterialCategoryOut)
 async def update_material_category(
     cid: int, body: schemas.MaterialCategoryIn,
-    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    current: models.User = Depends(get_current_user),   # 🆕 字典设置放开给所有登录用户(增删改)
     db: AsyncSession = Depends(get_db),
 ):
     """改段码只影响之后新发的编码，已发编码不追改（编码一经发出不变）。上级不可改。"""
@@ -394,7 +395,7 @@ async def update_material_category(
 @router.delete("/material-categories/{cid}", response_model=schemas.Msg)
 async def delete_material_category(
     cid: int,
-    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    current: models.User = Depends(get_current_user),   # 🆕 字典设置放开给所有登录用户(增删改)
     db: AsyncSession = Depends(get_db),
 ):
     child = (await db.execute(select(func.count(models.MaterialCategory.id)).where(
@@ -441,9 +442,7 @@ async def _gen_material_code(db: AsyncSession, category_id: int) -> str:
 
 # ==================== 🆕 字典维护（物料类别 / 计量单位 / 供应商分类 受管理取值）====================
 # 同一张表(dtype 区分)、同一套 CRUD；三者取值语义各自独立，互不并入对方下拉。
-# 维护：采购主管（admin/manager 由 require_roles 自动放行）；读取：所有登录用户
-# （_DICT_ADMIN_ROLES 定义已前移到物料编码分类段之前——Depends 默认参数在 import 时求值，
-#   定义在使用之后会让整个后端 NameError 起不来）
+# 🆕 维护与读取均放开给所有登录用户（用户要求字典设置全员可用）。
 
 
 def _dict_ref(dtype: str):
@@ -484,7 +483,7 @@ async def list_material_dict(
 @router.post("/material-dict", response_model=schemas.MaterialDictOut)
 async def create_material_dict(
     body: schemas.MaterialDictIn,
-    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    current: models.User = Depends(get_current_user),   # 🆕 字典设置放开给所有登录用户(增删改)
     db: AsyncSession = Depends(get_db),
 ):
     val = body.value.strip()
@@ -506,7 +505,7 @@ async def create_material_dict(
 @router.put("/material-dict/{did}", response_model=schemas.MaterialDictOut)
 async def update_material_dict(
     did: int, body: schemas.MaterialDictIn,
-    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    current: models.User = Depends(get_current_user),   # 🆕 字典设置放开给所有登录用户(增删改)
     db: AsyncSession = Depends(get_db),
 ):
     r = await db.execute(select(models.MaterialDict).where(models.MaterialDict.id == did))
@@ -539,7 +538,7 @@ async def update_material_dict(
 @router.delete("/material-dict/{did}", response_model=schemas.Msg)
 async def delete_material_dict(
     did: int,
-    current: models.User = Depends(require_roles(*_DICT_ADMIN_ROLES)),
+    current: models.User = Depends(get_current_user),   # 🆕 字典设置放开给所有登录用户(增删改)
     db: AsyncSession = Depends(get_db),
 ):
     """删除字典项。若仍被物料使用则拦截（改用「停用」，避免下拉丢值/被重新并入）。"""

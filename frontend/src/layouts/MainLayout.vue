@@ -167,6 +167,12 @@ onUnmounted(() => {
           <span v-if="!collapsed">{{ m.label }}</span>
         </a>
 
+        <!-- 🆕 字典设置：物料类别/单位/材质/供应商分类/订单编号——放开给所有登录用户（含编辑） -->
+        <a :class="{ active: activeKey === 'dict-admin' }" @click="go('dict-admin')">
+          <el-icon class="nav-icon"><Collection /></el-icon>
+          <span v-if="!collapsed">字典设置</span>
+        </a>
+
         <!-- 🆕 消息中心（带未读角标） -->
         <a v-if="auth.hasMenu('messages')"
            :class="{ active: activeKey === 'messages' }" @click="go('messages')">
@@ -191,10 +197,7 @@ onUnmounted(() => {
             <el-icon class="nav-icon"><Document /></el-icon>
             <span v-if="!collapsed">操作审计</span>
           </a>
-          <a :class="{ active: activeKey === 'dict-admin' }" @click="go('dict-admin')">
-            <el-icon class="nav-icon"><Collection /></el-icon>
-            <span v-if="!collapsed">字典设置</span>
-          </a>
+          <!-- 字典设置已移到业务菜单区、放开给所有人（见上） -->
           <!-- 🆕 v3 管理组新菜单（导出审批/企微绑定） -->
           <a v-for="m in adminExtraMenus" :key="m.key"
              :class="{ active: activeKey === m.key }" @click="go(m.key)">
