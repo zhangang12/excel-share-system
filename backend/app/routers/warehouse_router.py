@@ -912,12 +912,27 @@ def _dnum(v):
         return None
 
 
+def _demand_sheet_cols() -> dict:
+    """物料需求「清单需求」纳入的清单 → {表名: (名称列, 规格列, 数量列)}。
+
+    用户 2026-07-16 确认：只纳入「走库存的 3 张材料清单」——标准件清单 / 电工采购单 /
+    不锈钢原料下料单（都有数量列、是真正入库的材料）；外协加工 / 激光件清单是定制直发件，
+    不算仓库物料需求，不列。列名各表不同，直接复用采购模块 `_PURCHASABLE_SHEETS`(唯一权威,
+    避免二次硬编码)。惰性 import 规避与采购路由的循环依赖。"""
+    from .purchase_mgmt_router import _PURCHASABLE_SHEETS
+    return {
+        _PURCHASABLE_SHEETS[k][0]: (_PURCHASABLE_SHEETS[k][1], _PURCHASABLE_SHEETS[k][2], _PURCHASABLE_SHEETS[k][3])
+        for k in ("standard", "elec_po", "material")
+    }
+
+
 async def _demand_rows(db: AsyncSession, project_id: int, *, stock=None, mats=None):
     """项目物料需求逐行（供 /demand 与 /demand-overview 复用）。
     stock/mats 可由调用方预先算好传入，避免 overview 逐项目重复扫全表。
 
     两个来源合并（都可勾选领用出库到本项目）：
-    ① 清单需求：读项目「标准件清单」逐行（source="清单"）；
+    ① 清单需求：读项目「走库存的 3 张材料清单」(标准件清单/电工采购单/不锈钢原料下料单)逐行
+       (source="清单")——见 _demand_sheet_cols()；
     ② 采购单入库：经采购收货/入库登记**关联到本项目**(WhTxn.project_id) 但不在清单里的物料
        (source="采购")——解决"新建采购单的物料关联了项目号却无法在物料需求里汇总/出库"。"""
     if stock is None:
@@ -940,11 +955,13 @@ async def _demand_rows(db: AsyncSession, project_id: int, *, stock=None, mats=No
     out: list[schemas.WarehouseDemandRow] = []
     bom_mat_ids: set[int] = set()
 
-    # ---- 一、清单需求行（标准件清单 BOM）----
-    r = await db.execute(select(models.Datasheet).where(
-        models.Datasheet.project_id == project_id, models.Datasheet.name == "标准件清单"))
-    sheet = r.scalar_one_or_none()
-    if sheet:
+    # ---- 一、清单需求行（3 张材料清单：标准件清单/电工采购单/不锈钢原料下料单）----
+    demand_sheets = _demand_sheet_cols()   # {表名: (名称列, 规格列, 数量列)}
+    sr = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.project_id == project_id,
+        models.Datasheet.name.in_(list(demand_sheets.keys()))))
+    for sheet in sr.scalars().all():
+        name_col, spec_col, qty_col = demand_sheets[sheet.name]
         fr = await db.execute(select(models.Field).where(models.Field.datasheet_id == sheet.id))
         name2id = {f.name: str(f.id) for f in fr.scalars().all()}
         lr = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.source_sheet_id == sheet.id))
@@ -963,11 +980,11 @@ async def _demand_rows(db: AsyncSession, project_id: int, *, stock=None, mats=No
                     x = "、".join(str(i) for i in x)
                 return str(x).strip() if x not in (None, "") else None
 
-            name = gv("项目")
+            name = gv(name_col)
             if not name:
                 continue
-            spec = gv("规格型号")
-            demand = _dnum(gv("数量"))
+            spec = gv(spec_col)
+            demand = _dnum(gv(qty_col)) if qty_col else None
             m = mat_by_key.get((name, spec or None))
             if m:
                 bom_mat_ids.add(m.id)
@@ -1014,7 +1031,8 @@ async def project_demand(
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """项目物料需求（读「标准件清单」）：逐行显示 需求量 / 现有库存 / 建议采购量 / 采购状态。"""
+    """项目物料需求：读 3 张材料清单(标准件清单/电工采购单/不锈钢原料下料单)+ 采购单入库到本项目的物料，
+    逐行显示 需求量 / 现有库存 / 建议采购量 / 采购状态，来源列区分「清单」/「采购」。"""
     return await _demand_rows(db, project_id)
 
 
@@ -1025,10 +1043,12 @@ async def demand_overview(
 ):
     """🆕 #157：物料需求总览——直接列出有物料需求的项目 + 待出库/已出库条数，免去先从下拉选项目。
     待出库=有货且仍有未领需求的物料行数；已出库=已领用过的物料行数。
-    🆕 项目来源两类并集：① 有「标准件清单」的项目；② 采购单入库**关联了项目号**的项目(哪怕没有清单)。"""
+    🆕 项目来源两类并集：① 有 3 张材料清单(标准件清单/电工采购单/不锈钢原料下料单)任一的项目；
+    ② 采购单入库**关联了项目号**的项目(哪怕没有清单)。"""
     pids: set[int] = set()
     sr = await db.execute(
-        select(models.Datasheet.project_id).where(models.Datasheet.name == "标准件清单").distinct())
+        select(models.Datasheet.project_id).where(
+            models.Datasheet.name.in_(list(_demand_sheet_cols().keys()))).distinct())
     pids |= {p for (p,) in sr.all() if p is not None}
     # 🆕 采购收货/入库登记关联到项目的入库(非冲红)：把这些项目也纳入总览
     pr2 = await db.execute(

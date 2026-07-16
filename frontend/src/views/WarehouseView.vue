@@ -940,7 +940,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
               <b>项目物料需求总览</b>
               <el-button :icon="Search" size="small" @click="loadDemandOverview">刷新</el-button>
-              <span class="muted small">列出有物料需求的项目（标准件清单 + 采购单入库关联了项目号的）；点「查看」进入逐行需求并领用出库。待出库=有货且未领完的物料行数，已出库=已领用过的行数。</span>
+              <span class="muted small">列出有物料需求的项目（材料清单：标准件清单/电工采购单/不锈钢原料下料单，+ 采购单入库关联了项目号的）；点「查看」进入逐行需求并领用出库。待出库=有货且未领完的物料行数，已出库=已领用过的行数。</span>
             </div>
             <el-table show-overflow-tooltip :data="demandOverview" v-loading="demandOverviewLoading" stripe size="small"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl" :fit="false">
@@ -956,7 +956,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-table-column label="操作" width="100" align="center" fixed="right" :show-overflow-tooltip="false">
                 <template #default="{ row }"><el-button size="small" type="primary" plain @click="openDemandProject(row.project_id)">查看</el-button></template>
               </el-table-column>
-              <template #empty><EmptyHint text="暂无有物料需求的项目（无标准件清单、也无关联项目的采购入库）" size="sm" /></template>
+              <template #empty><EmptyHint text="暂无有物料需求的项目（无材料清单、也无关联项目的采购入库）" size="sm" /></template>
             </el-table>
           </template>
 
@@ -968,7 +968,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <!-- 🆕 反馈#244：勾选多行只领用勾选的 -->
             <el-button v-if="canWrite" type="warning" plain size="small" :disabled="!demandSel.length"
                        @click="issueSelected">批量领用出库{{ demandSel.length ? `（已选 ${demandSel.length}）` : '' }}</el-button>
-            <span class="muted small">合并「标准件清单需求」与「采购单入库到本项目的物料」(来源列区分),逐行看 需求量 / 现有库存 / 建议采购量。有货的可勾选后批量领用、或单行领用、或一键全部,缺的走采购。</span>
+            <span class="muted small">合并「材料清单需求(标准件清单/电工采购单/不锈钢原料下料单)」与「采购单入库到本项目的物料」(来源列区分),逐行看 需求量 / 现有库存 / 建议采购量。有货的可勾选后批量领用、或单行领用、或一键全部,缺的走采购。</span>
           </div>
           <el-table show-overflow-tooltip :data="demandRows" v-loading="demandLoading" stripe size="small"
                     max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl"
@@ -1005,7 +1005,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               </template>
             </el-table-column>
           </el-table>
-          <EmptyHint v-if="!demandLoading && !demandRows.length" text="该项目暂无物料需求（无标准件清单，也无关联本项目的采购入库）" size="sm" />
+          <EmptyHint v-if="!demandLoading && !demandRows.length" text="该项目暂无物料需求（无材料清单，也无关联本项目的采购入库）" size="sm" />
           </template>
         </el-tab-pane>
 
