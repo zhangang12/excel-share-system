@@ -23,6 +23,7 @@ export interface MgmtTodo {
   title: string
   content?: string | null
   priority: 'normal' | 'urgent'
+  due_date?: string | null
   created_by: number
   creator_name?: string | null
   created_at: string
@@ -39,6 +40,7 @@ export interface MyTodoRow {
   title: string
   content?: string | null
   priority: 'normal' | 'urgent'
+  due_date?: string | null
   creator_name?: string | null
   created_at: string
   status: MgmtTodoStatus
@@ -53,7 +55,7 @@ export interface MyTodoRow {
 
 export const managementTodoApi = {
   // 管理层
-  create: (data: { title: string; content?: string; priority?: string; recipient_ids: number[] }) =>
+  create: (data: { title: string; content?: string; priority?: string; due_date?: string; recipient_ids: number[] }) =>
     http.post<MgmtTodo>('/management-todos', data).then((r) => r.data),
   listSent: () => http.get<MgmtTodo[]>('/management-todos/sent').then((r) => r.data),
   remove: (todoId: number) =>

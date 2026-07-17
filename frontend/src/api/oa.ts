@@ -33,6 +33,11 @@ export interface OaRequest {
 export interface OaSummaryRow {
   department_id: number; department_name: string; doc_type: string; count: number; amount: number
 }
+// 🆕 #247 汇总报表下钻明细
+export interface OaSummaryDetailRow {
+  id: number; request_no: string; requester_name?: string | null; title?: string | null
+  amount: number; settled: boolean; created_at: string; updated_at: string
+}
 // 🆕 已配置审批流程一览
 export interface OaChainOverviewStep {
   step_order: number; approver_role: string; role_name: string; step_label?: string | null; enabled: boolean
@@ -91,4 +96,6 @@ export const oaApi = {
   markPaid: (id: number) => http.put<OaRequest>(`/oa/requests/${id}/mark-paid`).then(r => r.data),
 
   summary: () => http.get<OaSummaryRow[]>('/oa/reports/summary').then(r => r.data),
+  summaryDetail: (department_id: number, doc_type: string) =>
+    http.get<OaSummaryDetailRow[]>('/oa/reports/summary/detail', { params: { department_id, doc_type } }).then(r => r.data),
 }

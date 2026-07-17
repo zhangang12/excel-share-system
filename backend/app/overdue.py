@@ -253,15 +253,21 @@ async def scan_management_todos(db: AsyncSession) -> dict:
         todo = t.todo
         if todo is None:
             continue
+        # 逾期 = 未完成且已过截止日；截止日取「管理层 due_date」与「收件人承诺日」最早者(#251)
         overdue = False
-        if t.status == "committed" and t.committed_at:
+        over_ref = None      # 触发逾期的日期（用于文案/天数）
+        for d in (t.committed_at if t.status == "committed" else None, todo.due_date):
+            if not d:
+                continue
             try:
-                overdue = date.fromisoformat(t.committed_at) < today
+                if date.fromisoformat(d) < today:
+                    overdue = True
+                    over_ref = d if over_ref is None else min(over_ref, d)
             except (ValueError, TypeError):
-                overdue = False
-        # 未回复承诺时间：下发满 1 天仍 pending 才开始催（当天不催）
+                continue
+        # 未回复承诺时间：下发满 1 天仍 pending 才开始催（当天不催）；已逾期则不再走待回复
         need_reply = False
-        if t.status == "pending":
+        if t.status == "pending" and not overdue:
             created_d = date.fromisoformat(_cn_date(todo.created_at))
             need_reply = (today - created_d).days >= 1
         if not overdue and not need_reply:
@@ -278,8 +284,9 @@ async def scan_management_todos(db: AsyncSession) -> dict:
 
         title = todo.title
         if overdue:
-            over_days = (today - date.fromisoformat(t.committed_at)).days
-            text = (f"【待办逾期】你的待办「{title}」承诺 {t.committed_at} 完成，"
+            over_days = (today - date.fromisoformat(over_ref)).days
+            kind_txt = "承诺" if over_ref == t.committed_at else "要求"
+            text = (f"【待办逾期】你的待办「{title}」{kind_txt} {over_ref} 完成，"
                     f"已逾期 {over_days} 天，请尽快完成并点「已完成」，或申请顺延。")
         else:
             text = f"【待办待回复】你有一条待办「{title}」尚未回复承诺完成时间，请尽快回复。"

@@ -238,15 +238,16 @@ function pickAttendanceFile() {
 
 // ===== 🆕 个人工资(按月每人,人事录入,敏感——仅人事/管理层) =====
 interface SalRow { employee_id: number; emp_no?: string; name: string; department_name?: string | null
-  base: number; merit: number; overtime_pay: number; allowance: number; social_deduct: number; other_deduct: number
+  base: number; merit: number; overtime_pay: number; allowance: number; social_deduct: number
+  personal_tax: number; other_deduct: number
   left_this_month?: boolean; leave_date?: string | null   // 🆕 #229 当月离职标记
   net?: number; note?: string | null }
 const sMonth = ref(new Date().toISOString().slice(0, 7))
 const sRows = ref<SalRow[]>([])
-const sLoading = ref(false); const sSaving = ref(false)
-// 实发 = 基本+绩效+加班费+补贴 − 社保公积金 − 其他扣款(与后端 _salary_net 一致)
+const sLoading = ref(false); const sSaving = ref(false); const sImporting = ref(false)
+// 实发 = 基本+绩效+加班费+补贴 − 社保公积金 − 个税 − 其他扣款(与后端 _salary_net 一致)
 const salNet = (r: SalRow) => (Number(r.base) || 0) + (Number(r.merit) || 0) + (Number(r.overtime_pay) || 0)
-  + (Number(r.allowance) || 0) - (Number(r.social_deduct) || 0) - (Number(r.other_deduct) || 0)
+  + (Number(r.allowance) || 0) - (Number(r.social_deduct) || 0) - (Number(r.personal_tax) || 0) - (Number(r.other_deduct) || 0)
 const sTotalNet = computed(() => sRows.value.reduce((s, r) => s + salNet(r), 0))
 async function loadSalary() {
   sLoading.value = true
@@ -259,11 +260,46 @@ async function saveSalary() {
     const r: any = (await http.put(`/hr/salary/${sMonth.value}`, {
       rows: sRows.value.map(x => ({ employee_id: x.employee_id, base: Number(x.base) || 0, merit: Number(x.merit) || 0,
         overtime_pay: Number(x.overtime_pay) || 0, allowance: Number(x.allowance) || 0,
-        social_deduct: Number(x.social_deduct) || 0, other_deduct: Number(x.other_deduct) || 0, note: x.note })),
+        social_deduct: Number(x.social_deduct) || 0, personal_tax: Number(x.personal_tax) || 0,
+        other_deduct: Number(x.other_deduct) || 0, note: x.note })),
     })).data
     ElMessage.success(r.message || '已保存')
   } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '保存失败') }
   finally { sSaving.value = false }
+}
+
+// ===== 🆕 #249 工资批量导入(按工号匹配，导入到当前所选月份) =====
+async function downloadSalaryTemplate() {
+  try {
+    const r = await http.get('/hr/salary/import-template', { responseType: 'blob' })
+    const url = URL.createObjectURL(r.data as Blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = '工资导入模板.xlsx'; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch { ElMessage.error('模板下载失败') }
+}
+function pickSalaryFile() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.xlsx'
+  input.onchange = async () => {
+    const f = input.files?.[0]
+    if (!f) return
+    try {
+      await ElMessageBox.confirm(
+        `将把《${f.name}》导入到 ${sMonth.value} 的工资：按工号匹配，该月已有工资的人整行覆盖，表里没出现的人不动。`,
+        '确认导入', { type: 'warning' })
+    } catch { return }
+    sImporting.value = true
+    try {
+      const fd = new FormData()
+      fd.append('file', f)
+      const r: any = (await http.post(`/hr/salary/${sMonth.value}/import`, fd)).data
+      ElMessage.success({ message: r.message || '导入完成', duration: 6000 })
+      await loadSalary()
+    } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '导入失败') }
+    finally { sImporting.value = false }
+  }
+  input.click()
 }
 
 function onTab(name: string) {
@@ -433,11 +469,14 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
         <!-- ===== 🆕 个人工资(按月每人,敏感) ===== -->
         <el-tab-pane v-if="tv('salary')" label="🧾 工资" name="salary">
           <el-alert type="warning" :closable="false" style="margin-bottom:10px"
-            title="个人工资明细，敏感数据——本页仅人事 / 管理层可见。实发 = 基本 + 绩效 + 加班费 + 补贴 − 社保公积金 − 其他扣款（自动计算）。" />
+            title="个人工资明细，敏感数据——本页仅人事 / 管理层可见。实发 = 基本 + 绩效 + 加班费 + 补贴 − 社保公积金 − 个税 − 其他扣款（自动计算）。" />
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
             <el-date-picker v-model="sMonth" type="month" value-format="YYYY-MM" :clearable="false" style="width:130px" @change="loadSalary" />
             <span>本月实发合计 <b class="amt">¥{{ fmtMoney(sTotalNet) }}</b></span>
             <el-button type="primary" :loading="sSaving" @click="saveSalary">保存本月</el-button>
+            <!-- 🆕 #249 批量导入 -->
+            <el-button :icon="Upload" :loading="sImporting" @click="pickSalaryFile">批量导入</el-button>
+            <el-button link type="primary" :icon="Download" @click="downloadSalaryTemplate">下载模板</el-button>
           </div>
           <el-table show-overflow-tooltip :data="sRows" v-loading="sLoading" stripe size="small" class="compact-tbl" max-height="calc(100vh - 300px)">
             <el-table-column prop="emp_no" label="工号" width="72" fixed="left"><template #default="{ row }"><span class="code">{{ row.emp_no || '—' }}</span></template></el-table-column>
@@ -454,6 +493,7 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
             <el-table-column label="加班费" width="112"><template #default="{ row }"><el-input-number v-model="row.overtime_pay" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="补贴" width="110"><template #default="{ row }"><el-input-number v-model="row.allowance" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="社保公积金" width="120"><template #default="{ row }"><el-input-number v-model="row.social_deduct" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="个税" width="110"><template #default="{ row }"><el-input-number v-model="row.personal_tax" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="其他扣款" width="112"><template #default="{ row }"><el-input-number v-model="row.other_deduct" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="实发" width="112" align="right" fixed="right"><template #default="{ row }"><b class="amt">{{ fmtMoney(salNet(row)) }}</b></template></el-table-column>
             <el-table-column label="备注" min-width="120"><template #default="{ row }"><el-input v-model="row.note" size="small" placeholder="选填" maxlength="255" /></template></el-table-column>

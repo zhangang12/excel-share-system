@@ -4,7 +4,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Check, Close, Download, Upload, RefreshLeft, Delete } from '@element-plus/icons-vue'
 import { http } from '@/api'
-import { oaApi, type Department, type OaDocType, type OaApprovalStep, type OaRequest, type OaSummaryRow, type OaChainOverviewRow } from '@/api/oa'
+import { oaApi, type Department, type OaDocType, type OaApprovalStep, type OaRequest, type OaSummaryRow, type OaSummaryDetailRow, type OaChainOverviewRow } from '@/api/oa'
 import { adminApi } from '@/api/admin'
 import { downloadAttachment } from '@/api/orders'
 import { useAuthStore } from '@/stores/auth'
@@ -503,6 +503,20 @@ async function loadSummary() {
 }
 const summaryTotal = computed(() => summaryRows.value.reduce((s, r) => s + r.amount, 0))
 
+// 🆕 #247 汇总报表下钻明细
+const sumDetailVisible = ref(false)
+const sumDetailLoading = ref(false)
+const sumDetailRows = ref<OaSummaryDetailRow[]>([])
+const sumDetailTitle = ref('')
+async function openSumDetail(row: OaSummaryRow) {
+  sumDetailTitle.value = `${row.department_name} · ${docLabel(row.doc_type)}`
+  sumDetailVisible.value = true
+  sumDetailLoading.value = true
+  try { sumDetailRows.value = await oaApi.summaryDetail(row.department_id, row.doc_type) }
+  finally { sumDetailLoading.value = false }
+}
+const sumDetailTotal = computed(() => sumDetailRows.value.reduce((s, r) => s + r.amount, 0))
+
 function onMainTabChange(name: string | number) {
   const n = String(name)
   if (n === 'settings' && canConfig.value) { loadDepartments(); loadRoles(); stepResetForm(); loadChainOverview() }
@@ -654,11 +668,16 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane v-if="canViewSummary" label="汇总报表" name="summary">
-        <el-table show-overflow-tooltip :data="summaryRows" v-loading="summaryLoading" stripe size="small">
+        <div class="muted" style="font-size:12.5px;margin-bottom:8px">点某一行的「查看明细」下钻，看这个部门+单据类型下的每一条已批准申请。</div>
+        <el-table show-overflow-tooltip :data="summaryRows" v-loading="summaryLoading" stripe size="small"
+                  @row-click="openSumDetail" class="clickable-rows">
           <el-table-column prop="department_name" label="部门" width="140" />
           <el-table-column label="单据类型" width="140"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>
           <el-table-column prop="count" label="已批件数" width="100" align="right" />
           <el-table-column label="金额合计" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+          <el-table-column label="操作" width="110" align="center" fixed="right" :show-overflow-tooltip="false">
+            <template #default="{ row }"><el-button size="small" type="primary" link @click.stop="openSumDetail(row)">查看明细</el-button></template>
+          </el-table-column>
           <template #empty><EmptyHint text="暂无已批准的申请数据" /></template>
         </el-table>
         <div class="summary-bar" v-if="summaryRows.length">合计 <b>{{ fmtMoney(summaryTotal) }}</b></div>
@@ -1117,6 +1136,24 @@ onMounted(async () => {
         </div>
       </div>
     </el-drawer>
+
+    <!-- 🆕 #247 汇总报表下钻明细 -->
+    <el-dialog v-model="sumDetailVisible" :title="`报表明细 · ${sumDetailTitle}`" width="720px" class="v3-scroll-dialog">
+      <el-table show-overflow-tooltip :data="sumDetailRows" v-loading="sumDetailLoading" stripe size="small" max-height="56vh">
+        <el-table-column prop="request_no" label="单号" width="150"><template #default="{ row }"><span class="code">{{ row.request_no }}</span></template></el-table-column>
+        <el-table-column prop="requester_name" label="申请人" width="100"><template #default="{ row }">{{ row.requester_name || '—' }}</template></el-table-column>
+        <el-table-column prop="title" label="事由/标题" min-width="160"><template #default="{ row }">{{ row.title || '—' }}</template></el-table-column>
+        <el-table-column label="金额" width="128" align="right">
+          <template #default="{ row }">
+            <b class="amt">{{ fmtMoney(row.amount) }}</b>
+            <el-tag v-if="row.settled" size="small" type="success" effect="plain" style="margin-left:4px">核定</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="批准时间" width="150"><template #default="{ row }">{{ fmtDateTime(row.updated_at) }}</template></el-table-column>
+        <template #empty><EmptyHint text="暂无明细" size="sm" /></template>
+      </el-table>
+      <div class="summary-bar" v-if="sumDetailRows.length">共 {{ sumDetailRows.length }} 条 · 合计 <b>{{ fmtMoney(sumDetailTotal) }}</b></div>
+    </el-dialog>
   </div>
 </template>
 
@@ -1129,6 +1166,7 @@ onMounted(async () => {
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .form-section-title { font-weight: 600; margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--el-border-color-lighter); }
 .summary-bar { margin-top: 12px; padding: 10px 14px; background: var(--el-fill-color-light); border-radius: 6px; text-align: right; }
+.clickable-rows :deep(.el-table__row) { cursor: pointer; }
 .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 16px; margin-bottom: 14px; }
 .detail-json { background: var(--el-fill-color-light); border-radius: 6px; padding: 10px 14px; font-size: 13px; line-height: 1.8; margin-bottom: 14px; }
 .cc-line { margin-bottom: 14px; font-size: 13px; }

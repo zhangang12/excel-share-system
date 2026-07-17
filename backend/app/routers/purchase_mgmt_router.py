@@ -737,6 +737,7 @@ _PURCHASABLE_SHEETS = {
 _ALL_ORDER_DATE_COLS = ("订购日期", "下单日期", "发出日期")
 _ALL_ARRIVAL_COLS = ("到货日期", "到料日期")
 _ALL_WH_SIGN_COLS = ("仓库签字", "仓库")
+_ALL_WH_LOC_COLS = ("库位",)   # 🆕 #250 收货时把库位也回写清单（列不存在的表自动跳过）
 
 
 async def _sheet_fieldmap(db: AsyncSession, sheet_id: int) -> dict:
@@ -1505,6 +1506,10 @@ async def _finish_receive(db: AsyncSession, item: models.PurchaseItem,
             wb[c] = arrival_date
         for c in _ALL_WH_SIGN_COLS:
             wb[c] = (current.full_name or current.username)
+        # 🆕 #250 库位回写：收货填的库位写回清单「库位」列（此前只回写日期/签字，库位一直空）
+        if item.stock_location:
+            for c in _ALL_WH_LOC_COLS:
+                wb[c] = item.stock_location
         await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
     await _auto_stock_in(db, item, current)
     _maybe_auto_reconcile(item)

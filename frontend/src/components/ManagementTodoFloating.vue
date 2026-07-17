@@ -102,10 +102,10 @@ async function loadSent() {
 
 const createDlg = ref(false)
 const users = ref<User[]>([])
-const createForm = ref<{ title: string; content: string; priority: string; recipient_ids: number[] }>(
-  { title: '', content: '', priority: 'normal', recipient_ids: [] })
+const createForm = ref<{ title: string; content: string; priority: string; due_date: string; recipient_ids: number[] }>(
+  { title: '', content: '', priority: 'normal', due_date: '', recipient_ids: [] })
 async function openCreate() {
-  createForm.value = { title: '', content: '', priority: 'normal', recipient_ids: [] }
+  createForm.value = { title: '', content: '', priority: 'normal', due_date: '', recipient_ids: [] }
   createDlg.value = true
   if (!users.value.length) {
     try { users.value = await adminApi.listUsers() } catch { /* 静默 */ }
@@ -121,6 +121,7 @@ async function submitCreate() {
       title: createForm.value.title.trim(),
       content: createForm.value.content.trim() || undefined,
       priority: createForm.value.priority,
+      due_date: createForm.value.due_date || undefined,
       recipient_ids: createForm.value.recipient_ids,
     })
     ElMessage.success('待办已下发')
@@ -212,6 +213,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
             </div>
             <div v-if="row.content" class="tc-content">{{ row.content }}</div>
             <div class="tc-meta">
+              <span v-if="row.due_date">截止：<b :class="{ over: row.overdue }">{{ row.due_date }}</b></span>
               <span v-if="row.committed_at">承诺完成：<b :class="{ over: row.overdue }">{{ row.committed_at }}</b></span>
               <span v-if="row.done_at" class="ok">已于 {{ fmtRelative(row.done_at) }} 完成</span>
               <span v-if="row.extend_status === 'pending'" class="pend">顺延申请审批中（申请到 {{ row.extend_to }}）</span>
@@ -242,6 +244,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
             <div class="tc-head">
               <el-tag v-if="t.priority === 'urgent'" type="danger" size="small" effect="dark">紧急</el-tag>
               <span class="tc-title">{{ t.title }}</span>
+              <el-tag v-if="t.due_date" size="small" type="warning" effect="plain">截止 {{ t.due_date }}</el-tag>
               <span class="sent-sum">
                 完成 {{ t.done_count }}/{{ t.total }}
                 <span v-if="t.overdue_count" class="over"> · 逾期 {{ t.overdue_count }}</span>
@@ -333,6 +336,11 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
           <el-radio-button value="urgent">紧急</el-radio-button>
         </el-radio-group>
       </el-form-item>
+      <el-form-item label="截止时间（选填）">
+        <el-date-picker v-model="createForm.due_date" type="date" value-format="YYYY-MM-DD"
+                        placeholder="要求完成的最晚日期" style="width:100%" />
+        <div class="muted-tip">设了截止时间：到期未完成即算逾期、开始每日提醒（不管收件人承诺了几号）。</div>
+      </el-form-item>
       <el-form-item label="收件人（可多选）" required>
         <el-select v-model="createForm.recipient_ids" multiple filterable collapse-tags collapse-tags-tooltip
                    placeholder="勾选要下发的人" style="width:100%">
@@ -373,6 +381,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 @media (max-width: 640px) { .mt-fab { padding: 10px 14px; } .mt-lbl { display: none; } }
 
 .tab-badge { margin-left: 6px; }
+.muted-tip { font-size: 12px; color: var(--text-3, #9ca3af); line-height: 1.5; margin-top: 4px; }
 
 .mine-wrap { max-height: 58vh; overflow-y: auto; min-height: 120px; }
 .empty { text-align: center; color: var(--text-3, #9ca3af); padding: 40px 0; font-size: 13px; }

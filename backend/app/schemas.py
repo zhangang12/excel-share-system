@@ -1625,11 +1625,24 @@ class OaSummaryRow(BaseModel):
     amount: float = 0
 
 
+class OaSummaryDetailRow(BaseModel):
+    """🆕 #247 汇总报表下钻：某部门+单据类型下，各条已批准申请明细。"""
+    id: int
+    request_no: str
+    requester_name: Optional[str] = None
+    title: Optional[str] = None
+    amount: float = 0          # 有效金额=核定金额优先，否则申请金额
+    settled: bool = False      # 是否用了核定金额
+    created_at: datetime
+    updated_at: datetime
+
+
 # ---------- 🆕 管理层待办 ----------
 class MgmtTodoCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     content: Optional[str] = None
     priority: str = "normal"                     # normal / urgent
+    due_date: Optional[str] = None               # 🆕 #251 截止日期 YYYY-MM-DD（选填）
     recipient_ids: list[int] = Field(min_length=1)   # 勾选的收件人
 
 
@@ -1675,6 +1688,7 @@ class MgmtTodoOut(BaseModel):
     title: str
     content: Optional[str] = None
     priority: str = "normal"
+    due_date: Optional[str] = None
     created_by: int
     creator_name: Optional[str] = None
     created_at: datetime
@@ -1693,6 +1707,7 @@ class MyTodoRow(BaseModel):
     title: str
     content: Optional[str] = None
     priority: str = "normal"
+    due_date: Optional[str] = None
     creator_name: Optional[str] = None
     created_at: datetime
     status: str

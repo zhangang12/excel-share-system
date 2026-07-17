@@ -399,7 +399,7 @@ function onDatePickerMount(el: any) {
 // 整列着色：进度列的 td 按值染色（与项目一览状态列一致）
 // 用 columnIndex 精确定位字段：columnIndex 0 是 # 自动行号列，从 1 起对应 visibleFields[0..]
 // 严格匹配已知状态词，其他值（日期、人名、数字）一律不染色 —— 避免误伤
-const STATUS_DONE_WORDS = new Set(['完成', '已完成', '完工', '已结束'])
+const STATUS_DONE_WORDS = new Set(['完成', '已完成', '完工', '已结束', '已到货', '已收货', '已备齐'])
 const STATUS_DOING_WORDS = new Set([
   '进行中', '正在做', '处理中', '在做',
   '未开始', '待开始', '待处理', '未开工',

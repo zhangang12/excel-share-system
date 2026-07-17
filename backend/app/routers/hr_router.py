@@ -103,6 +103,7 @@ class SalaryRowIn(BaseModel):
     overtime_pay: float = 0     # 加班费
     allowance: float = 0        # 补贴
     social_deduct: float = 0    # 社保公积金扣款
+    personal_tax: float = 0     # 🆕 #248 个税
     other_deduct: float = 0     # 其他扣款
     note: Optional[str] = None
 
@@ -694,9 +695,9 @@ async def import_attendance(
 
 # ==================== 🆕 个人工资(按月每人,人事录入,敏感) ====================
 def _salary_net(s) -> float:
-    """实发 = 基本+绩效+加班费+补贴 − 社保公积金扣款 − 其他扣款。"""
+    """实发 = 基本+绩效+加班费+补贴 − 社保公积金扣款 − 个税 − 其他扣款。"""
     return round((s.base or 0) + (s.merit or 0) + (s.overtime_pay or 0) + (s.allowance or 0)
-                 - (s.social_deduct or 0) - (s.other_deduct or 0), 2)
+                 - (s.social_deduct or 0) - (getattr(s, "personal_tax", 0) or 0) - (s.other_deduct or 0), 2)
 
 
 @router.get("/salary")
@@ -718,7 +719,8 @@ async def get_salary(
             "department_name": (e.department.name if e.department else None),
             "base": (s.base if s else 0), "merit": (s.merit if s else 0),
             "overtime_pay": (s.overtime_pay if s else 0), "allowance": (s.allowance if s else 0),
-            "social_deduct": (s.social_deduct if s else 0), "other_deduct": (s.other_deduct if s else 0),
+            "social_deduct": (s.social_deduct if s else 0),
+            "personal_tax": (s.personal_tax if s else 0), "other_deduct": (s.other_deduct if s else 0),
             "net": (_salary_net(s) if s else 0), "note": (s.note if s else None),
             # 🆕 #229 当月离职：人事需要一眼看出这是末月工资(否则容易照上月全额发)
             "left_this_month": bool(e.status == "离职" and (e.leave_date or "")[:7] == period),
@@ -746,6 +748,7 @@ async def save_salary(
                 employee_id=r.employee_id, period=period,
                 base=r.base or 0, merit=r.merit or 0, overtime_pay=r.overtime_pay or 0,
                 allowance=r.allowance or 0, social_deduct=r.social_deduct or 0,
+                personal_tax=r.personal_tax or 0,
                 other_deduct=r.other_deduct or 0, note=(r.note or "").strip() or None))
         else:
             row.base = r.base or 0
@@ -753,6 +756,7 @@ async def save_salary(
             row.overtime_pay = r.overtime_pay or 0
             row.allowance = r.allowance or 0
             row.social_deduct = r.social_deduct or 0
+            row.personal_tax = r.personal_tax or 0
             row.other_deduct = r.other_deduct or 0
             row.note = (r.note or "").strip() or None
         n += 1
@@ -760,6 +764,133 @@ async def save_salary(
     await write_audit(db, user=current, action="hr_salary_save", target_type="salary",
                       detail=f"{period} {n} 人")
     return schemas.Msg(message=f"已保存 {period} 工资（{n} 人）")
+
+
+# 🆕 #249 工资批量导入：表头即模板列（顺序=界面列顺序，人事对着填）
+_SAL_IMPORT_COLS = ["工号*", "姓名", "基本工资", "绩效/奖金", "加班费", "补贴",
+                    "社保公积金", "个税", "其他扣款", "备注"]
+
+
+@router.get("/salary/import-template")
+async def salary_import_template(
+    _: models.User = Depends(require_roles(*_HR)),
+):
+    """🆕 #249 下载工资导入模板（.xlsx，含表头 + 示例行 + 填写说明）。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "工资导入"
+    ws.append(_SAL_IMPORT_COLS)
+    hfill = PatternFill("solid", fgColor="FDF3E3")
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = hfill
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.append(["00015", "张明宇（仅参考，导入按工号匹配）", 6000, 1500, 300, 200, 800, 120, 0, "示例行，导入前请删除"])
+    for i, w in enumerate([10, 24, 12, 12, 10, 10, 12, 10, 12, 24], start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    ws.freeze_panes = "A2"
+    ws2 = wb.create_sheet("填写说明")
+    for line in [
+        ["工资导入说明"],
+        [""],
+        ["1. 按「工号」匹配员工——工号必填且必须已在花名册存在，姓名列仅供人工核对，不参与匹配。"],
+        ["2. 导入哪个月，由页面上选的月份决定（不在表里填月份），导入前请先确认页面月份选对。"],
+        ["3. 同一工号在该月已有工资 → 整行覆盖；没有 → 新建。表里没出现的人保持原样，不会被清空。"],
+        ["4. 实发系统自动算 = 基本 + 绩效 + 加班费 + 补贴 − 社保公积金 − 个税 − 其他扣款，无需填。"],
+        ["5. 金额列留空按 0 处理。第 2 行为示例，导入前请删除。"],
+        ["6. 离职员工：离职当月仍可导入（末月工资要发得出来），之后的月份不在名单里。"],
+    ]:
+        ws2.append(line)
+    ws2["A1"].font = Font(bold=True, size=13)
+    ws2.column_dimensions["A"].width = 84
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = "工资导入模板.xlsx"
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
+@router.post("/salary/{period}/import")
+async def import_salary(
+    period: str,
+    file: UploadFile = File(...),
+    current: models.User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #249 批量导入某月工资：按工号匹配，已有则整行覆盖，未出现的人不动。"""
+    if len(period) != 7 or period[4] != "-":
+        raise HTTPException(400, "period 格式应为 YYYY-MM")
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(BytesIO(await file.read()), data_only=True, read_only=True)
+    except Exception:
+        raise HTTPException(400, "无法解析该文件，请使用模板导出的 .xlsx")
+    rows = list(wb.active.iter_rows(values_only=True))
+    if len(rows) < 2:
+        raise HTTPException(400, "文件为空或只有表头")
+    header = [(str(c).strip().replace("*", "") if c is not None else "") for c in rows[0]]
+    col = {name: idx for idx, name in enumerate(header) if name}
+    if "工号" not in col:
+        raise HTTPException(400, "表头缺少必填列「工号」，请用模板")
+
+    def cell(row, name):
+        i = col.get(name)
+        return row[i] if (i is not None and i < len(row)) else None
+
+    def num(v) -> float:
+        if v is None or str(v).strip() == "":
+            return 0.0
+        try:
+            return float(str(v).replace(",", "").replace("￥", "").replace("¥", "").strip())
+        except ValueError:
+            return 0.0
+
+    emp_by_no = {(e.emp_no or "").strip(): e for e in await _active_emps(db, period) if e.emp_no}
+    cur = {r.employee_id: r for r in (await db.execute(select(models.EmployeeSalaryMonthly).where(
+        models.EmployeeSalaryMonthly.period == period))).scalars().all()}
+
+    created = updated = 0
+    skipped: list[str] = []
+    for row in rows[1:]:
+        raw_no = cell(row, "工号")
+        if raw_no is None or str(raw_no).strip() == "":
+            continue
+        no = str(raw_no).strip()
+        if no.isdigit() and no not in emp_by_no:
+            no = no.zfill(5)
+        e = emp_by_no.get(no)
+        if not e:
+            skipped.append(str(raw_no).strip())
+            continue
+        vals = dict(
+            base=num(cell(row, "基本工资")), merit=num(cell(row, "绩效/奖金")),
+            overtime_pay=num(cell(row, "加班费")), allowance=num(cell(row, "补贴")),
+            social_deduct=num(cell(row, "社保公积金")), personal_tax=num(cell(row, "个税")),
+            other_deduct=num(cell(row, "其他扣款")),
+            note=(str(cell(row, "备注")).strip() if cell(row, "备注") not in (None, "") else None),
+        )
+        s = cur.get(e.id)
+        if s is None:
+            db.add(models.EmployeeSalaryMonthly(employee_id=e.id, period=period, **vals))
+            created += 1
+        else:
+            for k, v in vals.items():
+                setattr(s, k, v)
+            updated += 1
+    await db.commit()
+    await write_audit(db, user=current, action="hr_salary_import", target_type="salary",
+                      detail=f"{period} 新增{created} 覆盖{updated} 跳过{len(skipped)}")
+    msg = f"导入完成：新增 {created} 人，覆盖 {updated} 人"
+    if skipped:
+        head = "、".join(skipped[:5]) + ("…" if len(skipped) > 5 else "")
+        msg += f"；{len(skipped)} 个工号在该月名单里找不到，已跳过（{head}）"
+    return {"message": msg, "created": created, "updated": updated, "skipped": skipped}
 
 
 @router.get("/payroll-summary")

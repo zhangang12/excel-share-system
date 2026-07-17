@@ -31,15 +31,23 @@ def _cn_today() -> date:
     return datetime.now(_CN_TZ).date()
 
 
-def _is_overdue(t: models.ManagementTodoTarget, today: Optional[date] = None) -> bool:
-    """承诺日已过且未完成 = 逾期（未回复承诺时间的 pending 不算 overdue，另有「待回复」态）。"""
-    if t.status == "done" or not t.committed_at:
+def _is_overdue(t: models.ManagementTodoTarget, today: Optional[date] = None,
+                due_date: Optional[str] = None) -> bool:
+    """逾期 = 未完成且已过截止日。截止日取两处最早者：
+    ① 管理层设定的 due_date(#251)；② 收件人承诺日 committed_at。
+    只设 due_date 时，即使收件人还没回复承诺时间，过了 due_date 也算逾期。"""
+    if t.status == "done":
         return False
     today = today or _cn_today()
-    try:
-        return date.fromisoformat(t.committed_at) < today
-    except (ValueError, TypeError):
-        return False
+    for d in (t.committed_at, due_date):
+        if not d:
+            continue
+        try:
+            if date.fromisoformat(d) < today:
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
 
 
 def _uname(u: Optional[models.User]) -> Optional[str]:
@@ -48,19 +56,21 @@ def _uname(u: Optional[models.User]) -> Optional[str]:
     return u.full_name or u.username
 
 
-def _target_out(t: models.ManagementTodoTarget, today: date) -> schemas.MgmtTodoTargetOut:
+def _target_out(t: models.ManagementTodoTarget, today: date,
+                due_date: Optional[str] = None) -> schemas.MgmtTodoTargetOut:
     return schemas.MgmtTodoTargetOut(
         id=t.id, user_id=t.user_id, user_name=_uname(t.user), status=t.status,
         committed_at=t.committed_at, progress=t.progress, reply_at=t.reply_at,
-        done_at=t.done_at, overdue=_is_overdue(t, today),
+        done_at=t.done_at, overdue=_is_overdue(t, today, due_date),
         extend_status=t.extend_status, extend_to=t.extend_to, extend_reason=t.extend_reason,
     )
 
 
 def _todo_out(todo: models.ManagementTodo, today: date) -> schemas.MgmtTodoOut:
-    targets = [_target_out(t, today) for t in todo.targets]
+    targets = [_target_out(t, today, todo.due_date) for t in todo.targets]
     return schemas.MgmtTodoOut(
         id=todo.id, title=todo.title, content=todo.content, priority=todo.priority,
+        due_date=todo.due_date,
         created_by=todo.created_by, creator_name=_uname(todo.creator),
         created_at=todo.created_at, targets=targets,
         total=len(targets),
@@ -74,9 +84,10 @@ def _my_row(t: models.ManagementTodoTarget, today: date) -> schemas.MyTodoRow:
     todo = t.todo
     return schemas.MyTodoRow(
         target_id=t.id, todo_id=t.todo_id, title=todo.title, content=todo.content,
-        priority=todo.priority, creator_name=_uname(todo.creator), created_at=todo.created_at,
+        priority=todo.priority, due_date=todo.due_date,
+        creator_name=_uname(todo.creator), created_at=todo.created_at,
         status=t.status, committed_at=t.committed_at, progress=t.progress,
-        done_at=t.done_at, overdue=_is_overdue(t, today),
+        done_at=t.done_at, overdue=_is_overdue(t, today, todo.due_date),
         extend_status=t.extend_status, extend_to=t.extend_to, extend_reason=t.extend_reason,
     )
 
@@ -101,10 +112,17 @@ async def create_todo(
     if not valid_ids:
         raise HTTPException(400, "请选择有效的收件人")
 
+    due_date = (body.due_date or "").strip() or None
+    if due_date:
+        try:
+            date.fromisoformat(due_date)
+        except (ValueError, TypeError):
+            raise HTTPException(400, "截止日期格式应为 YYYY-MM-DD")
+
     todo = models.ManagementTodo(
         title=title, content=(body.content or "").strip() or None,
         priority=("urgent" if body.priority == "urgent" else "normal"),
-        created_by=current.id,
+        due_date=due_date, created_by=current.id,
     )
     todo.targets = [models.ManagementTodoTarget(user_id=rid, status="pending") for rid in valid_ids]
     db.add(todo)
@@ -113,10 +131,11 @@ async def create_todo(
 
     # 通知每位收件人回复承诺完成时间
     tag = "【紧急】" if todo.priority == "urgent" else "【管理层待办】"
+    due_txt = f"（要求 {due_date} 前完成）" if due_date else ""
     for rid in valid_ids:
         await push_message(
             db, to_user_id=rid, kind="warn",
-            text=f"{tag}{_uname(current)} 给你下达待办「{title}」，请尽快回复承诺完成时间。",
+            text=f"{tag}{_uname(current)} 给你下达待办「{title}」{due_txt}，请尽快回复承诺完成时间。",
             biz_type="mgmt_todo", biz_id=todo.id)
     await write_audit(db, user=current, action="create", target_type="management_todo",
                       target_id=todo.id, detail=f"下发待办「{title}」给 {len(valid_ids)} 人")
@@ -187,7 +206,7 @@ async def list_mine(
     # 未完成在前；其中待回复/逾期优先，其余按创建时间倒序
     def _order(t: models.ManagementTodoTarget):
         done = 1 if t.status == "done" else 0
-        urgent = 0 if (t.status == "pending" or _is_overdue(t, today)) else 1
+        urgent = 0 if (t.status == "pending" or _is_overdue(t, today, t.todo.due_date)) else 1
         return (done, urgent, -t.todo.created_at.timestamp())
     rows.sort(key=_order)
     return [_my_row(t, today) for t in rows]
@@ -205,7 +224,7 @@ async def my_count(
     for t in res.scalars().all():
         if t.status == "done":
             continue
-        if t.status == "pending" or _is_overdue(t, today):
+        if t.status == "pending" or _is_overdue(t, today, t.todo.due_date):
             n += 1
     return {"count": n}
 

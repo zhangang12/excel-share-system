@@ -869,6 +869,7 @@ class EmployeeSalaryMonthly(Base):
     overtime_pay: Mapped[float] = mapped_column(default=0)             # 加班费
     allowance: Mapped[float] = mapped_column(default=0)               # 补贴
     social_deduct: Mapped[float] = mapped_column(default=0)            # 社保公积金扣款
+    personal_tax: Mapped[float] = mapped_column(default=0)             # 🆕 #248 个人所得税(扣款)
     other_deduct: Mapped[float] = mapped_column(default=0)             # 其他扣款
     note: Mapped[Optional[str]] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -1001,6 +1002,7 @@ class ManagementTodo(Base):
     title: Mapped[str] = mapped_column(String(200))
     content: Mapped[Optional[str]] = mapped_column(Text)          # 待办详情
     priority: Mapped[str] = mapped_column(String(8), default="normal")  # normal/urgent
+    due_date: Mapped[Optional[str]] = mapped_column(String(10))   # 🆕 #251 管理层设定的截止日期 YYYY-MM-DD
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

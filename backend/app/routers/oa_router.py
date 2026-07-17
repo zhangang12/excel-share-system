@@ -751,3 +751,31 @@ async def oa_summary(
     rows = (await db.execute(q)).all()
     return [schemas.OaSummaryRow(department_id=r[0], department_name=r[1], doc_type=r[2],
                                  count=r[3] or 0, amount=round(r[4] or 0, 2)) for r in rows]
+
+
+@router.get("/reports/summary/detail", response_model=list[schemas.OaSummaryDetailRow])
+async def oa_summary_detail(
+    department_id: int = Query(...),
+    doc_type: str = Query(...),
+    current: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #247 汇总报表下钻：某部门+单据类型下的已批准申请逐条明细（申请人/金额/事由/时间）。"""
+    q = (
+        select(models.OaRequest)
+        .where(models.OaRequest.status == "approved",
+               models.OaRequest.department_id == department_id,
+               models.OaRequest.doc_type == doc_type)
+        .order_by(models.OaRequest.updated_at.desc())
+    )
+    reqs = (await db.execute(q)).scalars().all()
+    out = []
+    for r in reqs:
+        settled = r.settle_amount is not None
+        amt = r.settle_amount if settled else (r.amount or 0)
+        out.append(schemas.OaSummaryDetailRow(
+            id=r.id, request_no=r.request_no,
+            requester_name=(r.requester.full_name or r.requester.username) if r.requester else None,
+            title=r.title, amount=round(amt or 0, 2), settled=settled,
+            created_at=r.created_at, updated_at=r.updated_at))
+    return out
