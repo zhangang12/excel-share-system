@@ -1587,6 +1587,9 @@ async def receive_item(
     _loc = (body.stock_location or "").strip() or None
     if _loc:
         item.stock_location = _loc
+    # 🆕 #253 订单编号：手工采购单没带项目号的，仓库收货时补/改（放在入库前，入库流水也能挂上项目）
+    if body.project_code is not None:
+        item.project_code = (body.project_code or "").strip() or None
     if body.unit_price is not None:
         item.unit_price = body.unit_price
     if body.received_amount is not None:
@@ -1646,11 +1649,14 @@ async def receive_batch(
             elif it.qty and it.unit_price:
                 it.received_amount = round(it.qty * it.unit_price, 4)
     _loc = (body.stock_location or "").strip() or None   # 🆕 #204 整批一个库位,仓库收货时填
+    _pcode = (body.project_code or "").strip() or None    # 🆕 #253 整批一个订单编号
     for it in ordered:
         it.delivery_note_no = body.delivery_note_no
         it.arrival_date = body.arrival_date
         if _loc:
             it.stock_location = _loc
+        if body.project_code is not None:
+            it.project_code = _pcode
         await _finish_receive(db, it, body.arrival_date, current)
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids)))

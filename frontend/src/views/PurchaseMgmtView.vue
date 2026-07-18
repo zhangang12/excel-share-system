@@ -661,6 +661,10 @@ async function saveOrder() {
   if (!orderForm.supplier_id) { ElMessage.error('请选择供应商'); return }
   const lines = orderForm.lines.filter(l => l.item_name.trim())
   if (!lines.length) { ElMessage.error('请至少填写一行零件（名称必填）'); return }
+  // 🆕 #253 订单编号必填：表头选一个默认订单编号，或逐行填；否则仓库收货看不到属于哪个项目/订单
+  if (lines.some(l => !((l.project_code || '').trim() || (orderForm.project_code || '').trim()))) {
+    ElMessage.error('请填写订单编号（表头选一个默认订单编号，或逐行填写；无项目的采购可在「字典设置-订单编号」里维护一个通用编号）'); return
+  }
   orderSaving.value = true
   try {
     const resp = await http.post<PurchaseItemOut[]>('/purchase-mgmt/orders', {

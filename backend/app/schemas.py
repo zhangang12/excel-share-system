@@ -1223,6 +1223,7 @@ class PurchaseReceiveIn(BaseModel):
     unit_price: Optional[float] = None
     received_amount: Optional[float] = None
     stock_location: Optional[str] = None  # 🆕 #204 库位改由仓库收货时填（取代采购下单填）
+    project_code: Optional[str] = None    # 🆕 #253 订单编号：手工采购单没填的，仓库收货可补/改
 
 
 class BatchReceiveLine(BaseModel):
@@ -1239,6 +1240,7 @@ class BatchReceiveIn(BaseModel):
     total_amount: Optional[float] = None
     lines: list[BatchReceiveLine] = Field(default_factory=list)
     stock_location: Optional[str] = None  # 🆕 #204 库位改由仓库收货时填（整批一个）
+    project_code: Optional[str] = None    # 🆕 #253 订单编号：整批补/改（合并收货）
 
 
 class PurchaseItemOut(BaseModel):

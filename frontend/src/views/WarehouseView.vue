@@ -382,15 +382,16 @@ const recvVisible = ref(false)
 const recvSaving = ref(false)
 const recvForm = reactive({
   id: 0, po_no: '', supplier_name: '', item_name: '', spec: '', qty: null as number | null,
-  stock_location: '' as string | null,
+  stock_location: '' as string | null, project_code: '' as string | null,   // 🆕 #253 订单编号
   delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10),
   unit_price: null as number | null, received_amount: null as number | null,
 })
 function openReceive(it: RecvItem) {
+  if (!projects.value.length) loadProjects()   // 🆕 #253 订单编号下拉需要项目列表
   Object.assign(recvForm, {
     id: it.id, po_no: it.po_no || '', supplier_name: it.supplier_name,
     item_name: it.item_name, spec: it.spec || '', qty: it.qty ?? null,
-    stock_location: it.stock_location || null,
+    stock_location: it.stock_location || null, project_code: it.project_code || '',
     delivery_note_no: it.delivery_note_no || '',
     arrival_date: it.arrival_date || new Date().toISOString().slice(0, 10),
     unit_price: it.unit_price ?? null,
@@ -432,6 +433,7 @@ async function submitReceive() {
       unit_price: recvForm.unit_price,
       received_amount: recvForm.received_amount,
       stock_location: recvForm.stock_location || null,   // 🆕 #204 库位改由收货时填
+      project_code: recvForm.project_code || null,       // 🆕 #253 订单编号补/改
     })
     if (recvReceiptFile.value) await uploadReceipt(recvForm.id, recvReceiptFile.value)
     ElMessage.success('已确认收货')
@@ -466,7 +468,7 @@ function onRecvSelect(rows: RecvItem[]) { recvSelected.value = rows }
 const batchRecvVisible = ref(false)
 const batchRecvSaving = ref(false)
 const batchRecvMode = ref<'total' | 'lines'>('lines')   // #1：去掉「合并总价按数量分摊」，只逐行填价
-const batchRecvForm = reactive({ delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null as number | null, stock_location: '' as string | null })
+const batchRecvForm = reactive({ delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null as number | null, stock_location: '' as string | null, project_code: '' as string | null })
 const batchRecvLines = ref<{ item_id: number; item_name: string; spec?: string | null; qty: number | null; unit_price: number | null; received_amount: number | null }[]>([])
 const batchReceiptFile = ref<File | null>(null)
 function pickBatchReceipt() {
@@ -484,8 +486,10 @@ function splitShare(line: { qty: number | null }): number {
 }
 function openBatchReceive() {
   if (recvSelected.value.length < 1) { ElMessage.info('请先在列表勾选要合并收货的明细'); return }
+  if (!projects.value.length) loadProjects()   // 🆕 #253
   batchRecvMode.value = 'lines'
-  Object.assign(batchRecvForm, { delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null, stock_location: null })
+  const scodes = [...new Set(recvSelected.value.map(i => i.project_code).filter(Boolean))]
+  Object.assign(batchRecvForm, { delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10), total_amount: null, stock_location: null, project_code: scodes.length === 1 ? scodes[0] : '' })
   batchReceiptFile.value = null
   batchRecvLines.value = recvSelected.value.map(i => ({
     item_id: i.id, item_name: i.item_name, spec: i.spec, qty: i.qty ?? null,
@@ -497,11 +501,13 @@ function openBatchReceive() {
 function openBatchReceiveGroup(row: any) {
   const children = (row.children || []) as RecvItem[]
   if (!children.length) return
+  if (!projects.value.length) loadProjects()   // 🆕 #253
   batchRecvMode.value = 'lines'
   const dnote = row.delivery_note_no && row.delivery_note_no !== '多个' ? row.delivery_note_no : ''
   const adate = row.arrival_date && row.arrival_date !== '多个' ? row.arrival_date : new Date().toISOString().slice(0, 10)
   const rloc = row.stock_location && row.stock_location !== '多个' ? row.stock_location : null
-  Object.assign(batchRecvForm, { delivery_note_no: dnote, arrival_date: adate, total_amount: null, stock_location: rloc })
+  const rpc = row.project_code && row.project_code !== '多个' ? row.project_code : ''
+  Object.assign(batchRecvForm, { delivery_note_no: dnote, arrival_date: adate, total_amount: null, stock_location: rloc, project_code: rpc })
   batchReceiptFile.value = null
   batchRecvLines.value = children.map(i => ({
     item_id: i.id, item_name: i.item_name, spec: i.spec, qty: i.qty ?? null,
@@ -519,6 +525,7 @@ async function submitBatchReceive() {
       delivery_note_no: batchRecvForm.delivery_note_no || null,
       arrival_date: batchRecvForm.arrival_date,
       stock_location: batchRecvForm.stock_location || null,   // 🆕 #204 整批一个库位,收货时填
+      project_code: batchRecvForm.project_code || null,       // 🆕 #253 整批一个订单编号
     }
     body.lines = batchRecvLines.value.map(l => ({ item_id: l.item_id, unit_price: l.unit_price, received_amount: l.received_amount }))
     await http.post('/purchase-mgmt/items/receive-batch', body)
@@ -1459,6 +1466,13 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-option v-for="l in enabledLocations" :key="l.id" :label="l.name" :value="l.name" />
           </el-select>
         </el-form-item>
+        <!-- 🆕 #253 订单编号：手工采购单没填的，仓库收货可补/改（选项目 或 直接输订单号） -->
+        <el-form-item label="订单编号（属于哪个项目/订单；手工采购单没填的可在此补）">
+          <el-select v-model="recvForm.project_code" filterable allow-create default-first-option clearable
+                     placeholder="选项目编号，或直接输入订单编号" style="width:100%">
+            <el-option v-for="p in projects" :key="p.id" :label="`${p.code}　${p.name}`" :value="p.code" />
+          </el-select>
+        </el-form-item>
         <div class="frow">
           <el-form-item label="单价（后填价格在此补）">
             <el-input-number v-model="recvForm.unit_price" :min="0" :precision="2" :controls="false" style="width:100%" @change="onRecvCalc" />
@@ -1494,6 +1508,13 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         <el-form-item label="库位（整批放到哪个库）" required>
           <el-select v-model="batchRecvForm.stock_location" filterable clearable placeholder="选择库位（库位管理里维护）" style="width:100%">
             <el-option v-for="l in enabledLocations" :key="l.id" :label="l.name" :value="l.name" />
+          </el-select>
+        </el-form-item>
+        <!-- 🆕 #253 订单编号：整批补/改（手工采购单没填的） -->
+        <el-form-item label="订单编号（整批属于哪个项目/订单；没填的可在此补）">
+          <el-select v-model="batchRecvForm.project_code" filterable allow-create default-first-option clearable
+                     placeholder="选项目编号，或直接输入订单编号" style="width:100%">
+            <el-option v-for="p in projects" :key="p.id" :label="`${p.code}　${p.name}`" :value="p.code" />
           </el-select>
         </el-form-item>
         <div class="muted small" style="margin:2px 0 8px">逐行填单价/收货金额（单价可留空，货到再补）。</div>
