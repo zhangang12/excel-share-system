@@ -989,13 +989,27 @@ async def create_order_from_list(
     po_no = await _next_po_no(db)
     today = _date.today().isoformat()
     uname = current.full_name or current.username
+    # 🆕 #253：未显式带项目号时，从来源清单回溯项目编号落库（否则仓库收货看不到订单编号）
+    sheet_code_map: dict = {}
+    if not (body.project_code or "").strip():
+        sids = {l.source_sheet_id for l in lines if l.source_sheet_id}
+        if sids:
+            dsr = await db.execute(select(models.Datasheet.id, models.Datasheet.project_id)
+                                   .where(models.Datasheet.id.in_(sids)))
+            pmap = {sid: pid for sid, pid in dsr.all() if pid}
+            if pmap:
+                pr = await db.execute(select(models.Project.id, models.Project.code)
+                                      .where(models.Project.id.in_(set(pmap.values()))))
+                cbp = {pid: code for pid, code in pr.all()}
+                sheet_code_map = {sid: cbp.get(pid) for sid, pid in pmap.items()}
     for l in lines:
         recv = None
         if l.qty and l.unit_price:
             recv = round((l.qty or 0) * (l.unit_price or 0), 4)
         db.add(models.PurchaseItem(
             po_no=po_no, source_sheet_id=l.source_sheet_id, source_record_id=l.source_record_id,
-            supplier_id=body.supplier_id, delivery_date=body.delivery_date, project_code=body.project_code,
+            supplier_id=body.supplier_id, delivery_date=body.delivery_date,
+            project_code=(body.project_code or sheet_code_map.get(l.source_sheet_id)),
             item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=(l.payment_method or body.payment_method),
             prepay_ratio=(l.prepay_ratio if l.prepay_ratio is not None else body.prepay_ratio),
@@ -1483,7 +1497,31 @@ async def list_receiving(
     if po_no:
         stmt = stmt.where(models.PurchaseItem.po_no.ilike(f"%{po_no}%"))
     r = await db.execute(stmt.limit(300))
-    outs = [_item_out(i) for i in r.scalars().all()]
+    items = list(r.scalars().all())
+    outs = [_item_out(i) for i in items]
+    # 🆕 #253：订单编号(project_code)为空、但来自项目清单的明细，回溯来源表所属项目编号补显示
+    #   （外协/加工件下单时未带项目号，仓库收货看不到属于哪个项目/加工订单）
+    need_sheets = {i.source_sheet_id for i in items
+                   if i.source_sheet_id and not (i.project_code or "").strip()}
+    if need_sheets:
+        dsr = await db.execute(select(models.Datasheet.id, models.Datasheet.project_id)
+                               .where(models.Datasheet.id.in_(need_sheets)))
+        proj_by_sheet = {sid: pid for sid, pid in dsr.all() if pid}
+        pids = set(proj_by_sheet.values())
+        code_by_pid = {}
+        if pids:
+            pr = await db.execute(select(models.Project.id, models.Project.code)
+                                  .where(models.Project.id.in_(pids)))
+            code_by_pid = {pid: code for pid, code in pr.all()}
+        code_by_item = {}
+        for i in items:
+            if i.source_sheet_id and not (i.project_code or "").strip():
+                code = code_by_pid.get(proj_by_sheet.get(i.source_sheet_id))
+                if code:
+                    code_by_item[i.id] = code
+        for o in outs:
+            if not (o.project_code or "").strip() and o.id in code_by_item:
+                o.project_code = code_by_item[o.id]
     # 🆕 需求十四：附上各明细的收货单数量
     if outs:
         rc = await db.execute(

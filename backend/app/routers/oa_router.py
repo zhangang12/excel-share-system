@@ -354,6 +354,8 @@ async def _fetch_request(db: AsyncSession, rid: int) -> Optional[models.OaReques
 def _can_view(req: models.OaRequest, current: models.User) -> bool:
     if current.has_role("admin", "manager"):
         return True
+    if current.has_role("finance"):   # 🆕 #256：财务可查看任意申请明细（对账/付款需要）
+        return True
     if req.requester_id == current.id:
         return True
     if any(s.approver_role in current.role_codes for s in req.steps):
@@ -586,7 +588,8 @@ async def list_requests(
             return []
         q = q.where(models.OaRequest.department_id.in_(led_ids))
     elif scope == "all":
-        if not current.has_role("admin", "manager"):
+        # 🆕 #256：财务需要查看全部申请明细（对账/付款用），放开给 finance
+        if not current.has_role("admin", "manager", "finance"):
             raise HTTPException(403, "无权查看全部申请")
     else:
         q = q.where(models.OaRequest.requester_id == current.id)

@@ -14,7 +14,7 @@ import { fmtDateTime } from '@/utils/format'
 
 const auth = useAuthStore()
 const canConfig = computed(() => auth.isAdmin)               // 部门/审批流程设置：仅 admin/manager
-const canViewAll = computed(() => auth.isAdmin)               // 全部申请：仅 admin/manager
+const canViewAll = computed(() => auth.isAdmin || auth.hasRole('finance'))  // 🆕 #256 全部申请：admin/manager + 财务
 const canViewSummary = computed(() => auth.isAdmin || auth.hasRole('finance'))
 
 // ===== 基础字典：部门 / 单据类型 / 角色 =====
@@ -501,7 +501,13 @@ async function loadSummary() {
   try { summaryRows.value = await oaApi.summary() }
   finally { summaryLoading.value = false }
 }
-const summaryTotal = computed(() => summaryRows.value.reduce((s, r) => s + r.amount, 0))
+// 🆕 #257 汇总报表加「单据类型」筛选（客户端过滤已加载汇总行）
+const summaryDocType = ref('')
+const summaryDocOptions = computed(() =>
+  Array.from(new Set(summaryRows.value.map(r => r.doc_type))).map(k => ({ key: k, label: docLabel(k) })))
+const summaryView = computed(() => summaryRows.value.filter(r =>
+  !summaryDocType.value || r.doc_type === summaryDocType.value))
+const summaryTotal = computed(() => summaryView.value.reduce((s, r) => s + r.amount, 0))
 
 // 🆕 #247 汇总报表下钻明细
 const sumDetailVisible = ref(false)
@@ -668,8 +674,13 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane v-if="canViewSummary" label="汇总报表" name="summary">
-        <div class="muted" style="font-size:12.5px;margin-bottom:8px">点某一行的「查看明细」下钻，看这个部门+单据类型下的每一条已批准申请。</div>
-        <el-table show-overflow-tooltip :data="summaryRows" v-loading="summaryLoading" stripe size="small"
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <el-select v-model="summaryDocType" placeholder="单据类型(全部)" clearable style="width:180px" size="small">
+            <el-option v-for="d in summaryDocOptions" :key="d.key" :label="d.label" :value="d.key" />
+          </el-select>
+          <span class="muted" style="font-size:12.5px">点某一行的「查看明细」下钻，看这个部门+单据类型下的每一条已批准申请。</span>
+        </div>
+        <el-table show-overflow-tooltip :data="summaryView" v-loading="summaryLoading" stripe size="small"
                   @row-click="openSumDetail" class="clickable-rows">
           <el-table-column prop="department_name" label="部门" width="140" />
           <el-table-column label="单据类型" width="140"><template #default="{ row }">{{ docLabel(row.doc_type) }}</template></el-table-column>

@@ -121,19 +121,22 @@ async def project_workflow(
         if dept == "produce":
             gr = await db.execute(select(models.ProduceGroupTask).where(
                 models.ProduceGroupTask.order_id == o.id))
-            for t in gr.scalars().all():
+            task_by_group = {t.group: t for t in gr.scalars().all()}
+            # 🆕 #254：生产部始终展示钣金/封板/装配三组，未派发的占位显示（负责人—），
+            #   否则只显示已派发的组、看不到还没派的组（如装配组）。
+            for gk in ("sheetmetal", "sealing", "assembly"):
+                t = task_by_group.get(gk)
                 w = None
-                if t.worker_id:
+                if t and t.worker_id:
                     wu = (await db.execute(select(models.User).where(
                         models.User.id == t.worker_id))).scalar_one_or_none()
                     w = (wu.full_name or wu.username) if wu else None
                 groups.append(WfGroup(
-                    group=t.group, name=_PRODUCE_GROUP_NAME.get(t.group, t.group),
-                    worker_name=w, done=(t.status == "done"), due_date=t.due_date,
-                    done_date=(t.done_at + timedelta(hours=8)).strftime("%Y-%m-%d") if t.done_at else None,
+                    group=gk, name=_PRODUCE_GROUP_NAME.get(gk, gk),
+                    worker_name=w, done=(t.status == "done") if t else False,
+                    due_date=(t.due_date if t else None),
+                    done_date=(t.done_at + timedelta(hours=8)).strftime("%Y-%m-%d") if (t and t.done_at) else None,
                 ))
-            groups.sort(key=lambda g: ["sheetmetal", "assembly", "sealing"].index(g.group)
-                        if g.group in ("sheetmetal", "assembly", "sealing") else 9)
         depts_out.append(WfDept(
             dept=dept, name=cfg["name"], status=o.status,
             worker_name=(o.worker.full_name or o.worker.username) if o.worker else None,
