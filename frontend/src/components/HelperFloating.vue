@@ -33,7 +33,7 @@ const mineLoading = ref(false)
 async function loadMine() {
   mineLoading.value = true
   try {
-    mineList.value = await userFeedbackApi.list({ mine: true })
+    mineList.value = (await userFeedbackApi.list({ mine: true, page_size: 100 })).items
     // 打开即视为已读所有回复 → 消除登录右下角弹窗提醒
     try {
       await userFeedbackApi.markRepliesRead()

@@ -873,6 +873,25 @@ class UserFeedbackRow(BaseModel):
     reply_read: bool = False
 
 
+class UserFeedbackStats(BaseModel):
+    """🆕 反馈概览统计（按当前可见范围全量算，不受 kind/status 过滤与分页影响）。"""
+    total: int = 0
+    open: int = 0
+    done: int = 0
+    bug: int = 0
+    suggest: int = 0
+    other: int = 0
+
+
+class UserFeedbackListOut(BaseModel):
+    """🆕 反馈分页结果：items=当前页，total=过滤后总数，stats=概览统计。"""
+    items: list[UserFeedbackRow] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+    stats: UserFeedbackStats = UserFeedbackStats()
+
+
 # ==================== 🆕 销售线索跟踪 ====================
 class SalesLeadCreate(BaseModel):
     source: str = Field(min_length=1, max_length=32)        # 询盘来源(必填)

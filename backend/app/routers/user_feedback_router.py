@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, UploadFile, File, Query, Request, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import select, update as sa_update, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -82,26 +82,51 @@ async def submit(
     return _row_out(fb2)
 
 
-@router.get("", response_model=List[schemas.UserFeedbackRow])
+@router.get("", response_model=schemas.UserFeedbackListOut)
 async def list_feedback(
     mine: bool = Query(False, description="普通用户强制只看自己;管理层显式传 true 则只看自己"),
     kind: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """管理层(admin/manager)可见全部,其余角色只看自己。"""
+    """管理层(admin/manager)可见全部,其余角色只看自己。分页返回 + 概览统计(优化大数据量性能)。"""
     is_mgr = current.has_role("admin", "manager")
-    q = select(models.UserFeedback)
+    F = models.UserFeedback
+    # 可见范围(与 kind/status 过滤无关)：概览统计按此范围全量算
+    scope_conds = []
     if not is_mgr or mine:
-        q = q.where(models.UserFeedback.user_id == current.id)
+        scope_conds.append(F.user_id == current.id)
+
+    def _cnt(cond):
+        return func.coalesce(func.sum(case((cond, 1), else_=0)), 0)
+
+    srow = (await db.execute(
+        select(
+            func.count(F.id),
+            _cnt(F.status == "open"), _cnt(F.status == "done"),
+            _cnt(F.kind == "bug"), _cnt(F.kind == "suggest"), _cnt(F.kind == "other"),
+        ).where(*scope_conds))).one()
+    stats = schemas.UserFeedbackStats(
+        total=srow[0] or 0, open=srow[1] or 0, done=srow[2] or 0,
+        bug=srow[3] or 0, suggest=srow[4] or 0, other=srow[5] or 0)
+
+    # 当前过滤(kind/status)下的分页数据
+    conds = list(scope_conds)
     if kind in KINDS:
-        q = q.where(models.UserFeedback.kind == kind)
+        conds.append(F.kind == kind)
     if status in ("open", "done"):
-        q = q.where(models.UserFeedback.status == status)
-    q = q.order_by(models.UserFeedback.id.desc()).limit(500)
-    rows = list((await db.execute(q)).scalars().all())
-    return [_row_out(r) for r in rows]
+        conds.append(F.status == status)
+    total = (await db.execute(select(func.count(F.id)).where(*conds))).scalar() or 0
+    rows = list((await db.execute(
+        select(F).where(*conds)
+        .order_by(F.id.desc())
+        .limit(page_size).offset((page - 1) * page_size))).scalars().all())
+    return schemas.UserFeedbackListOut(
+        items=[_row_out(r) for r in rows], total=total,
+        page=page, page_size=page_size, stats=stats)
 
 
 @router.post("/{fid}/done", response_model=schemas.Msg)

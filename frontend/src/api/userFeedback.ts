@@ -20,6 +20,17 @@ export interface UserFeedbackRow {
   reply_read?: boolean
 }
 
+export interface UserFeedbackStats {
+  total: number; open: number; done: number; bug: number; suggest: number; other: number
+}
+export interface UserFeedbackListResult {
+  items: UserFeedbackRow[]
+  total: number
+  page: number
+  page_size: number
+  stats: UserFeedbackStats
+}
+
 export const userFeedbackApi = {
   submit: (kind: string, content: string, page_url: string, file?: File | null) => {
     const fd = new FormData()
@@ -29,8 +40,9 @@ export const userFeedbackApi = {
     if (file) fd.append('file', file)
     return http.post<UserFeedbackRow>('/user-feedback', fd).then((r) => r.data)
   },
-  list: (params: { mine?: boolean; kind?: string; status?: string } = {}) =>
-    http.get<UserFeedbackRow[]>('/user-feedback', { params }).then((r) => r.data),
+  // 🆕 分页返回 { items, total, page, page_size, stats }
+  list: (params: { mine?: boolean; kind?: string; status?: string; page?: number; page_size?: number } = {}) =>
+    http.get<UserFeedbackListResult>('/user-feedback', { params }).then((r) => r.data),
   markDone: (id: number) =>
     http.post<{ message: string }>(`/user-feedback/${id}/done`).then((r) => r.data),
   // 🆕 系统回信

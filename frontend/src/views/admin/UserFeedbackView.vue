@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // 🆕 v3 用户反馈管理后台（仅 admin/manager）
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Download, Refresh, ChatLineRound } from '@element-plus/icons-vue'
-import { userFeedbackApi, type UserFeedbackRow } from '@/api/userFeedback'
+import { userFeedbackApi, type UserFeedbackRow, type UserFeedbackStats } from '@/api/userFeedback'
 import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -13,6 +13,11 @@ const loading = ref(false)
 const list = ref<UserFeedbackRow[]>([])
 const filterKind = ref('')
 const filterStatus = ref('')
+// 🆕 服务端分页 + 概览统计（大数据量下不再一次性拉全部）
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
+const stats = ref<UserFeedbackStats>({ total: 0, open: 0, done: 0, bug: 0, suggest: 0, other: 0 })
 
 const KIND_TXT: Record<string, string> = { bug: '问题反馈', suggest: '意见建议', other: '其它' }
 const KIND_TAG: Record<string, any> = { bug: 'danger', suggest: 'primary', other: 'info' }
@@ -22,18 +27,26 @@ const STATUS_TAG: Record<string, any> = { open: 'warning', done: 'success' }
 async function load() {
   loading.value = true
   try {
-    list.value = await userFeedbackApi.list({
+    const res = await userFeedbackApi.list({
       kind: filterKind.value || undefined,
       status: filterStatus.value || undefined,
+      page: page.value,
+      page_size: pageSize.value,
     })
+    list.value = res.items
+    total.value = res.total
+    stats.value = res.stats
   } finally { loading.value = false }
 }
+// 过滤变了从第 1 页重新查
+function reload() { page.value = 1; load() }
 onMounted(load)
 
 async function markDone(row: UserFeedbackRow) {
   await userFeedbackApi.markDone(row.id)
   ElMessage.success('已标记为已处理')
-  row.status = 'done'
+  // 状态变化会影响过滤结果与概览计数，刷新当前页
+  await load()
 }
 
 // 🆕 系统回信：回复处理意见
@@ -78,13 +91,6 @@ async function exportHtml() {
     ElMessage.error(`导出失败：${e?.response?.status || e?.message || e}`)
   }
 }
-
-const stats = computed(() => ({
-  total: list.value.length,
-  open: list.value.filter(r => r.status === 'open').length,
-  bug: list.value.filter(r => r.kind === 'bug').length,
-  suggest: list.value.filter(r => r.kind === 'suggest').length,
-}))
 
 const previewVisible = ref(false)
 const previewSrc = ref('')
@@ -141,12 +147,12 @@ function closePreview() {
       <template #header>
         <div style="display:flex;align-items:center;gap:10px">
           <span>反馈列表</span>
-          <el-select v-model="filterKind" placeholder="类型(全部)" clearable style="width:150px" @change="load">
+          <el-select v-model="filterKind" placeholder="类型(全部)" clearable style="width:150px" @change="reload">
             <el-option label="问题反馈" value="bug" />
             <el-option label="意见建议" value="suggest" />
             <el-option label="其它" value="other" />
           </el-select>
-          <el-select v-model="filterStatus" placeholder="状态(全部)" clearable style="width:150px" @change="load">
+          <el-select v-model="filterStatus" placeholder="状态(全部)" clearable style="width:150px" @change="reload">
             <el-option label="待处理" value="open" />
             <el-option label="已处理" value="done" />
           </el-select>
@@ -192,6 +198,12 @@ function closePreview() {
         </el-table-column>
       </el-table>
       <EmptyHint v-if="!loading && !list.length" text="暂无用户反馈" />
+      <div v-if="total > 0" class="pager">
+        <el-pagination
+          background layout="total, sizes, prev, pager, next, jumper"
+          :total="total" v-model:current-page="page" v-model:page-size="pageSize"
+          :page-sizes="[20, 50, 100]" @current-change="load" @size-change="load" />
+      </div>
     </el-card>
 
     <!-- 🆕 回复处理意见 -->
@@ -227,4 +239,5 @@ function closePreview() {
 .reply-orig { background: var(--el-fill-color-light); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
 .reply-orig-h { font-size: 12.5px; color: var(--el-text-color-secondary); margin-bottom: 4px; }
 .reply-orig-c { white-space: pre-wrap; word-break: break-word; line-height: 1.55; color: #1f2937; }
+.pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 </style>
