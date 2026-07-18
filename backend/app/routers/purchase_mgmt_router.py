@@ -745,10 +745,13 @@ async def _sheet_fieldmap(db: AsyncSession, sheet_id: int) -> dict:
     return {f.name: str(f.id) for f in fr.scalars().all()}
 
 
-async def _writeback_sheet_row(db: AsyncSession, sheet_id: int, record_id: int, updates: dict) -> None:
-    """把 {列名: 值} 写进某数据表某行 values（按列名匹配 field_id）；列不存在则跳过。"""
+async def _writeback_sheet_row(db: AsyncSession, sheet_id: int, record_id: int, updates: dict,
+                               *, only_if_empty: Optional[set] = None) -> None:
+    """把 {列名: 值} 写进某数据表某行 values（按列名匹配 field_id）；列不存在则跳过。
+    only_if_empty 里的列名仅在当前单元格为空时才写（不覆盖已手填值，#255 采购负责人用）。"""
     if not sheet_id or not record_id:
         return
+    only_if_empty = only_if_empty or set()
     name2id = await _sheet_fieldmap(db, sheet_id)
     rr = await db.execute(select(models.Record).where(models.Record.id == record_id))
     rec = rr.scalar_one_or_none()
@@ -758,9 +761,15 @@ async def _writeback_sheet_row(db: AsyncSession, sheet_id: int, record_id: int, 
     hit = False
     for col, val in updates.items():
         fid = name2id.get(col)
-        if fid and val is not None:
-            vals[fid] = val
-            hit = True
+        if not fid or val is None:
+            continue
+        if col in only_if_empty:
+            cur = vals.get(fid)
+            cur_empty = cur in (None, "") or (isinstance(cur, list) and not cur)
+            if not cur_empty:
+                continue   # 已手填，保留不覆盖
+        vals[fid] = val
+        hit = True
     if hit:
         rec.values = vals
 
@@ -1020,7 +1029,9 @@ async def create_order_from_list(
             wb = {"采购负责人": uname}
             for c in _ALL_ORDER_DATE_COLS:
                 wb[c] = (body.delivery_date or today)
-            await _writeback_sheet_row(db, l.source_sheet_id, l.source_record_id, wb)
+            # 🆕 #255：采购负责人若已在表格手填，则保留、不被下单人覆盖；下单日期照常回写
+            await _writeback_sheet_row(db, l.source_sheet_id, l.source_record_id, wb,
+                                       only_if_empty={"采购负责人"})
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
                          .order_by(models.PurchaseItem.id))
@@ -1075,7 +1086,9 @@ async def create_kit_order_from_list(
                 wb = {"采购负责人": uname}
                 for c in _ALL_ORDER_DATE_COLS:
                     wb[c] = (body.delivery_date or today)
-                await _writeback_sheet_row(db, body.source_sheet_id, p.source_record_id, wb)
+                # 🆕 #255：采购负责人若已手填则保留、不被下单人覆盖
+                await _writeback_sheet_row(db, body.source_sheet_id, p.source_record_id, wb,
+                                           only_if_empty={"采购负责人"})
     await db.commit()
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == item.id))
     return _item_out(r.scalar_one())
