@@ -25,10 +25,10 @@ echo "[$(date '+%F %T')] upgrade start"
 OLD_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 echo "  current commit: $OLD_COMMIT"
 
-# 2. 备份
+# 2. 备份（发版前置：只备份数据库；uploads 卷发版不动，全备由每日 cron 负责，避免每次发版都 tar 数百 MB 撑爆磁盘）
 if [[ "$SKIP_BACKUP" == "0" ]]; then
-    echo "[1/5] 备份..."
-    bash "$SCRIPT_DIR/backup.sh" || { echo "备份失败，升级中止"; exit 1; }
+    echo "[1/5] 备份数据库（跳过 uploads，日常 cron 每日全备）..."
+    SKIP_UPLOADS=1 bash "$SCRIPT_DIR/backup.sh" || { echo "备份失败，升级中止"; exit 1; }
 else
     echo "[1/5] (跳过备份)"
 fi

@@ -18,6 +18,10 @@ cd "$PROJECT_DIR"
 # === 配置 ===
 BACKUP_DIR="${BACKUP_DIR:-/backup}"
 KEEP_DAYS="${KEEP_DAYS:-30}"
+# 🆕 uploads 备份数量上限：每个约数百 MB，频繁发版会撑爆磁盘，超出只保留最新 N 个（0=不限）
+KEEP_UPLOADS="${KEEP_UPLOADS:-7}"
+# 🆕 SKIP_UPLOADS=1：只备份数据库，跳过 uploads（发版前置备份用——发版不动 uploads 卷，日常 cron 已每日全备）
+SKIP_UPLOADS="${SKIP_UPLOADS:-0}"
 COMPOSE_FILE="docker-compose.prod.yml"
 ENV_FILE=".env.prod"
 COS_BUCKET="${COS_BUCKET:-}"          # e.g. cos://pms-backup-xxx/db/
@@ -53,21 +57,30 @@ SIZE=$(du -h "$FILE_DB" | cut -f1)
 echo "  → ok ($SIZE)"
 
 # === 2. 备份上传目录（uploads volume）===
-echo "[$(date '+%F %T')] backup uploads -> $FILE_UPLOADS"
-UPLOADS_VOL=$(docker volume ls -q | grep -E 'uploads_data$' | head -1)
-if [[ -n "$UPLOADS_VOL" ]]; then
-    docker run --rm -v "$UPLOADS_VOL":/src:ro -v "$BACKUP_DIR":/dst alpine \
-        tar czf "/dst/pms-uploads-${DATE}.tar.gz" -C /src . || true
-    SIZE=$(du -h "$FILE_UPLOADS" 2>/dev/null | cut -f1)
-    [[ -n "$SIZE" ]] && echo "  → ok ($SIZE)"
+if [[ "$SKIP_UPLOADS" == "1" ]]; then
+    echo "[$(date '+%F %T')] skip uploads backup (SKIP_UPLOADS=1)"
+else
+    echo "[$(date '+%F %T')] backup uploads -> $FILE_UPLOADS"
+    UPLOADS_VOL=$(docker volume ls -q | grep -E 'uploads_data$' | head -1)
+    if [[ -n "$UPLOADS_VOL" ]]; then
+        docker run --rm -v "$UPLOADS_VOL":/src:ro -v "$BACKUP_DIR":/dst alpine \
+            tar czf "/dst/pms-uploads-${DATE}.tar.gz" -C /src . || true
+        SIZE=$(du -h "$FILE_UPLOADS" 2>/dev/null | cut -f1)
+        [[ -n "$SIZE" ]] && echo "  → ok ($SIZE)"
+    fi
 fi
 
 # === 3. 滚动清理 ===
-echo "[$(date '+%F %T')] rotate (keep ${KEEP_DAYS} days)"
+echo "[$(date '+%F %T')] rotate (db keep ${KEEP_DAYS} days, uploads keep newest ${KEEP_UPLOADS})"
 find "$BACKUP_DIR" -name 'pms-db-*.sql.gz' -mtime +${KEEP_DAYS} -delete
 find "$BACKUP_DIR" -name 'pms-uploads-*.tar.gz' -mtime +${KEEP_DAYS} -delete
+# 🆕 uploads 数量上限：无论天数，只留最新 KEEP_UPLOADS 个（防频繁发版把磁盘撑爆）
+if [[ "${KEEP_UPLOADS}" -gt 0 ]]; then
+    ls -t "$BACKUP_DIR"/pms-uploads-*.tar.gz 2>/dev/null | tail -n +$((KEEP_UPLOADS+1)) | xargs -r rm -f
+fi
 LEFT=$(find "$BACKUP_DIR" -name 'pms-db-*.sql.gz' | wc -l)
-echo "  → ${LEFT} db backups left"
+UP_LEFT=$(find "$BACKUP_DIR" -name 'pms-uploads-*.tar.gz' | wc -l)
+echo "  → ${LEFT} db backups, ${UP_LEFT} uploads backups left"
 
 # === 4. (可选) 上传 COS ===
 if [[ "$UPLOAD_COS" == "1" ]]; then
