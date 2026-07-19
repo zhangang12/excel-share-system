@@ -1018,6 +1018,7 @@ class SupplierOut(BaseModel):
 class PurchaseItemCreate(BaseModel):
     supplier_id: int
     delivery_date: Optional[str] = None
+    expected_arrival: Optional[str] = None   # 🆕 预计到货日期（选填；到期未到货每日提醒）
     contract_no: Optional[str] = None
     project_code: Optional[str] = None
     delivery_note_no: Optional[str] = None
@@ -1094,6 +1095,7 @@ class MaterialDictOut(BaseModel):
 class PurchaseOrderCreate(BaseModel):
     supplier_id: int
     delivery_date: Optional[str] = None          # 下单日期（总的）
+    expected_arrival: Optional[str] = None        # 🆕 预计到货日期（整单一个，选填；到期未到货每日提醒）
     contract_no: Optional[str] = None
     project_code: Optional[str] = None           # 默认项目编号（行可覆盖）
     payment_method: Optional[str] = None          # 🆕 付款方式（表头，作用于全单）
@@ -1147,6 +1149,7 @@ class OrderFromListLine(BaseModel):
 class OrderFromListCreate(BaseModel):
     supplier_id: int
     delivery_date: Optional[str] = None
+    expected_arrival: Optional[str] = None   # 🆕 预计到货日期（选填；落采购明细并回写清单「预计到货」列）
     project_code: Optional[str] = None
     payment_method: Optional[str] = None
     prepay_ratio: Optional[float] = None
@@ -1210,7 +1213,9 @@ class PurchaseItemUpdate(BaseModel):
     invoice_amount: Optional[float] = None
     payment_method: Optional[str] = None
     prepay_ratio: Optional[float] = None
-    arrival_date: Optional[str] = None
+    # 注意：不允许在这里开放 arrival_date——到货日期只能由仓库收货接口写入，
+    # 否则采购员可绕过收货流程直接填/清到货日期，让「到期未到货提醒」失真（且不入库、不回写清单）。
+    expected_arrival: Optional[str] = None   # 🆕 预计到货日期（可改；改动会回写清单「预计到货」列并通知管理层）
     custom_values: Optional[dict] = None   # 🆕 R6
     invoice_status: Optional[str] = None
     notes: Optional[str] = None
@@ -1253,6 +1258,7 @@ class PurchaseItemOut(BaseModel):
     project_code: Optional[str] = None
     delivery_note_no: Optional[str] = None
     arrival_date: Optional[str] = None
+    expected_arrival: Optional[str] = None   # 🆕 预计到货日期
     item_name: str
     spec: Optional[str] = None
     brand: Optional[str] = None
@@ -1296,6 +1302,7 @@ class KitFromListCreate(BaseModel):
     supplier_id: int
     project_code: Optional[str] = None
     delivery_date: Optional[str] = None
+    expected_arrival: Optional[str] = None   # 🆕 预计到货日期（选填；落采购明细并回写清单「预计到货」列）
     payment_method: Optional[str] = None
     prepay_ratio: Optional[float] = None
     stock_location: Optional[str] = None   # 🆕 库位（整套一个）

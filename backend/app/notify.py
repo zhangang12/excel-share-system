@@ -35,6 +35,7 @@ async def push_message(
     text: str,
     biz_type: Optional[str] = None,
     biz_id: Optional[int] = None,
+    exclude_user_ids: Optional[set] = None,   # 🆕 扇出时排除这些人（如已单独推过的下单人，避免同人同日两条相同文本）
 ) -> int:
     """推送站内消息。返回写入条数。to_user_id 与 to_role 至少给一个。"""
     user_ids: list[int] = []
@@ -60,10 +61,11 @@ async def push_message(
         log.info("push_message: 角色 %s 无在线用户，消息丢弃: %s", to_role, text[:50])
         return 0
 
+    excl = set(exclude_user_ids or ())
     seen: set[int] = set()
     rows = []
     for uid in user_ids:
-        if uid in seen:
+        if uid in seen or uid in excl:
             continue
         seen.add(uid)
         rows.append(models.Message(

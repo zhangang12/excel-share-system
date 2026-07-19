@@ -1,6 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
+<html lang="zh-CN"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>采购模块 · 需求书 + UI 设计稿（v1 待修订）</title>
@@ -76,12 +75,12 @@
 <div class="toolbar">
   <b>🛒 采购模块 · 需求书 + UI 设计稿</b>
   <span class="tip">「业务确认」列可直接打字；改正文点「编辑全文」</span>
-  <button onclick="toggleEdit(this)">✏️ 编辑全文</button>
+  <button onclick="toggleEdit(this)">✅ 编辑中（再点结束）</button>
   <button onclick="saveHtml()">💾 保存为HTML（导出修订版）</button>
   <button onclick="window.print()">🖨️ 打印 / PDF</button>
 </div>
 
-<main id="doc">
+<main id="doc" contenteditable="true">
   <h1>采购模块 · 全流程设计（需求书 + UI 设计稿）</h1>
   <div class="sub">版本：v1（待业务修订）｜日期：2026-06-28｜适用：同辉智能项目管理系统</div>
 
@@ -92,14 +91,14 @@
   <div class="card" style="border:2px solid var(--blue);background:#f8fbff">
     <h2 style="border-color:var(--green)">★ 录音补充要点（2026-06-28 电话，已转写）</h2>
     <table>
-      <tr><th class="no">#</th><th>要点</th><th>对应到本设计</th><th>业务确认</th></tr>
+      <tbody><tr><th class="no">#</th><th>要点</th><th>对应到本设计</th><th>业务确认</th></tr>
       <tr><td class="no">A</td><td><b>供应商按「账期」分类</b>：有账期（如月结3个月）/ 无账期 / 现金。账期要体现在系统里——未付的显示为「应付/欠款」，到期才算应付。</td><td>供应商档案加「结算方式 + 账期天数」；对账/报表按账期算应付与到期。见 4.1#1、4.4、4.6。</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">B</td><td><b>报表口径</b>：数据录完→老板看总报表；① 按采购员（约3个采购各一张）② 按项目一搜就知道该项目花了多少钱 ③ 每项目含 <b>合计 / 已开票 / 待开票 / 已付款 / 欠款</b>。</td><td>汇总报表加「按采购员」「按项目搜索」两个视角；列含上述5项金额。见 4.6。</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">C</td><td><b>对账闭环</b>：一张对账表体现「已送货 + 已付款」；采购→送货到→付款 = 一个闭环完成。</td><td>对账单/采购单状态体现 已送货、已付款；闭环 = 已收货且已结清。见 4.3#9、4.4。</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">D</td><td><b>要比金蝶简单</b>：金蝶字段太细、面向大公司（含出租库等用不到的），要贴合本公司规模的轻量版。</td><td>本设计刻意只保留核心流程，二/三期再扩；不做复杂质检/竞标/门户。</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">E</td><td><b>先建总表、逐步迭代</b>：先把总表建起来，字段让采购员后面一个个提、往上加（同现工作流）。</td><td>一期先上"供应商+采购单+对账+汇总总表"，字段做成可扩展，按需增列。</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">F</td><td>会提供现有采购/对账 Excel 截图作参考（表格可能不全，需重新设计）。</td><td>收到截图后据此细化字段与对账表样式。</td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
   </div>
 
   <div class="card" style="border:2px solid var(--green);background:#f7fdf9">
@@ -116,22 +115,22 @@
 
     <h3>① 采购明细表（=你的「年度采购明细表」，唯一录入入口）</h3>
     <p style="font-size:12.5px;color:var(--muted);margin:2px 0">字段直接照搬你的表：</p>
-    <table><tr><th>字段</th></tr><tr><td style="font-size:12.5px">开票状态(待对账/已对账…) · 送货时间 · 供应商 · 合同编号 · 项目编号 · 送货单号 · 名称 · 规格型号 · 数量 · 单价 · 收货金额 · 开票日期 · 税率 · 开票金额 · 付款日期 · 付款金额 · 备注</td></tr></table>
+    <table><tbody><tr><th>字段</th></tr><tr><td style="font-size:12.5px">开票状态(待对账/已对账…) · 送货时间 · 供应商 · 合同编号 · 项目编号 · 送货单号 · 名称 · 规格型号 · 数量 · 单价 · 收货金额 · 开票日期 · 税率 · 开票金额 · 付款日期 · 付款金额 · 备注</td></tr></tbody></table>
 
     <h3>② 供应商账目一览（=你的「供应商账目信息一览表」，自动汇总）</h3>
-    <table><tr><th>字段</th></tr><tr><td style="font-size:12.5px">序号 · 公司名称 · 对账无误/有误 · <b>送货单金额(=采购合计)</b> · <b>已开票</b> · <b>待开票</b> · <b>已付款</b> · <b>欠款</b> · 备注（点开=该供应商明细报表）</td></tr></table>
+    <table><tbody><tr><th>字段</th></tr><tr><td style="font-size:12.5px">序号 · 公司名称 · 对账无误/有误 · <b>送货单金额(=采购合计)</b> · <b>已开票</b> · <b>待开票</b> · <b>已付款</b> · <b>欠款</b> · 备注（点开=该供应商明细报表）</td></tr></tbody></table>
     <p style="font-size:12.5px;color:var(--amber);margin:2px 0">★这张就是录音里老板要看的"总报表"，五项金额口径完全一致；点公司名→下钻到该供应商的明细（替代你现在每家一个 .xls）。</p>
 
     <h3>③ 每家供应商明细报表（=你发的单家 xlsx，自动筛选生成）</h3>
-    <table><tr><th>字段</th></tr><tr><td style="font-size:12.5px">项目 · 型号规格 · 数量 · 单价 · 金额 · 下单日期 · 到货日期 · 采购负责人 · 对应项目单号 · <b>已付 · 未付</b> · 发票 · 送货单 · 采购合同</td></tr></table>
+    <table><tbody><tr><th>字段</th></tr><tr><td style="font-size:12.5px">项目 · 型号规格 · 数量 · 单价 · 金额 · 下单日期 · 到货日期 · 采购负责人 · 对应项目单号 · <b>已付 · 未付</b> · 发票 · 送货单 · 采购合同</td></tr></tbody></table>
 
     <table style="margin-top:10px">
-      <tr><th class="no">#</th><th>合并后的关键设计点</th><th>业务确认</th></tr>
+      <tbody><tr><th class="no">#</th><th>合并后的关键设计点</th><th>业务确认</th></tr>
       <tr><td class="no">甲</td><td>三张表合一：只在「采购明细」录入，账目一览/单家报表/汇总全自动，杜绝重复录入与对不上账</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">乙</td><td>欠款 = 收货金额 − 已付款；待开票 = 收货金额 − 已开票；账期决定欠款到期提醒（录音A）</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">丙</td><td>「对账无误/有误」沿用你现在的勾选；闭环=已送货+已开票+已付款（录音C）</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">丁</td><td>供应商先从你这份「名单」批量导入，账期/分类等字段后续逐步补（录音E：先建总表迭代）</td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
   </div>
 
   <!-- 一、目标范围 -->
@@ -148,12 +147,12 @@
   <div class="card">
     <h2>二、角色与权限</h2>
     <table>
-      <tr><th class="no">#</th><th>角色</th><th>主要权限</th><th>业务确认</th></tr>
+      <tbody><tr><th class="no">#</th><th>角色</th><th>主要权限</th><th>业务确认</th></tr>
       <tr><td class="no">1</td><td>采购员（外协/标准件/原料/激光等分工）</td><td>维护供应商、建采购申请/订单、登记到货、生成对账单；只看本人/本类数据（沿用现有按账号分工）</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">2</td><td>采购主管</td><td>审批采购订单、审核对账单、看全量采购报表</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">3</td><td>财务</td><td>应付账款、发票校验、付款审批/登记；接收对账推送</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">4</td><td>管理层</td><td>全量可见、汇总报表、审批兜底</td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
   </div>
 
   <!-- 三、流程 -->
@@ -174,58 +173,58 @@
 
   <!-- 四、功能模块 + 需求清单 -->
   <div class="card">
-    <h2>四、功能模块 & 需求清单</h2>
+    <h2>四、功能模块 &amp; 需求清单</h2>
 
     <h3>4.1 供应商管理（对应需求③）</h3>
     <table>
-      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tbody><tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
       <tr><td class="no">1</td><td>新增/编辑供应商</td><td>编号、名称、分类（外协/标准件/不锈钢原料/激光件/电气件…）、联系人、电话、地址、税号、开户行+银行账号、<b>结算方式（现金 / 月结N月 / 无账期）+ 账期天数</b>、状态（启用/停用）<br><span style="color:var(--amber);font-size:12px">★录音A：账期是关键分类，决定到期应付与欠款显示</span></td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">2</td><td>供应商资质附件</td><td>营业执照、合同、资质证书上传留存</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">3</td><td>供应商分类/标签</td><td>按品类筛选；采购员按分工只看相关供应商</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">4</td><td>供应商评级/绩效</td><td>到货及时率、质量、价格，给星级（供选型参考）</td><td class="c"><span class="pri p3">低</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">5</td><td>停用而非删除</td><td>有历史采购的供应商不可物理删除，只能停用（保数据可追溯）</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
 
     <h3>4.2 采购申请 / 采购订单</h3>
     <table>
-      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tbody><tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
       <tr><td class="no">6</td><td>新建采购订单</td><td>选供应商+关联项目；明细行：物料名称/规格/数量/单位/单价/金额；自动算总额、税额</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
-      <tr><td class="no">7</td><td>从项目需求带出请购</td><td>设计/电工推过来的外协/原料/激光件需求 → 一键转采购单（少录一遍）</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
-      <tr><td class="no">8</td><td>采购订单审批</td><td>超额/按规则需采购主管审批；小额可免审（可配置阈值）</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">7</td><td>从项目需求带出请购</td><td>设计/电工推过来的BOM外协/原料/激光件和需求给仓管员 → 仓管员核对库存后生成采购需求推送给采购一键转采购单（少录一遍），</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
+      <tr><td class="no">8</td><td>采购订单审批</td><td>超额/按规则需采购主管审批；小额可免审（可配置阈值），非常用件按照需求采购，常用件可以备些库存</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">9</td><td>订单状态流转</td><td>待审批 → 已下单 → 部分到货 → 已到货 → 已对账 → 已付款</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">10</td><td>打印/导出采购单（PDF）</td><td>带公司抬头，发给供应商</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">11</td><td>比价（可选）</td><td>同一需求录多家报价，择优下单（二期）</td><td class="c"><span class="pri p3">低</span></td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
 
     <h3>4.3 到货 / 收货</h3>
     <table>
-      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tbody><tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
       <tr><td class="no">12</td><td>到货登记</td><td>按采购单登记到货数量、到货日期；支持分批到货</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">13</td><td>与仓库联动</td><td>到货→仓库入库（沿用现有仓库模块），避免重复登记</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">14</td><td>到货异常/质检</td><td>登记不合格/退货，影响供应商评级（二期）</td><td class="c"><span class="pri p3">低</span></td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
 
-    <h3>4.4 供应商对账 & 报表（对应需求①，重点）</h3>
+    <h3>4.4 供应商对账 &amp; 报表（对应需求①，重点）</h3>
     <table>
-      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tbody><tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
       <tr><td class="no">15</td><td>每家供应商独立对账单</td><td>按期间（月/自定义）汇总该供应商所有采购明细：采购笔数、采购总额、已付、应付余额</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">16</td><td>对账单明细可下钻</td><td>点开看每张采购单/每次到货明细，可导出 Excel/PDF 发供应商核对</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">17</td><td>对账确认</td><td>采购/供应商双方核对无误后"确认对账"，锁定本期，生成应付</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">18</td><td>供应商往来余额</td><td>累计应付/已付/余额一目了然</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
 
     <h3>4.5 财务联动（对应需求②）</h3>
     <table>
-      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tbody><tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
       <tr><td class="no">19</td><td>对账确认 → 推送财务应付</td><td>本期对账确认后自动生成"应付账款"并推送/通知财务（站内+企微）</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">20</td><td>发票校验</td><td>供应商开来的发票录入/上传，与对账金额勾稽（金额、税率）</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">21</td><td>付款申请 → 财务审批 → 付款登记</td><td>采购发起付款申请，财务审批并登记付款（部分付款/全额）；回写采购单与对账余额</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">22</td><td>应付账款汇总进财务</td><td>各供应商应付汇总纳入财务报表口径（与销售开票同一财务视图）</td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
 
     <h3>4.6 采购汇总报表（对应需求④，重点）</h3>
     <table>
-      <tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
+      <tbody><tr><th class="no">#</th><th>功能点</th><th>说明</th><th>优先级</th><th>业务确认</th></tr>
       <tr><td class="no">23</td><td>总报表（月/季/年）</td><td>每项目/期间含 <b>合计 / 已开票 / 待开票 / 已付款 / 欠款</b> 五项金额；趋势图<br><span style="color:var(--amber);font-size:12px">★录音B：老板要看的核心总报表口径</span></td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">24</td><td><b>按采购员出报表</b></td><td>约3个采购员各一张报表（采购额、已付、欠款等）<span style="color:var(--amber);font-size:12px">★录音B</span></td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">25</td><td><b>按项目搜索</b></td><td>输入项目编号→一搜就出该项目花了多少钱（合计/已付/欠款）<span style="color:var(--amber);font-size:12px">★录音B</span></td><td class="c"><span class="pri p1">高</span></td><td class="confirm" contenteditable="true"></td></tr>
@@ -233,25 +232,25 @@
       <tr><td class="no">27</td><td>按品类/项目分布</td><td>外协/标准件/原料/激光件各占多少；按项目看采购成本</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">28</td><td>应付账龄（按账期）</td><td>应付按账龄/账期分段（如月结3月到期未付提示），提示逾期付款风险</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td class="no">29</td><td>报表导出</td><td>所有报表可导出 Excel/PDF</td><td class="c"><span class="pri p2">中</span></td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
   </div>
 
   <!-- 五、数据模型 -->
   <div class="card">
     <h2>五、数据模型概要</h2>
     <table>
-      <tr><th>实体</th><th>关键字段</th><th>业务确认</th></tr>
+      <tbody><tr><th>实体</th><th>关键字段</th><th>业务确认</th></tr>
       <tr><td><b>供应商 Supplier</b></td><td>编号、名称、分类、联系人、电话、地址、税号、开户行、银行账号、账期、评级、状态、资质附件</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td><b>采购订单 PO</b></td><td>单号、供应商、关联项目、采购员、下单日期、交期、税率、总额、状态</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td><b>采购明细 PurchaseItem</b><br><span style="font-size:11.5px;color:var(--green)">=年度采购明细表(唯一录入)</span></td><td>开票状态、送货时间、供应商、合同编号、项目编号、送货单号、名称、规格型号、数量、单价、收货金额、开票日期、税率、开票金额、付款日期、付款金额、采购负责人、备注</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td><b>对账单 Statement</b><br><span style="font-size:11.5px;color:var(--green)">=供应商账目一览(自动)</span></td><td>供应商、期间、送货单金额、已开票、待开票、已付款、欠款、对账无误/有误、状态</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td><b>应付/付款 Payable/Payment</b></td><td>供应商、关联对账、应付额、已付额、付款日期、方式、发票号、财务审批人</td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
   </div>
 
   <!-- 六、衔接 + 分期 -->
   <div class="card">
-    <h2>六、与现有系统衔接 & 分期建议</h2>
+    <h2>六、与现有系统衔接 &amp; 分期建议</h2>
     <h3>衔接点</h3>
     <ul style="font-size:13px;margin:4px 0">
       <li>现有「采购部」按账号分工（外协/标准件/激光等）→ 直接复用为采购员分工 + 供应商分类。</li>
@@ -261,11 +260,11 @@
     </ul>
     <h3>分期</h3>
     <table>
-      <tr><th>期</th><th>内容</th><th>业务确认</th></tr>
+      <tbody><tr><th>期</th><th>内容</th><th>业务确认</th></tr>
       <tr><td><b>一期(核心)</b></td><td>供应商管理 + 采购订单 + 到货登记 + 供应商对账单 + 月/季/年采购汇总 + 财务应付推送</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td><b>二期</b></td><td>付款审批闭环 + 发票校验 + 账龄报表 + 供应商评级</td><td class="confirm" contenteditable="true"></td></tr>
       <tr><td><b>三期</b></td><td>比价竞标 + 质检退换 + 供应商门户</td><td class="confirm" contenteditable="true"></td></tr>
-    </table>
+    </tbody></table>
   </div>
 
   <!-- ======= UI 设计稿 ======= -->
@@ -287,11 +286,11 @@
           <span class="m-btn">＋ 新增明细</span>
         </div>
         <table class="mt">
-          <tr><th>☑</th><th>送货时间</th><th>供应商</th><th>项目编号</th><th>名称</th><th>规格型号</th><th>数量</th><th>单价</th><th>收货金额</th><th>已开票</th><th>待开票</th><th>已付款</th><th>欠款</th><th>对账</th></tr>
+          <tbody><tr><th>☑</th><th>送货时间</th><th>供应商</th><th>项目编号</th><th>名称</th><th>规格型号</th><th>数量</th><th>单价</th><th>收货金额</th><th>已开票</th><th>待开票</th><th>已付款</th><th>欠款</th><th>对账</th></tr>
           <tr><td>☑</td><td>2026-06-10</td><td>无锡元普自动化设备</td><td>—</td><td>气缸</td><td>SC100-1500</td><td>1</td><td>450</td><td><b>450</b></td><td>0</td><td style="color:#d97706">450</td><td>0</td><td style="color:#b91c1c">450</td><td><span class="m-tag g-gray">待对账</span></td></tr>
           <tr><td>☐</td><td>2026-06-10</td><td>阀盟不锈钢</td><td>2026-041M</td><td>1.5D工业弯头</td><td>76*3</td><td>2</td><td>28</td><td><b>56</b></td><td>56</td><td>0</td><td>56</td><td>0</td><td><span class="m-tag g-green">已对账</span></td></tr>
           <tr><td>☐</td><td>2026-06-10</td><td>阀盟不锈钢</td><td>2026-041M</td><td>运费</td><td>—</td><td>1</td><td>7</td><td><b>7</b></td><td>7</td><td>0</td><td>7</td><td>0</td><td><span class="m-tag g-green">已对账</span></td></tr>
-        </table>
+        </tbody></table>
         <div style="display:flex;gap:16px;font-size:12px;color:#475569;background:#f1f5f9;padding:7px 12px;border-radius:0 0 8px 8px;margin-top:-1px">
           <span>共 <b>1286</b> 条</span><span style="flex:1"></span>
           <span>收货合计 <b>¥4,862,300</b></span><span>待开票 <b style="color:#d97706">¥1,203,400</b></span>
@@ -307,12 +306,12 @@
       <div class="body">
         <div class="m-toolbar"><span class="m-sel">分类 ▾</span><span class="m-sel">状态：启用 ▾</span><span class="m-input" style="width:140px;color:#94a3b8">名称/联系人</span><span style="flex:1"></span><span class="m-btn ghost">批量导入名单</span><span class="m-btn">＋ 新增供应商</span></div>
         <table class="mt">
-          <tr><th>#</th><th>公司名称</th><th>分类</th><th>结算/账期</th><th>送货单金额</th><th>已开票</th><th>待开票</th><th>已付款</th><th>欠款</th><th>状态</th><th>操作</th></tr>
+          <tbody><tr><th>#</th><th>公司名称</th><th>分类</th><th>结算/账期</th><th>送货单金额</th><th>已开票</th><th>待开票</th><th>已付款</th><th>欠款</th><th>状态</th><th>操作</th></tr>
           <tr><td>40</td><td>无锡吉明金属制品有限公司</td><td><span class="m-tag g-blue">外协加工</span></td><td>月结·60天</td><td><b>522,422.14</b></td><td>263,350.08</td><td style="color:#d97706">259,072.06</td><td>0.00</td><td style="color:#b91c1c"><b>522,422.14</b></td><td><span class="m-tag g-green">启用</span></td><td><b>明细</b>·编辑</td></tr>
           <tr><td>41</td><td>无锡锡珑工控设备有限公司</td><td><span class="m-tag g-amber">电气件</span></td><td>月结·30天</td><td><b>94,670.00</b></td><td>94,670.00</td><td>0.00</td><td>0.00</td><td style="color:#b91c1c"><b>94,670.00</b></td><td><span class="m-tag g-green">启用</span></td><td><b>明细</b>·编辑</td></tr>
           <tr><td>42</td><td>无锡优正运输有限公司</td><td><span class="m-tag g-gray">运输</span></td><td>月结·30天</td><td><b>43,730.00</b></td><td>43,730.00</td><td>0.00</td><td>43,730.00</td><td>0.00</td><td><span class="m-tag g-green">启用</span></td><td><b>明细</b>·编辑</td></tr>
           <tr><td>39</td><td>常州市洪庄电镀有限公司</td><td><span class="m-tag g-blue">外协加工</span></td><td>现金</td><td><b>1,522.00</b></td><td>1,522.00</td><td>0.00</td><td>1,522.00</td><td>0.00</td><td><span class="m-tag g-green">启用</span></td><td><b>明细</b>·编辑</td></tr>
-        </table>
+        </tbody></table>
         <p style="font-size:12px;color:var(--muted);margin-top:6px">五列金额由「采购明细」<b>自动汇总</b>，不再手工统计。点「明细」下钻看该供应商全部采购（替代你现在每家一个 .xls）。「批量导入名单」可把你那份供应商名单一次粘入。</p>
       </div>
     </div>
@@ -340,20 +339,20 @@
           <div>
             <div style="font-size:12.5px;color:#475569;margin-bottom:6px">Top 供应商（采购额）</div>
             <table class="mt">
-              <tr><th>供应商</th><th>采购额</th><th>欠款</th></tr>
+              <tbody><tr><th>供应商</th><th>采购额</th><th>欠款</th></tr>
               <tr><td>无锡吉明金属</td><td>¥522,422</td><td style="color:#b91c1c">¥522,422</td></tr>
               <tr><td>无锡锡珑工控</td><td>¥94,670</td><td style="color:#b91c1c">¥94,670</td></tr>
               <tr><td>无锡优正运输</td><td>¥43,730</td><td>¥0</td></tr>
-            </table>
+            </tbody></table>
           </div>
         </div>
         <div style="font-size:12.5px;color:#475569;margin:12px 0 6px">按采购员</div>
         <table class="mt">
-          <tr><th>采购员</th><th>明细数</th><th>采购额</th><th>已付款</th><th>欠款</th></tr>
+          <tbody><tr><th>采购员</th><th>明细数</th><th>采购额</th><th>已付款</th><th>欠款</th></tr>
           <tr><td>李新新</td><td>312</td><td><b>¥1,860,400</b></td><td>¥1,200,000</td><td style="color:#b91c1c">¥660,400</td></tr>
           <tr><td>方步森</td><td>286</td><td><b>¥1,540,900</b></td><td>¥980,000</td><td style="color:#b91c1c">¥560,900</td></tr>
           <tr><td>王芹</td><td>198</td><td><b>¥1,461,000</b></td><td>¥1,030,800</td><td style="color:#b91c1c">¥430,200</td></tr>
-        </table>
+        </tbody></table>
       </div>
     </div>
 
@@ -421,5 +420,6 @@
     setTimeout(function(){URL.revokeObjectURL(a.href)},1000);
   }
 </script>
-</body>
-</html>
+
+
+</body></html>

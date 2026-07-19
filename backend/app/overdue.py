@@ -7,11 +7,13 @@
 import asyncio
 import logging
 from datetime import date, datetime, timezone, timedelta
+from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import models
+from .config import settings
 
 # 业务时区(中国 UTC+8)；messages.created_at 由 func.now() 落 UTC。
 # 幂等与逾期判定统一用业务自然日，避免 UTC/本地日界错位导致重复推送(#78)。
@@ -306,10 +308,98 @@ async def scan_management_todos(db: AsyncSession) -> dict:
     return {"scanned": len(targets), "notified": notified}
 
 
+async def scan_po_arrival_overdue(db: AsyncSession) -> dict:
+    """🆕 采购到期未到货每日提醒：预计到货日期(expected_arrival)已到(含当天)、仍未收货(arrival_date 为空)
+    的采购明细，每天推一次提醒——该明细的采购员(buyer_id) + 采购主管(buyer_lead) + 全体管理层(admin/manager)。
+
+    幂等键 =(biz_type='po_arrival_overdue', biz_id=purchase_item.id, 当日)：同一条同一天只推一次；
+    货到(填了到货日期)即不再命中扫描、自动停推；预计到货留空的明细不提醒。返回 {scanned, notified}。
+    """
+    today = datetime.now(_CN_TZ).date()
+    today_s = today.isoformat()
+    r = await db.execute(
+        select(models.PurchaseItem).where(
+            models.PurchaseItem.expected_arrival.isnot(None),
+            models.PurchaseItem.expected_arrival != "",
+            models.PurchaseItem.expected_arrival <= today_s,   # 到货日当天仍未收货即开始提醒
+            or_(models.PurchaseItem.arrival_date.is_(None),
+                models.PurchaseItem.arrival_date == ""),
+        )
+    )
+    items = list(r.scalars().all())
+    notified = 0
+    for it in items:
+        # 幂等：该明细今日是否已推过（查 messages biz_type=po_arrival_overdue 当日）
+        r2 = await db.execute(
+            select(models.Message.created_at).where(
+                models.Message.biz_type == "po_arrival_overdue",
+                models.Message.biz_id == it.id,
+            )
+        )
+        if any(ts and _cn_date(ts) == today_s for (ts,) in r2.all()):
+            continue
+        try:
+            over_days = (today - date.fromisoformat(it.expected_arrival)).days
+        except (ValueError, TypeError):
+            continue  # 脏数据(非法日期)跳过，避免误推
+        sup = it.supplier.name if it.supplier else "—"
+        po = f"采购单 {it.po_no} " if it.po_no else ""
+        if over_days <= 0:
+            text = (f"【未到货提醒】{po}{it.item_name}（供应商：{sup}）预计今天（{it.expected_arrival}）到货，"
+                    f"目前仍未到货，请尽快跟进。")
+        else:
+            text = (f"【未到货提醒】{po}{it.item_name}（供应商：{sup}）预计 {it.expected_arrival} 到货，"
+                    f"已超期 {over_days} 天仍未到货，请尽快跟进。")
+        # 采购员本人（无归属采购员则只推主管/管理层）+ 采购主管 + 全体管理层(admin/manager)；
+        # 角色扇出排除采购员本人，避免其兼有主管/管理角色时同日收到两条相同文本
+        excl = {it.buyer_id} if it.buyer_id else None
+        if it.buyer_id:
+            await push_message(db, to_user_id=it.buyer_id, kind="warn",
+                               text=text, biz_type="po_arrival_overdue", biz_id=it.id)
+        await push_message(db, to_role="buyer_lead", kind="warn",
+                           text=text, biz_type="po_arrival_overdue", biz_id=it.id,
+                           exclude_user_ids=excl)
+        await push_message(db, to_role="manager", kind="warn",
+                           text=text, biz_type="po_arrival_overdue", biz_id=it.id,
+                           exclude_user_ids=excl)
+        await push_message(db, to_role="admin", kind="warn",
+                           text=text, biz_type="po_arrival_overdue", biz_id=it.id,
+                           exclude_user_ids=excl)
+        notified += 1
+
+    if notified:
+        log.info("[scan_po_arrival_overdue] 推送 %d 条到期未到货提醒（共扫描 %d）", notified, len(items))
+    return {"scanned": len(items), "notified": notified}
+
+
+def _try_acquire_scheduler_lock():
+    """多 worker(uvicorn --workers N)部署时用 flock 保证只有一个进程跑周期扫描：
+    否则 N 个 worker 同时醒来会同时通过 messages 表的当日去重检查(check-then-act 竞态)，
+    同一明细同一天被重复推送 N 份。进程退出锁自动释放；拿不到锁的进程不跑 scheduler，
+    其 HTTP 服务不受影响。返回文件句柄(保持锁)或 None(锁被占用)。"""
+    try:
+        import fcntl   # Unix only；Windows 开发环境退化为不锁（单进程运行无所谓）
+    except ImportError:
+        return "no-lock"
+    lock_dir = Path(settings.files_dir).resolve()
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_dir / ".overdue_scheduler.lock", "w")  # noqa: SIM115 句柄需随进程存活
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    return fh
+
+
 async def overdue_scheduler(interval_hours: int = 12) -> None:
-    """启动期周期任务：每 interval_hours 扫一次（单容器部署用 asyncio 即可）。
+    """启动期周期任务：每 interval_hours 扫一次（多 worker 部署由 flock 保证单实例运行）。
     含：逾期任务提醒 + 尾款到期提醒 + 逾期尾款周催办 + 人事到期提醒
-    + 🆕 管理层待办逾期/待回复提醒（各用独立会话，互不影响）。"""
+    + 管理层待办逾期/待回复提醒 + 🆕 采购到期未到货提醒（各用独立会话，互不影响）。"""
+    _lock = _try_acquire_scheduler_lock()
+    if _lock is None:
+        log.info("[overdue_scheduler] 另一进程已在运行周期扫描，本 worker 跳过（防多实例重复推送）")
+        return
     while True:
         try:
             async with SessionLocal() as db:
@@ -336,4 +426,9 @@ async def overdue_scheduler(interval_hours: int = 12) -> None:
                 await scan_management_todos(db)
         except Exception as e:  # noqa: BLE001
             log.warning("scan_management_todos 失败: %s", e)
+        try:
+            async with SessionLocal() as db:
+                await scan_po_arrival_overdue(db)
+        except Exception as e:  # noqa: BLE001
+            log.warning("scan_po_arrival_overdue 失败: %s", e)
         await asyncio.sleep(interval_hours * 3600)

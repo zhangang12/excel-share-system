@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from .. import models, schemas
 from ..deps import require_roles, get_current_user
+from ..notify import push_message
 from ..utils import write_audit
 
 router = APIRouter(prefix="/api/purchase-mgmt", tags=["采购管理"])
@@ -607,7 +608,7 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         supplier_name=i.supplier.name if i.supplier else "",
         delivery_date=i.delivery_date, contract_no=i.contract_no,
         project_code=i.project_code, delivery_note_no=i.delivery_note_no,
-        arrival_date=i.arrival_date,
+        arrival_date=i.arrival_date, expected_arrival=i.expected_arrival,
         item_name=i.item_name, spec=i.spec, brand=i.brand, qty=i.qty, unit_price=i.unit_price,
         received_amount=i.received_amount or 0,
         invoice_date=i.invoice_date, invoice_no=i.invoice_no, tax_rate=i.tax_rate,
@@ -701,6 +702,7 @@ async def create_purchase_order(
             po_no=po_no,
             supplier_id=body.supplier_id,
             delivery_date=body.delivery_date,
+            expected_arrival=(body.expected_arrival or None),   # 🆕 预计到货（整单一个，选填）
             contract_no=body.contract_no,
             project_code=(ln.project_code or body.project_code),
             item_name=ln.item_name.strip(),
@@ -738,6 +740,7 @@ _ALL_ORDER_DATE_COLS = ("订购日期", "下单日期", "发出日期")
 _ALL_ARRIVAL_COLS = ("到货日期", "到料日期")
 _ALL_WH_SIGN_COLS = ("仓库签字", "仓库")
 _ALL_WH_LOC_COLS = ("库位",)   # 🆕 #250 收货时把库位也回写清单（列不存在的表自动跳过）
+_ALL_EXPECTED_ARRIVAL_COLS = ("预计到货",)   # 🆕 下单时把预计到货日期回写清单（列不存在的表自动跳过）
 
 
 async def _sheet_fieldmap(db: AsyncSession, sheet_id: int) -> dict:
@@ -745,9 +748,27 @@ async def _sheet_fieldmap(db: AsyncSession, sheet_id: int) -> dict:
     return {f.name: str(f.id) for f in fr.scalars().all()}
 
 
+async def _ensure_expected_arrival_field(db: AsyncSession, sheet_id: int, name2id: dict) -> Optional[str]:
+    """清单缺「预计到货」列时当场补建（存量空表用旧版 Excel 重新导入后会缺列，
+    不补的话下单回写会静默丢弃预计到货日期）。返回 field_id 字符串。"""
+    fr = await db.execute(select(models.Field).where(models.Field.datasheet_id == sheet_id))
+    flds = fr.scalars().all()
+    for f in flds:
+        if (f.name or "").strip() == "预计到货":
+            name2id["预计到货"] = str(f.id)
+            return str(f.id)
+    mx = max((f.sort_order or 0) for f in flds) if flds else 0
+    fld = models.Field(datasheet_id=sheet_id, name="预计到货", type="date", sort_order=mx + 1)
+    db.add(fld)
+    await db.flush()
+    name2id["预计到货"] = str(fld.id)
+    return str(fld.id)
+
+
 async def _writeback_sheet_row(db: AsyncSession, sheet_id: int, record_id: int, updates: dict,
                                *, only_if_empty: Optional[set] = None) -> None:
-    """把 {列名: 值} 写进某数据表某行 values（按列名匹配 field_id）；列不存在则跳过。
+    """把 {列名: 值} 写进某数据表某行 values（按列名匹配 field_id）；列不存在则跳过
+    （「预计到货」列例外：缺列时自动补建，见 _ensure_expected_arrival_field）。
     only_if_empty 里的列名仅在当前单元格为空时才写（不覆盖已手填值，#255 采购负责人用）。"""
     if not sheet_id or not record_id:
         return
@@ -761,6 +782,8 @@ async def _writeback_sheet_row(db: AsyncSession, sheet_id: int, record_id: int, 
     hit = False
     for col, val in updates.items():
         fid = name2id.get(col)
+        if not fid and col in _ALL_EXPECTED_ARRIVAL_COLS:
+            fid = await _ensure_expected_arrival_field(db, sheet_id, name2id)
         if not fid or val is None:
             continue
         if col in only_if_empty:
@@ -1018,6 +1041,7 @@ async def create_order_from_list(
         db.add(models.PurchaseItem(
             po_no=po_no, source_sheet_id=l.source_sheet_id, source_record_id=l.source_record_id,
             supplier_id=body.supplier_id, delivery_date=body.delivery_date,
+            expected_arrival=(body.expected_arrival or None),   # 🆕 预计到货（选填，到期未到货每日提醒）
             project_code=(body.project_code or sheet_code_map.get(l.source_sheet_id)),
             item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=(l.payment_method or body.payment_method),
@@ -1029,6 +1053,9 @@ async def create_order_from_list(
             wb = {"采购负责人": uname}
             for c in _ALL_ORDER_DATE_COLS:
                 wb[c] = (body.delivery_date or today)
+            # 🆕 预计到货日期回写清单「预计到货」列（未填则跳过不回写）
+            for c in _ALL_EXPECTED_ARRIVAL_COLS:
+                wb[c] = (body.expected_arrival or None)
             # 🆕 #255：采购负责人若已在表格手填，则保留、不被下单人覆盖；下单日期照常回写
             await _writeback_sheet_row(db, l.source_sheet_id, l.source_record_id, wb,
                                        only_if_empty={"采购负责人"})
@@ -1068,6 +1095,7 @@ async def create_kit_order_from_list(
     item = models.PurchaseItem(
         po_no=po_no, source_sheet_id=body.source_sheet_id,
         supplier_id=body.supplier_id, delivery_date=body.delivery_date,
+        expected_arrival=(body.expected_arrival or None),   # 🆕 预计到货（选填）
         project_code=body.project_code,
         item_name=body.kit_name.strip(), spec=f"成套（{len(kit_parts)}项零件）",
         qty=qty, unit_price=unit_price, received_amount=round(body.kit_total, 2),
@@ -1086,6 +1114,9 @@ async def create_kit_order_from_list(
                 wb = {"采购负责人": uname}
                 for c in _ALL_ORDER_DATE_COLS:
                     wb[c] = (body.delivery_date or today)
+                # 🆕 预计到货日期回写清单「预计到货」列（未填则跳过不回写）
+                for c in _ALL_EXPECTED_ARRIVAL_COLS:
+                    wb[c] = (body.expected_arrival or None)
                 # 🆕 #255：采购负责人若已手填则保留、不被下单人覆盖
                 await _writeback_sheet_row(db, body.source_sheet_id, p.source_record_id, wb,
                                            only_if_empty={"采购负责人"})
@@ -1137,7 +1168,7 @@ async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: m
 # 模板列（顺序即模板列顺序；* 为必填）。解析时按表头名匹配，允许调整列序。
 _IMPORT_COLS = [
     "供应商名称*", "采购单号", "下单日期", "订单编号", "名称*", "规格型号",
-    "数量", "单价", "合计金额", "送货单号", "到货日期", "付款方式",
+    "数量", "单价", "合计金额", "送货单号", "预计到货", "到货日期", "付款方式",
     "开票日期", "开票金额", "税率", "对账状态", "备注",
 ]
 
@@ -1184,9 +1215,9 @@ async def import_template(
         c.fill = hfill
         c.alignment = Alignment(horizontal="center", vertical="center")
     ws.append(["无锡示例金属制品有限公司", "CG20260101-001", "2026-01-05", "2026-046",
-               "轴承座", "SKF-6205", 4, 35, 140, "SF1234", "2026-01-08", "转账",
+               "轴承座", "SKF-6205", 4, 35, 140, "SF1234", "2026-01-07", "2026-01-08", "转账",
                "", "", "13%", "待对账", "示例行，导入前请删除"])
-    widths = [26, 16, 12, 12, 18, 16, 8, 10, 12, 14, 12, 10, 12, 12, 8, 10, 20]
+    widths = [26, 16, 12, 12, 18, 16, 8, 10, 12, 14, 12, 12, 10, 12, 12, 8, 10, 20]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
     ws.freeze_panes = "A2"
@@ -1202,6 +1233,7 @@ async def import_template(
         ["5. 付款方式：现金 / 转账 / 月结 / 承兑 / 预付（也可自定义）。"],
         ["6. 对账状态：待对账 / 已对账 / 已开票（留空默认待对账）。"],
         ["7. 第 2 行为示例，导入前请删除。可一次导入多个供应商、多条明细。"],
+        ["8. 预计到货（选填）：填了之后，到期仍未收货会每天提醒采购员/采购主管和管理层。"],
     ]:
         ws2.append(line)
     ws2["A1"].font = Font(bold=True, size=13)
@@ -1281,6 +1313,7 @@ async def import_items(
             spec=_norm_str(cell(row, "规格型号")),
             qty=qty, unit_price=unit_price, received_amount=recv or 0,
             delivery_note_no=_norm_str(cell(row, "送货单号")),
+            expected_arrival=_norm_date(cell(row, "预计到货")),   # 🆕 选填；填了进入到期未到货每日提醒
             arrival_date=_norm_date(cell(row, "到货日期")),
             payment_method=_norm_str(cell(row, "付款方式")),
             invoice_date=_norm_date(cell(row, "开票日期")),
@@ -1434,8 +1467,13 @@ async def update_item(
     if _buyer_restricted(current) and item.buyer_id != current.id:
         raise HTTPException(403, "无权编辑他人明细")
     data = body.model_dump(exclude_unset=True)
+    data.pop("arrival_date", None)   # 防御：到货日期只允许仓库收货接口写入，采购编辑不能碰（防绕过收货停提醒）
     if "custom_values" in data:
         data["custom_values"] = await _clean_custom(db, data.get("custom_values"))
+    # 🆕 预计到货改期留痕：回写来源清单「预计到货」列 + 通知主管/管理层（防"改期消音"无人知晓）
+    old_ea = item.expected_arrival or None
+    ea_touched = "expected_arrival" in data
+    new_ea = ((data.get("expected_arrival") or "").strip() or None) if ea_touched else old_ea
     for k, v in data.items():
         setattr(item, k, v)
     if ("qty" in data or "unit_price" in data) and "received_amount" not in data:
@@ -1450,8 +1488,21 @@ async def update_item(
         for t in tr.scalars().all():
             t.unit_price = item.unit_price
             t.amount = round((t.qty or 0) * item.unit_price, 4)
+    if ea_touched and new_ea != old_ea and item.source_sheet_id and item.source_record_id:
+        # 回写来源清单「预计到货」列，保持项目详单与采购单一致（清空日期则清空单元格）
+        wb = {c: (new_ea or "") for c in _ALL_EXPECTED_ARRIVAL_COLS}
+        await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
     _maybe_auto_reconcile(item)
     await db.commit()
+    if ea_touched and new_ea != old_ea:
+        # 改期留痕通知（事务提交后再推，避免幻影通知）；排除操作人本人
+        uname = current.full_name or current.username
+        text = (f"【预计到货变更】采购单 {item.po_no or '（无单号）'}「{item.item_name}」预计到货日期"
+                f"由 {old_ea or '未填'} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
+        for role in ("buyer_lead", "manager", "admin"):
+            await push_message(db, to_role=role, kind="warn", text=text,
+                               biz_type="po_expected_changed", biz_id=item.id,
+                               exclude_user_ids={current.id})
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id == iid))
     return _item_out(r.scalar_one())
 

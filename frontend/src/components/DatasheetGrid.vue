@@ -386,9 +386,10 @@ function isProgressField(f: DataField): boolean {
 const PROGRESS_OPTIONS = ['完成', '进行中']
 
 // 🆕 #94 日期列：按字段名含「日期」识别（订购日期/到货日期/交货日期 等），
+// 或字段类型为 date（如「预计到货」——名字不带"日期"但本质是日期），
 // 单元格改用日期选择器选填，统一为 YYYY-MM-DD，避免手输格式不一
 function isDateField(f: DataField): boolean {
-  return (f.name || '').includes('日期')
+  return f.type === 'date' || (f.name || '').includes('日期')
 }
 function onDatePickerMount(el: any) {
   if (!el) return

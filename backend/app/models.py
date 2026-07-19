@@ -606,6 +606,7 @@ class PurchaseItem(Base):
     stock_location: Mapped[Optional[str]] = mapped_column(String(64))      # 🆕 库位（采购下单填,整单一个;收货按此入库）
     delivery_note_no: Mapped[Optional[str]] = mapped_column(String(64))    # 送货单号（仓库收货填）
     arrival_date: Mapped[Optional[str]] = mapped_column(String(10))        # 🆕 到货日期（仓库收货填）
+    expected_arrival: Mapped[Optional[str]] = mapped_column(String(10))    # 🆕 预计到货日期（采购下单填，选填；到期未到货每日提醒）
     item_name: Mapped[str] = mapped_column(String(128))
     spec: Mapped[Optional[str]] = mapped_column(String(255))
     brand: Mapped[Optional[str]] = mapped_column(String(64))  # 🆕 品牌（下单时逐行选/填，自由输入）

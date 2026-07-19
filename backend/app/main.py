@@ -152,6 +152,15 @@ def create_app() -> FastAPI:
         from .overdue import scan_management_todos
         return await scan_management_todos(db)
 
+    # 🆕 采购到期未到货扫描手动/cron 触发（管理层）：预计到货已过且未收货 → 每日提醒
+    @app.post("/api/internal/po-arrival-scan")
+    async def po_arrival_scan_now(
+        current=Depends(require_admin_or_manager),
+        db=Depends(get_db),
+    ):
+        from .overdue import scan_po_arrival_overdue
+        return await scan_po_arrival_overdue(db)
+
     # ===== 演示模式：托管前端静态资源 =====
     static_path = Path(settings.static_dir).resolve()
     if static_path.exists():

@@ -100,6 +100,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "purchase_items": [
         ("is_stock", "BOOLEAN DEFAULT TRUE"),      # 🆕 备货标记(存量默认只入库,保持旧行为)
         ("stock_location", "VARCHAR(64)"),         # 🆕 库位(采购下单填,收货按此入库)
+        ("expected_arrival", "VARCHAR(10)"),       # 🆕 预计到货日期(采购下单填,选填;到期未到货每日提醒)
     ],
     "wh_materials": [
         ("category_id", "INTEGER"),                # 🆕 物料编码分类(细分类叶子)
@@ -629,7 +630,7 @@ def _tpl_field_type(name: str) -> str:
     n = (name or '').strip()
     if n == '进度':
         return 'select'
-    if n.endswith('日期'):
+    if n.endswith('日期') or n == '预计到货':
         return 'date'
     if n == '数量':
         return 'number'
@@ -1407,6 +1408,33 @@ async def add_location_column_to_known_sheets(db: AsyncSession) -> dict:
     return {"added": added}
 
 
+async def add_expected_arrival_column_to_purchase_sheets(db: AsyncSession) -> dict:
+    """🆕 采购预计到货：给存量项目的 5 张采购来源表（标准件清单/电工采购单/不锈钢原料下料单/
+    外协加工/激光件清单）末尾补「预计到货」列（date 型，与该表到货/到料日期列一致）。
+    新建项目由模板自带。钣金装配不下采购单，不补。
+    幂等：已有同名字段的表跳过。追加在末尾，不影响 Excel 按位置导入的映射。"""
+    from .sheet_templates import ELEC_PO_SHEET_NAME
+
+    names = ["标准件清单", "不锈钢原料下料单", "外协加工", "激光件清单", ELEC_PO_SHEET_NAME]
+    sheets = (await db.execute(select(models.Datasheet).where(
+        models.Datasheet.name.in_(names)))).scalars().all()
+    added = 0
+    for ds in sheets:
+        flds = (await db.execute(select(models.Field).where(
+            models.Field.datasheet_id == ds.id))).scalars().all()
+        if not flds:
+            continue   # 空表(未导入)不补,建列由导入/模板流程负责
+        if any((f.name or "").strip() == "预计到货" for f in flds):
+            continue
+        mx = max((f.sort_order or 0) for f in flds)
+        db.add(models.Field(datasheet_id=ds.id, name="预计到货", type="date", sort_order=mx + 1))
+        added += 1
+    if added:
+        await db.commit()
+        log.info("[add_expected_arrival_column_to_purchase_sheets] 为 %d 张采购来源表补「预计到货」列", added)
+    return {"added": added}
+
+
 async def fix_elec_po_item_names(db: AsyncSession) -> dict:
     """🆕 #196：修复「电工采购单」'项目'列被写成项目编号的存量行。
 
@@ -2134,6 +2162,10 @@ async def run_all(db: AsyncSession) -> None:
         await add_location_column_to_known_sheets(db)   # 🆕 #195 存量进度表补「库位」列
     except Exception as e:
         log.warning("add_location_column_to_known_sheets failed: %s", e)
+    try:
+        await add_expected_arrival_column_to_purchase_sheets(db)   # 🆕 存量 5 张采购来源表补「预计到货」列
+    except Exception as e:
+        log.warning("add_expected_arrival_column_to_purchase_sheets failed: %s", e)
     try:
         await close_legacy_electric_done_orders(db)   # 🆕 #197 止损:卡在旧二步流的电工单置完成
     except Exception as e:

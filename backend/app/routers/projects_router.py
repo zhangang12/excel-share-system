@@ -16,7 +16,7 @@ def _template_field_type(name: str) -> str:
     """按字段名推断模板字段类型（用于新建项目时预置空数据表）。"""
     if name == '进度':
         return 'select'
-    if name.endswith('日期'):
+    if name.endswith('日期') or name == '预计到货':
         return 'date'
     if name == '数量':
         return 'number'
