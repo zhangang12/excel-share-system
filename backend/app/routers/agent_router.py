@@ -1,8 +1,9 @@
 """🆕 Agent 助手（只读问数 POC，仅 admin/manager 可用）。
 
-- POST /api/agent/chat  {message, history?} → {reply, fallback, sources}
+- POST /api/agent/chat  {message, history?, model?} → {reply, fallback, sources, suggestions}
   - history 可选，最多保留最近 10 轮（20 条）
   - sources 列出本轮实际调用的数据工具（前端小字展示「数据来源」）
+  - suggestions 为追问建议（按实际调用的工具映射，前端渲染为可点击 chips）
 - 大脑：OpenAI 兼容接口 function calling（30s 超时）。LLM 配置生效优先级 =
   数据库 app_settings（admin 在页面配置，GET/PUT /api/agent/config）> settings(.env) 默认值；
   api_key 任何接口/日志都不输出明文
@@ -108,6 +109,23 @@ async def tool_po_arriving(db: AsyncSession, days: int = 3) -> dict:
     } for it in r.scalars().all() if _parse_d(it.expected_arrival)]
     rows.sort(key=lambda x: x["expected_arrival"])
     return {"count": len(rows), "days": days, "items": rows[:20]}
+
+
+async def tool_po_overdue_by_supplier(db: AsyncSession) -> dict:
+    """到期未到货按供应商聚合：每个供应商的未收货条数、最大超期天数、涉及项目（口径同 tool_po_arrival_overdue）。"""
+    d = await tool_po_arrival_overdue(db, min_overdue_days=0)
+    agg: dict[str, dict] = {}
+    for it in d["items"]:
+        a = agg.setdefault(it["supplier"], {"supplier": it["supplier"], "count": 0,
+                                            "max_over_days": 0, "projects": set()})
+        a["count"] += 1
+        a["max_over_days"] = max(a["max_over_days"], it["over_days"])
+        if it.get("project_code"):
+            a["projects"].add(it["project_code"])
+    rows = sorted(agg.values(), key=lambda x: (-x["max_over_days"], -x["count"]))
+    for a in rows:
+        a["projects"] = sorted(a["projects"])
+    return {"count": len(rows), "item_total": d["count"], "suppliers": rows[:20]}
 
 
 async def tool_balance_due(db: AsyncSession) -> dict:
@@ -268,10 +286,32 @@ TOOL_LABELS = {
     "morning_report": "晨报聚合",
     "po_arrival_overdue": "采购到期未到货",
     "po_arriving": "预计到货",
+    "po_overdue_by_supplier": "未到货·按供应商汇总",
     "balance_due": "尾款到期清单",
     "overdue_orders": "部门逾期任务",
     "project_status": "项目进度查询",
 }
+
+# 追问建议：按实际调用的工具映射固定建议（去重保序，取前 3 条）
+_TOOL_SUGGESTIONS = {
+    "morning_report": ["采购未到货明细", "尾款到期清单", "部门逾期任务"],
+    "po_arrival_overdue": ["按供应商汇总未到货", "未来 7 天到货", "今日晨报"],
+    "po_arriving": ["采购未到货", "今日晨报"],
+    "po_overdue_by_supplier": ["采购未到货明细", "未来 7 天到货"],
+    "balance_due": ["今日晨报", "部门逾期任务"],
+    "overdue_orders": ["今日晨报", "采购未到货"],
+    "project_status": ["该项目未到货采购", "尾款到期", "今日晨报"],
+}
+_DEFAULT_SUGGESTIONS = ["今日晨报", "采购未到货", "尾款到期"]
+
+
+def _suggestions_for(tool_names) -> list[str]:
+    out: list[str] = []
+    for n in tool_names:
+        for s in _TOOL_SUGGESTIONS.get(n, []):
+            if s not in out:
+                out.append(s)
+    return (out or _DEFAULT_SUGGESTIONS)[:3]
 
 TOOL_SCHEMAS = [
     {"type": "function", "function": {
@@ -288,6 +328,10 @@ TOOL_SCHEMAS = [
         "description": "未来 N 天预计到货的采购明细（默认 3 天）",
         "parameters": {"type": "object", "properties": {
             "days": {"type": "integer", "description": "未来天数，默认 3"}}}}},
+    {"type": "function", "function": {
+        "name": "po_overdue_by_supplier",
+        "description": "到期未到货按供应商聚合：每家供应商的未收货条数、最大超期天数、涉及项目",
+        "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "balance_due",
         "description": "尾款到期/逾期清单（尾款>0 且约定日期在未来 14 天内或已逾期）",
@@ -313,6 +357,8 @@ async def _run_tool(name: str, args: dict, db: AsyncSession):
         return await tool_po_arrival_overdue(db, int(args.get("min_overdue_days") or 0))
     if name == "po_arriving":
         return await tool_po_arriving(db, int(args.get("days") or 3))
+    if name == "po_overdue_by_supplier":
+        return await tool_po_overdue_by_supplier(db)
     if name == "balance_due":
         return await tool_balance_due(db)
     if name == "overdue_orders":
@@ -324,12 +370,13 @@ async def _run_tool(name: str, args: dict, db: AsyncSession):
 
 # ==================== 大脑：OpenAI 兼容 function calling ====================
 
-_SYSTEM_PROMPT = """你是制造业 ERP 项目管理系统内置的数据助手（只读）。严格遵守：
+_SYSTEM_PROMPT = """你是制造业 ERP 项目管理系统内置的数据分析助手（只读），当前服务对象：「{user_name}」（角色：{roles}）。严格遵守：
 1. 只能根据工具返回的真实数据回答，严禁编造任何数字、日期、金额、项目编号、人名；
 2. 工具没有返回的信息就如实说"系统里查不到"，不要推测、不要举例；
-3. 回答用中文，简洁条目化（每项一行），金额保留原始数值，日期原样引用；
-4. 需要数据时先调用工具，可连续调用多个；拿到工具结果后直接总结，不要重复调用同一工具；
-5. 你只能查询，不能修改任何数据；用户要求改数据时明确拒绝。
+3. 回答用中文、Markdown 格式：先一句话结论概览，明细数据（≥2 条）一律用 Markdown 表格呈现，最后给 1-2 条可执行的建议或跟进方向；
+4. 表格列从工具字段里挑最有用的 4-6 列（如物料/供应商/预计到货/超期天数/项目），超期严重的用 **加粗** 标出；金额保留原始数值，日期原样引用；
+5. 需要数据时先调用工具，可连续调用多个；拿到工具结果后直接总结，不要重复调用同一工具；
+6. 你只能查询，不能修改任何数据；用户要求改数据时明确拒绝。
 今天日期：{today}（中国时区）。"""
 
 
@@ -356,10 +403,13 @@ async def _llm_request(messages: list[dict], model: str, cfg: dict) -> dict:
 
 
 async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
-                         model: str, cfg: dict):
-    """LLM 主路径：带 tools 请求 → 执行 tool_calls 回灌 → 再请模型总结。返回 (reply, sources)。"""
-    sources: list[str] = []
-    messages = ([{"role": "system", "content": _SYSTEM_PROMPT.format(today=_today().isoformat())}]
+                         model: str, cfg: dict, user: models.User):
+    """LLM 主路径：带 tools 请求 → 执行 tool_calls 回灌 → 再请模型总结。返回 (reply, 调用过的工具名列表)。"""
+    tool_names: list[str] = []
+    roles = "、".join(sorted(user.role_codes)) if getattr(user, "role_codes", None) else "—"
+    sys_prompt = _SYSTEM_PROMPT.format(today=_today().isoformat(),
+                                       user_name=_uname(user), roles=roles)
+    messages = ([{"role": "system", "content": sys_prompt}]
                 + history + [{"role": "user", "content": message}])
     for _ in range(4):  # 工具轮次上限，防死循环
         data = await _llm_request(messages, model, cfg)
@@ -369,7 +419,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
             content = (msg.get("content") or "").strip()
             if not content:
                 raise RuntimeError("LLM 返回空内容")
-            return content, sources
+            return content, tool_names
         messages.append(msg)  # 含 tool_calls 的 assistant 消息原样回灌
         for tc in tool_calls[:4]:
             fn = (tc.get("function") or {})
@@ -379,8 +429,8 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
             except json.JSONDecodeError:
                 args = {}
             result = await _run_tool(name, args, db)
-            if name in TOOL_LABELS and TOOL_LABELS[name] not in sources:
-                sources.append(TOOL_LABELS[name])
+            if name in TOOL_LABELS and name not in tool_names:
+                tool_names.append(name)
             messages.append({
                 "role": "tool", "tool_call_id": tc.get("id"),
                 "content": json.dumps(result, ensure_ascii=False, default=str),
@@ -406,124 +456,162 @@ def _fmt_days(days: int) -> str:
 
 
 def _po_overdue_text(d: dict) -> str:
-    lines = [f"到期未到货采购共 {d['count']} 条" + ("（仅列前 20 条）：" if d["count"] > 20 else "：")]
-    for it in d["items"]:
-        po = f"采购单 {it['po_no']}，" if it.get("po_no") else ""
-        proj = f"，项目 {it['project_code']}" if it.get("project_code") else ""
-        when = "预计今天到货" if it["over_days"] == 0 else f"预计 {it['expected_arrival']} 到货，已超期 {it['over_days']} 天"
-        lines.append(f"- {it['item_name']}（{po}供应商：{it['supplier']}{proj}）{when}")
     if d["count"] == 0:
-        lines.append("- 暂无到期未到货的采购明细")
+        return "**到期未到货采购：0 条** ✅\n\n目前没有到期仍未收货的采购明细。"
+    head = f"**到期未到货采购共 {d['count']} 条**"
+    if d["count"] > 20:
+        head += "（仅列超期最严重的前 20 条，完整清单见「采购管理」）"
+    lines = [head, "", "| 物料 | 供应商 | 采购单号 | 预计到货 | 超期 | 项目 | 采购员 |",
+             "|---|---|---|---|---|---|---|"]
+    for it in d["items"]:
+        over = "今天到期" if it["over_days"] == 0 else f"**⚠ {it['over_days']} 天**"
+        lines.append(f"| {it['item_name']} | {it['supplier']} | {it.get('po_no') or '—'} "
+                     f"| {it['expected_arrival']} | {over} | {it.get('project_code') or '—'} | {it['buyer']} |")
+    return "\n".join(lines)
+
+
+def _po_arriving_text(d: dict) -> str:
+    if d["count"] == 0:
+        return f"**未来 {d['days']} 天预计到货：0 条** ✅"
+    lines = [f"**未来 {d['days']} 天预计到货共 {d['count']} 条**"
+             + ("（仅列前 20 条）" if d["count"] > 20 else ""), "",
+             "| 物料 | 供应商 | 采购单号 | 预计到货 | 项目 |", "|---|---|---|---|---|"]
+    for it in d["items"]:
+        when = "今天" if it["in_days"] == 0 else f"{it['in_days']} 天后"
+        lines.append(f"| {it['item_name']} | {it['supplier']} | {it.get('po_no') or '—'} "
+                     f"| {it['expected_arrival']}（{when}） | {it.get('project_code') or '—'} |")
+    return "\n".join(lines)
+
+
+def _po_by_supplier_text(d: dict) -> str:
+    if d["count"] == 0:
+        return "**到期未到货按供应商汇总：0 家** ✅"
+    lines = [f"**{d['count']} 家供应商存在到期未到货，共 {d['item_total']} 条**"
+             + ("（仅列前 20 家）" if d["count"] > 20 else ""), "",
+             "| 供应商 | 未到货条数 | 最大超期 | 涉及项目 |", "|---|---|---|---|"]
+    for s in d["suppliers"]:
+        over = "未超期（今天到期）" if s["max_over_days"] == 0 else f"**⚠ {s['max_over_days']} 天**"
+        lines.append(f"| {s['supplier']} | {s['count']} | {over} | {'、'.join(s['projects']) or '—'} |")
     return "\n".join(lines)
 
 
 def _balance_text(d: dict) -> str:
-    lines = [f"尾款到期（14 天内）或已逾期共 {d['count']} 条" + ("（仅列前 20 条）：" if d["count"] > 20 else "：")]
-    for it in d["items"]:
-        lines.append(f"- {it['project_code']} {it['project_name']}：尾款 {_fmt_money(it['balance'])}，"
-                     f"约定 {it['balance_date']}（{_fmt_days(it['days'])}），销售：{it['sales']}")
     if d["count"] == 0:
-        lines.append("- 暂无到期或逾期的尾款")
+        return "**尾款到期/逾期：0 条** ✅\n\n未来 14 天内没有到期尾款，也没有已逾期未收的。"
+    lines = [f"**尾款到期（14 天内）或已逾期共 {d['count']} 条**"
+             + ("（仅列前 20 条）" if d["count"] > 20 else ""), "",
+             "| 项目 | 客户 | 尾款 | 约定日期 | 状态 | 销售 |", "|---|---|---|---|---|---|"]
+    for it in d["items"]:
+        status = _fmt_days(it["days"])
+        if it["days"] < 0:
+            status = f"**⚠ {status}**"
+        lines.append(f"| {it['project_code']} {it['project_name']} | {it.get('customer') or '—'} "
+                     f"| {_fmt_money(it['balance'])} | {it['balance_date']} | {status} | {it['sales']} |")
     return "\n".join(lines)
 
 
 def _overdue_orders_text(d: dict) -> str:
-    lines = [f"部门逾期任务共 {d['count']} 条" + ("（仅列前 20 条）：" if d["count"] > 20 else "：")]
-    for it in d["items"]:
-        lines.append(f"- {it['dept_name']} {it['project_code']}：预计 {it['due_date']} 完成，"
-                     f"已逾期 {it['over_days']} 天（负责人：{it['worker']}）")
     if d["count"] == 0:
-        lines.append("- 暂无逾期任务")
+        return "**部门逾期任务：0 条** ✅"
+    lines = [f"**部门逾期任务共 {d['count']} 条**"
+             + ("（仅列逾期最严重的前 20 条）" if d["count"] > 20 else ""), "",
+             "| 部门 | 项目 | 预计完成 | 已逾期 | 负责人 |", "|---|---|---|---|---|"]
+    for it in d["items"]:
+        lines.append(f"| {it['dept_name']} | {it['project_code']} | {it['due_date']} "
+                     f"| **⚠ {it['over_days']} 天** | {it['worker']} |")
     return "\n".join(lines)
 
 
 def _morning_text(d: dict) -> str:
-    lines = [f"【今日晨报 {d['today']}】"]
+    def _sec(title: str, count: int) -> str:
+        return f"**{title}：{count} 条**" + (" ✅" if count == 0 else "")
+
+    lines = [f"## 📋 今日晨报（{d['today']}）", ""]
     s = d["po_arrival_overdue"]
-    lines.append(f"一、采购到期未到货：{s['count']} 条")
+    lines.append(_sec("一、采购到期未到货", s["count"]))
     for it in s["top"]:
-        lines.append(f"  - {it['item_name']}（供应商：{it['supplier']}）预计 {it['expected_arrival']} 到货，"
-                     + ("今天到期" if it["over_days"] == 0 else f"已超期 {it['over_days']} 天"))
+        over = "今天到期" if it["over_days"] == 0 else f"**⚠ 已超期 {it['over_days']} 天**"
+        lines.append(f"- {it['item_name']}（{it['supplier']}）预计 {it['expected_arrival']}，{over}")
     s = d["overdue_orders"]
-    lines.append(f"二、部门逾期任务：{s['count']} 条")
+    lines += ["", _sec("二、部门逾期任务", s["count"])]
     for it in s["top"]:
-        lines.append(f"  - {it['dept_name']} {it['project_code']} 已逾期 {it['over_days']} 天（{it['worker']}）")
+        lines.append(f"- {it['dept_name']} {it['project_code']}，**⚠ 逾期 {it['over_days']} 天**（{it['worker']}）")
     s = d["balance_due"]
-    lines.append(f"三、尾款到期/逾期：{s['count']} 条")
+    lines += ["", _sec("三、尾款到期/逾期", s["count"])]
     for it in s["top"]:
-        lines.append(f"  - {it['project_code']} 尾款 {_fmt_money(it['balance'])}，{_fmt_days(it['days'])}")
+        lines.append(f"- {it['project_code']} 尾款 {_fmt_money(it['balance'])}，{_fmt_days(it['days'])}")
     s = d["hr_due"]
-    lines.append(f"四、人事到期：{s['count']} 条")
+    lines += ["", _sec("四、人事到期", s["count"])]
     for it in s["top"]:
-        lines.append(f"  - {it['name']}（{it['dept']}）{it['kind']} {it['date']}（{_fmt_days(it['days'])}）")
+        lines.append(f"- {it['name']}（{it['dept']}）{it['kind']} {it['date']}（{_fmt_days(it['days'])}）")
     return "\n".join(lines)
 
 
 def _project_text(d: dict) -> str:
     if not d.get("found"):
         return f"系统里查不到项目编号「{d['code']}」，请核对编号后重试。"
-    lines = [f"【项目 {d['code']} {d['name']}】" + ("（已删除）" if d.get("is_deleted") else ""),
-             f"状态：{d['status']}；负责人：{d['manager']}"]
-    lines.append(f"各部门任务（{len(d['dept_orders'])} 条）：")
-    for o in d["dept_orders"]:
-        segs = [f"  - {o['dept_name']}：{o['status']}（负责人：{o['worker']}"]
-        if o.get("due_date"):
-            segs.append(f"，预计 {o['due_date']} 完成")
-        if o.get("done_date"):
-            segs.append(f"，实际 {o['done_date']} 完成")
-        lines.append("".join(segs) + "）")
-    if not d["dept_orders"]:
-        lines.append("  - 暂无部门任务单")
-    lines.append(f"未到货采购项：{d['po_pending_count']} 项")
+    lines = [f"### 项目 {d['code']} {d['name']}" + ("（已删除）" if d.get("is_deleted") else ""), "",
+             f"- 状态：**{d['status']}**；负责人：{d['manager']}"]
+    lines.append(f"\n**各部门任务（{len(d['dept_orders'])} 条）**")
+    if d["dept_orders"]:
+        lines += ["", "| 部门 | 状态 | 预计完成 | 实际完成 | 负责人 |", "|---|---|---|---|---|"]
+        for o in d["dept_orders"]:
+            lines.append(f"| {o['dept_name']} | {o['status']} | {o.get('due_date') or '—'} "
+                         f"| {o.get('done_date') or '—'} | {o['worker']} |")
+    else:
+        lines.append("\n- 暂无部门任务单")
+    lines.append(f"\n**未到货采购项：{d['po_pending_count']} 项**")
     for it in d["po_pending"]:
         over = ""
         if it.get("over_days") is not None and it["over_days"] > 0:
-            over = f"，已超期 {it['over_days']} 天"
-        exp = f"，预计 {it['expected_arrival']} 到货" if it.get("expected_arrival") else "，未填预计到货"
-        lines.append(f"  - {it['item_name']}（供应商：{it['supplier']}{exp}{over}）")
+            over = f"，**⚠ 已超期 {it['over_days']} 天**"
+        exp = f"预计 {it['expected_arrival']}" if it.get("expected_arrival") else "未填预计到货"
+        lines.append(f"- {it['item_name']}（{it['supplier']}，{exp}{over}）")
     led = d.get("ledger")
+    lines.append("\n**回款/尾款**")
     if led:
         bal = led["balance"] or 0
         if bal > 0:
             when = _fmt_days(led["balance_days"]) if led.get("balance_days") is not None else "未约定日期"
-            lines.append(f"尾款：{_fmt_money(bal)} 未收（约定 {led.get('balance_date') or '—'}，{when}）；"
+            lines.append(f"- 尾款 **{_fmt_money(bal)}** 未收（约定 {led.get('balance_date') or '—'}，{when}）；"
                          f"合同额 {_fmt_money(led['amount'])}，客户：{led.get('customer') or '—'}")
         else:
-            lines.append(f"尾款：已结清；合同额 {_fmt_money(led['amount'])}，客户：{led.get('customer') or '—'}")
+            lines.append(f"- 尾款已结清；合同额 {_fmt_money(led['amount'])}，客户：{led.get('customer') or '—'}")
     else:
-        lines.append("尾款：无销售台账记录")
+        lines.append("- 无销售台账记录")
     return "\n".join(lines)
 
 
 _CAPABILITY_TEXT = """我是 ERP 数据助手（只读），所有数字都来自系统实时查询。目前可以回答：
-- 「今日晨报」：采购未到货 / 逾期任务 / 尾款 / 人事到期一览
-- 「采购未到货」：到期仍未收货的采购明细
-- 「未来几天到货」：预计到货的采购明细
-- 「尾款到期」：14 天内到期或已逾期的尾款
-- 「逾期任务」：各部门逾期未完成任务
-- 单项目进度：消息里带上项目编号，如「TH-2501 进度」"""
+- **「今日晨报」**：采购未到货 / 逾期任务 / 尾款 / 人事到期一览（也可以说「今天要盯什么」）
+- **「采购未到货」**：到期仍未收货的采购明细；「哪个供应商拖期」→ 按供应商汇总
+- **「未来一周到货」**：即将到货的采购明细
+- **「尾款到期」**：14 天内到期或已逾期的尾款（也可以说「回款」「欠款」）
+- **「逾期任务」**：各部门逾期未完成任务
+- **单项目进度**：消息里带上项目编号，如「TH-2501 进度」"""
 
 
 async def _rule_chat(message: str, db: AsyncSession):
-    """规则降级：关键词意图匹配 → 调对应数据工具 → 模板格式化。返回 (reply, sources)。"""
+    """规则降级：关键词意图匹配 → 调对应数据工具 → Markdown 模板格式化。
+    返回 (reply, 工具名列表)（工具名供 endpoints 映射 sources 标签 + 追问建议）。"""
     m = message.strip()
-    if any(k in m for k in ("晨报", "早报", "早会")):
-        return _morning_text(await tool_morning_report(db)), [TOOL_LABELS["morning_report"]]
+    if any(k in m for k in ("晨报", "早报", "早会", "要盯", "风险", "汇报")):
+        return _morning_text(await tool_morning_report(db)), ["morning_report"]
+    if "供应商" in m:
+        return _po_by_supplier_text(await tool_po_overdue_by_supplier(db)), ["po_overdue_by_supplier"]
     if any(k in m for k in ("未到货", "采购", "到货")):
-        if any(k in m for k in ("未来", "预计", "即将", "将要")) and "未到货" not in m and "超期" not in m:
-            d = await tool_po_arriving(db)
-            lines = [f"未来 {d['days']} 天预计到货共 {d['count']} 条："]
-            lines += [f"- {it['item_name']}（供应商：{it['supplier']}）预计 {it['expected_arrival']} 到货"
-                      for it in d["items"]] or ["- 暂无"]
-            return "\n".join(lines), [TOOL_LABELS["po_arriving"]]
-        return _po_overdue_text(await tool_po_arrival_overdue(db)), [TOOL_LABELS["po_arrival_overdue"]]
-    if any(k in m for k in ("尾款", "回款")):
-        return _balance_text(await tool_balance_due(db)), [TOOL_LABELS["balance_due"]]
+        if any(k in m for k in ("未来", "预计", "即将", "将要", "下周", "一周")) \
+                and "未到货" not in m and "超期" not in m:
+            days = 7 if any(k in m for k in ("下周", "一周", "7 天", "7天")) else 3
+            return _po_arriving_text(await tool_po_arriving(db, days)), ["po_arriving"]
+        return _po_overdue_text(await tool_po_arrival_overdue(db)), ["po_arrival_overdue"]
+    if any(k in m for k in ("尾款", "回款", "欠款")):
+        return _balance_text(await tool_balance_due(db)), ["balance_due"]
     if "逾期" in m:
-        return _overdue_orders_text(await tool_overdue_orders(db)), [TOOL_LABELS["overdue_orders"]]
+        return _overdue_orders_text(await tool_overdue_orders(db)), ["overdue_orders"]
     hit = _PROJECT_CODE_RE.search(m)
     if hit:
-        return _project_text(await tool_project_status(db, hit.group(0))), [TOOL_LABELS["project_status"]]
+        return _project_text(await tool_project_status(db, hit.group(0))), ["project_status"]
     return _CAPABILITY_TEXT, []
 
 
@@ -693,9 +781,14 @@ async def chat(
                for h in body.history[-20:] if h.role in ("user", "assistant")]
     if cfg["api_key"]:
         try:
-            reply, sources = await _chat_with_llm(text, history, db, model or cfg["model"], cfg)
-            return {"reply": reply, "fallback": False, "sources": sources}
+            reply, tool_names = await _chat_with_llm(text, history, db,
+                                                     model or cfg["model"], cfg, current)
+            return {"reply": reply, "fallback": False,
+                    "sources": [TOOL_LABELS[n] for n in tool_names],
+                    "suggestions": _suggestions_for(tool_names)}
         except Exception as e:  # noqa: BLE001 —— LLM 任何异常都降级，保证可用
             log.warning("[agent] LLM 调用失败，转规则降级: %s", e)
-    reply, sources = await _rule_chat(text, db)
-    return {"reply": reply, "fallback": True, "sources": sources}
+    reply, tool_names = await _rule_chat(text, db)
+    return {"reply": reply, "fallback": True,
+            "sources": [TOOL_LABELS[n] for n in tool_names],
+            "suggestions": _suggestions_for(tool_names)}

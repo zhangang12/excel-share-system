@@ -10,6 +10,7 @@ export interface AgentChatReply {
   reply: string
   fallback: boolean // true=规则降级模式（未配置 LLM 或 LLM 异常）
   sources: string[] // 本轮实际调用的数据工具（「数据来源」小字展示）
+  suggestions?: string[] // 追问建议（渲染为可点击 chips，点击直接发送）
 }
 
 export interface AgentModelsReply {

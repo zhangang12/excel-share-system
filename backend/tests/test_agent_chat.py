@@ -72,6 +72,18 @@ async def main():
                                      balance=50000, balance_date=BALANCE_DUE)
             db.add_all([it_over, it_done, od, led])
             await db.commit()
+            # ⑤ 供应商B 也有逾期（3 天前）→ 按供应商聚合应有 A/B 两家（project 用别的编号，不影响项目进度口径）
+            sup2 = models.Supplier(name="测试供应商B")
+            db.add(sup2); await db.flush()
+            it_b = models.PurchaseItem(supplier_id=sup2.id, item_name="减速机", po_no="PO-AGT3",
+                                       project_code="AGT-2502",
+                                       expected_arrival=(TODAY - timedelta(days=3)).isoformat())
+            # ⑥ 未来 2 天到货、未收货 → 「未来一周到货」能查到（且不应出现在到期未到货里）
+            it_fut = models.PurchaseItem(supplier_id=sup.id, item_name="钢板", po_no="PO-AGT4",
+                                         project_code="AGT-2502",
+                                         expected_arrival=(TODAY + timedelta(days=2)).isoformat())
+            db.add_all([it_b, it_fut])
+            await db.commit()
 
         # ===== 1. 权限：非管理层 403 =====
         r = await c.post("/api/agent/chat", headers=Hb, json={"message": "晨报"})
@@ -112,6 +124,32 @@ async def main():
         # 兜底：无关键词 → 能力说明
         r = await c.post("/api/agent/chat", headers=H, json={"message": "你好"})
         chk("晨报" in r.json().get("reply", ""), f"兜底返回能力说明: {r.text[:150]}")
+
+        # ===== 2d. 追问建议 + Markdown 表格 + 扩充意图 =====
+        r = await c.post("/api/agent/chat", headers=H, json={"message": "采购未到货吗"})
+        j = r.json()
+        chk(isinstance(j.get("suggestions"), list) and len(j["suggestions"]) >= 1,
+            f"回复带追问建议 suggestions: {j.get('suggestions')}")
+        chk("|" in j.get("reply", "") and "供应商" in j.get("reply", ""),
+            f"规则模式明细用 Markdown 表格呈现: {j.get('reply','')[:200]}")
+
+        r = await c.post("/api/agent/chat", headers=H, json={"message": "今天要盯什么"})
+        chk("晨报聚合" in r.json().get("sources", []), f"「要盯」路由到晨报: {r.json().get('sources')}")
+        r = await c.post("/api/agent/chat", headers=H, json={"message": "有哪些欠款"})
+        chk("尾款到期清单" in r.json().get("sources", []), f"「欠款」路由到尾款: {r.json().get('sources')}")
+        r = await c.post("/api/agent/chat", headers=H, json={"message": "未来一周到货"})
+        j = r.json()
+        chk("预计到货" in j.get("sources", []) and "钢板" in j.get("reply", ""),
+            f"「未来一周」路由到预计到货且含 2 天后到货的钢板: {j.get('reply','')[:200]}")
+        chk("钢板" not in (await c.post("/api/agent/chat", headers=H,
+                                        json={"message": "采购未到货"})).json().get("reply", ""),
+            "未来到货的钢板不出现在到期未到货里")
+        r = await c.post("/api/agent/chat", headers=H, json={"message": "哪个供应商拖期最严重"})
+        j = r.json()
+        chk("未到货·按供应商汇总" in j.get("sources", []),
+            f"「供应商拖期」路由到按供应商汇总: {j.get('sources')}")
+        chk("测试供应商A" in j.get("reply", "") and "测试供应商B" in j.get("reply", ""),
+            f"聚合回复含 A/B 两家供应商: {j.get('reply','')[:300]}")
 
         # ===== 2b. 模型选择：models 接口 + chat 的 model 入参 =====
         r = await c.get("/api/agent/models", headers=Hb)
@@ -258,6 +296,15 @@ async def main():
                 and d["balance_due"]["count"] >= 1,
                 f"晨报四类聚合计数: po={d['po_arrival_overdue']['count']} "
                 f"orders={d['overdue_orders']['count']} bal={d['balance_due']['count']}")
+
+            d = await agent_router.tool_po_overdue_by_supplier(db)
+            sup_names = [x["supplier"] for x in d["suppliers"]]
+            chk("测试供应商A" in sup_names and "测试供应商B" in sup_names,
+                f"按供应商聚合含 A/B 两家: {sup_names}")
+            b = next((x for x in d["suppliers"] if x["supplier"] == "测试供应商B"), None)
+            chk(b is not None and b["count"] == 1 and b["max_over_days"] == 3
+                and b["projects"] == ["AGT-2502"],
+                f"供应商B 聚合口径(1条/超期3天/项目): {b}")
 
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")

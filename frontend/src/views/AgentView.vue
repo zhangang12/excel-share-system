@@ -2,6 +2,7 @@
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { MagicStick, Promotion, Setting } from '@element-plus/icons-vue'
+import MarkdownIt from 'markdown-it'
 import { agentApi, type ChatHistoryItem } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 
@@ -10,19 +11,33 @@ interface ChatItem {
   content: string
   sources?: string[]
   fallback?: boolean
+  suggestions?: string[]
 }
 
 const QUICK_QUESTIONS = ['今日晨报', '采购未到货', '尾款到期', '逾期任务']
 
+// 🆕 助手回复按 Markdown 渲染（html:false 防 XSS，原始 HTML 一律转义；用户消息保持纯文本）
+const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+const renderMd = (text: string) => md.render(text || '')
+
 const auth = useAuthStore()
 // 🆕 LLM 配置入口仅 admin 可见（manager 能用助手/选模型，但看不到配置按钮）
 const isAdmin = computed(() => auth.hasRole('admin'))
+// 用户头像首字（姓名优先，其次用户名）
+const userInitial = computed(() => {
+  const name = auth.user?.full_name || auth.user?.username || '我'
+  return name.trim().charAt(0) || '我'
+})
 
 const messages = ref<ChatItem[]>([
   {
     role: 'assistant',
-    content: '你好，我是 ERP 数据助手（只读）。可以问我：今日晨报 / 采购未到货 / 尾款到期 / 逾期任务，'
-      + '或带上项目编号问进度（如「TH-2501 进度」）。所有数字都来自系统实时查询。',
+    content: '你好，我是 ERP 数据助手（只读），所有数字都来自系统实时查询。可以问我：\n'
+      + '- **今日晨报**：采购未到货 / 逾期任务 / 尾款 / 人事到期一览\n'
+      + '- **采购未到货**、**哪个供应商拖期**、**未来一周到货**\n'
+      + '- **尾款到期**、**逾期任务**\n'
+      + '- 单项目进度：带上项目编号，如「TH-2501 进度」',
+    suggestions: QUICK_QUESTIONS.slice(0, 3),
   },
 ])
 const input = ref('')
@@ -103,7 +118,8 @@ async function send(text?: string) {
       .map((m) => ({ role: m.role, content: m.content }))
     const resp = await agentApi.chat(q, history, selectedModel.value || undefined)
     messages.value.push({
-      role: 'assistant', content: resp.reply, sources: resp.sources, fallback: resp.fallback,
+      role: 'assistant', content: resp.reply, sources: resp.sources,
+      fallback: resp.fallback, suggestions: resp.suggestions || [],
     })
   } catch {
     messages.value.push({ role: 'assistant', content: '（请求失败，请稍后重试）' })
@@ -157,34 +173,50 @@ async function send(text?: string) {
       <!-- 消息列表 -->
       <div ref="listRef" class="msg-list">
         <div v-for="(m, i) in messages" :key="i" class="msg-row" :class="m.role">
-          <div class="bubble" :class="m.role">
-            <div class="bubble-text">{{ m.content }}</div>
+          <div v-if="m.role === 'assistant'" class="avatar assistant">
+            <el-icon><MagicStick /></el-icon>
+          </div>
+          <div class="bubble-col">
+            <div class="bubble" :class="m.role">
+              <!-- 助手：Markdown 渲染；用户：纯文本 -->
+              <div v-if="m.role === 'assistant'" class="md-body" v-html="renderMd(m.content)"></div>
+              <div v-else class="bubble-text">{{ m.content }}</div>
+            </div>
             <div v-if="m.role === 'assistant' && (m.sources?.length || m.fallback)" class="bubble-meta">
               <el-tag v-if="m.fallback" size="small" type="info" effect="plain">规则模式</el-tag>
               <span v-if="m.sources?.length">数据来源：{{ m.sources.join('、') }}</span>
             </div>
+            <!-- 🆕 追问建议 chips：点击直接发送 -->
+            <div v-if="m.role === 'assistant' && m.suggestions?.length" class="sugg-row">
+              <span
+                v-for="s in m.suggestions" :key="s"
+                class="sugg-chip" :class="{ disabled: sending }"
+                @click="!sending && send(s)"
+              >{{ s }}</span>
+            </div>
           </div>
+          <div v-if="m.role === 'user'" class="avatar user">{{ userInitial }}</div>
         </div>
         <div v-if="sending" class="msg-row assistant">
-          <div class="bubble assistant">
-            <div class="bubble-text thinking">正在查询…</div>
+          <div class="avatar assistant">
+            <el-icon><MagicStick /></el-icon>
+          </div>
+          <div class="bubble assistant thinking">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
           </div>
         </div>
       </div>
 
-      <!-- 输入区 -->
+      <!-- 输入区：Enter 发送，Shift+Enter 换行 -->
       <div class="input-row">
         <el-input
           v-model="input"
-          placeholder="输入问题，回车发送（如：采购未到货吗 / AGT-2501 进度）"
+          type="textarea"
+          :autosize="{ minRows: 1, maxRows: 5 }"
+          placeholder="输入问题，Enter 发送、Shift+Enter 换行（如：采购未到货吗 / TH-2501 进度）"
           :disabled="sending"
-          clearable
-          @keyup.enter="send()"
-        >
-          <template #prefix>
-            <el-icon><MagicStick /></el-icon>
-          </template>
-        </el-input>
+          @keydown.enter.exact.prevent="send()"
+        />
         <el-button type="primary" :loading="sending" :icon="Promotion" @click="send()">发送</el-button>
       </div>
     </el-card>
@@ -236,18 +268,31 @@ async function send(text?: string) {
   flex: 1; min-height: 320px; overflow-y: auto;
   border-top: 1px solid var(--el-border-color-lighter);
   border-bottom: 1px solid var(--el-border-color-lighter);
-  padding: 16px 4px;
-  display: flex; flex-direction: column; gap: 14px;
+  padding: 16px 6px;
+  display: flex; flex-direction: column; gap: 16px;
 }
-.msg-row { display: flex; }
-.msg-row.user { justify-content: flex-end; }
-.msg-row.assistant { justify-content: flex-start; }
+.msg-row { display: flex; align-items: flex-start; gap: 8px; }
+.msg-row.user { flex-direction: row-reverse; }
+
+.avatar {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; margin-top: 2px;
+}
+.avatar.assistant {
+  background: linear-gradient(135deg, var(--el-color-primary), #7aa5f8);
+  color: #fff; font-size: 15px;
+}
+.avatar.user { background: var(--el-color-primary-light-7); color: var(--el-color-primary); }
+
+.bubble-col { max-width: 78%; display: flex; flex-direction: column; }
+.msg-row.user .bubble-col { align-items: flex-end; }
 
 .bubble {
-  max-width: 72%;
   padding: 10px 14px;
   border-radius: 10px;
   font-size: 14px; line-height: 1.7;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
 }
 .bubble.user {
   background: var(--el-color-primary);
@@ -255,17 +300,68 @@ async function send(text?: string) {
   border-bottom-right-radius: 2px;
 }
 .bubble.assistant {
-  background: var(--el-fill-color-light);
+  background: #fff;
+  border: 1px solid var(--el-border-color-lighter);
   color: var(--el-text-color-primary);
   border-bottom-left-radius: 2px;
 }
 .bubble-text { white-space: pre-wrap; word-break: break-word; }
-.bubble-text.thinking { color: var(--el-text-color-secondary); }
+
 .bubble-meta {
-  margin-top: 6px; font-size: 12px; color: var(--el-text-color-secondary);
+  margin-top: 5px; font-size: 12px; color: var(--el-text-color-secondary);
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 }
 
-.input-row { display: flex; gap: 10px; padding-top: 12px; }
+/* 🆕 追问建议 chips */
+.sugg-row { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.sugg-chip {
+  font-size: 12px; color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-5);
+  border-radius: 14px; padding: 2px 10px; cursor: pointer;
+  transition: background .15s;
+}
+.sugg-chip:hover { background: var(--el-color-primary-light-7); }
+.sugg-chip.disabled { opacity: .5; cursor: not-allowed; }
+
+/* 「正在思考…」三点动画 */
+.bubble.thinking { display: flex; gap: 5px; align-items: center; padding: 14px 16px; }
+.dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--el-text-color-secondary);
+  animation: blink 1.2s infinite ease-in-out;
+}
+.dot:nth-child(2) { animation-delay: .2s; }
+.dot:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+.input-row { display: flex; gap: 10px; padding-top: 12px; align-items: flex-end; }
 .input-row .el-input { flex: 1; }
+
+/* 🆕 助手气泡内的 Markdown 排版（scoped 需 :deep 穿透 v-html） */
+.md-body { word-break: break-word; }
+.md-body :deep(p) { margin: 4px 0; }
+.md-body :deep(p:first-child) { margin-top: 0; }
+.md-body :deep(p:last-child) { margin-bottom: 0; }
+.md-body :deep(h2), .md-body :deep(h3) {
+  font-size: 15px; font-weight: 700; margin: 8px 0 4px; color: var(--el-text-color-primary);
+}
+.md-body :deep(ul), .md-body :deep(ol) { margin: 4px 0; padding-left: 20px; }
+.md-body :deep(li) { margin: 2px 0; }
+.md-body :deep(strong) { color: var(--el-color-danger-dark-2); font-weight: 700; }
+.md-body :deep(table) {
+  border-collapse: collapse; margin: 8px 0; font-size: 13px;
+  display: block; overflow-x: auto; max-width: 100%;
+}
+.md-body :deep(th), .md-body :deep(td) {
+  border: 1px solid var(--el-border-color-lighter);
+  padding: 5px 10px; text-align: left; white-space: nowrap;
+}
+.md-body :deep(th) { background: var(--el-fill-color-light); font-weight: 600; }
+.md-body :deep(tbody tr:nth-child(even)) { background: var(--el-fill-color-lighter); }
+.md-body :deep(code) {
+  font-family: Menlo, Consolas, monospace; font-size: .9em;
+  background: var(--el-fill-color); border-radius: 4px; padding: 1px 5px;
+}
+.md-body :deep(a) { color: var(--el-color-primary); }
 </style>
