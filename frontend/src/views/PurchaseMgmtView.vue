@@ -603,10 +603,11 @@ function onItemCalc() {
 interface OrderLine {
   item_name: string; spec: string; project_code: string
   qty: number | null; unit_price: number | null; received_amount: number | null
+  expected_arrival: string   // 🆕 逐行预计到货（留空用表头/供应商级值）
   tax_rate: string; notes: string; custom_values: Record<string, any>
 }
 function blankLine(): OrderLine {
-  return { item_name: '', spec: '', project_code: '', qty: null, unit_price: null, received_amount: null, tax_rate: '', notes: '', custom_values: {} }
+  return { item_name: '', spec: '', project_code: '', qty: null, unit_price: null, received_amount: null, expected_arrival: '', tax_rate: '', notes: '', custom_values: {} }
 }
 const orderDialogVisible = ref(false)
 const orderSaving = ref(false)
@@ -619,7 +620,7 @@ async function loadWhLocations() {
 
 const orderForm = reactive({
   supplier_id: '' as number | '',
-  delivery_date: '', expected_arrival: '',   // 🆕 预计到货日期（整单一个，选填）
+  delivery_date: '', expected_arrival: '',   // 🆕 预计到货（供应商级默认，选填；逐行 expected_arrival 优先）
   contract_no: '', project_code: '', payment_method: '',
   prepay_ratio: null as number | null,
   stock_location: '',   // 🆕 库位(整单一个;从仓库「库位管理」取值)
@@ -687,7 +688,7 @@ async function saveOrder() {
     const resp = await http.post<PurchaseItemOut[]>('/purchase-mgmt/orders', {
       supplier_id: orderForm.supplier_id,
       delivery_date: orderForm.delivery_date || null,
-      expected_arrival: orderForm.expected_arrival || null,   // 🆕 预计到货（选填）
+      expected_arrival: orderForm.expected_arrival || null,   // 🆕 预计到货（供应商级默认，逐行优先）
       contract_no: orderForm.contract_no || null,
       project_code: orderForm.project_code || null,
       stock_location: null,   // 🆕 #204 采购下单不再填库位,改由仓库收货时填
@@ -700,6 +701,7 @@ async function saveOrder() {
         qty: l.qty,
         unit_price: l.unit_price,
         received_amount: l.received_amount,
+        expected_arrival: l.expected_arrival || null,   // 🆕 逐行预计到货（留空用表头值）
         tax_rate: l.tax_rate || null,
         notes: l.notes || null,
         custom_values: l.custom_values || {},
@@ -918,6 +920,7 @@ interface PurchasableRow {
   project_code?: string | null; project_name?: string | null
   _checked: boolean; _price: number | null; _buyqty: number | null
   _supplier_id: number | ''; _brand: string   // 🆕 逐行选供应商/品牌
+  _expected: string   // 🆕 逐行预计到货（跟着零件走，回写该行清单「预计到货」列）
   _payment_method: string   // 🆕 逐行付款方式（不同批次可能不一样，不跟供应商绑死）
   _prepay_ratio: number | null   // 🆕 逐行预付比例(%)，仅现金预付/对公预付时有意义
 }
@@ -967,7 +970,7 @@ const onlyGap = ref(false)   // 🆕 只看有缺口（建议采购>0）的行
 // 🆕 A4：去掉表头供应商，改逐行选；🆕 付款方式也改逐行(见 _payment_method)，表头只留 项目/清单/下单日期
 const listOrderForm = reactive({
   project_id: '' as number | '', project_code: '',
-  delivery_date: '', expected_arrival: '',   // 🆕 预计到货日期（选填，落采购明细并回写清单「预计到货」列）
+  delivery_date: '', expected_arrival: '',   // 🆕 预计到货（仅成套模式用：整套一个；普通模式逐行 _expected 维护）
   stock_location: '',   // 🆕 库位(整单一个,收货按此入库)
 })
 // 🆕 R4/A6：沿用采购部项目目录「按人分表」可见性——采购员只对自己负责的清单下单
@@ -1031,6 +1034,15 @@ function applyBatchPrepayRatio() {
   t.forEach(r => { r._prepay_ratio = batchPrepayRatio.value })
   ElMessage.success(`已把预付比例填给 ${t.length} 个勾选行`)
 }
+// 🆕 批量填预计到货：同一供应商合并下单时一个日期填给该供应商全部勾选行（逐行可再改）
+const batchExpected = ref('')
+function applyBatchExpected() {
+  if (!batchExpected.value) { ElMessage.info('先选一个预计到货日期'); return }
+  const t = purchasableRows.value.filter(r => r._checked)
+  if (!t.length) { ElMessage.info('先勾选要设置的行'); return }
+  t.forEach(r => { r._expected = batchExpected.value })
+  ElMessage.success(`已把预计到货填给 ${t.length} 个勾选行`)
+}
 const filteredPurchasable = computed(() => {
   const kw = purchasableFilter.value.trim().toLowerCase()
   return purchasableRows.value.filter(r =>
@@ -1056,7 +1068,7 @@ async function openListOrder(mode?: unknown) {
     delivery_date: new Date().toISOString().slice(0, 10), expected_arrival: '',
   })
   purchasableRows.value = []; purchasableFilter.value = ''; onlyGap.value = false
-  batchSupplier.value = ''; batchBrand.value = ''; batchPaymentMethod.value = ''; batchPrepayRatio.value = null; listSheet.value = myDefaultSheet.value
+  batchSupplier.value = ''; batchBrand.value = ''; batchPaymentMethod.value = ''; batchPrepayRatio.value = null; batchExpected.value = ''; listSheet.value = myDefaultSheet.value
   try {
     const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
     // 只要有任意一张「本采购员负责」的来源清单就可选（R4/A6）
@@ -1091,6 +1103,7 @@ async function loadPurchasable() {
       _buyqty: x.suggest_purchase > 0 ? x.suggest_purchase : (x.qty ?? null),
       _supplier_id: '' as number | '',
       _brand: x.brand || '',
+      _expected: '',
       _payment_method: '',
       _prepay_ratio: null,
     }))
@@ -1143,12 +1156,13 @@ async function submitListOrder() {
       const resp = await http.post<PurchaseItemOut[]>('/purchase-mgmt/orders/from-list', {
         supplier_id: sid,
         delivery_date: listOrderForm.delivery_date || null,
-        expected_arrival: listOrderForm.expected_arrival || null,   // 🆕 预计到货（选填，回写清单）
+        expected_arrival: null,   // 🆕 预计到货已改逐行维护（跟着零件走），整单级不再使用
         project_code: listOrderForm.project_code || null,
         stock_location: null,   // 🆕 #204 采购下单不再填库位,改由仓库收货时填
         lines: rows.map(r => ({
           source_sheet_id: r.sheet_id, source_record_id: r.record_id,
           item_name: r.item_name, spec: foldDrawingSpec(r), brand: r._brand || null,
+          expected_arrival: r._expected || null,   // 🆕 逐行预计到货（回写该行清单）
           payment_method: r._payment_method || null,
           prepay_ratio: isPrepayMethod(r._payment_method) ? r._prepay_ratio : null,
           qty: r._buyqty ?? r.suggest_purchase ?? r.qty, unit_price: r._price,
@@ -2453,7 +2467,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <el-alert v-if="listOrderMode === 'kit'" type="success" :closable="false" style="margin-bottom:14px"
         title="按套下单：选项目 + 清单 → 勾选一组零件 → 填「套名称/套数/套总价/供应商」→ 打包成一套（一条成套明细）。勾中的零件成为套内清单并回写清单为「已下单」；整套按一个总走收货/入库/开票/请款/付款，作一个库存单位入库、按套领料。一套=同一供应商。" />
       <el-alert v-else type="info" :closable="false" style="margin-bottom:14px"
-        title="选项目 + 清单类型（标准件/电工/不锈钢/外协/激光）→ 逐行选「供应商」「品牌」（可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的下单日期/采购负责人/预计到货。外协/激光无数量，采购数量手填。" />
+        title="选项目 + 清单类型（标准件/电工/不锈钢/外协/激光）→ 逐行选「供应商」「品牌」「预计到货」（都可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的下单日期/采购负责人/预计到货（逐行回写对应零件行）。外协/激光无数量，采购数量手填。" />
       <el-form :model="listOrderForm" label-position="top" class="order-form listorder-head-form">
         <el-row :gutter="14">
           <el-col :xs="24" :sm="10" :md="10">
@@ -2477,9 +2491,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-date-picker v-model="listOrderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <!-- 🆕 预计到货（选填）：落采购明细并回写清单「预计到货」列；到期未到货每日提醒 -->
-          <el-col :xs="12" :sm="4" :md="4">
-            <el-form-item label="预计到货（选填）">
+          <!-- 🆕 预计到货：普通模式逐行维护（可用工具栏批量填）；成套模式整套一个 -->
+          <el-col v-if="listOrderMode === 'kit'" :xs="12" :sm="4" :md="4">
+            <el-form-item label="预计到货（整套，选填）">
               <el-date-picker v-model="listOrderForm.expected_arrival" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
@@ -2543,6 +2557,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-input-number v-if="isPrepayMethod(batchPaymentMethod)" v-model="batchPrepayRatio"
               :min="0" :max="100" placeholder="预付%" controls-position="right" style="width:100px" />
             <el-button v-if="isPrepayMethod(batchPaymentMethod)" size="small" @click="applyBatchPrepayRatio">填给勾选行</el-button>
+            <!-- 🆕 批量预计到货：同一供应商合并下单时一个日期填给全部勾选行（逐行可再改） -->
+            <el-date-picker v-model="batchExpected" type="date" value-format="YYYY-MM-DD" placeholder="批量预计到货" style="width:136px" />
+            <el-button size="small" @click="applyBatchExpected">填给勾选行</el-button>
           </template>
         </div>
         <span class="muted">已勾选 <b>{{ listSelCount }}</b> / {{ purchasableRows.length }} 行</span>
@@ -2608,6 +2625,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
+        <!-- 🆕 逐行预计到货（跟着零件走，回写该行清单「预计到货」列；到期未到货每日提醒） -->
+        <el-table-column v-if="listOrderMode !== 'kit'" label="预计到货" width="138">
+          <template #default="{ row }">
+            <el-date-picker v-model="row._expected" type="date" value-format="YYYY-MM-DD" placeholder="选填"
+                            size="small" style="width:100%" @change="row._checked = true" />
+          </template>
+        </el-table-column>
         <el-table-column label="采购状态" width="80" align="center">
           <template #default="{ row }"><el-tag size="small" :type="listStatusTag(row.status)">{{ row.status }}</el-tag></template>
         </el-table-column>
@@ -2633,7 +2657,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     <!-- ==================== 采购单弹窗（同一供应商多个零件行）==================== -->
     <el-dialog v-model="orderDialogVisible" title="新建采购单" width="min(1180px, 98vw)" top="4vh" class="compact-dialog-scroll compact-tbl" :close-on-click-modal="false" :before-close="onOrderDialogClose">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
-        title="同一供应商一次录入多个零件：表头（供应商 / 下单日期 / 合同 / 默认项目）在上，零件逐行填。单价「选填」——已谈好价先填；激光板材等到货送货单才带价的，单价留空，货到仓库再补。保存后自动生成采购单号；可「打印采购单」发供应商。" />
+        title="同一供应商一次录入多个零件：表头（供应商 / 下单日期 / 合同 / 默认项目 / 预计到货整单默认）在上，零件逐行填（预计到货可逐行改，留空跟整单）。单价「选填」——已谈好价先填；激光板材等到货送货单才带价的，单价留空，货到仓库再补。保存后自动生成采购单号；可「打印采购单」发供应商。" />
       <el-form :model="orderForm" label-position="top" class="order-form">
         <el-row :gutter="20">
           <el-col :xs="24" :sm="12" :md="6">
@@ -2648,9 +2672,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-date-picker v-model="orderForm.delivery_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
-          <!-- 🆕 预计到货（选填）：到期未到货每日提醒采购员+管理层 -->
+          <!-- 🆕 预计到货（供应商级默认）：逐行可单独改；到期未到货每日提醒采购员+采购主管+管理层 -->
           <el-col :xs="12" :sm="12" :md="4">
-            <el-form-item label="预计到货（选填）">
+            <el-form-item label="预计到货（整单默认）">
               <el-date-picker v-model="orderForm.expected_arrival" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
@@ -2722,6 +2746,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-table-column label="合计金额" width="128">
             <template #default="{ row }">
               <el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" />
+            </template>
+          </el-table-column>
+          <!-- 🆕 逐行预计到货（留空用表头「整单默认」值） -->
+          <el-table-column label="预计到货" width="140">
+            <template #default="{ row }">
+              <el-date-picker v-model="row.expected_arrival" type="date" value-format="YYYY-MM-DD"
+                              :placeholder="orderForm.expected_arrival || '默认整单'" size="small" style="width:100%" />
             </template>
           </el-table-column>
           <el-table-column label="备注" min-width="130">

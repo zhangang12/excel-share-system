@@ -702,7 +702,7 @@ async def create_purchase_order(
             po_no=po_no,
             supplier_id=body.supplier_id,
             delivery_date=body.delivery_date,
-            expected_arrival=(body.expected_arrival or None),   # 🆕 预计到货（整单一个，选填）
+            expected_arrival=((ln.expected_arrival or body.expected_arrival) or None),   # 🆕 逐行预计到货优先，表头(供应商级)兜底
             contract_no=body.contract_no,
             project_code=(ln.project_code or body.project_code),
             item_name=ln.item_name.strip(),
@@ -1038,10 +1038,12 @@ async def create_order_from_list(
         recv = None
         if l.qty and l.unit_price:
             recv = round((l.qty or 0) * (l.unit_price or 0), 4)
+        # 🆕 预计到货跟着零件走：逐行值优先，整单(供应商级)值兜底；逐行回写清单「预计到货」列
+        line_ea = ((l.expected_arrival or body.expected_arrival) or None)
         db.add(models.PurchaseItem(
             po_no=po_no, source_sheet_id=l.source_sheet_id, source_record_id=l.source_record_id,
             supplier_id=body.supplier_id, delivery_date=body.delivery_date,
-            expected_arrival=(body.expected_arrival or None),   # 🆕 预计到货（选填，到期未到货每日提醒）
+            expected_arrival=line_ea,
             project_code=(body.project_code or sheet_code_map.get(l.source_sheet_id)),
             item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=(l.payment_method or body.payment_method),
@@ -1053,9 +1055,9 @@ async def create_order_from_list(
             wb = {"采购负责人": uname}
             for c in _ALL_ORDER_DATE_COLS:
                 wb[c] = (body.delivery_date or today)
-            # 🆕 预计到货日期回写清单「预计到货」列（未填则跳过不回写）
+            # 🆕 预计到货逐行回写清单「预计到货」列（未填则跳过不回写）
             for c in _ALL_EXPECTED_ARRIVAL_COLS:
-                wb[c] = (body.expected_arrival or None)
+                wb[c] = line_ea
             # 🆕 #255：采购负责人若已在表格手填，则保留、不被下单人覆盖；下单日期照常回写
             await _writeback_sheet_row(db, l.source_sheet_id, l.source_record_id, wb,
                                        only_if_empty={"采购负责人"})

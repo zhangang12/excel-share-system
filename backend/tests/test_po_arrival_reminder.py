@@ -143,6 +143,56 @@ async def main():
             chk(len(await msgs_for(db, admin_id, "po_expected_changed", it3)) == 1, "改期通知 admin")
             chk(len(await msgs_for(db, b1, "po_expected_changed", it3)) == 0, "操作人本人不重复收改期通知")
 
+        # ===== 3b. 预计到货跟着零件走：从清单下单逐行日期（整单值兜底），逐行回写清单 =====
+        async with SessionLocal() as db:
+            proj2 = models.Project(code="T-EA2", name="逐行预计到货测试")
+            db.add(proj2); await db.flush()
+            ds2 = models.Datasheet(project_id=proj2.id, name="标准件清单")
+            db.add(ds2); await db.flush()
+            f2 = models.Field(datasheet_id=ds2.id, name="项目", type="text", sort_order=1)
+            db.add(f2); await db.flush()
+            rec_a = models.Record(datasheet_id=ds2.id, values={str(f2.id): "零件甲"})
+            rec_b = models.Record(datasheet_id=ds2.id, values={str(f2.id): "零件乙"})
+            db.add_all([rec_a, rec_b]); await db.commit()
+            ds2_id, ra_id, rb_id = ds2.id, rec_a.id, rec_b.id
+        r = await c.post("/api/purchase-mgmt/orders/from-list", headers=Hb1, json={
+            "supplier_id": sid, "delivery_date": TODAY,
+            "expected_arrival": "2026-08-01",   # 供应商级默认
+            "lines": [
+                {"source_sheet_id": ds2_id, "source_record_id": ra_id,
+                 "item_name": "零件甲", "qty": 1, "expected_arrival": "2026-08-05"},   # 逐行覆盖
+                {"source_sheet_id": ds2_id, "source_record_id": rb_id,
+                 "item_name": "零件乙", "qty": 2},                                       # 兜底用整单值
+            ]})
+        chk(r.status_code == 200, f"从清单下单(逐行预计到货): {r.text[:200]}")
+        async with SessionLocal() as db:
+            its = {i.item_name: i for i in (await db.execute(select(models.PurchaseItem).where(
+                models.PurchaseItem.item_name.in_(["零件甲", "零件乙"])))).scalars().all()}
+            chk(its["零件甲"].expected_arrival == "2026-08-05", f"逐行日期优先: {its['零件甲'].expected_arrival!r}")
+            chk(its["零件乙"].expected_arrival == "2026-08-01", f"整单值兜底: {its['零件乙'].expected_arrival!r}")
+            flds2 = {f.name: str(f.id) for f in (await db.execute(
+                select(models.Field).where(models.Field.datasheet_id == ds2_id))).scalars().all()}
+            ea_fid = flds2.get("预计到货")
+            chk(ea_fid is not None, "清单已补建「预计到货」列")
+            va = (await db.execute(select(models.Record).where(models.Record.id == ra_id))).scalar_one().values
+            vb = (await db.execute(select(models.Record).where(models.Record.id == rb_id))).scalar_one().values
+            chk(va.get(ea_fid) == "2026-08-05", f"零件甲行回写自己的日期: {va.get(ea_fid)!r}")
+            chk(vb.get(ea_fid) == "2026-08-01", f"零件乙行回写兜底日期: {vb.get(ea_fid)!r}")
+
+        # ===== 3c. 新建采购单：逐行预计到货覆盖表头默认 =====
+        r = await c.post("/api/purchase-mgmt/orders", headers=Hb1, json={
+            "supplier_id": sid, "expected_arrival": "2026-08-10",
+            "lines": [
+                {"item_name": "逐行件A", "qty": 1, "expected_arrival": "2026-08-20"},
+                {"item_name": "逐行件B", "qty": 1},
+            ]})
+        chk(r.status_code == 200, f"新建采购单(逐行预计到货): {r.text[:200]}")
+        async with SessionLocal() as db:
+            its = {i.item_name: i for i in (await db.execute(select(models.PurchaseItem).where(
+                models.PurchaseItem.item_name.in_(["逐行件A", "逐行件B"])))).scalars().all()}
+            chk(its["逐行件A"].expected_arrival == "2026-08-20", f"新建单逐行优先: {its['逐行件A'].expected_arrival!r}")
+            chk(its["逐行件B"].expected_arrival == "2026-08-10", f"新建单表头兜底: {its['逐行件B'].expected_arrival!r}")
+
         # ===== 4. Excel 导入带「预计到货」列 =====
         from openpyxl import Workbook
         wb = Workbook(); ws = wb.active

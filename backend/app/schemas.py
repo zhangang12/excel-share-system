@@ -1047,6 +1047,7 @@ class PurchaseOrderLine(BaseModel):
     qty: Optional[float] = None
     unit_price: Optional[float] = None           # 选填：后填价格流程可留空，货到仓库再补
     received_amount: Optional[float] = None
+    expected_arrival: Optional[str] = None       # 🆕 逐行预计到货（留空用表头/供应商级值）
     tax_rate: Optional[str] = None
     notes: Optional[str] = None
     custom_values: dict = Field(default_factory=dict)   # 🆕 R6
@@ -1095,7 +1096,7 @@ class MaterialDictOut(BaseModel):
 class PurchaseOrderCreate(BaseModel):
     supplier_id: int
     delivery_date: Optional[str] = None          # 下单日期（总的）
-    expected_arrival: Optional[str] = None        # 🆕 预计到货日期（整单一个，选填；到期未到货每日提醒）
+    expected_arrival: Optional[str] = None        # 🆕 预计到货日期（供应商级默认，选填；逐行 expected_arrival 优先）
     contract_no: Optional[str] = None
     project_code: Optional[str] = None           # 默认项目编号（行可覆盖）
     payment_method: Optional[str] = None          # 🆕 付款方式（表头，作用于全单）
@@ -1141,6 +1142,7 @@ class OrderFromListLine(BaseModel):
     brand: Optional[str] = None          # 🆕 逐行品牌
     qty: Optional[float] = None
     unit_price: Optional[float] = None
+    expected_arrival: Optional[str] = None   # 🆕 逐行预计到货（跟着零件走，回写该行清单；留空用整单/供应商级值）
     payment_method: Optional[str] = None  # 🆕 逐行付款方式（不同批次可能不一样，不随供应商固定）
     prepay_ratio: Optional[float] = None  # 🆕 逐行预付比例(%)
     notes: Optional[str] = None
@@ -1149,7 +1151,7 @@ class OrderFromListLine(BaseModel):
 class OrderFromListCreate(BaseModel):
     supplier_id: int
     delivery_date: Optional[str] = None
-    expected_arrival: Optional[str] = None   # 🆕 预计到货日期（选填；落采购明细并回写清单「预计到货」列）
+    expected_arrival: Optional[str] = None   # 🆕 预计到货（供应商级默认，选填；逐行 expected_arrival 优先，逐行回写清单「预计到货」列）
     project_code: Optional[str] = None
     payment_method: Optional[str] = None
     prepay_ratio: Optional[float] = None
@@ -1302,7 +1304,7 @@ class KitFromListCreate(BaseModel):
     supplier_id: int
     project_code: Optional[str] = None
     delivery_date: Optional[str] = None
-    expected_arrival: Optional[str] = None   # 🆕 预计到货日期（选填；落采购明细并回写清单「预计到货」列）
+    expected_arrival: Optional[str] = None   # 🆕 预计到货日期（整套一个，选填；落采购明细并回写各零件行清单「预计到货」列）
     payment_method: Optional[str] = None
     prepay_ratio: Optional[float] = None
     stock_location: Optional[str] = None   # 🆕 库位（整套一个）
