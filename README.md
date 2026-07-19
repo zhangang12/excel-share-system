@@ -1,5 +1,7 @@
 # 项目文件管理系统 v2
 
+> ⚠️ 本 README 内容偏旧（v2 时代）。**最新项目状态请看：`AGENTS.md`（项目记忆）和 `docs/项目交接文档.md`（交接文档）。**
+
 类飞书多维表格的内部项目进度管理系统。
 
 **技术栈**：FastAPI + PostgreSQL + Redis + Vue 3 + TypeScript + Vite + Element Plus + vxe-table
