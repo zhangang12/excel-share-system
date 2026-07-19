@@ -1040,3 +1040,15 @@ class ManagementTodoTarget(Base):
 
     todo: Mapped["ManagementTodo"] = relationship(back_populates="targets")
     user: Mapped["User"] = relationship(foreign_keys=[user_id], lazy="joined")
+
+
+# ---------- 🆕 Agent 助手：应用级 kv 配置（页面可改，优先于 .env 默认值） ----------
+class AppSetting(Base):
+    """通用 kv 配置表（key 主键）。目前仅 Agent 助手用来存 LLM 配置
+    （agent_llm.base_url / agent_llm.api_key / agent_llm.model / agent_llm_models），
+    表由 Base.metadata.create_all 自动创建，无需迁移脚本。"""
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[Optional[str]] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

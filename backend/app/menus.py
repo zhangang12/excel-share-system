@@ -32,6 +32,7 @@ MENU_DEFS: list[dict] = [
     {"key": "report",     "label": "月度工作报表"},
     {"key": "oa",         "label": "OA审批"},     # 🆕 全员可见（业务/报销/采购申请+审批）
     {"key": "messages",   "label": "消息中心"},
+    {"key": "agent",      "label": "Agent 助手"},   # 🆕 只读问数 POC（仅 admin/manager；矩阵不下发给其他角色）
 ]
 
 # 管理组菜单（admin + manager 专属）

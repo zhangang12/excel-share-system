@@ -156,6 +156,12 @@ const router = createRouter({
           component: () => import('@/views/admin/UserFeedbackView.vue'),
           meta: { menuKey: 'user-feedback' },
         },
+        {
+          path: 'agent',
+          name: 'agent',  // 🆕 Agent 助手（只读问数 POC）；菜单 key=agent，仅 admin/manager 下发
+          component: () => import('@/views/AgentView.vue'),
+          meta: { menuKey: 'agent' },
+        },
       ],
     },
   ],

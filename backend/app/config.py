@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     # 生产环境置 SALES_ORDER_APPROVAL=true 开启（可逆开关红线）。
     sales_order_approval: bool = False
 
+    # 🆕 Agent 助手（只读问数 POC）：OpenAI 兼容接口（function calling）。
+    # api_key 留空 = 纯规则降级模式（永远可用）；任意 LLM 异常也自动降级。
+    agent_llm_base_url: str = "https://api.deepseek.com/v1"
+    agent_llm_api_key: str = ""
+    agent_llm_model: str = "deepseek-chat"
+    # 可选模型白名单（逗号分隔；agent_llm_model 为默认模型，不在名单里会自动并入）
+    agent_llm_models: str = "deepseek-chat,deepseek-reasoner"
+
     # 🆕 项目目录行级可见性：仅 设计/电工/装配 三类岗位只看"自己接的项目"(被派单 worker_id=自己)，
     # 其余角色(管理层/各部门负责人/采购/仓库/财务/物流等)维持看全部。
     # 默认开启；如需回退为"全部可见"，设环境变量 PROJECT_DIR_OWN_ONLY=false 重启即可（可逆开关红线）。
