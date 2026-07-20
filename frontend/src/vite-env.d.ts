@@ -6,3 +6,12 @@ declare module '*.vue' {
   const component: DefineComponent<{}, {}, any>
   export default component
 }
+
+// 🆕 桌面客户端（Electron）preload 注入的全局；仅桌面端存在，浏览器为 undefined
+interface Window {
+  pmsDesktop?: {
+    isDesktop: boolean
+    version: string
+    deviceId: string
+  }
+}

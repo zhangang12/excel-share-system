@@ -1,0 +1,5 @@
+# desktop 级忽略
+node_modules/
+dist/
+# 🆕 打包时由 release.sh 从 frontend/dist 拷贝进来的前端产物（绝不入库）
+app/

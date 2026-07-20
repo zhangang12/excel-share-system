@@ -162,6 +162,12 @@ const router = createRouter({
           component: () => import('@/views/AgentView.vue'),
           meta: { menuKey: 'agent' },
         },
+        {
+          path: 'admin/desktop',
+          name: 'desktop',  // 🆕 桌面端在线版本统计（只读）；菜单 key=desktop，仅 admin/manager 下发
+          component: () => import('@/views/admin/DesktopClientsPage.vue'),
+          meta: { menuKey: 'desktop' },
+        },
       ],
     },
   ],

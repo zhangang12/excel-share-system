@@ -1,0 +1,45 @@
+{
+  "name": "pms-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "同辉项目管理系统 Windows 桌面客户端（Electron 壳，内置前端 dist，自动更新走服务器 nginx 静态目录）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack:win": "electron-builder --win nsis --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.tonghui.pms",
+    "productName": "同辉项目管理",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "app/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "http://8.141.123.141/desktop/"
+    }
+  }
+}

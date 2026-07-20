@@ -13,6 +13,9 @@ dist/
 .vite/
 *.tsbuildinfo
 
+# ===== 桌面客户端（desktop/release.sh 打包时从 frontend/dist 拷贝的内置页面）=====
+desktop/app/
+
 # ===== 构建产物 =====
 build/build/
 build/out/

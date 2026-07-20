@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>版本过旧，需要更新 - 同辉项目管理</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #1e3a5f;
+    color: #fff;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .card {
+    width: 480px;
+    text-align: center;
+    padding: 48px 40px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+  }
+  h1 { font-size: 24px; margin-bottom: 16px; }
+  .sub { font-size: 14px; color: #b8c7d9; margin-bottom: 8px; }
+  .notes {
+    font-size: 14px;
+    color: #d7e2ee;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 18px 0;
+    min-height: 20px;
+    white-space: pre-wrap;
+    text-align: left;
+  }
+  #btn {
+    display: inline-block;
+    width: 100%;
+    margin-top: 12px;
+    padding: 14px 0;
+    font-size: 18px;
+    font-weight: bold;
+    color: #1e3a5f;
+    background: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  #btn:disabled { opacity: 0.5; cursor: default; }
+  .bar-wrap {
+    display: none;
+    margin-top: 20px;
+    height: 12px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  #bar { height: 100%; width: 0%; background: #4fc08d; transition: width 0.2s; }
+  #status { margin-top: 12px; font-size: 13px; color: #b8c7d9; min-height: 18px; }
+  #err { margin-top: 8px; font-size: 13px; color: #ff8a80; min-height: 18px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>同辉项目管理系统</h1>
+    <p class="sub">当前客户端版本过旧，已停止使用，请更新到最新版本。</p>
+    <div class="notes" id="notes"></div>
+    <button id="btn">立即更新</button>
+    <div class="bar-wrap" id="barWrap"><div id="bar"></div></div>
+    <p id="status"></p>
+    <p id="err"></p>
+  </div>
+
+<script>
+  const d = window.pmsDesktop || {};
+  const btn = document.getElementById('btn');
+  const barWrap = document.getElementById('barWrap');
+  const bar = document.getElementById('bar');
+  const status = document.getElementById('status');
+  const err = document.getElementById('err');
+
+  // 版本提示 + 服务器 version.json 里的更新说明（由主进程经 preload 透传）
+  document.querySelector('.sub').textContent =
+    `当前版本 ${d.version || ''} 已低于最低要求版本，请更新后继续使用。`;
+  document.getElementById('notes').textContent =
+    d.forceUpdateNotes ? `更新说明：${d.forceUpdateNotes}` : '';
+
+  btn.addEventListener('click', () => {
+    btn.disabled = true;
+    err.textContent = '';
+    status.textContent = '正在检查更新…';
+    barWrap.style.display = 'block';
+    d.triggerUpdate && d.triggerUpdate();
+  });
+
+  d.onProgress && d.onProgress((p) => {
+    const pct = Math.floor((p && p.percent) || 0);
+    bar.style.width = pct + '%';
+    status.textContent = `正在下载更新… ${pct}%`;
+  });
+
+  d.onDownloaded && d.onDownloaded(() => {
+    bar.style.width = '100%';
+    status.textContent = '更新已下载完成，正在重启安装…';
+  });
+
+  d.onUpdateError && d.onUpdateError((msg) => {
+    btn.disabled = false;
+    status.textContent = '';
+    err.textContent = msg || '更新失败，请重试。';
+  });
+</script>
+</body>
+</html>

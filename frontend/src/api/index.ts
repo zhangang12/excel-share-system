@@ -2,13 +2,26 @@ import axios, { AxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
 
 export const http = axios.create({
-  baseURL: '/api',
+  // 🆕 桌面客户端打包时以 VITE_API_BASE（如 http://8.141.123.141）构建，直连后端；
+  //   浏览器构建不设该变量，baseURL 仍是 '/api'（走 Vite 代理 / nginx），行为与原来一致。
+  baseURL: (import.meta.env.VITE_API_BASE ?? '') + '/api',
   timeout: 30000,
 })
 
 http.interceptors.request.use((config) => {
   const token = localStorage.getItem('pms_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+  // 🆕 桌面客户端在线统计：preload 注入 window.pmsDesktop（仅桌面端有），带统计头，
+  //   后端中间件按 device_id upsert（60s 节流）；浏览器无此全局，不加头、行为不变。
+  const dk = window.pmsDesktop
+  if (dk?.isDesktop) {
+    config.headers['X-PMS-Client'] = `desktop/${dk.version}`
+    config.headers['X-PMS-Device'] = dk.deviceId
+    try {
+      const u = JSON.parse(localStorage.getItem('pms_user') || 'null')
+      if (u?.username) config.headers['X-PMS-User'] = String(u.username)
+    } catch { /* pms_user 解析失败则不带用户名头，不影响请求 */ }
+  }
   // 🆕 #188：文件下载(blob)不设前端超时——打包 zip/CAD 图纸等大文件在慢网络下
   //   远超全局 30s，被 axios 掐断后表现为「请求超时/打包下载失败」。
   //   服务端 nginx proxy_read_timeout=300s 仍然兜底，不会无限挂起。

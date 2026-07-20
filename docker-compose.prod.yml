@@ -73,6 +73,7 @@ services:
       - ./nginx/certs:/etc/nginx/certs:ro
       - ./nginx/certbot-www:/var/www/certbot:ro   # 🆕 HTTPS: ACME http-01 验证目录（enable-https.sh 用）
       - ./nginx/wecom-verify:/var/www/wecom:ro    # 🆕 企业微信「可信域名」验证文件目录
+      - ./desktop-releases:/opt/pms/desktop:ro    # 🆕 桌面客户端更新包目录（desktop/release.sh 上传，nginx /desktop/ 对外）
       - nginx_logs:/var/log/nginx
     depends_on:
       - backend

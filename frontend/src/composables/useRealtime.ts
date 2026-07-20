@@ -36,8 +36,16 @@ export function useRealtime(
     const token = localStorage.getItem('pms_token') || ''
     if (!token) return
     try {
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const url = `${proto}://${location.host}${path}?token=${encodeURIComponent(token)}`
+      // 🆕 桌面客户端以 VITE_API_BASE 构建：ws 地址从它推导（http→ws、https→wss）；
+      //   浏览器构建未设该变量，保持从 location 拼的老逻辑。
+      const apiBase = import.meta.env.VITE_API_BASE as string | undefined
+      let url: string
+      if (apiBase) {
+        url = `${apiBase.replace(/^http/, 'ws')}${path}?token=${encodeURIComponent(token)}`
+      } else {
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+        url = `${proto}://${location.host}${path}?token=${encodeURIComponent(token)}`
+      }
       ws = new WebSocket(url)
       ws.onopen = () => {
         connected.value = true

@@ -10,7 +10,7 @@ import {
   Key, SwitchButton, Grid, Lock,
   Suitcase, EditPen, Lightning, SetUp, Scissor, ShoppingCart,
   Box, Van, Money, Service, TrendCharts, Bell, Stamp, ChatDotRound, ChatLineRound,
-  Aim, Checked, Collection, Avatar, MagicStick,
+  Aim, Checked, Collection, Avatar, MagicStick, Monitor,
 } from '@element-plus/icons-vue'
 import { messagesApi } from '@/api/messages'
 import { userFeedbackApi } from '@/api/userFeedback'
@@ -29,8 +29,9 @@ const MENU_ICONS: Record<string, any> = {
   approve: Stamp, wxbind: ChatDotRound, 'user-feedback': ChatLineRound, oa: Checked,
   hr: Avatar,   // 🆕 人事部
   agent: MagicStick,   // 🆕 Agent 助手（只读问数 POC）
+  desktop: Monitor,    // 🆕 桌面端在线版本统计
 }
-const ADMIN_EXTRA = ['approve', 'wxbind', 'user-feedback', 'agent']
+const ADMIN_EXTRA = ['approve', 'wxbind', 'user-feedback', 'agent', 'desktop']
 // 业务部门菜单（排除 messages 单独放底部、管理组的归管理组）
 const bizMenus = computed(() =>
   auth.deptMenus.filter(m => !['messages', ...ADMIN_EXTRA].includes(m.key)))

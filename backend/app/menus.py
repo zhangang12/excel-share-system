@@ -44,6 +44,7 @@ ADMIN_MENU_DEFS: list[dict] = [
     {"key": "wxbind",         "label": "企微绑定"},
     {"key": "user-feedback",  "label": "用户反馈"},  # 🆕 收集所有用户提交的问题/建议
     {"key": "agent",          "label": "Agent 助手"},  # 🆕 只读问数 POC（admin/manager 专属，归入「管理」分组）
+    {"key": "desktop",        "label": "桌面端"},      # 🆕 桌面客户端在线版本分布（admin/manager 专属，只读统计）
 ]
 
 _ALL_KEYS = [m["key"] for m in MENU_DEFS]

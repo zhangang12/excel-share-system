@@ -1,14 +1,16 @@
 """主入口"""
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from .config import settings
 from .database import Base, engine, SessionLocal
@@ -23,7 +25,7 @@ from .routers import (
     aftersales_router, finance_router, feedback_router, reports_router,
     warehouse_router, export_router, user_feedback_router,
     produce_router, leads_router, purchase_mgmt_router, oa_router,
-    hr_router, management_todo_router, agent_router,
+    hr_router, management_todo_router, agent_router, desktop_router,
 )
 from .errors import register_exception_handlers
 from .database import get_db
@@ -34,6 +36,29 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 log = logging.getLogger("main")
+
+# ===== 🆕 桌面客户端在线统计：进程内节流状态 =====
+# device_id -> 上次写库的 monotonic 时间；60 秒内同设备重复请求直接跳过，
+# 避免桌面客户端每个 API 请求都写一次库。多 worker 部署时每进程各自节流，足够用。
+_desktop_last_write: dict[str, float] = {}
+_DESKTOP_THROTTLE_SEC = 60.0
+
+
+async def _upsert_desktop_client(device_id: str, version: str, username: str | None):
+    """按 device_id upsert desktop_clients（统计中间件调用；独立会话，用完即关）。"""
+    async with SessionLocal() as db:
+        row = (await db.execute(
+            select(models.DesktopClient).where(models.DesktopClient.device_id == device_id)
+        )).scalar_one_or_none()
+        now = datetime.now(timezone.utc)
+        if row is None:
+            db.add(models.DesktopClient(device_id=device_id, version=version,
+                                        username=username, last_seen=now))
+        else:
+            row.version = version
+            row.username = username
+            row.last_seen = now
+        await db.commit()
 
 
 @asynccontextmanager
@@ -91,6 +116,33 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
+    # ===== 🆕 桌面客户端在线统计中间件 =====
+    # 桌面客户端（Electron）所有 API 请求带 X-PMS-Client: desktop/<version> 等统计头，
+    # 这里 upsert 到 desktop_clients 表供管理页展示在线版本分布。
+    # 节流/会话/异常处理见模块级 _desktop_last_write / _upsert_desktop_client；
+    # 写库异常只记日志，绝不影响业务请求。
+    # 注意：本中间件在 add_middleware(CORSMiddleware) 之后注册（执行顺序更靠外），
+    #   不改动 CORS 配置本身；OPTIONS 预检 / 无统计头的请求直接放行。
+    @app.middleware("http")
+    async def desktop_client_stats(request: Request, call_next):
+        client = request.headers.get("x-pms-client", "")
+        if request.method == "OPTIONS" or not client.startswith("desktop/"):
+            return await call_next(request)
+        try:
+            device_id = (request.headers.get("x-pms-device") or "").strip()
+            if device_id:
+                now = time.monotonic()
+                if now - _desktop_last_write.get(device_id, 0.0) >= _DESKTOP_THROTTLE_SEC:
+                    _desktop_last_write[device_id] = now  # 先占位再写库，防并发重复 upsert
+                    await _upsert_desktop_client(
+                        device_id=device_id,
+                        version=client[len("desktop/"):].strip() or "unknown",
+                        username=(request.headers.get("x-pms-user") or "").strip() or None,
+                    )
+        except Exception:
+            log.exception("桌面客户端统计写入失败（不影响业务请求）")
+        return await call_next(request)
+
     app.include_router(auth_router.router)
     app.include_router(admin_router.router)
     app.include_router(projects_router.router)
@@ -121,6 +173,7 @@ def create_app() -> FastAPI:
     app.include_router(hr_router.router)   # 🆕 人事部一期  # 🆕 OA 审批模块
     app.include_router(management_todo_router.router)  # 🆕 管理层待办
     app.include_router(agent_router.router)  # 🆕 Agent 助手（只读问数 POC，admin/manager）
+    app.include_router(desktop_router.router)  # 🆕 桌面客户端在线统计（只读，admin/manager）
 
     @app.get("/api/health")
     async def health():

@@ -1052,3 +1052,17 @@ class AppSetting(Base):
     value: Mapped[Optional[str]] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ---------- 🆕 桌面客户端在线统计（Electron 客户端带 X-PMS-Client 头，中间件 upsert） ----------
+class DesktopClient(Base):
+    """🆕 桌面客户端设备台账：一台设备一行（device_id 唯一）。
+    由 main.py 的统计中间件按请求头 upsert（60 秒节流），管理页展示在线版本分布。
+    表由 Base.metadata.create_all 自动创建，无需迁移脚本。"""
+    __tablename__ = "desktop_clients"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # preload 注入的设备唯一标识
+    version: Mapped[str] = mapped_column(String(32))                            # 客户端版本号（如 1.0.1）
+    username: Mapped[Optional[str]] = mapped_column(String(64))                 # 最近登录用户名（仅展示用）
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))        # 最近一次带统计头请求的时间
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
