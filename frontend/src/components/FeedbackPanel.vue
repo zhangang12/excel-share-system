@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 🆕 v3 M13 问题反馈面板（按角色显示：装配提交 / 生产主管审批 / 设计师接收驳回）
+// 🆕 v3 M13 问题反馈面板（按角色显示：生产三组提交 / 设计师接收驳回）
 import { ref, onMounted, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Check, UserFilled } from '@element-plus/icons-vue'
@@ -11,8 +11,9 @@ import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
 const auth = useAuthStore()
+// 🆕 2026-07-20：提交权限由仅装配组放宽到 装配/钣金/封板 三组（直达设计师，不审批）
 // 多角色：按并集判断（任一角色命中即显示对应能力）
-const isAssembler = computed(() => auth.hasRole('assembler'))
+const canSubmit = computed(() => auth.hasRole('assembler', 'sheetmetal', 'sealing'))
 // 🆕 反馈#227/#228：装配反馈直达设计,取消生产主管审批环节——不再显示"问题反馈审批"面板
 const isDesigner = computed(() => auth.hasRole('designer'))
 // 🆕 #29 断链修复：设计负责人/管理层此前看不到本面板，死信反馈(无在岗设计师)无处可指派
@@ -30,14 +31,14 @@ async function load() {
 onMounted(load)
 
 const title = computed(() => {
-  if (isAssembler.value) return '📝 我的问题反馈'
+  if (canSubmit.value) return '📝 我的问题反馈'
   if (isDesigner.value) return '📥 待接收的问题反馈'
   if (isDesignLead.value) return '📥 待指派的问题反馈'
   if (isMgr.value) return '📥 待处理的问题反馈'
   return '问题反馈'
 })
 
-// 装配提交
+// 生产三组(装配/钣金/封板)提交
 const submitVisible = ref(false)
 const form = reactive({ project_id: undefined as number | undefined, content: '' })
 const projOptions = ref<{ id: number; code: string; name: string }[]>([])
@@ -119,16 +120,16 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
 </script>
 
 <template>
-  <el-card v-if="isAssembler || isDesigner || canAssign" shadow="never" class="fb-card">
+  <el-card v-if="canSubmit || isDesigner || canAssign" shadow="never" class="fb-card">
     <template #header>
       <div class="fb-head">
         <span>{{ title }} <el-tag v-if="list.length" size="small" type="warning">{{ list.length }}</el-tag></span>
-        <el-button v-if="isAssembler" size="small" type="primary" :icon="Plus" @click="openSubmit">提交反馈</el-button>
+        <el-button v-if="canSubmit" size="small" type="primary" :icon="Plus" @click="openSubmit">提交反馈</el-button>
       </div>
     </template>
 
     <EmptyHint v-if="!loading && !list.length"
-              :text="isAssembler ? '暂无反馈，可对在手项目提交问题' : '暂无待处理反馈'" />
+              :text="canSubmit ? '暂无反馈，可对在手项目提交问题' : '暂无待处理反馈'" />
     <el-table v-else :data="list" v-loading="loading" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
       <el-table-column label="项目" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
       <el-table-column prop="content" label="问题内容" min-width="220" show-overflow-tooltip />
@@ -141,7 +142,7 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
           <span v-else class="muted small">—</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="!isAssembler" label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>
+      <el-table-column v-if="!canSubmit" label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>
       <!-- 🆕 #29 指派视角：谁在处理一目了然，未指派=死信 -->
       <el-table-column v-if="canAssign" label="设计师" width="100">
         <template #default="{ row }">
@@ -176,7 +177,7 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
           </el-select>
         </el-form-item>
         <el-form-item label="问题内容" required>
-          <el-input v-model="form.content" type="textarea" :rows="3" placeholder="描述装配中发现的问题，提交后直接推送设计师接收" />
+          <el-input v-model="form.content" type="textarea" :rows="3" placeholder="描述生产中发现的问题，提交后直接推送设计师接收（无需审批）" />
         </el-form-item>
         <!-- 🆕 #193 现场照片(选填,多张) -->
         <el-form-item label="现场照片（选填，可多张）">

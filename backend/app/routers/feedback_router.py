@@ -1,6 +1,9 @@
 """🆕 v3 M13 生产问题反馈流（§十四）：
-装配工人(本人在手项目)提交 → 生产主管审批(通过→待设计接收/驳回) →
-该项目设计师接收(存档)/驳回。状态：pending_pm→pending_design→archived/rejected_by_*。
+生产三组(装配/钣金/封板,本人在手项目)提交 → 🆕 直达该项目设计师接收(存档)/驳回，无需审批。
+状态：pending_design→archived/rejected_by_design（pending_pm/pm-approve 为历史遗留）。
+
+🆕 2026-07-20：提交权限由仅装配组(assembler)放宽到 装配/钣金/封板 三组
+（assembler/sheetmetal/sealing），同样直达设计师、不审批。
 
 设计师反查：用项目当前 design 任务的 worker_id（非姓名匹配，修正原型缺陷）；
 无 design 任务时降级推 design_lead 池。
@@ -90,7 +93,8 @@ async def list_feedbacks(
             # 🆕 管理层全量：与 require_roles(admin/manager 始终放行) 口径对齐，
             #   否则设计部工作台的反馈面板对管理层永远空白
             conds.append(models.Feedback.status == "pending_design")
-        if "assembler" in codes:
+        if codes & {"assembler", "sheetmetal", "sealing"}:
+            # 🆕 2026-07-20 生产三组(装配/钣金/封板)都能看自己提交的反馈
             conds.append(models.Feedback.created_by == current.id)
         if "pm_lead" in codes:
             conds.append(models.Feedback.status == "pending_pm")
@@ -108,18 +112,23 @@ async def list_feedbacks(
     return await _rows(db, list(r.scalars().all()))
 
 
+# 🆕 2026-07-20 可提交问题反馈的生产三组（装配/钣金/封板）及其 ProduceGroupTask.group 取值
+_FEEDBACK_GROUPS = ("assembly", "sheetmetal", "sealing")
+_FEEDBACK_ROLES = ("assembler", "sheetmetal", "sealing")
+
+
 @router.get("/projects", response_model=List[schemas.FeedbackProjOption])
 async def my_projects(
-    current: models.User = Depends(require_roles("assembler")),
+    current: models.User = Depends(require_roles(*_FEEDBACK_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    """在手项目列表：仅返回派给本装配工(装配组)且进行中的项目供提交问题反馈时选择。
-    🆕 反馈#210「对应不上」：下拉与提交校验同源(ProduceGroupTask 装配组派单)，
+    """在手项目列表：返回派给本人(装配/钣金/封板任一组)且进行中的项目供提交问题反馈时选择。
+    🆕 反馈#210「对应不上」：下拉与提交校验同源(ProduceGroupTask 分组派单)，
     避免过去下拉列全部在手项目、提交却被「只能对自己在手的项目提交反馈」拦下的错配。"""
     r = await db.execute(
         select(models.Project.id, models.Project.code, models.Project.name)
         .join(models.ProduceGroupTask, models.ProduceGroupTask.project_id == models.Project.id)
-        .where(models.ProduceGroupTask.group == "assembly",
+        .where(models.ProduceGroupTask.group.in_(_FEEDBACK_GROUPS),
                models.ProduceGroupTask.worker_id == current.id,
                models.Project.status == "进行中", models.Project.is_deleted == False)
         .distinct().order_by(models.Project.code)
@@ -132,19 +141,20 @@ async def create_feedback(
     project_id: int = Form(...),
     content: str = Form(...),
     files: List[UploadFile] = File(default=[]),
-    current: models.User = Depends(require_roles("assembler")),
+    current: models.User = Depends(require_roles(*_FEEDBACK_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    """装配工人提交问题反馈（限本人在手项目）→ 🆕 反馈#228 直达设计接收（不再经生产主管审批）。
+    """生产三组(装配/钣金/封板)提交问题反馈（限本人在手项目）→ 直达设计接收（不审批）。
+    🆕 2026-07-20：由仅装配组放宽到三组，同样建单即 pending_design。
     🆕 #193 改 multipart：可附现场照片(多张,选填)，设计师接收时可查看。"""
     if not content.strip():
         raise HTTPException(400, "请填写问题内容")
-    # 校验是本人在手(装配组)项目——与 /projects 下拉同源(ProduceGroupTask 装配组派单)。
-    # 🆕 反馈#210：装配工的在手项目走分组派单(worker_id 在 ProduceGroupTask,非 DeptOrder),
+    # 校验是本人在手(装配/钣金/封板任一组)项目——与 /projects 下拉同源(ProduceGroupTask 分组派单)。
+    # 🆕 反馈#210：工人的在手项目走分组派单(worker_id 在 ProduceGroupTask,非 DeptOrder),
     #   过去这里查 DeptOrder.worker_id 恒为空 → 与下拉对不上,一提交就被拦。
     r = await db.execute(select(models.ProduceGroupTask).where(
         models.ProduceGroupTask.project_id == project_id,
-        models.ProduceGroupTask.group == "assembly",
+        models.ProduceGroupTask.group.in_(_FEEDBACK_GROUPS),
         models.ProduceGroupTask.worker_id == current.id,
     ))
     if not r.scalars().first():
