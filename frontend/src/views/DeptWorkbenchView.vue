@@ -1484,7 +1484,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="状态" width="96" align="center"><template #default="{ row }"><StatusPill :text="PREQ_STATUS[row.status] || row.status" :variant="preqStatusVariant(row.status)" /></template></el-table-column>
             <el-table-column label="处理" min-width="150"><template #default="{ row }"><span v-if="row.status === 'done'" class="muted">{{ row.handler_name }} 已处理</span><span v-else-if="row.status === 'rejected'" style="color:var(--el-color-danger)">驳回：{{ row.reject_reason || '—' }}</span><span v-else class="muted">等待采购处理</span></template></el-table-column>
             <el-table-column label="提交时间" width="104"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
-            <el-table-column label="操作" width="70" align="center" fixed="right" :show-overflow-tooltip="false"><template #default="{ row }"><el-button v-if="row.status !== 'done'" size="small" link type="danger" @click="deletePurchReq(row)">删除</el-button></template></el-table-column>
+            <el-table-column label="操作" width="70" align="center" fixed="right" :show-overflow-tooltip="false"><template #default="{ row }"><el-button size="small" link type="danger" @click="deletePurchReq(row)">删除</el-button></template></el-table-column>
             <template #empty><EmptyHint text="暂无请购单，点「提请购单」开始" size="sm" /></template>
           </el-table>
         </el-tab-pane>

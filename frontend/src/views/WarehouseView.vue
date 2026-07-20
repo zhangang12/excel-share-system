@@ -1201,7 +1201,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-table-column label="状态" width="100" align="center"><template #default="{ row }"><StatusPill :text="PREQ_STATUS[row.status] || row.status" :variant="preqStatusVariant(row.status)" /></template></el-table-column>
               <el-table-column label="处理" min-width="140"><template #default="{ row }"><span v-if="row.status === 'done'" class="muted small">{{ row.handler_name }} 已处理</span><span v-else-if="row.status === 'rejected'" class="danger small">驳回：{{ row.reject_reason || '—' }}</span><span v-else class="muted small">等待采购部处理</span></template></el-table-column>
               <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
-              <el-table-column label="操作" width="70" align="center" fixed="right" :show-overflow-tooltip="false"><template #default="{ row }"><el-button v-if="row.status !== 'done'" size="small" link type="danger" @click="deletePurchReq(row)">删除</el-button></template></el-table-column>
+              <el-table-column label="操作" width="70" align="center" fixed="right" :show-overflow-tooltip="false"><template #default="{ row }"><el-button size="small" link type="danger" @click="deletePurchReq(row)">删除</el-button></template></el-table-column>
               <template #empty><EmptyHint text="暂无采购申请，点「提采购申请」开始" size="sm" /></template>
             </el-table>
           </template>
