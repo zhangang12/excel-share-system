@@ -20,3 +20,5 @@ app.use(ElementPlus, { locale: zhCn })
 app.use(VxeUIAll)
 app.use(VxeUITable)
 app.mount('#app')
+// 桌面客户端：通知主进程首屏已挂载，关启动页亮主窗口（浏览器端 pmsDesktop 为 undefined，自动跳过）
+window.pmsDesktop?.notifyReady?.()

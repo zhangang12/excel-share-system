@@ -3,6 +3,10 @@ import vue from '@vitejs/plugin-vue';
 import { fileURLToPath, URL } from 'node:url';
 export default defineConfig({
     plugins: [vue()],
+    // 桌面客户端（Electron file:// 加载）构建时设了 VITE_API_BASE，
+    // 资源必须走相对路径 './'，否则 file:// 下 /assets/... 会解析到磁盘根目录导致白屏；
+    // 浏览器/docker 构建不设 VITE_API_BASE，保持 '/' 不变（history 路由深链接不受影响）。
+    base: process.env.VITE_API_BASE ? './' : '/',
     resolve: {
         alias: {
             '@': fileURLToPath(new URL('./src', import.meta.url)),

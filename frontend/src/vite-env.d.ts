@@ -13,5 +13,7 @@ interface Window {
     isDesktop: boolean
     version: string
     deviceId: string
+    /** Vue 挂载完成后通知主进程（关启动页、亮主窗口） */
+    notifyReady?: () => void
   }
 }

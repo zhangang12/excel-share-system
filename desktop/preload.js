@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('pmsDesktop', {
   version: info.version || '',
   deviceId: info.deviceId || '',
 
+  // 前端 Vue 挂载完成后调用：主进程收到后关启动页、亮主窗口
+  notifyReady: () => ipcRenderer.send('pms-desktop:app-ready'),
+
   // ---- 强制更新页专用最小 IPC ----
   forceUpdateNotes: info.forceNotes || '',
   onProgress: (cb) => ipcRenderer.on('force-update:progress', (_e, p) => cb(p)),

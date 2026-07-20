@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>同辉项目管理系统</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    /* 与登录页同款深蓝径向渐变 */
+    background: radial-gradient(120% 100% at 78% 12%, #1c3350 0%, #16293f 42%, #0f1d30 100%);
+    color: #e8eef6;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  /* 细网格纹理，与登录页一致 */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(120,150,190,.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120,150,190,.06) 1px, transparent 1px);
+    background-size: 46px 46px;
+    pointer-events: none;
+  }
+  .logo-ring {
+    width: 132px;
+    height: 132px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(200,162,79,.35);
+    box-shadow: 0 0 42px rgba(200,162,79,.14), 0 12px 32px rgba(0,0,0,.35);
+  }
+  .logo-ring img { width: 104px; height: 104px; border-radius: 50%; }
+  h1 { margin-top: 26px; font-size: 22px; font-weight: 600; letter-spacing: 4px; }
+  .rule { height: 3px; width: 56px; background: #c8a24f; border-radius: 2px; margin: 14px 0 12px; }
+  .sub { font-size: 12px; color: #8fa3bd; letter-spacing: 2px; }
+  /* 三个金色跳动圆点 */
+  .dots { margin-top: 34px; display: flex; gap: 10px; }
+  .dots span {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #c8a24f;
+    animation: bounce 1.2s ease-in-out infinite;
+  }
+  .dots span:nth-child(2) { animation-delay: .15s; }
+  .dots span:nth-child(3) { animation-delay: .3s; }
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: .45; }
+    30% { transform: translateY(-7px); opacity: 1; }
+  }
+  .ver { position: fixed; bottom: 16px; font-size: 11px; color: #5c7089; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+  <div class="logo-ring"><img src="logo.png" alt=""></div>
+  <h1>同辉项目管理系统</h1>
+  <div class="rule"></div>
+  <p class="sub">正在加载，请稍候…</p>
+  <div class="dots"><span></span><span></span><span></span></div>
+  <p class="ver" id="ver"></p>
+<script>
+  // preload 注入的版本号（splash 复用同一 preload）
+  const d = window.pmsDesktop || {};
+  if (d.version) document.getElementById('ver').textContent = 'v' + d.version;
+</script>
+</body>
+</html>

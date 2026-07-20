@@ -1,8 +1,11 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
-  history: createWebHistory(),
+  // 桌面客户端（file:// 加载，构建时注入 VITE_API_BASE）必须用 hash 模式：
+  // file:// 下初始 URL 是磁盘路径，HTML5 history 匹配不到任何路由会白屏；
+  // 浏览器/docker 构建保持 history 模式不变。
+  history: import.meta.env.VITE_API_BASE ? createWebHashHistory() : createWebHistory(),
   routes: [
     {
       path: '/login',

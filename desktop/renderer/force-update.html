@@ -7,63 +7,95 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
-    background: #1e3a5f;
-    color: #fff;
+    /* 与登录页/启动页同款深蓝径向渐变 */
+    background: radial-gradient(120% 100% at 78% 12%, #1c3350 0%, #16293f 42%, #0f1d30 100%);
+    color: #e8eef6;
     height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* 细网格纹理，与登录页一致 */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(120,150,190,.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120,150,190,.06) 1px, transparent 1px);
+    background-size: 46px 46px;
+    pointer-events: none;
   }
   .card {
     width: 480px;
     text-align: center;
-    padding: 48px 40px;
+    padding: 44px 40px 40px;
     background: rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
   }
-  h1 { font-size: 24px; margin-bottom: 16px; }
+  .logo { width: 72px; height: 72px; border-radius: 50%; box-shadow: 0 0 28px rgba(200,162,79,.18); }
+  h1 { font-size: 22px; letter-spacing: 2px; margin-top: 16px; }
+  .rule { height: 3px; width: 56px; background: #c8a24f; border-radius: 2px; margin: 14px auto 16px; }
   .sub { font-size: 14px; color: #b8c7d9; margin-bottom: 8px; }
   .notes {
-    font-size: 14px;
+    font-size: 13px;
     color: #d7e2ee;
-    background: rgba(0, 0, 0, 0.2);
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     padding: 14px 16px;
-    margin: 18px 0;
+    margin: 18px 0 4px;
     min-height: 20px;
     white-space: pre-wrap;
     text-align: left;
   }
+  .notes:empty { display: none; }
   #btn {
     display: inline-block;
     width: 100%;
-    margin-top: 12px;
+    margin-top: 16px;
     padding: 14px 0;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: bold;
-    color: #1e3a5f;
-    background: #fff;
+    letter-spacing: 2px;
+    color: #1a2b42;
+    /* 品牌金渐变，与登录按钮一致 */
+    background: linear-gradient(180deg, #d8b45f 0%, #c8a24f 55%, #b8862f 100%);
     border: none;
     border-radius: 8px;
     cursor: pointer;
+    transition: filter .15s, transform .1s;
   }
-  #btn:disabled { opacity: 0.5; cursor: default; }
+  #btn:hover:not(:disabled) { filter: brightness(1.08); }
+  #btn:active:not(:disabled) { transform: translateY(1px); }
+  #btn:disabled { opacity: 0.55; cursor: default; }
   .bar-wrap {
     display: none;
     margin-top: 20px;
-    height: 12px;
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
+    height: 10px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
     overflow: hidden;
   }
-  #bar { height: 100%; width: 0%; background: #4fc08d; transition: width 0.2s; }
+  #bar {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #c8a24f, #e5c878);
+    border-radius: 5px;
+    transition: width 0.2s;
+  }
   #status { margin-top: 12px; font-size: 13px; color: #b8c7d9; min-height: 18px; }
   #err { margin-top: 8px; font-size: 13px; color: #ff8a80; min-height: 18px; }
 </style>
 </head>
 <body>
   <div class="card">
+    <img class="logo" src="logo.png" alt="">
     <h1>同辉项目管理系统</h1>
+    <div class="rule"></div>
     <p class="sub">当前客户端版本过旧，已停止使用，请更新到最新版本。</p>
     <div class="notes" id="notes"></div>
     <button id="btn">立即更新</button>
