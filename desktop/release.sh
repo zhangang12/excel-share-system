@@ -85,7 +85,9 @@ fi
 # ---- 1. 版本号 ----
 cd "$DESKTOP_DIR"
 if [[ -n "$SET_VERSION" ]]; then
-  npm version "$SET_VERSION" --no-git-tag-version
+  # 与当前版本相同则跳过（npm version 同号会报 Version not changed 直接退出）
+  [[ "$SET_VERSION" != "$(node -p "require('./package.json').version")" ]] \
+    && npm version "$SET_VERSION" --no-git-tag-version
 else
   npm version patch --no-git-tag-version
 fi
@@ -101,7 +103,7 @@ if [[ -n "$MIN_VERSION" ]]; then
     j.min_version = '$MIN_VERSION';
     fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
   "
-  echo "✓ version.json 最低版本已改为 $MIN_VERSION（低于它的客户端将被强制更新）"
+  echo "✓ version.json 最低版本已改为 ${MIN_VERSION}（低于它的客户端将被强制更新）"
 fi
 
 # ---- 3. 打包前端（桌面端走绝对地址 API，与前端约定 VITE_API_BASE）----
@@ -131,4 +133,4 @@ echo "[4/4] 上传到服务器 ${TARGET}:${REMOTE_DIR}/ ..."
 "${SCP[@]}" "$DESKTOP_DIR"/dist/*.exe "$DESKTOP_DIR"/dist/latest.yml "$DESKTOP_DIR"/dist/*.blockmap "$DESKTOP_DIR/version.json" "$TARGET:$REMOTE_DIR/"
 
 echo ""
-echo "✓ 已发布 $VERSION，客户端下一轮检查将收到更新。"
+echo "✓ 已发布 ${VERSION}，客户端下一轮检查将收到更新。"
