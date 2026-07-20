@@ -480,6 +480,20 @@ function viewSheet(row: GroupProjectRow) {
   viewVisible.value = true
 }
 
+// 🆕 反馈#258 装配组：标准件清单/外协加工 可预览编辑（复用 SheetmetalGrid，权限同钣金装配表）
+const asmSheetVisible = ref(false)
+const asmSheetTitle = ref('')
+const asmSheetId = ref<number | null>(null)
+const asmSheetCode = ref('')
+function viewAsmSheet(row: GroupProjectRow, kind: 'standard' | 'outsource') {
+  const id = kind === 'standard' ? row.standard_datasheet_id : row.outsource_datasheet_id
+  if (!id) { ElMessage.info(`该项目暂无${kind === 'standard' ? '标准件清单' : '外协加工'}表`); return }
+  asmSheetTitle.value = `${row.code} · ${kind === 'standard' ? '标准件清单' : '外协加工'}`
+  asmSheetId.value = id
+  asmSheetCode.value = row.code
+  asmSheetVisible.value = true
+}
+
 // 反馈#230：封板组不再单列「激光件清单」(工人反馈不要),原查看/编辑激光件清单入口已移除。
 watch(dept, () => { activeTab.value = ''; load() })
 onMounted(load)
@@ -1347,11 +1361,17 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="标准件清单" min-width="120" align="center">
-              <template #default="{ row }"><StatusPill :text="row.standard_ready ? '已备齐' : '进行中'" :variant="row.standard_ready ? 'success' : 'warn'" /></template>
+            <el-table-column label="标准件清单" min-width="130" align="center">
+              <template #default="{ row }">
+                <StatusPill :text="row.standard_ready ? '已备齐' : '进行中'" :variant="row.standard_ready ? 'success' : 'warn'" />
+                <el-button v-if="row.standard_datasheet_id" size="small" link type="primary" @click="viewAsmSheet(row, 'standard')">预览/编辑</el-button>
+              </template>
             </el-table-column>
-            <el-table-column label="外协加工" min-width="120" align="center">
-              <template #default="{ row }"><StatusPill :text="row.outsource_ready ? '已备齐' : '进行中'" :variant="row.outsource_ready ? 'success' : 'warn'" /></template>
+            <el-table-column label="外协加工" min-width="130" align="center">
+              <template #default="{ row }">
+                <StatusPill :text="row.outsource_ready ? '已备齐' : '进行中'" :variant="row.outsource_ready ? 'success' : 'warn'" />
+                <el-button v-if="row.outsource_datasheet_id" size="small" link type="primary" @click="viewAsmSheet(row, 'outsource')">预览/编辑</el-button>
+              </template>
             </el-table-column>
             <el-table-column label="预计完成" min-width="150" align="center">
               <template #default="{ row }">
@@ -1652,6 +1672,16 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         v-if="viewRow?.sheetmetal_datasheet_id"
         :datasheetId="viewRow.sheetmetal_datasheet_id"
         :projectCode="viewRow.code"
+        :canEdit="canEditSheet"
+      />
+    </el-dialog>
+
+    <!-- ===== 🆕 反馈#258 装配组：标准件清单/外协加工 可编辑预览 ===== -->
+    <el-dialog v-model="asmSheetVisible" :title="asmSheetTitle" width="90vw" destroy-on-close>
+      <SheetmetalGrid
+        v-if="asmSheetId"
+        :datasheetId="asmSheetId"
+        :projectCode="asmSheetCode"
         :canEdit="canEditSheet"
       />
     </el-dialog>

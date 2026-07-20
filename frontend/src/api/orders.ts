@@ -154,6 +154,8 @@ export interface GroupProjectRow {
   sheetmetal_done: boolean
   standard_ready?: boolean | null    // 仅装配组
   outsource_ready?: boolean | null   // 仅装配组
+  standard_datasheet_id?: number | null   // 🆕 反馈#258 仅装配组：标准件清单(可预览编辑)
+  outsource_datasheet_id?: number | null  // 🆕 反馈#258 仅装配组：外协加工(可预览编辑)
   material_locations?: string[]      // 🆕 #204 本项目材料所在库位
   laser_datasheet_id?: number | null           // 🆕 反馈#209 封板组：激光件清单(只读表)
   laser_files?: { id: number; name: string }[] // 🆕 反馈#209 封板组：CAD激光图纸(可下载)

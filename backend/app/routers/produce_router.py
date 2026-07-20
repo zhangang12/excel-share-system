@@ -304,6 +304,9 @@ class GroupProjectRow(BaseModel):
     # 仅装配组用：标准件清单/外协加工 是否已备齐
     standard_ready: Optional[bool] = None
     outsource_ready: Optional[bool] = None
+    # 🆕 反馈#258 装配组：标准件清单/外协加工 数据表 id（可预览编辑，复用 SheetmetalGrid）
+    standard_datasheet_id: Optional[int] = None
+    outsource_datasheet_id: Optional[int] = None
     material_locations: List[str] = []   # 🆕 #204 本项目材料所在库位(入库流水去重,供装配/钣金知道去哪拿料)
     # 🆕 反馈#209 封板组「推送激光图」：激光件清单(只读表)+ CAD激光图纸文件(设计产出,可下载)
     laser_datasheet_id: Optional[int] = None
@@ -455,8 +458,13 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
         )
         if group == "assembly":
             sheets = ready_by_pid.get(p.id, {})
-            row.standard_ready = await _sheet_ready(db, sheets.get("标准件清单"))
-            row.outsource_ready = await _sheet_ready(db, sheets.get("外协加工"))
+            std = sheets.get("标准件清单")
+            out = sheets.get("外协加工")
+            row.standard_ready = await _sheet_ready(db, std)
+            row.outsource_ready = await _sheet_ready(db, out)
+            # 🆕 反馈#258：装配组可直接预览/编辑这两张表
+            row.standard_datasheet_id = std.id if std else None
+            row.outsource_datasheet_id = out.id if out else None
         if group == "sealing":
             ld = laser_ds_by_pid.get(p.id, {}).get("激光件清单")
             row.laser_datasheet_id = ld.id if ld else None
