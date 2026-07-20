@@ -145,6 +145,21 @@ function uploadExpenseInvoice(row: ExpenseItem) {
   }
   input.click()
 }
+// 🆕 反馈#264：提交申请时可直接添加文档附件（提交成功后逐个上传到本申请）
+const subFiles = ref<File[]>([])
+function pickSubFiles() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.multiple = true
+  input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.jpg,.jpeg,.png,.gif,.bmp,.webp,.dwg,.dxf,.zip,.rar,.7z,.ofd,.txt'
+  input.onchange = () => {
+    for (const f of Array.from(input.files || [])) {
+      if (!subFiles.value.some(x => x.name === f.name && x.size === f.size)) subFiles.value.push(f)
+    }
+  }
+  input.click()
+}
+function removeSubFile(i: number) { subFiles.value.splice(i, 1) }
+
 const subDocType = computed(() => docTypes.value.find(d => d.key === subForm.doc_type))
 const subCategory = computed(() => subDocType.value?.category || '')
 const showBusinessFields = computed(() => subCategory.value === 'business')
@@ -206,6 +221,7 @@ function resetSubForm() {
     expense_items: [],
     cc_user_ids: [],
   })
+  subFiles.value = []   // 🆕 反馈#264：附件选择一并重置
 }
 function openSubmit() {
   resetSubForm()
@@ -263,6 +279,17 @@ async function submitNew() {
       cc_user_ids: subForm.cc_user_ids,
     })
     ElMessage.success(`已提交 ${r.request_no}`)
+    // 🆕 反馈#264：随申请一并上传附件（失败不阻塞，可在详情抽屉重新上传）
+    if (subFiles.value.length) {
+      let fail = 0
+      for (const f of subFiles.value) {
+        const fd = new FormData()
+        fd.append('file', f); fd.append('biz_type', 'oa_request'); fd.append('biz_id', String(r.id))
+        try { await http.post('/attachments', fd) } catch { fail++ }
+      }
+      if (fail) ElMessage.warning(`${fail} 个附件上传失败，可在申请详情里重新上传`)
+      subFiles.value = []
+    }
     subVisible.value = false
     if (activeTab.value === 'mine') await loadList()
   } catch { /* 全局拦截器已提示 */ }
@@ -1037,6 +1064,19 @@ onMounted(async () => {
                          style="width:100%" placeholder="抄送给谁看——不参与审批，仅收到通知并可查看该申请">
                 <el-option v-for="u in ccCandidates" :key="u.id" :label="u.name" :value="u.id" />
               </el-select>
+            </el-form-item>
+          </el-col>
+
+          <!-- 🆕 反馈#264：提交申请时可直接添加文档附件 -->
+          <el-col :span="24">
+            <el-form-item label="附件（选填）">
+              <div style="width:100%">
+                <div v-for="(f, i) in subFiles" :key="i" class="att-row">
+                  <span :title="f.name">{{ f.name }}</span>
+                  <el-button size="small" link type="danger" @click="removeSubFile(i)">移除</el-button>
+                </div>
+                <el-button size="small" :icon="Upload" @click="pickSubFiles">添加文档</el-button>
+              </div>
             </el-form-item>
           </el-col>
         </el-row>

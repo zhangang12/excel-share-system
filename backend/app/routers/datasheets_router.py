@@ -407,8 +407,8 @@ async def delete_record(
 # ══════════════════════════════════════════════════════════
 
 SHEETMETAL_DS_NAME = "钣金装配"
-# 🆕 反馈#258：装配组「标准件清单/外协加工」也允许生产组编辑（可预览编辑）
-PRODUCE_EDIT_DS_NAMES = {SHEETMETAL_DS_NAME, "标准件清单", "外协加工"}
+# 🆕 反馈#258：装配组「外协加工」允许生产组编辑（可预览编辑，口径同钣金装配表；标准件清单不在其列）
+PRODUCE_EDIT_DS_NAMES = {SHEETMETAL_DS_NAME, "外协加工"}
 
 
 async def _produce_edit_check(
@@ -418,10 +418,10 @@ async def _produce_edit_check(
 ) -> models.Datasheet:
     """验证数据表允许生产组编辑且用户有编辑权，返回 Datasheet 对象。
     反馈#230：封板组「激光件清单」编辑已撤销，不在白名单内。
-    反馈#258：白名单 = 钣金装配 + 标准件清单 + 外协加工（装配组可预览编辑）。"""
+    反馈#258：白名单 = 钣金装配 + 外协加工（装配组「编辑外协加工表」，口径同钣金装配表）。"""
     d = await _get_datasheet_or_404(db, did)
     if d.name not in PRODUCE_EDIT_DS_NAMES:
-        raise HTTPException(403, "此端点仅限编辑「钣金装配/标准件清单/外协加工」数据表")
+        raise HTTPException(403, "此端点仅限编辑「钣金装配/外协加工」数据表")
     if not current.has_role("admin", "manager"):
         r = await db.execute(
             select(models.ProduceGroupTask).where(
