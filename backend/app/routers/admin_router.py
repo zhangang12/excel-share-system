@@ -37,6 +37,14 @@ async def get_tab_registry(_: models.User = Depends(require_admin_or_manager)):
     return tab_registry()
 
 
+# ---------- 🆕 一级菜单定义（用户管理「菜单权限」弹窗用，顺序即侧边栏顺序） ----------
+@router.get("/menu-defs")
+async def get_menu_defs(_: models.User = Depends(require_admin_or_manager)):
+    """返回全量一级菜单定义：business=业务区(MENU_DEFS)、admin=管理组(ADMIN_MENU_DEFS)。"""
+    from ..menus import MENU_DEFS, ADMIN_MENU_DEFS
+    return {"business": MENU_DEFS, "admin": ADMIN_MENU_DEFS}
+
+
 
 
 # ---------- 用户 ----------
@@ -49,7 +57,10 @@ def _resolve_roles(u: models.User) -> list[models.Role]:
 
 
 def _user_to_out(u: models.User) -> schemas.UserOut:
+    from ..menus import ADMIN_MENU_DEFS
     roles = _resolve_roles(u)
+    menus = list(u.menus or [])
+    admin_keys = [m["key"] for m in ADMIN_MENU_DEFS]
     return schemas.UserOut(
         id=u.id, username=u.username, full_name=u.full_name, email=u.email,
         role_id=u.role_id,
@@ -62,7 +73,9 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         password_must_change=u.password_must_change,
         wxid=u.wxid,
         hidden_tabs=list(u.hidden_tabs or []),
-        grant_menus=list(u.grant_menus or []),
+        menus=menus,
+        # 派生值（兼容旧客户端/旧桌面端）：menus ∩ 管理组有效 key；不再读 grant_menus 列
+        grant_menus=[k for k in admin_keys if k in set(menus)],
         created_at=u.created_at, last_login=u.last_login,
     )
 
@@ -142,6 +155,13 @@ async def create_user(
     db.add(u)
     await db.flush()  # 拿到 u.id（写 user_roles + 项目成员回填）
     codes = await _set_user_roles(db, u, role_ids, current)  # 校验 + 越权防护 + 设锚点 + 写 user_roles
+    # 🆕 一级菜单按账号配置：建号时用所选角色（含锚点）的 ROLE_DEFAULT_MENUS 并集
+    # + messages + oa 预填（一次性默认；之后由「菜单权限」按账号调整，改角色不再联动）。
+    # admin/manager 天然全可见，无需预填。
+    if not (codes & {"admin", "manager"}):
+        from ..menus import default_menus_for_roles
+        eff = set(codes) | ({"finance"} if "finance_lead" in codes else set())  # 与 role_codes 隐含口径一致
+        u.menus = default_menus_for_roles(eff)
     # 新用户默认加入所有「存量活跃项目」为 edit 成员
     # （admin/manager 在 deps 层自动拥有全部项目权限，无需塞 member）
     if u.is_active and not (codes & {"admin", "manager"}):
@@ -192,6 +212,37 @@ async def update_user(
     return _user_to_out(u)
 
 
+@router.put("/users/{uid}/menus", response_model=schemas.UserOut)
+async def set_user_menus(
+    uid: int,
+    data: schemas.SetMenusIn,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 一级菜单按账号配置（角色菜单矩阵已废除）：整体替换该账号的一级菜单 key 清单。
+
+    key 必须 ⊆ MENU_DEFS ∪ ADMIN_MENU_DEFS，非法 400；去重后按规范顺序落库。
+    仅对非 admin/manager 账号有意义（管理层天然全可见）；写审计。"""
+    from ..menus import MENU_DEFS, ADMIN_MENU_DEFS, canonical_menu_order
+    res = await db.execute(select(models.User).where(models.User.id == uid))
+    u = res.scalar_one_or_none()
+    if not u:
+        raise HTTPException(404, "用户不存在")
+    if u.has_role("admin") and not current.has_role("admin"):
+        raise HTTPException(403, "不可修改超级管理员账号")
+    valid_keys = {m["key"] for m in (MENU_DEFS + ADMIN_MENU_DEFS)}
+    bad = set(data.menus) - valid_keys
+    if bad:
+        raise HTTPException(400, f"非法菜单 key：{'、'.join(sorted(bad))}")
+    u.menus = canonical_menu_order(dict.fromkeys(data.menus))
+    await write_audit(db, user=current, action="set_menus",
+                      target_type="user", target_id=u.id,
+                      detail=f"设置一级菜单: {u.menus}")
+    await db.commit()
+    await db.refresh(u, attribute_names=["role", "roles"])
+    return _user_to_out(u)
+
+
 @router.put("/users/{uid}/grant-menus", response_model=schemas.UserOut)
 async def grant_menus(
     uid: int,
@@ -199,10 +250,11 @@ async def grant_menus(
     current: models.User = Depends(require_admin_or_manager),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 反馈#268：按账号开通管理组菜单（目前仅 dict-admin 字典设置）。
+    """兼容包装（桌面端 1.0.2 在用）：按账号开通/收回管理组菜单。
 
-    仅对非 admin/manager 账号有意义（管理层天然全可见）；整体替换，写审计。"""
-    from ..menus import ADMIN_MENU_DEFS
+    语义 = 仅对 ADMIN_MENU_DEFS 的 key：入参含有的加入 User.menus、不含的从 User.menus
+    移除；其余（业务）key 不动。仅对非 admin/manager 账号有意义（管理层天然全可见）；写审计。"""
+    from ..menus import ADMIN_MENU_DEFS, canonical_menu_order, user_menu_keys
     res = await db.execute(select(models.User).where(models.User.id == uid))
     u = res.scalar_one_or_none()
     if not u:
@@ -213,10 +265,13 @@ async def grant_menus(
     bad = set(data.grant_menus) - valid_keys
     if bad:
         raise HTTPException(400, f"不可开通的管理组菜单：{'、'.join(sorted(bad))}")
-    u.grant_menus = list(dict.fromkeys(data.grant_menus))
+    # menus 为 NULL（未配置）时先按当前有效可见值落地，再对管理组 key 做增删
+    base = list(u.menus) if u.menus is not None else user_menu_keys(u)
+    kept = set(base) - valid_keys
+    u.menus = canonical_menu_order(kept | set(data.grant_menus))
     await write_audit(db, user=current, action="grant_menus",
                       target_type="user", target_id=u.id,
-                      detail=f"开通管理组菜单: {u.grant_menus}")
+                      detail=f"开通管理组菜单: {[k for k in u.menus if k in valid_keys]}")
     await db.commit()
     await db.refresh(u, attribute_names=["role", "roles"])
     return _user_to_out(u)

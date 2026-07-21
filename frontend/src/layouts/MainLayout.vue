@@ -170,8 +170,8 @@ onUnmounted(() => {
           <span v-if="!collapsed">{{ m.label }}</span>
         </a>
 
-        <!-- 🆕 字典设置：物料类别/单位/材质/供应商分类/订单编号——放开给所有登录用户（含编辑） -->
-        <a :class="{ active: activeKey === 'dict-admin' }" @click="go('dict-admin')">
+        <!-- 🆕 字典设置：按账号菜单配置可见（一级菜单由后端下发，不再无条件放开） -->
+        <a v-if="auth.hasMenu('dict-admin')" :class="{ active: activeKey === 'dict-admin' }" @click="go('dict-admin')">
           <el-icon class="nav-icon"><Collection /></el-icon>
           <span v-if="!collapsed">字典设置</span>
         </a>
@@ -188,19 +188,19 @@ onUnmounted(() => {
           <div v-if="!collapsed" class="section-title">管理</div>
           <div v-else class="section-divider"></div>
 
-          <a :class="{ active: activeKey === 'admin-users' }" @click="go('admin-users')">
+          <a v-if="auth.hasMenu('admin-users')" :class="{ active: activeKey === 'admin-users' }" @click="go('admin-users')">
             <el-icon class="nav-icon"><User /></el-icon>
             <span v-if="!collapsed">用户</span>
           </a>
-          <a :class="{ active: activeKey === 'admin-perms' }" @click="go('admin-perms')">
+          <a v-if="auth.hasMenu('admin-perms')" :class="{ active: activeKey === 'admin-perms' }" @click="go('admin-perms')">
             <el-icon class="nav-icon"><Lock /></el-icon>
             <span v-if="!collapsed">权限管理</span>
           </a>
-          <a :class="{ active: activeKey === 'admin-audit' }" @click="go('admin-audit')">
+          <a v-if="auth.hasMenu('admin-audit')" :class="{ active: activeKey === 'admin-audit' }" @click="go('admin-audit')">
             <el-icon class="nav-icon"><Document /></el-icon>
             <span v-if="!collapsed">操作审计</span>
           </a>
-          <!-- 字典设置已移到业务菜单区、放开给所有人（见上） -->
+          <!-- 字典设置在业务菜单区渲染（见上，hasMenu 驱动） -->
           <!-- 🆕 v3 管理组新菜单（导出审批/企微绑定） -->
           <a v-for="m in adminExtraMenus" :key="m.key"
              :class="{ active: activeKey === m.key }" @click="go(m.key)">

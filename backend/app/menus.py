@@ -1,6 +1,9 @@
-"""🆕 v3 菜单可见性矩阵 —— 全系统唯一权威（前端经 GET /api/auth/menus 渲染）。
+"""🆕 v3 菜单可见性 —— 全系统唯一权威（前端经 GET /api/auth/menus 渲染）。
 
-口径来源：《权限矩阵.md》§二 + 2026-06-12 收紧口径：
+运行时口径（2026-07-21 起）：一级菜单按账号配置（User.menus），管理层 admin/manager
+全量可见；角色菜单矩阵（原 ROLE_MENUS）已废除，仅存 ROLE_DEFAULT_MENUS 作建号/迁移默认值。
+
+历史口径来源：《权限矩阵.md》§二 + 2026-06-12 收紧口径：
 - 销售员/销售主管、电工/电工部负责人、装配组：只保留本部门菜单 + 项目目录，
   且项目目录中编号不可点进项目详单（can_view_detail=False）
 - 售后部员工/主管：仅售后部菜单（无项目目录）
@@ -50,9 +53,14 @@ ADMIN_MENU_DEFS: list[dict] = [
 _ALL_KEYS = [m["key"] for m in MENU_DEFS]
 _ADMIN_KEYS = [m["key"] for m in ADMIN_MENU_DEFS]
 
-# role_code -> 可见菜单 key 集合（admin/manager 不在表内=全可见）
-# 注意：messages/oa 全员可见，统一在 user_menu_keys 里追加，不在矩阵重复
-ROLE_MENUS: dict[str, list[str]] = {
+# 未配置 User.menus（NULL）时的兜底默认（正常不会命中：建号预填 + 存量迁移都会落地）
+DEFAULT_ACCOUNT_MENUS: list[str] = ["catalog", "list", "messages", "oa"]
+
+# role_code -> 默认一级菜单 key 集合（admin/manager 不在表内=全可见）
+# ⚠️ 仅作「建号预填 / 存量迁移 backfill」的默认值模板：运行时菜单可见性一律读
+#    User.menus（见 user_menu_keys），不读本表。本表内容 = 已废除的原 ROLE_MENUS
+#    角色菜单矩阵，原样保留仅供上述两处取默认值。
+ROLE_DEFAULT_MENUS: dict[str, list[str]] = {
     # ---- 老角色：保持既有可见性（catalog+list），叠加对应部门工作台 ----
     "designer":         ["catalog", "list", "design"],
     "production_clerk": ["catalog", "list", "produce"],
@@ -111,28 +119,38 @@ def tab_registry() -> list[dict]:
             for g in TAB_REGISTRY]
 
 
-def user_menu_keys(user: models.User) -> list[str]:
-    """当前用户可见的业务菜单 key（按 MENU_DEFS 顺序）+ 管理组 key。
+def canonical_menu_order(keys) -> list[str]:
+    """把一批菜单 key 按规范顺序排列：业务 key 按 MENU_DEFS 顺序，管理组 key 按
+    ADMIN_MENU_DEFS 顺序排尾；无效 key 丢弃。"""
+    s = set(keys or [])
+    return [k for k in _ALL_KEYS if k in s] + [k for k in _ADMIN_KEYS if k in s]
 
-    多角色取并集：可见菜单 = 各角色可见菜单的合集。
+
+def default_menus_for_roles(codes) -> list[str]:
+    """建号/存量迁移的一次性默认值：角色集 → ROLE_DEFAULT_MENUS 并集 ∪ {messages, oa}
+    （按规范顺序）。仅建号/迁移用，运行时不调。"""
+    allowed: set[str] = set()
+    for code in (codes or {""}):
+        allowed |= set(ROLE_DEFAULT_MENUS.get(code, ["catalog", "list"]))  # 未知角色按老默认（目录+详单）
+    allowed |= {"messages", "oa"}  # messages/oa 全员可见，统一在此并入，不在模板重复
+    return canonical_menu_order(allowed)
+
+
+def user_menu_keys(user: models.User) -> list[str]:
+    """当前用户可见的业务菜单 key（按 MENU_DEFS 顺序）+ 管理组 key（按 ADMIN_MENU_DEFS 顺序排尾）。
+
+    口径（2026-07-21 起）：一级菜单按账号配置（User.menus），角色菜单矩阵已废除：
+    - admin/manager：全量可见（不读 User.menus）
+    - 其余账号：User.menus 即完整清单；NULL=未配置 → DEFAULT_ACCOUNT_MENUS 兜底
     """
     codes = user.role_codes
     if codes & {"admin", "manager"}:
         return _ALL_KEYS + _ADMIN_KEYS
-    allowed: set[str] = set()
-    for code in (codes or {""}):
-        allowed |= set(ROLE_MENUS.get(code, ["catalog", "list"]))  # 未知角色按老默认（目录+详单）
-    allowed.add("messages")
-    allowed.add("oa")  # 🆕 OA审批：全员可见，不受角色矩阵限制
-    keys = [k for k in _ALL_KEYS if k in allowed]
-    # 🆕 反馈#268 按账号额外开通的管理组菜单（如 dict-admin 字典设置）：
-    # 追加在业务菜单之后；只认 ADMIN_MENU_DEFS 里存在的 key，忽略脏数据
-    granted = set(user.grant_menus or [])
-    keys += [k for k in _ADMIN_KEYS if k in granted]
-    return keys
+    configured = user.menus if user.menus is not None else DEFAULT_ACCOUNT_MENUS
+    return canonical_menu_order(configured)
 
 
 def user_can_view_detail(user: models.User) -> bool:
     """是否可进入项目详单/项目详情（2026-06-12 收紧口径：销售/电工/装配/售后不可）。
-    与菜单矩阵同源：有 'list' 菜单即可进详单。"""
+    与菜单配置同源：有 'list' 菜单即可进详单。"""
     return "list" in user_menu_keys(user)

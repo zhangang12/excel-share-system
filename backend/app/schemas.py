@@ -43,8 +43,14 @@ class UserUpdate(BaseModel):
 
 
 # 🆕 反馈#268 按账号开通管理组菜单（目前仅 dict-admin 字典设置）
+#   2026-07-21 起为兼容包装：对管理组 key 做「入参含有的加入 menus、不含的移除」
 class GrantMenusIn(BaseModel):
-    grant_menus: list[str] = []  # 整体替换该账号额外开通的管理组菜单 key
+    grant_menus: list[str] = []  # 目标开通的管理组菜单 key（仅影响 menus 中的管理组部分）
+
+
+# 🆕 一级菜单按账号配置（整体替换；key ⊆ MENU_DEFS ∪ ADMIN_MENU_DEFS）
+class SetMenusIn(BaseModel):
+    menus: list[str] = []
 
 
 class UserOut(BaseModel):
@@ -66,7 +72,8 @@ class UserOut(BaseModel):
     password_must_change: bool = False
     wxid: Optional[str] = None  # 🆕 v3 企微绑定
     hidden_tabs: list[str] = []  # 🆕 #7 该账号隐藏的二级菜单tab
-    grant_menus: list[str] = []  # 🆕 反馈#268 该账号额外开通的管理组菜单
+    menus: list[str] = []        # 🆕 该账号配置的一级菜单 key（业务+管理组混合，规范顺序）
+    grant_menus: list[str] = []  # 派生值 = menus ∩ 管理组有效 key（兼容旧客户端，不再独立存储）
     created_at: datetime
     last_login: Optional[datetime] = None
 

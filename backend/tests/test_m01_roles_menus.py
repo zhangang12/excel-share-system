@@ -60,21 +60,21 @@ async def main():
             r = await c.post("/api/auth/login", json={"username":u,"password":"pass123"})
             return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
-        # 销售员：菜单=catalog+sales+messages，无 list；详单 403
+        # 销售员：菜单=catalog+sales+leads+oa+messages，无 list；详单 403
         Hs = await login("s1")
         r = await c.get("/api/auth/menus", headers=Hs); j = r.json()
         ks = [m["key"] for m in j["menus"]]
-        chk(ks==["catalog","sales","messages"], f"sales menus: {ks}")
+        chk(ks==["catalog","sales","leads","oa","messages"], f"sales menus: {ks}")
         chk(j["can_view_detail"] is False, "sales cannot view detail")
         r = await c.get(f"/api/projects/{pid}", headers=Hs)
         chk(r.status_code==403, f"sales project detail 403: {r.status_code}")
         r = await c.get(f"/api/projects/{pid}/datasheets", headers=Hs)
         chk(r.status_code==403, f"sales datasheets 403: {r.status_code}")
 
-        # 电工：catalog+electric，无详单
+        # 电工：catalog+electric+oa+messages，无详单
         He = await login("e1")
         ks = [m["key"] for m in (await c.get("/api/auth/menus", headers=He)).json()["menus"]]
-        chk(ks==["catalog","electric","messages"], f"electrician menus: {ks}")
+        chk(ks==["catalog","electric","oa","messages"], f"electrician menus: {ks}")
         r = await c.get(f"/api/projects/{pid}", headers=He)
         chk(r.status_code==403, "electrician detail 403")
 
@@ -104,16 +104,16 @@ async def main():
             r = await c.get(f"/api/datasheets/{did}/fields", headers=Hd_early)
             chk(r.status_code == 200, f"designer 仍可读 fields(不回归): {r.status_code}")
 
-        # 售后：仅 aftersales+messages，无 catalog
+        # 售后：仅 aftersales+oa+messages，无 catalog
         Hw = await login("w1")
         ks = [m["key"] for m in (await c.get("/api/auth/menus", headers=Hw)).json()["menus"]]
-        chk(ks==["aftersales","messages"], f"as_worker menus: {ks}")
+        chk(ks==["aftersales","oa","messages"], f"as_worker menus: {ks}")
 
-        # 设计师（老角色）：catalog+list+design，详单可访问
+        # 设计师（老角色）：catalog+list+design+oa+messages，详单可访问
         Hd = await login("d1")
         jd = (await c.get("/api/auth/menus", headers=Hd)).json()
         ks = [m["key"] for m in jd["menus"]]
-        chk(ks==["catalog","list","design","messages"], f"designer menus: {ks}")
+        chk(ks==["catalog","list","design","oa","messages"], f"designer menus: {ks}")
         chk(jd["can_view_detail"] is True, "designer can view detail")
         r = await c.get(f"/api/projects/{pid}", headers=Hd)
         chk(r.status_code==200, f"designer detail 200: {r.status_code}")

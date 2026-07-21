@@ -53,7 +53,12 @@ class User(Base):
     # 🆕 #7 按账号隐藏的二级菜单(tab) key 列表（形如 "finance:pay_payment"）；空=按角色可见全部 tab
     hidden_tabs: Mapped[Optional[list]] = mapped_column(PortableJSON())
     # 🆕 反馈#268 按账号额外开通的管理组菜单 key（如 "dict-admin" 字典设置）；空=无额外开通
+    #   ⚠️ 2026-07-21 起停用：存量值由 backfill_user_menus 并入 menus；读取侧只保留列不删
     grant_menus: Mapped[Optional[list]] = mapped_column(PortableJSON())
+    # 🆕 一级菜单按账号配置：该账号完整的一级菜单 key 清单（业务 MENU_DEFS + 管理组
+    #   ADMIN_MENU_DEFS 混合）；NULL=未配置（运行时兜底 DEFAULT_ACCOUNT_MENUS）。
+    #   角色菜单矩阵已废除；admin/manager 天然全可见、不读本列。
+    menus: Mapped[Optional[list]] = mapped_column(PortableJSON())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 

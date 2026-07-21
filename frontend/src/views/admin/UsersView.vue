@@ -26,20 +26,26 @@ const form = reactive({
   is_active: true,
 })
 
-// 🆕 #7 二级菜单(tab)权限：管理层给某账号勾掉不可见的 tab
+// 🆕 菜单权限弹窗：一级菜单按账号配置（角色矩阵已废除）+ 二级菜单(tab)按账号隐藏
 const tabRegistry = ref<{ menu_key: string; menu_label: string; tabs: { key: string; label: string }[] }[]>([])
+const menuDefs = ref<{ business: { key: string; label: string }[]; admin: { key: string; label: string }[] }>({ business: [], admin: [] })
 const tabDlgVisible = ref(false)
 const tabDlgUser = ref<User | null>(null)
 const tabHiddenSet = ref<Set<string>>(new Set())
+const menuSet = ref<Set<string>>(new Set())   // 勾选=该账号可见该一级菜单
 const tabSaving = ref(false)
-// 🆕 反馈#268 按账号开通「字典设置」管理组菜单（与二级菜单权限同一弹窗维护）
-const dictGranted = ref(false)
 async function openTabPerm(u: User) {
   tabDlgUser.value = u
   tabHiddenSet.value = new Set(u.hidden_tabs || [])
-  dictGranted.value = ((u as User & { grant_menus?: string[] }).grant_menus || []).includes('dict-admin')
+  menuSet.value = new Set(u.menus || [])
   if (!tabRegistry.value.length) { try { tabRegistry.value = await adminApi.tabRegistry() } catch { /* */ } }
+  if (!menuDefs.value.business.length) { try { menuDefs.value = await adminApi.menuDefs() } catch { /* */ } }
   tabDlgVisible.value = true
+}
+function toggleMenu(key: string, visible: boolean) {
+  const s = new Set(menuSet.value)
+  if (visible) s.add(key); else s.delete(key)
+  menuSet.value = s
 }
 function tabChecked(key: string) { return !tabHiddenSet.value.has(key) }   // 勾选=可见
 function toggleTab(key: string, visible: boolean) {
@@ -56,8 +62,8 @@ async function saveTabPerm() {
   if (!tabDlgUser.value) return
   tabSaving.value = true
   try {
+    await adminApi.setMenus(tabDlgUser.value.id, [...menuSet.value])
     await adminApi.updateUser(tabDlgUser.value.id, { hidden_tabs: [...tabHiddenSet.value] } as Partial<User>)
-    await adminApi.grantMenus(tabDlgUser.value.id, dictGranted.value ? ['dict-admin'] : [])
     ElMessage.success('菜单权限已保存（该账号重新登录或刷新后生效）')
     tabDlgVisible.value = false
     await load()
@@ -223,7 +229,7 @@ onMounted(load)
         <el-table-column v-if="isAdmin" label="操作" width="270" align="right" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" @click="openTabPerm(row)">二级菜单权限</el-button>
+            <el-button size="small" @click="openTabPerm(row)">菜单权限</el-button>
             <el-button size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -260,15 +266,21 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <!-- 🆕 #7 二级菜单(tab)权限：勾选=该账号可见该 tab -->
-    <el-dialog v-model="tabDlgVisible" :title="`二级菜单权限 — ${tabDlgUser?.full_name || tabDlgUser?.username || ''}`" width="min(720px, 96vw)" top="6vh">
+    <!-- 🆕 菜单权限：一级菜单按账号配置 + 二级菜单(tab)按账号隐藏（勾选=可见） -->
+    <el-dialog v-model="tabDlgVisible" :title="`菜单权限 — ${tabDlgUser?.full_name || tabDlgUser?.username || ''}`" width="min(720px, 96vw)" top="6vh">
       <el-alert type="info" :closable="false" style="margin-bottom:12px"
-        title="勾选=该账号可见该二级菜单(tab)，取消勾选=对该账号隐藏。这里只控制页面内的二级 tab；顶层菜单仍由角色决定。管理层不受此限制。" />
-      <!-- 🆕 反馈#268 管理组菜单按账号开通：目前仅「字典设置」 -->
+        title="一级菜单勾选=该账号侧边栏可见（建号时已按角色预填，此处按账号调整，改角色不再联动）；二级菜单(tab)取消勾选=对该账号隐藏。管理层(admin/manager)不受此限制，天然全可见。" />
+      <div style="margin-bottom:14px">
+        <div style="margin-bottom:6px"><b>一级菜单</b></div>
+        <el-checkbox v-for="m in menuDefs.business" :key="m.key" :model-value="menuSet.has(m.key)"
+                     @change="(v: any) => toggleMenu(m.key, !!v)" style="margin-right:18px">{{ m.label }}</el-checkbox>
+      </div>
       <div style="margin-bottom:14px">
         <div style="margin-bottom:6px"><b>管理组菜单</b></div>
-        <el-checkbox v-model="dictGranted">字典设置（开通后该账号侧边栏「管理」组出现字典设置）</el-checkbox>
+        <el-checkbox v-for="m in menuDefs.admin" :key="m.key" :model-value="menuSet.has(m.key)"
+                     @change="(v: any) => toggleMenu(m.key, !!v)" style="margin-right:18px">{{ m.label }}</el-checkbox>
       </div>
+      <div style="margin:4px 0 10px"><b>二级菜单(tab)隐藏</b></div>
       <div v-for="g in tabRegistry" :key="g.menu_key" style="margin-bottom:14px">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
           <b>{{ g.menu_label }}</b>

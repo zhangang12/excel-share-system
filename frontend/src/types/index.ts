@@ -12,6 +12,8 @@ export interface User {
   is_active: boolean; password_must_change: boolean
   wxid?: string | null
   hidden_tabs?: string[]   // 🆕 #7 该账号隐藏的二级菜单tab key
+  menus?: string[]         // 🆕 该账号配置的一级菜单 key（业务+管理组混合）
+  grant_menus?: string[]   // 派生值 = menus ∩ 管理组有效 key（兼容旧桌面端）
   created_at: string; last_login?: string | null
 }
 

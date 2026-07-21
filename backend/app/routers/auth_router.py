@@ -14,10 +14,13 @@ router = APIRouter(prefix="/api/auth", tags=["认证"])
 
 
 def _user_to_out(u: models.User) -> schemas.UserOut:
+    from ..menus import ADMIN_MENU_DEFS
     roles = list(u.roles or [])
     if u.role and u.role.id not in {r.id for r in roles}:
         roles = [u.role] + roles
     roles = sorted(roles, key=lambda r: r.id)
+    menus = list(u.menus or [])
+    admin_keys = [m["key"] for m in ADMIN_MENU_DEFS]
     return schemas.UserOut(
         id=u.id,
         username=u.username,
@@ -33,7 +36,9 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         password_must_change=u.password_must_change,
         wxid=u.wxid,
         hidden_tabs=list(u.hidden_tabs or []),   # 🆕 #7 前端据此隐藏二级菜单tab
-        grant_menus=list(u.grant_menus or []),   # 🆕 反馈#268 额外开通的管理组菜单
+        menus=menus,                            # 🆕 该账号配置的一级菜单 key
+        # 派生值（兼容旧客户端/旧桌面端）：menus ∩ 管理组有效 key；不再读 grant_menus 列
+        grant_menus=[k for k in admin_keys if k in set(menus)],
         created_at=u.created_at,
         last_login=u.last_login,
     )

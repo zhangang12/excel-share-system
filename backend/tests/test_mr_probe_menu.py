@@ -1,10 +1,13 @@
-"""多角色菜单并集「两个边界」探针(临时 SQLite)。
+"""一级菜单按账号配置 探针(临时 SQLite)。原「多角色菜单并集」探针按新语义重写
+（2026-07-21 角色菜单矩阵 ROLE_MENUS 废除，一级菜单读 User.menus）：
 
 (1) 管理层压制：用户 [manager, sales] 调 GET /api/auth/menus 应拿到
     全部业务菜单 + 管理组菜单(与纯 admin/manager 一致),不被 sales 收窄。
-(2) 三个窄部门角色并集：用户 [warehouse, finance, logistics] 的菜单应=
-    这三个部门菜单的合集 + catalog/list/messages,不多不少
-    (不应出现 sales/design 等无关部门菜单)。
+(2) 建号预填：[warehouse, finance, logistics] 建号时 menus 预填=
+    三角色 ROLE_DEFAULT_MENUS 并集 + messages/oa，菜单即该预填值,不多不少。
+(3) 建号后改角色不影响菜单：sales 建号后把角色改成 design_lead，
+    /api/auth/menus 仍是建号预填值（角色不再驱动菜单）。
+(4) PUT /api/admin/users/{uid}/menus 直接生效：整体替换后菜单=新值。
 
 角色 id 直接查 DB(SessionLocal + models.Role,因 admin/manager 对
 /api/admin/roles 隐藏)。多角色用 POST /api/admin/users role_ids 建。
@@ -24,7 +27,7 @@ from app.database import engine, SessionLocal, Base
 from app.seed import seed
 from app.data_migration import run_all, ensure_schema_columns
 from app import models
-from app.menus import MENU_DEFS, ADMIN_MENU_DEFS, ROLE_MENUS
+from app.menus import MENU_DEFS, ADMIN_MENU_DEFS, ROLE_DEFAULT_MENUS
 
 FAIL = []
 def chk(c, m):
@@ -41,7 +44,7 @@ async def main():
     # 全部角色 id（含 admin/manager 等对 /roles 隐藏的）直接查 DB
     async with SessionLocal() as db:
         rid = {r.code: r.id for r in (await db.execute(select(models.Role))).scalars().all()}
-    for need in ("manager", "sales", "warehouse", "finance", "logistics", "admin"):
+    for need in ("manager", "sales", "design_lead", "warehouse", "finance", "logistics", "admin"):
         chk(need in rid, f"seed 中存在角色 {need}: rid={sorted(rid)}")
 
     ALL_BIZ = {m["key"] for m in MENU_DEFS}
@@ -68,7 +71,6 @@ async def main():
             return {m["key"] for m in r.json()["menus"]}, r.json()
 
         # 基线：纯 manager 与纯 admin 的菜单(用于「一致」对比)
-        mgr_keys = set(ROLE_MENUS.get("manager", []))  # manager 不在矩阵=全可见
         await mk("mgr_only", [rid["manager"]])
         H_mgr_only = await login("mgr_only")
         base_mgr, _ = await menu_keys(H_mgr_only)
@@ -97,21 +99,22 @@ async def main():
         chk(ms_raw.get("can_view_detail") is True,
             f"[manager,sales] can_view_detail=True: {ms_raw.get('can_view_detail')}")
 
-        # ================= (2) 三窄部门并集：[warehouse, finance, logistics] =================
-        await mk("wfl", [rid["warehouse"], rid["finance"], rid["logistics"]])
+        # ================= (2) 建号预填：[warehouse, finance, logistics] =================
+        wfl_id = await mk("wfl", [rid["warehouse"], rid["finance"], rid["logistics"]])
         H_wfl = await login("wfl")
         wfl_keys, wfl_raw = await menu_keys(H_wfl)
         expect_wfl = (
-            set(ROLE_MENUS["warehouse"])
-            | set(ROLE_MENUS["finance"])
-            | set(ROLE_MENUS["logistics"])
-            | {"messages"}
+            set(ROLE_DEFAULT_MENUS["warehouse"])
+            | set(ROLE_DEFAULT_MENUS["finance"])
+            | set(ROLE_DEFAULT_MENUS["logistics"])
+            | {"messages", "oa"}
         )
-        # 显式拼出期望:三部门菜单合集 + catalog/list/messages
-        chk(expect_wfl == {"catalog", "list", "warehouse", "finance", "logistics", "messages"},
+        # 显式拼出期望:三部门模板合集 + messages/oa（finance 模板含 purchase_mgmt）
+        chk(expect_wfl == {"catalog", "list", "warehouse", "finance", "logistics",
+                           "purchase_mgmt", "messages", "oa"},
             f"期望集自检: {sorted(expect_wfl)}")
         chk(wfl_keys == expect_wfl,
-            f"[warehouse,finance,logistics] 菜单=三部门合集+catalog/list/messages: "
+            f"[warehouse,finance,logistics] 菜单=建号预填(三角色模板并集+messages/oa): "
             f"实际={sorted(wfl_keys)} 期望={sorted(expect_wfl)} "
             f"多={sorted(wfl_keys-expect_wfl)} 少={sorted(expect_wfl-wfl_keys)}")
         # 不多:不应出现无关部门菜单
@@ -123,6 +126,33 @@ async def main():
         # 三部门各自部门菜单都在
         for dept in ("warehouse", "finance", "logistics"):
             chk(dept in wfl_keys, f"[warehouse,finance,logistics] 含 {dept} 部门菜单")
+
+        # ================= (3) 建号后改角色不影响菜单 =================
+        s_id = await mk("s_role", [rid["sales"]])
+        H_s = await login("s_role")
+        s_before, _ = await menu_keys(H_s)
+        expect_sales = set(ROLE_DEFAULT_MENUS["sales"]) | {"messages", "oa"}
+        chk(s_before == expect_sales,
+            f"sales 建号预填=模板+messages/oa: 实际={sorted(s_before)} 期望={sorted(expect_sales)}")
+        r = await c.put(f"/api/admin/users/{s_id}", headers=H, json={"role_ids": [rid["design_lead"]]})
+        chk(r.status_code == 200, f"改角色为 design_lead: {r.status_code} {r.text[:150]}")
+        s_after, s_raw = await menu_keys(H_s)
+        chk(s_after == s_before,
+            f"改角色后菜单不变(角色不再驱动菜单): 改前={sorted(s_before)} 改后={sorted(s_after)}")
+        chk("list" not in s_after and s_raw.get("can_view_detail") is False,
+            f"改角色后仍无 list 详单(不随 design_lead 解锁): {sorted(s_after)}")
+
+        # ================= (4) PUT menus 直接生效 =================
+        r = await c.put(f"/api/admin/users/{wfl_id}/menus", headers=H,
+                        json={"menus": ["catalog", "list", "design", "messages", "oa", "dict-admin"]})
+        chk(r.status_code == 200, f"PUT menus: {r.status_code} {r.text[:200]}")
+        chk(r.json().get("menus") == ["catalog", "list", "design", "oa", "messages", "dict-admin"],
+            f"PUT 响应带规范序 menus: {r.json().get('menus')}")
+        wfl_keys2, wfl_raw2 = await menu_keys(H_wfl)
+        chk(wfl_keys2 == {"catalog", "list", "design", "oa", "messages", "dict-admin"},
+            f"PUT menus 后菜单=新值: 实际={sorted(wfl_keys2)}")
+        chk(wfl_raw2.get("can_view_detail") is True,
+            f"PUT menus 含 list 后 can_view_detail=True: {wfl_raw2.get('can_view_detail')}")
 
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")

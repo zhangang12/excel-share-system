@@ -22,7 +22,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "management_todos": [("due_date", "VARCHAR(10)")],                 # 🆕 #251 管理层设定的截止日期
     "users": [("wxid", "VARCHAR(64)"), ("can_export", "BOOLEAN DEFAULT FALSE"),
               ("hidden_tabs", "JSON"),   # 🆕 #7 按账号隐藏的二级菜单tab
-              ("grant_menus", "JSON")],  # 🆕 反馈#268 按账号额外开通的管理组菜单(字典设置)
+              ("grant_menus", "JSON"),   # 🆕 反馈#268 按账号额外开通的管理组菜单(字典设置)
+              ("menus", "JSON")],        # 🆕 一级菜单按账号配置(角色矩阵废除,存量由 backfill_user_menus 回填)
     "datasheets": [
         ("imported_at", "TIMESTAMP"),       # P-16 四表导入标记
         ("done_flag", "BOOLEAN DEFAULT FALSE"),  # §十七 装配前置完成标记
@@ -1625,6 +1626,38 @@ async def backfill_user_roles(db: AsyncSession) -> dict:
     return {"added": added}
 
 
+async def backfill_user_menus(db: AsyncSession) -> dict:
+    """🆕 一级菜单按账号配置（原角色菜单矩阵 ROLE_MENUS 废除的衔接）：给存量用户回填 User.menus。
+
+    menus = 该用户 role_codes 的 ROLE_DEFAULT_MENUS 并集 ∪ (grant_menus ∩ 管理组有效key)
+            ∪ {messages, oa}，业务 key 按 MENU_DEFS 顺序、管理组 key 排尾
+            —— 与废除前 user_menu_keys 的运行时结果完全一致，行为无变化。
+    仅处理 menus IS NULL 且角色不含 admin/manager 的用户（管理层天然全可见，无需配置）。
+    幂等：只填 NULL，已配置的不动。
+    """
+    from .menus import ROLE_DEFAULT_MENUS, ADMIN_MENU_DEFS, canonical_menu_order
+    admin_keys = {m["key"] for m in ADMIN_MENU_DEFS}
+    res = await db.execute(select(models.User))
+    filled = 0
+    for u in res.scalars().all():
+        if u.menus is not None:
+            continue
+        codes = u.role_codes  # property 自带 finance_lead⊇finance 隐含
+        if codes & {"admin", "manager"}:
+            continue
+        allowed: set[str] = set()
+        for code in (codes or {""}):
+            allowed |= set(ROLE_DEFAULT_MENUS.get(code, ["catalog", "list"]))  # 未知角色按老默认
+        allowed |= set(u.grant_menus or []) & admin_keys  # 存量 #268 开通的管理组菜单并入
+        allowed |= {"messages", "oa"}
+        u.menus = canonical_menu_order(allowed)
+        filled += 1
+    if filled:
+        await db.commit()
+        log.info("[backfill_user_menus] 回填 %d 个存量用户的一级菜单配置", filled)
+    return {"filled": filled}
+
+
 async def normalize_tax_rate_no_invoice(db: AsyncSession) -> dict:
     """🆕 税票口径统一(2026-06-18)：存量「不开票」由 "/" 改为 "0"。幂等。"""
     from sqlalchemy import update as _upd
@@ -2063,6 +2096,10 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_user_roles(db)
     except Exception as e:
         log.warning("backfill_user_roles failed: %s", e)
+    try:
+        await backfill_user_menus(db)   # 🆕 一级菜单按账号配置：存量回填（须在 backfill_user_roles 之后）
+    except Exception as e:
+        log.warning("backfill_user_menus failed: %s", e)
     try:
         await cleanup_deleted_project_data(db)
     except Exception as e:

@@ -3,8 +3,8 @@
 覆盖：
 1. 新建销售员立刻出现在 /api/sales/salespeople（修复：下拉来自真实用户名单，
    而非已有台账行聚合 —— 未挂台账也能选到）。
-2. 多角色取并集：给用户加第二个角色（user_roles 关联），菜单 = 各角色菜单合集，
-   且更宽松角色能解锁原角色没有的菜单（sales 无详单 + design_lead 有详单 → 出现 list）。
+2. 一级菜单按账号配置（2026-07-21 起角色菜单矩阵废除）：建号时按角色模板预填
+   User.menus；之后追加/变更角色不再改变菜单；管理层用 PUT menus 按账号调整生效。
 3. has_role / role_codes 并集语义。
 """
 import asyncio, os, sys, tempfile, shutil
@@ -59,7 +59,8 @@ async def main():
         names = {p["name"] for p in people}
         chk("新来的销售" in names, f"名单含姓名: {names}")
 
-        # ---- 2) 多角色：给 newsales 追加 design_lead 角色（直接写关联表） ----
+        # ---- 2) 一级菜单按账号配置：给 newsales 追加 design_lead 角色（直接写关联表），
+        #    菜单不变（角色不再驱动菜单）；PUT menus 按账号解锁 design/list 才生效 ----
         async with SessionLocal() as db:
             db.add(models.UserRole(user_id=sid, role_id=rid["design_lead"]))
             await db.commit()
@@ -67,11 +68,19 @@ async def main():
         Hns = {"Authorization": f"Bearer {(await c.post('/api/auth/login', json={'username':'newsales','password':'pass123'})).json()['access_token']}"}
         mr = (await c.get("/api/auth/menus", headers=Hns)).json()
         keys = {m["key"] for m in mr["menus"]}
-        # sales 菜单: catalog, sales（无 list）；design_lead: catalog, list, design
-        chk("sales" in keys, f"并集含 sales 菜单: {keys}")
-        chk("design" in keys, f"并集含 design 菜单(来自第二角色): {keys}")
-        chk("list" in keys, f"并集解锁 list 详单(design_lead 有，sales 没有): {keys}")
-        chk(mr["can_view_detail"] is True, f"多角色后可看详单(design_lead 放行): {mr['can_view_detail']}")
+        # sales 建号预填: catalog/sales/leads + messages/oa（无 list/design）
+        chk("sales" in keys, f"预填含 sales 菜单: {keys}")
+        chk("design" not in keys, f"追加 design_lead 角色后菜单不变(无 design): {keys}")
+        chk("list" not in keys, f"追加 design_lead 角色后仍无 list 详单(不随角色解锁): {keys}")
+        chk(mr["can_view_detail"] is False, f"菜单未配 list → 不可看详单: {mr['can_view_detail']}")
+        # 管理层按账号配置 menus 后立即生效
+        r = await c.put(f"/api/admin/users/{sid}/menus", headers=H,
+                        json={"menus": ["catalog", "list", "sales", "design", "messages", "oa"]})
+        chk(r.status_code == 200, f"PUT menus: {r.status_code} {r.text[:150]}")
+        mr = (await c.get("/api/auth/menus", headers=Hns)).json()
+        keys = {m["key"] for m in mr["menus"]}
+        chk("design" in keys and "list" in keys, f"PUT menus 后含 design/list: {keys}")
+        chk(mr["can_view_detail"] is True, f"PUT menus 含 list 后可看详单: {mr['can_view_detail']}")
 
         # ---- 3) role_codes / has_role 并集 ----
         async with SessionLocal() as db:
