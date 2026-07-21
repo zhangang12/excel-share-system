@@ -312,6 +312,8 @@ class GroupProjectRow(BaseModel):
     laser_files: List[dict] = []
     # 🆕 封板文件(机架图/横梁图)：设计推送给封板组的产出(order_start_output kind=sealing_pkg,可下载)
     sealing_files: List[dict] = []
+    # 🆕 #269 冷作图纸：设计推送给钣金组的产出(order_start_output kind=coldwork_pkg,可下载)
+    coldwork_files: List[dict] = []
 
 
 async def _designer_by_pid(db: AsyncSession, pids: list[int]) -> dict[int, str]:
@@ -354,7 +356,8 @@ async def _sheet_ready(db: AsyncSession, ds: Optional[models.Datasheet]) -> bool
 
 async def _laser_files_by_pid(db: AsyncSession, pids: list[int], kind: str = "sheetpkg") -> dict[int, list[dict]]:
     """🆕 反馈#209「推送设计产物」：项目的设计任务产出文件(order_start_output)。
-    kind=sheetpkg→CAD激光图纸;kind=sealing_pkg→封板文件(机架图/横梁图)。封板组 tab 里可直接下载。"""
+    kind=sheetpkg→CAD激光图纸;kind=sealing_pkg→封板文件(机架图/横梁图);kind=coldwork_pkg→冷作图纸(#269→钣金组)。
+    封板组/钣金组 tab 里可直接下载。"""
     if not pids:
         return {}
     dord = await db.execute(select(models.DeptOrder.id, models.DeptOrder.project_id).where(
@@ -433,6 +436,9 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
     laser_ds_by_pid: dict = {}
     laser_files_by_pid: dict = {}
     sealing_files_by_pid: dict = {}   # 🆕 封板文件(机架图/横梁图)
+    coldwork_files_by_pid: dict = {}  # 🆕 #269 冷作图纸(设计→钣金组)
+    if group == "sheetmetal":
+        coldwork_files_by_pid = await _laser_files_by_pid(db, pids, "coldwork_pkg")
     if group == "sealing":
         laser_ds_by_pid = await _sheets_by_pid(db, pids, ("激光件清单",))
         laser_files_by_pid = await _laser_files_by_pid(db, pids)
@@ -468,6 +474,8 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
             row.laser_datasheet_id = ld.id if ld else None
             row.laser_files = laser_files_by_pid.get(p.id, [])
             row.sealing_files = sealing_files_by_pid.get(p.id, [])
+        if group == "sheetmetal":
+            row.coldwork_files = coldwork_files_by_pid.get(p.id, [])   # 🆕 #269 冷作图纸
         rows.append(row)
     rows.sort(key=lambda x: x.code, reverse=True)
     return rows

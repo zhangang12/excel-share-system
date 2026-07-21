@@ -397,6 +397,30 @@ function onDatePickerMount(el: any) {
   setTimeout(() => { try { el.focus?.() } catch { /* */ } }, 0)
 }
 
+// 🆕 #270 工艺列：字段名恰为「工艺1」「工艺2」的列，编辑时用带历史值提示的
+// el-autocomplete——已填过的工艺自动"存储"下来，输入时下拉可再选，也可手输新值
+// （实现思路与 SheetmetalGrid.vue 的 columnValues/fetchColumnSuggestions 一致）
+const CRAFT_FIELD_NAMES = new Set(['工艺1', '工艺2'])
+function isCraftField(f: DataField): boolean {
+  return CRAFT_FIELD_NAMES.has((f.name || '').trim())
+}
+// 该列已填过的去重非空值（下拉提示用，最多 20 条）
+function columnValues(f: DataField): { value: string }[] {
+  const seen = new Set<string>()
+  for (const r of records.value) {
+    const v = String(getCellValue(r, f) ?? '').trim()
+    if (v) seen.add(v)
+    if (seen.size >= 20) break
+  }
+  return Array.from(seen).map(v => ({ value: v }))
+}
+function fetchColumnSuggestions(f: DataField) {
+  return (query: string, cb: (list: { value: string }[]) => void) => {
+    const all = columnValues(f)
+    cb(query ? all.filter(x => x.value.toLowerCase().includes(query.toLowerCase())) : all)
+  }
+}
+
 // 整列着色：进度列的 td 按值染色（与项目一览状态列一致）
 // 用 columnIndex 精确定位字段：columnIndex 0 是 # 自动行号列，从 1 起对应 visibleFields[0..]
 // 严格匹配已知状态词，其他值（日期、人名、数字）一律不染色 —— 避免误伤
@@ -746,6 +770,17 @@ async function addRow() {
                             @change="saveEdit(row, f)"
                             @blur="saveEdit(row, f)"
                             @keyup.escape="cancelEdit" />
+            <!-- 🆕 #270 工艺列（工艺1/工艺2）：输入时下拉提示本列已填过的值，可手输新值 -->
+            <el-autocomplete v-else-if="isCraftField(f)"
+                             v-model="editingValue" size="small"
+                             :fetch-suggestions="fetchColumnSuggestions(f)"
+                             :trigger-on-focus="true"
+                             placeholder="输入或下拉选已有工艺"
+                             class="cell-edit-input" autofocus
+                             @select="saveEdit(row, f)"
+                             @blur="saveEdit(row, f)"
+                             @keyup.enter="saveEdit(row, f)"
+                             @keyup.escape="cancelEdit" />
             <el-input v-else v-model="editingValue" autofocus class="cell-edit-input"
                       @blur="saveEdit(row, f)" @keyup.enter="saveEdit(row, f)" @keyup.escape="cancelEdit" />
           </template>

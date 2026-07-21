@@ -52,6 +52,8 @@ class User(Base):
     can_export: Mapped[bool] = mapped_column(default=False)
     # 🆕 #7 按账号隐藏的二级菜单(tab) key 列表（形如 "finance:pay_payment"）；空=按角色可见全部 tab
     hidden_tabs: Mapped[Optional[list]] = mapped_column(PortableJSON())
+    # 🆕 反馈#268 按账号额外开通的管理组菜单 key（如 "dict-admin" 字典设置）；空=无额外开通
+    grant_menus: Mapped[Optional[list]] = mapped_column(PortableJSON())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 

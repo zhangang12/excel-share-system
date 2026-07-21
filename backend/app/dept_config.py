@@ -21,6 +21,8 @@ DEPTS: dict[str, dict] = {
             {"k": "outsource_img", "label": "外购附图", "to_role": "buyer"},
             # 🆕 封板文件(机架图/横梁图)→推送封板组(sealing);封板组 tab 里可下载
             {"k": "sealing_pkg", "label": "封板文件(机架图/横梁图)", "to_role": "sealing"},
+            # 🆕 #269 冷作图纸→推送钣金组(sheetmetal);钣金组 tab 里可下载
+            {"k": "coldwork_pkg", "label": "冷作图纸", "to_role": "sheetmetal"},
         ],
         "outputs": [
             {"k": "manual",    "label": "说明书 (Word)", "to_role": "logistics", "required": False},

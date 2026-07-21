@@ -21,7 +21,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "employee_salary_monthly": [("personal_tax", "FLOAT DEFAULT 0")],  # 🆕 #248 个税扣款
     "management_todos": [("due_date", "VARCHAR(10)")],                 # 🆕 #251 管理层设定的截止日期
     "users": [("wxid", "VARCHAR(64)"), ("can_export", "BOOLEAN DEFAULT FALSE"),
-              ("hidden_tabs", "JSON")],   # 🆕 #7 按账号隐藏的二级菜单tab
+              ("hidden_tabs", "JSON"),   # 🆕 #7 按账号隐藏的二级菜单tab
+              ("grant_menus", "JSON")],  # 🆕 反馈#268 按账号额外开通的管理组菜单(字典设置)
     "datasheets": [
         ("imported_at", "TIMESTAMP"),       # P-16 四表导入标记
         ("done_flag", "BOOLEAN DEFAULT FALSE"),  # §十七 装配前置完成标记

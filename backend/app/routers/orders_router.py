@@ -584,7 +584,7 @@ async def start_upload(
     if not (_is_mgr(current) or o.worker_id == current.id):
         raise HTTPException(403, "仅任务负责人可上传")
     # 🆕 #5 例外：设计部「设计资料」(CAD激光图纸/外购附图)在设计完成(done)后仍可更换
-    is_design_resource = o.dept == "design" and kind in ("sheetpkg", "outsource_img", "sealing_pkg")
+    is_design_resource = o.dept == "design" and kind in ("sheetpkg", "outsource_img", "sealing_pkg", "coldwork_pkg")
     if o.status not in ("in_progress", "assigned") and not (is_design_resource and o.status == "done"):
         raise HTTPException(400, "任务未在进行中")
 

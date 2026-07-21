@@ -42,6 +42,11 @@ class UserUpdate(BaseModel):
     hidden_tabs: Optional[list[str]] = None  # 🆕 #7 传则整体替换该账号隐藏的二级菜单tab
 
 
+# 🆕 反馈#268 按账号开通管理组菜单（目前仅 dict-admin 字典设置）
+class GrantMenusIn(BaseModel):
+    grant_menus: list[str] = []  # 整体替换该账号额外开通的管理组菜单 key
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -61,6 +66,7 @@ class UserOut(BaseModel):
     password_must_change: bool = False
     wxid: Optional[str] = None  # 🆕 v3 企微绑定
     hidden_tabs: list[str] = []  # 🆕 #7 该账号隐藏的二级菜单tab
+    grant_menus: list[str] = []  # 🆕 反馈#268 该账号额外开通的管理组菜单
     created_at: datetime
     last_login: Optional[datetime] = None
 

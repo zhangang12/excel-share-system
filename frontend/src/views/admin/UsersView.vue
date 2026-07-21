@@ -32,9 +32,12 @@ const tabDlgVisible = ref(false)
 const tabDlgUser = ref<User | null>(null)
 const tabHiddenSet = ref<Set<string>>(new Set())
 const tabSaving = ref(false)
+// 🆕 反馈#268 按账号开通「字典设置」管理组菜单（与二级菜单权限同一弹窗维护）
+const dictGranted = ref(false)
 async function openTabPerm(u: User) {
   tabDlgUser.value = u
   tabHiddenSet.value = new Set(u.hidden_tabs || [])
+  dictGranted.value = ((u as User & { grant_menus?: string[] }).grant_menus || []).includes('dict-admin')
   if (!tabRegistry.value.length) { try { tabRegistry.value = await adminApi.tabRegistry() } catch { /* */ } }
   tabDlgVisible.value = true
 }
@@ -54,7 +57,8 @@ async function saveTabPerm() {
   tabSaving.value = true
   try {
     await adminApi.updateUser(tabDlgUser.value.id, { hidden_tabs: [...tabHiddenSet.value] } as Partial<User>)
-    ElMessage.success('二级菜单权限已保存（该账号重新登录或刷新后生效）')
+    await adminApi.grantMenus(tabDlgUser.value.id, dictGranted.value ? ['dict-admin'] : [])
+    ElMessage.success('菜单权限已保存（该账号重新登录或刷新后生效）')
     tabDlgVisible.value = false
     await load()
   } catch { /* handled */ } finally { tabSaving.value = false }
@@ -260,6 +264,11 @@ onMounted(load)
     <el-dialog v-model="tabDlgVisible" :title="`二级菜单权限 — ${tabDlgUser?.full_name || tabDlgUser?.username || ''}`" width="min(720px, 96vw)" top="6vh">
       <el-alert type="info" :closable="false" style="margin-bottom:12px"
         title="勾选=该账号可见该二级菜单(tab)，取消勾选=对该账号隐藏。这里只控制页面内的二级 tab；顶层菜单仍由角色决定。管理层不受此限制。" />
+      <!-- 🆕 反馈#268 管理组菜单按账号开通：目前仅「字典设置」 -->
+      <div style="margin-bottom:14px">
+        <div style="margin-bottom:6px"><b>管理组菜单</b></div>
+        <el-checkbox v-model="dictGranted">字典设置（开通后该账号侧边栏「管理」组出现字典设置）</el-checkbox>
+      </div>
       <div v-for="g in tabRegistry" :key="g.menu_key" style="margin-bottom:14px">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
           <b>{{ g.menu_label }}</b>

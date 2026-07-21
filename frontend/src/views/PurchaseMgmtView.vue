@@ -546,9 +546,18 @@ const stmtCatFilter = ref('')
 const filteredStatementRows = computed(() => {
   const rows = statementData.value?.rows || []
   const kw = stmtNameFilter.value.trim().toLowerCase()
-  return rows.filter(r =>
+  const filtered = rows.filter(r =>
     (!kw || r.supplier_name.toLowerCase().includes(kw)) &&
     (!stmtCatFilter.value || (r.category || '') === stmtCatFilter.value))
+  // 🆕 #271：同分类聚排——先按分类升序（空分类排最后），同分类按供应商名升序
+  return filtered.sort((a, b) => {
+    const ca = a.category || '', cb = b.category || ''
+    if (!ca && cb) return 1
+    if (ca && !cb) return -1
+    const byCat = ca.localeCompare(cb, 'zh-Hans-CN')
+    if (byCat !== 0) return byCat
+    return (a.supplier_name || '').localeCompare(b.supplier_name || '', 'zh-Hans-CN')
+  })
 })
 // 🆕 供应商状态查询（避免模板里反复 find）+ 操作收进下拉菜单
 function supActive(supplierId: number): boolean {

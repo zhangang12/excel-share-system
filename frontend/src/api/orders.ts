@@ -159,6 +159,7 @@ export interface GroupProjectRow {
   laser_datasheet_id?: number | null           // 🆕 反馈#209 封板组：激光件清单(只读表)
   laser_files?: { id: number; name: string }[] // 🆕 反馈#209 封板组：CAD激光图纸(可下载)
   sealing_files?: { id: number; name: string }[] // 🆕 封板文件(机架图/横梁图,设计推送,可下载)
+  coldwork_files?: { id: number; name: string }[] // 🆕 #269 钣金组:冷作图纸(设计推送,可下载)
 }
 
 export interface DispatchOptions {

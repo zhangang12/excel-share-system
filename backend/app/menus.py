@@ -124,7 +124,12 @@ def user_menu_keys(user: models.User) -> list[str]:
         allowed |= set(ROLE_MENUS.get(code, ["catalog", "list"]))  # 未知角色按老默认（目录+详单）
     allowed.add("messages")
     allowed.add("oa")  # 🆕 OA审批：全员可见，不受角色矩阵限制
-    return [k for k in _ALL_KEYS if k in allowed]
+    keys = [k for k in _ALL_KEYS if k in allowed]
+    # 🆕 反馈#268 按账号额外开通的管理组菜单（如 dict-admin 字典设置）：
+    # 追加在业务菜单之后；只认 ADMIN_MENU_DEFS 里存在的 key，忽略脏数据
+    granted = set(user.grant_menus or [])
+    keys += [k for k in _ADMIN_KEYS if k in granted]
+    return keys
 
 
 def user_can_view_detail(user: models.User) -> bool:

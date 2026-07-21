@@ -33,6 +33,7 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         password_must_change=u.password_must_change,
         wxid=u.wxid,
         hidden_tabs=list(u.hidden_tabs or []),   # 🆕 #7 前端据此隐藏二级菜单tab
+        grant_menus=list(u.grant_menus or []),   # 🆕 反馈#268 额外开通的管理组菜单
         created_at=u.created_at,
         last_login=u.last_login,
     )

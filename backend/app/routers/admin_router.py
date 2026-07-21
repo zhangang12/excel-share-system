@@ -62,6 +62,7 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         password_must_change=u.password_must_change,
         wxid=u.wxid,
         hidden_tabs=list(u.hidden_tabs or []),
+        grant_menus=list(u.grant_menus or []),
         created_at=u.created_at, last_login=u.last_login,
     )
 
@@ -187,6 +188,36 @@ async def update_user(
         u.password_must_change = True
     await db.commit()
     # expire_on_commit=False：显式刷新 锚点 role + 多角色 roles，避免返回陈旧集合
+    await db.refresh(u, attribute_names=["role", "roles"])
+    return _user_to_out(u)
+
+
+@router.put("/users/{uid}/grant-menus", response_model=schemas.UserOut)
+async def grant_menus(
+    uid: int,
+    data: schemas.GrantMenusIn,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#268：按账号开通管理组菜单（目前仅 dict-admin 字典设置）。
+
+    仅对非 admin/manager 账号有意义（管理层天然全可见）；整体替换，写审计。"""
+    from ..menus import ADMIN_MENU_DEFS
+    res = await db.execute(select(models.User).where(models.User.id == uid))
+    u = res.scalar_one_or_none()
+    if not u:
+        raise HTTPException(404, "用户不存在")
+    if u.has_role("admin") and not current.has_role("admin"):
+        raise HTTPException(403, "不可修改超级管理员账号")
+    valid_keys = {m["key"] for m in ADMIN_MENU_DEFS}
+    bad = set(data.grant_menus) - valid_keys
+    if bad:
+        raise HTTPException(400, f"不可开通的管理组菜单：{'、'.join(sorted(bad))}")
+    u.grant_menus = list(dict.fromkeys(data.grant_menus))
+    await write_audit(db, user=current, action="grant_menus",
+                      target_type="user", target_id=u.id,
+                      detail=f"开通管理组菜单: {u.grant_menus}")
+    await db.commit()
     await db.refresh(u, attribute_names=["role", "roles"])
     return _user_to_out(u)
 

@@ -15,6 +15,7 @@ import {
   type DeptOrder, type DeptOptions, type OrderAttachment, type GroupProjectRow, type DispatchOptions,
 } from '@/api/orders'
 import { datasheetsApi } from '@/api/datasheets'
+import { packageAttachments } from '@/api/attachments'   // 🆕 #267 单元格文件打包 zip
 import { http } from '@/api'
 import SheetmetalGrid from '@/components/SheetmetalGrid.vue'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
@@ -289,6 +290,12 @@ async function setGroupDue(row: GroupProjectRow, val: string | null) {
     await load()   // 失败回滚显示
   }
 }
+// 🆕 #267 封板组「已推送 N」旁打包下载：把该单元格全部文件打成 zip（复用通用附件打包端点）
+function packCellFiles(row: GroupProjectRow, files: { id: number; name: string }[] | undefined, label: string) {
+  const ids = (files || []).map(f => f.id)
+  if (!ids.length) return
+  packageAttachments(ids, `${row.code}_${label}`)
+}
 // 🆕 任务跟踪父视图：取生产单某组(钣金/装配)的预计完成 / 完成日期
 function pgDue(row: DeptOrder, group: string): string {
   const b = (row.produce_groups || []).find(g => g.group === group)
@@ -403,7 +410,7 @@ const resSections = computed(() => resMode.value === 'shipprep'
   ? (dept.value === 'electric'   // 🆕 #197 电工发货准备 = 电路图
       ? [{ k: 'circuit', label: '电路图 (PDF)', btn: '上传电路图' }]
       : [{ k: 'manual', label: '产品说明书 (Word)', btn: '上传说明书' }, { k: 'nameplate', label: '铭牌 (CAD)', btn: '上传铭牌' }])
-  : [{ k: 'sheetpkg', label: 'CAD激光图纸', btn: '上传CAD激光图纸' }, { k: 'outsource_img', label: '外购附图', btn: '上传外购附图' }])
+  : [{ k: 'sheetpkg', label: 'CAD激光图纸', btn: '上传CAD激光图纸' }, { k: 'outsource_img', label: '外购附图', btn: '上传外购附图' }, { k: 'coldwork_pkg', label: '冷作图纸', btn: '上传冷作图纸' }])
 function openRes(o: DeptOrder, mode: ResMode) { resId.value = o.id; resMode.value = mode; resVisible.value = true }
 function resFiles(o: DeptOrder, kind: string) {
   return (resMode.value === 'design' ? o.start_files : o.output_files).filter(f => f.kind === kind)
@@ -1304,6 +1311,17 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
+            <!-- 🆕 #269 冷作图纸：设计部上传推送钣金组（待推送-已推送N + 文件下载，同封板组 CAD激光图纸列模式） -->
+            <el-table-column label="冷作图纸" min-width="150" align="center">
+              <template #default="{ row }">
+                <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+                  <StatusPill :text="(row.coldwork_files || []).length ? `已推送 ${(row.coldwork_files || []).length}` : '待推送'"
+                              :variant="(row.coldwork_files || []).length ? 'success' : 'muted'" />
+                  <el-button v-for="f in (row.coldwork_files || [])" :key="'c' + f.id" size="small" link type="success" :icon="Download"
+                             @click="downloadAttachment(f)">{{ f.name }}</el-button>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column label="预计完成" min-width="150" align="center">
               <template #default="{ row }">
                 <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
@@ -1434,8 +1452,13 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="CAD激光图纸" min-width="150" align="center">
               <template #default="{ row }">
                 <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
-                  <StatusPill :text="(row.laser_files || []).length ? `已推送 ${(row.laser_files || []).length}` : '待推送'"
-                              :variant="(row.laser_files || []).length ? 'success' : 'muted'" />
+                  <!-- 🆕 #267 有文件时「已推送 N」旁给打包下载(zip) -->
+                  <div style="display:flex;align-items:center;gap:2px">
+                    <StatusPill :text="(row.laser_files || []).length ? `已推送 ${(row.laser_files || []).length}` : '待推送'"
+                                :variant="(row.laser_files || []).length ? 'success' : 'muted'" />
+                    <el-button v-if="(row.laser_files || []).length" size="small" link type="primary" :icon="Download"
+                               title="打包下载全部文件" @click="packCellFiles(row, row.laser_files, 'CAD激光图纸')" />
+                  </div>
                   <el-button v-for="f in (row.laser_files || [])" :key="'l' + f.id" size="small" link type="success" :icon="Download"
                              @click="downloadAttachment(f)">{{ f.name }}</el-button>
                 </div>
@@ -1444,8 +1467,13 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="机架 / 横梁图" min-width="150" align="center">
               <template #default="{ row }">
                 <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
-                  <StatusPill :text="(row.sealing_files || []).length ? `已推送 ${(row.sealing_files || []).length}` : '待推送'"
-                              :variant="(row.sealing_files || []).length ? 'success' : 'muted'" />
+                  <!-- 🆕 #267 有文件时「已推送 N」旁给打包下载(zip) -->
+                  <div style="display:flex;align-items:center;gap:2px">
+                    <StatusPill :text="(row.sealing_files || []).length ? `已推送 ${(row.sealing_files || []).length}` : '待推送'"
+                                :variant="(row.sealing_files || []).length ? 'success' : 'muted'" />
+                    <el-button v-if="(row.sealing_files || []).length" size="small" link type="primary" :icon="Download"
+                               title="打包下载全部文件" @click="packCellFiles(row, row.sealing_files, '机架横梁图')" />
+                  </div>
                   <el-button v-for="f in (row.sealing_files || [])" :key="'s' + f.id" size="small" link type="warning" :icon="Download"
                              @click="downloadAttachment(f)">{{ f.name }}</el-button>
                 </div>

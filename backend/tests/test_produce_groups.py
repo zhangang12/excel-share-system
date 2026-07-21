@@ -115,6 +115,18 @@ async def main():
         chk((await c.get("/api/produce/assembly-projects", headers=Hsm)).status_code == 403, "钣金组越权装配列表403")
         chk((await c.get("/api/produce/sheetmetal-projects", headers=Hasm)).status_code == 403, "装配组越权钣金列表403")
 
+        # 🆕 #269 冷作图纸：设计任务产出(order_start_output/coldwork_pkg)聚合到钣金组项目行 coldwork_files
+        async with SessionLocal() as db:
+            dord = models.DeptOrder(project_id=pid, dept="design", status="in_progress")
+            db.add(dord)
+            await db.commit()
+            db.add(models.Attachment(biz_type="order_start_output", biz_id=dord.id, kind="coldwork_pkg",
+                                     project_id=pid, name="冷作图A.dwg", ext="dwg", size=1, path="x/coldwork_a.dwg"))
+            await db.commit()
+        smrows = (await c.get("/api/produce/sheetmetal-projects", headers=Hsm)).json()
+        chk([f["name"] for f in smrows[0].get("coldwork_files", [])] == ["冷作图A.dwg"],
+            f"钣金组行聚合冷作图纸: {smrows[0].get('coldwork_files')}")
+
         # 备齐判定：给「标准件清单」每条记录的「进度」列填「完成」→ standard_ready=True
         async with SessionLocal() as db:
             ds = (await db.execute(select(models.Datasheet).where(
