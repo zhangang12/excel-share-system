@@ -7,7 +7,7 @@ import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   Fold, Expand,
   FolderOpened, User, OfficeBuilding, Document, DataLine,
-  Key, SwitchButton, Grid, Lock,
+  Key, SwitchButton, Grid, Lock, Refresh,
   Suitcase, EditPen, Lightning, SetUp, Scissor, ShoppingCart,
   Box, Van, Money, Service, TrendCharts, Bell, Stamp, ChatDotRound, ChatLineRound,
   Aim, Checked, Collection, Avatar, MagicStick, Monitor,
@@ -90,6 +90,16 @@ const changePwdVisible = ref(false)
 const pwdForm = ref({ old: '', new1: '', new2: '' })
 const pwdLoading = ref(false)
 
+// 🆕 桌面端：主动检查更新（浏览器端 pmsDesktop 为 undefined，按钮不渲染）
+const desktop = window.pmsDesktop
+const updateChecking = ref(false)
+function checkDesktopUpdate() {
+  if (!desktop?.checkUpdate || updateChecking.value) return
+  updateChecking.value = true
+  ElMessage.info('正在检查更新…')
+  desktop.checkUpdate()
+}
+
 async function submitChangePwd() {
   if (!pwdForm.value.old || !pwdForm.value.new1) {
     ElMessage.warning('请填写完整'); return
@@ -124,6 +134,13 @@ onMounted(async () => {
   unreadTimer = window.setInterval(refreshUnread, 60_000)
   window.addEventListener('pms:messages-read', onMessagesRead)
   checkFeedbackReplies()   // 🆕 登录后提醒未读的反馈处理回复
+  // 🆕 桌面端：订阅手动检查更新的状态回推（downloaded 时主进程会弹原生重启对话框，无需前端提示）
+  desktop?.onUpdateStatus?.((s) => {
+    if (s.status === 'available') ElMessage.info(`发现新版本 v${s.version}，正在后台下载…`)
+    else if (s.status === 'not-available') ElMessage.success(`当前已是最新版本（v${desktop.version}）`)
+    else if (s.status === 'error') ElMessage.error(s.message ? `检查更新失败：${s.message}` : '检查更新失败，请稍后再试')
+    if (!['checking', 'available'].includes(s.status)) updateChecking.value = false
+  })
 })
 
 onUnmounted(() => {
@@ -223,6 +240,11 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="footer-actions" :class="{ collapsed }">
+          <el-tooltip v-if="desktop" :content="`检查更新（当前 v${desktop.version}）`" placement="top">
+            <button class="icon-btn" :disabled="updateChecking" @click="checkDesktopUpdate">
+              <el-icon :class="{ 'is-loading': updateChecking }"><Refresh /></el-icon>
+            </button>
+          </el-tooltip>
           <el-tooltip content="修改密码" placement="top">
             <button class="icon-btn" @click="changePwdVisible = true">
               <el-icon><Key /></el-icon>

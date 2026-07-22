@@ -220,11 +220,45 @@ function createWindow() {
 }
 
 // ---- 常规自动更新（后台静默下载，下完弹原生对话框问是否重启）----
+// 手动检查标记：布局底部「检查更新」按钮触发时置 true；
+// 只有手动触发的这一轮状态才推给前端，后台 4h 轮询保持静默不打扰用户
+let manualChecking = false;
+
+// 主动检查更新（前端 pmsDesktop.checkUpdate → 此 IPC）
+ipcMain.on('pms-desktop:check-update', () => {
+  const reply = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('pms-desktop:update-status', payload);
+  };
+  if (!app.isPackaged || forceMode) {
+    reply({ status: 'error', message: '当前环境不支持检查更新' });
+    return;
+  }
+  manualChecking = true;
+  autoUpdater.checkForUpdates().catch((err) => {
+    manualChecking = false;
+    reply({ status: 'error', message: (err && err.message) || '检查更新失败' });
+  });
+});
+
 function setupAutoUpdate() {
   autoUpdater.autoDownload = true;
   autoUpdater.logger = { info: log, warn: log, error: log };
 
+  // 状态推给渲染进程（manualChecking 外的后台轮询一律吞掉）
+  const sendStatus = (status, extra) => {
+    if (!manualChecking) return;
+    if (['not-available', 'downloaded', 'error'].includes(status)) manualChecking = false;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('pms-desktop:update-status', { status, ...(extra || {}) });
+    }
+  };
+
+  autoUpdater.on('checking-for-update', () => sendStatus('checking'));
+  autoUpdater.on('update-available', (info) => sendStatus('available', { version: info.version }));
+  autoUpdater.on('update-not-available', () => sendStatus('not-available'));
+
   autoUpdater.on('update-downloaded', (info) => {
+    sendStatus('downloaded', { version: info.version });
     dialog.showMessageBox(mainWindow, {
       type: 'info',
       title: '更新就绪',
@@ -237,8 +271,11 @@ function setupAutoUpdate() {
       if (r.response === 0) autoUpdater.quitAndInstall();
     });
   });
-  // 检查失败（断网/服务器没传清单等）静默记日志，不打扰用户
-  autoUpdater.on('error', (err) => log('自动更新检查失败（已忽略）：', err && err.message));
+  // 检查失败（断网/服务器没传清单等）静默记日志，不打扰用户（手动触发的经 sendStatus 告知）
+  autoUpdater.on('error', (err) => {
+    log('自动更新检查失败（已忽略）：', err && err.message);
+    sendStatus('error', { message: (err && err.message) || '' });
+  });
 
   const check = () => autoUpdater.checkForUpdates().catch((err) => log('检查更新失败：', err && err.message));
   check();

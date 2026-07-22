@@ -15,5 +15,9 @@ interface Window {
     deviceId: string
     /** Vue 挂载完成后通知主进程（关启动页、亮主窗口） */
     notifyReady?: () => void
+    /** 主动检查更新（桌面端「检查更新」按钮） */
+    checkUpdate?: () => void
+    /** 订阅更新状态：checking / available / not-available / downloaded / error */
+    onUpdateStatus?: (cb: (s: { status: string; version?: string; message?: string }) => void) => void
   }
 }
