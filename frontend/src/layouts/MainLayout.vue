@@ -201,7 +201,8 @@ onUnmounted(() => {
           <span v-if="unread > 0" class="nav-badge">{{ unread > 99 ? '99+' : unread }}</span>
         </a>
 
-        <template v-if="auth.isAdmin">
+        <!-- 管理组：管理层全量；非管理层被按账号授予管理组菜单(如 hr 的企微绑定)时，仅显示已授权项 -->
+        <template v-if="auth.isAdmin || adminExtraMenus.length">
           <div v-if="!collapsed" class="section-title">管理</div>
           <div v-else class="section-divider"></div>
 
