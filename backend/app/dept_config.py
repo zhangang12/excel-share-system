@@ -3,7 +3,7 @@
 三个执行部门（设计/电工/生产）的派单/接单/完成流配置：
 - worker_role / lead_role：工人与负责人角色 code（对应 seed.ROLES）
 - sheet_check：完成前置校验"四表已导入"（仅设计，D1 口径=有 Excel 导入记录 P-16）
-- start_outputs：接单后上传并推送下游（设计→图纸包→钣金；电工→采购清单→采购）
+- start_outputs：接单后上传并推送下游（设计→图纸包→采购+钣金；电工→采购清单→采购）
 - outputs：完成时上传产物并推送下游（required=必传，如电工电路图）
 - notify_pool：完成弹窗"通知人"候选角色（必选其一，企微/站内通知）
 - 标签：start_label/end_label/done_label 供前端展示
@@ -15,7 +15,8 @@ DEPTS: dict[str, dict] = {
         "worker_role": "designer",
         "lead_role": "design_lead",
         "sheet_check": True,
-        # 🆕 2026-06-19：图纸包改为「CAD激光图纸」并推送采购部(不再推钣金组)；新增「外购附图」也推采购部
+        # 🆕 2026-06-19：图纸包改为「CAD激光图纸」并推送采购部；新增「外购附图」也推采购部
+        # 🆕 2026-07-22：CAD激光图纸(sheetpkg)上传时除采购外同步推钣金组(start_upload 特判)，钣金组工作台图纸列同源可见
         "start_outputs": [
             {"k": "sheetpkg", "label": "CAD激光图纸", "to_role": "buyer"},
             {"k": "outsource_img", "label": "外购附图", "to_role": "buyer"},

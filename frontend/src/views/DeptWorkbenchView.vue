@@ -1313,6 +1313,15 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
+            <!-- 🆕 CAD激光图纸：设计部上传推送钣金组（状态 + 打包下载抽屉，交互同封板组 cd221a5） -->
+            <el-table-column label="CAD激光图纸" min-width="150" align="center">
+              <template #default="{ row }">
+                <StatusPill :text="(row.laser_files || []).length ? `已推送 ${(row.laser_files || []).length}` : '待推送'"
+                            :variant="(row.laser_files || []).length ? 'success' : 'muted'" />
+                <el-button v-if="(row.laser_files || []).length" size="small" link type="primary" :icon="Download"
+                           title="预览 / 打包下载" @click="openCellPack(row, row.laser_files, 'CAD激光图纸')">打包下载</el-button>
+              </template>
+            </el-table-column>
             <!-- 🆕 #269 冷作图纸：设计部上传推送钣金组（待推送-已推送N + 文件下载，同封板组 CAD激光图纸列模式） -->
             <el-table-column label="冷作图纸" min-width="150" align="center">
               <template #default="{ row }">

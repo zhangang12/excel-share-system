@@ -122,10 +122,15 @@ async def main():
             await db.commit()
             db.add(models.Attachment(biz_type="order_start_output", biz_id=dord.id, kind="coldwork_pkg",
                                      project_id=pid, name="冷作图A.dwg", ext="dwg", size=1, path="x/coldwork_a.dwg"))
+            # 🆕 CAD激光图纸(sheetpkg)：同一张设计任务单的产出，也聚合到钣金组项目行 laser_files
+            db.add(models.Attachment(biz_type="order_start_output", biz_id=dord.id, kind="sheetpkg",
+                                     project_id=pid, name="激光图A.dwg", ext="dwg", size=1, path="x/laser_a.dwg"))
             await db.commit()
         smrows = (await c.get("/api/produce/sheetmetal-projects", headers=Hsm)).json()
         chk([f["name"] for f in smrows[0].get("coldwork_files", [])] == ["冷作图A.dwg"],
             f"钣金组行聚合冷作图纸: {smrows[0].get('coldwork_files')}")
+        chk([f["name"] for f in smrows[0].get("laser_files", [])] == ["激光图A.dwg"],
+            f"钣金组行聚合CAD激光图纸(sheetpkg): {smrows[0].get('laser_files')}")
 
         # 备齐判定：给「标准件清单」每条记录的「进度」列填「完成」→ standard_ready=True
         async with SessionLocal() as db:

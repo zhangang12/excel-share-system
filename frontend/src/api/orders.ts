@@ -157,7 +157,7 @@ export interface GroupProjectRow {
   outsource_datasheet_id?: number | null  // 🆕 反馈#258 仅装配组：外协加工(可预览编辑)
   material_locations?: string[]      // 🆕 #204 本项目材料所在库位
   laser_datasheet_id?: number | null           // 🆕 反馈#209 封板组：激光件清单(只读表)
-  laser_files?: { id: number; name: string }[] // 🆕 反馈#209 封板组：CAD激光图纸(可下载)
+  laser_files?: { id: number; name: string }[] // 🆕 CAD激光图纸(可下载)：封板组+钣金组都聚合
   sealing_files?: { id: number; name: string }[] // 🆕 封板文件(机架图/横梁图,设计推送,可下载)
   coldwork_files?: { id: number; name: string }[] // 🆕 #269 钣金组:冷作图纸(设计推送,可下载)
 }

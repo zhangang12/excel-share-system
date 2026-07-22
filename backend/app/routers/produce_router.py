@@ -309,7 +309,7 @@ class GroupProjectRow(BaseModel):
     material_locations: List[str] = []   # 🆕 #204 本项目材料所在库位(入库流水去重,供装配/钣金知道去哪拿料)
     # 🆕 反馈#209 封板组「推送激光图」：激光件清单(只读表)+ CAD激光图纸文件(设计产出,可下载)
     laser_datasheet_id: Optional[int] = None
-    laser_files: List[dict] = []
+    laser_files: List[dict] = []   # CAD激光图纸(sheetpkg)：封板组+钣金组都聚合
     # 🆕 封板文件(机架图/横梁图)：设计推送给封板组的产出(order_start_output kind=sealing_pkg,可下载)
     sealing_files: List[dict] = []
     # 🆕 #269 冷作图纸：设计推送给钣金组的产出(order_start_output kind=coldwork_pkg,可下载)
@@ -438,6 +438,7 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
     sealing_files_by_pid: dict = {}   # 🆕 封板文件(机架图/横梁图)
     coldwork_files_by_pid: dict = {}  # 🆕 #269 冷作图纸(设计→钣金组)
     if group == "sheetmetal":
+        laser_files_by_pid = await _laser_files_by_pid(db, pids)   # 🆕 CAD激光图纸(sheetpkg)也推钣金组
         coldwork_files_by_pid = await _laser_files_by_pid(db, pids, "coldwork_pkg")
     if group == "sealing":
         laser_ds_by_pid = await _sheets_by_pid(db, pids, ("激光件清单",))
@@ -475,6 +476,7 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
             row.laser_files = laser_files_by_pid.get(p.id, [])
             row.sealing_files = sealing_files_by_pid.get(p.id, [])
         if group == "sheetmetal":
+            row.laser_files = laser_files_by_pid.get(p.id, [])         # 🆕 CAD激光图纸(sheetpkg,同封板组口径)
             row.coldwork_files = coldwork_files_by_pid.get(p.id, [])   # 🆕 #269 冷作图纸
         rows.append(row)
     rows.sort(key=lambda x: x.code, reverse=True)

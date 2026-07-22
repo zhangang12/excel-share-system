@@ -622,9 +622,12 @@ async def start_upload(
                                text=f"【采购清单】{p.code} {cfg['name']}已上传采购清单 {len(outs)} 个文件，请查收。",
                                biz_type="order", biz_id=o.id)
     else:
-        await push_message(db, to_role=so["to_role"], kind="info",
-                           text=f"【{so['label']}】{cfg['name']}已上传 {p.code} {so['label']} {len(outs)} 个文件，请查收。",
-                           biz_type="order", biz_id=o.id)
+        # 🆕 CAD激光图纸(sheetpkg)：配置目标(采购)之外同步推钣金组——钣金组工作台「CAD激光图纸」列同源可见
+        roles = [so["to_role"], "sheetmetal"] if (o.dept == "design" and kind == "sheetpkg") else [so["to_role"]]
+        for r in roles:
+            await push_message(db, to_role=r, kind="info",
+                               text=f"【{so['label']}】{cfg['name']}已上传 {p.code} {so['label']} {len(outs)} 个文件，请查收。",
+                               biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="upload", target_type="dept_order",
                       target_id=o.id, detail=f"start:{kind} x{len(outs)}")
     return [schemas.AttachmentOut.model_validate(a) for a in outs]
