@@ -68,7 +68,8 @@ ROLE_DEFAULT_MENUS: dict[str, list[str]] = {
     "buyer_standard":   ["catalog", "list", "purchase_mgmt"],
     "buyer_outsource":  ["catalog", "list", "purchase_mgmt"],
     # 🆕 反馈#208：人事只需人事部,不看项目目录/项目详单(纯 hr 用户收窄;多角色仍取并集)
-    "hr":               ["hr"],
+    # 🆕 2026-07-21：人事可进「企微绑定」(管理组菜单,给全体员工绑/解绑企微 userid)
+    "hr":               ["hr", "wxbind"],
     # ---- 🆕 v3 角色 ----
     "sales":            ["catalog", "sales", "leads"],        # 无详单，编号不可点；🆕 销售线索
     "sales_lead":       ["catalog", "sales", "leads"],

@@ -7,10 +7,19 @@ from sqlalchemy import select
 from ..database import get_db
 from .. import models, schemas
 from ..auth import hash_password
-from ..deps import require_admin_or_manager
+from ..deps import require_admin_or_manager, get_current_user
 from ..utils import write_audit
 
 router = APIRouter(prefix="/api/admin", tags=["管理后台"])
+
+
+async def _require_wxbind_ops(current: models.User = Depends(get_current_user)) -> models.User:
+    """🆕 2026-07-21 企微绑定页权限：admin/manager + 人事(hr)。
+    人事需要给全体员工绑/解绑企微 userid；用户列表接口对人事只读开放(供绑定页使用)，
+    其余用户管理接口(建/改/删/调角色)仍仅 admin/manager。"""
+    if not current.has_role("admin", "manager", "hr"):
+        raise HTTPException(403, "仅管理员/管理层/人事可操作")
+    return current
 
 
 # ---------- 角色（只读） ----------
@@ -123,7 +132,7 @@ def _effective_role_ids(data) -> Optional[list[int]]:
 
 @router.get("/users", response_model=List[schemas.UserOut])
 async def list_users(
-    _: models.User = Depends(require_admin_or_manager),
+    _: models.User = Depends(_require_wxbind_ops),  # 🆕 人事(hr)只读用户列表→企微绑定页
     db: AsyncSession = Depends(get_db),
 ):
     # 过滤掉拥有 admin 角色的用户（admin 对 UI 完全隐身；多角色：任一角色是 admin 即隐身）
@@ -281,7 +290,7 @@ async def grant_menus(
 async def bind_wxid(
     uid: int,
     data: schemas.WxidIn,
-    current: models.User = Depends(require_admin_or_manager),  # 🆕 管理层=管理员权限
+    current: models.User = Depends(_require_wxbind_ops),  # 🆕 人事(hr)亦可绑/解绑企微 userid
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 v3：绑定/更新用户企业微信 userid（F1 手动绑定口径；空串=解绑）。"""
@@ -299,11 +308,11 @@ async def bind_wxid(
 @router.post("/wecom-test", response_model=schemas.Msg)
 async def wecom_test(
     uid: Optional[int] = None,
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(_require_wxbind_ops),  # 🆕 人事(hr)亦可做推送自检
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 企微推送自检：给指定用户(uid 省略=当前登录人，需已绑 userid)发一条测试消息，
-    失败原因直接抛出。admin 与管理层均可用。"""
+    失败原因直接抛出。admin/管理层/人事均可用。"""
     from ..config import settings
     from ..notify import _send_wecom
     from datetime import datetime
