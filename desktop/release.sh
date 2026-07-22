@@ -78,7 +78,7 @@ if [[ "$DRY" == "1" ]]; then
   echo "[dry-run] rm -rf desktop/app && cp -R frontend/dist desktop/app"
   echo "[dry-run] (cd desktop && npx electron-builder --win nsis --x64 --publish never)"
   echo "[dry-run] ${SSH[*]} \"mkdir -p '$REMOTE_DIR'\""
-  echo "[dry-run] ${SCP[*]} desktop/dist/*.exe desktop/dist/latest.yml desktop/dist/*.blockmap desktop/version.json '$TARGET:$REMOTE_DIR/'"
+  echo "[dry-run] ${SCP[*]} \"desktop/dist/同辉项目管理 Setup <VER>.exe{,.blockmap}\" desktop/dist/latest.yml desktop/version.json '$TARGET:$REMOTE_DIR/'  # 只传当版，不整目录 glob"
   exit 0
 fi
 
@@ -128,9 +128,12 @@ export ELECTRON_BUILDER_BINARIES_MIRROR="${ELECTRON_BUILDER_BINARIES_MIRROR:-htt
 npx electron-builder --win nsis --x64 --publish never
 
 # ---- 6. 上传到服务器（nginx /desktop/ 指向 $DEPLOY_PATH/desktop-releases/）----
+# 只传当版本的文件（dist/ 里累积着历史包，整目录 glob 会把几百 MB 旧包重传一遍，
+# 传输窗口长还容易像 1.0.4 那次一样中途断线留下截断包）
 echo "[4/4] 上传到服务器 ${TARGET}:${REMOTE_DIR}/ ..."
+EXE="同辉项目管理 Setup ${VERSION}.exe"
 "${SSH[@]}" "mkdir -p '$REMOTE_DIR'"
-"${SCP[@]}" "$DESKTOP_DIR"/dist/*.exe "$DESKTOP_DIR"/dist/latest.yml "$DESKTOP_DIR"/dist/*.blockmap "$DESKTOP_DIR/version.json" "$TARGET:$REMOTE_DIR/"
+"${SCP[@]}" "$DESKTOP_DIR/dist/$EXE" "$DESKTOP_DIR/dist/$EXE.blockmap" "$DESKTOP_DIR/dist/latest.yml" "$DESKTOP_DIR/version.json" "$TARGET:$REMOTE_DIR/"
 
 echo ""
 echo "✓ 已发布 ${VERSION}，客户端下一轮检查将收到更新。"
