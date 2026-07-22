@@ -15,7 +15,6 @@ import {
   type DeptOrder, type DeptOptions, type OrderAttachment, type GroupProjectRow, type DispatchOptions,
 } from '@/api/orders'
 import { datasheetsApi } from '@/api/datasheets'
-import { packageAttachments } from '@/api/attachments'   // 🆕 #267 单元格文件打包 zip
 import { http } from '@/api'
 import SheetmetalGrid from '@/components/SheetmetalGrid.vue'
 import FeedbackPanel from '@/components/FeedbackPanel.vue'
@@ -290,11 +289,14 @@ async function setGroupDue(row: GroupProjectRow, val: string | null) {
     await load()   // 失败回滚显示
   }
 }
-// 🆕 #267 封板组「已推送 N」旁打包下载：把该单元格全部文件打成 zip（复用通用附件打包端点）
-function packCellFiles(row: GroupProjectRow, files: { id: number; name: string }[] | undefined, label: string) {
-  const ids = (files || []).map(f => f.id)
-  if (!ids.length) return
-  packageAttachments(ids, `${row.code}_${label}`)
+// 🆕 封板组资料列不再罗列文件：点「打包下载」开抽屉（预览+勾选+打包 zip，同采购部交互，复用 AttachmentPackDialog）
+function openCellPack(row: GroupProjectRow, files: { id: number; name: string }[] | undefined, label: string) {
+  const items = (files || []).map(f => ({ id: f.id, name: f.name }))
+  if (!items.length) return
+  packTitle.value = `${row.code} · ${label}`
+  packZipname.value = `${row.code}_${label}`
+  packGroups.value = [{ label, items }]
+  packVisible.value = true
 }
 // 🆕 任务跟踪父视图：取生产单某组(钣金/装配)的预计完成 / 完成日期
 function pgDue(row: DeptOrder, group: string): string {
@@ -1451,32 +1453,20 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             </el-table-column>
             <el-table-column label="CAD激光图纸" min-width="150" align="center">
               <template #default="{ row }">
-                <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
-                  <!-- 🆕 #267 有文件时「已推送 N」旁给打包下载(zip) -->
-                  <div style="display:flex;align-items:center;gap:2px">
-                    <StatusPill :text="(row.laser_files || []).length ? `已推送 ${(row.laser_files || []).length}` : '待推送'"
-                                :variant="(row.laser_files || []).length ? 'success' : 'muted'" />
-                    <el-button v-if="(row.laser_files || []).length" size="small" link type="primary" :icon="Download"
-                               title="打包下载全部文件" @click="packCellFiles(row, row.laser_files, 'CAD激光图纸')" />
-                  </div>
-                  <el-button v-for="f in (row.laser_files || [])" :key="'l' + f.id" size="small" link type="success" :icon="Download"
-                             @click="downloadAttachment(f)">{{ f.name }}</el-button>
-                </div>
+                <!-- 文件不罗列在列表中：状态 + 打包下载（开抽屉预览/勾选/打包 zip） -->
+                <StatusPill :text="(row.laser_files || []).length ? `已推送 ${(row.laser_files || []).length}` : '待推送'"
+                            :variant="(row.laser_files || []).length ? 'success' : 'muted'" />
+                <el-button v-if="(row.laser_files || []).length" size="small" link type="primary" :icon="Download"
+                           title="预览 / 打包下载" @click="openCellPack(row, row.laser_files, 'CAD激光图纸')">打包下载</el-button>
               </template>
             </el-table-column>
             <el-table-column label="机架 / 横梁图" min-width="150" align="center">
               <template #default="{ row }">
-                <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
-                  <!-- 🆕 #267 有文件时「已推送 N」旁给打包下载(zip) -->
-                  <div style="display:flex;align-items:center;gap:2px">
-                    <StatusPill :text="(row.sealing_files || []).length ? `已推送 ${(row.sealing_files || []).length}` : '待推送'"
-                                :variant="(row.sealing_files || []).length ? 'success' : 'muted'" />
-                    <el-button v-if="(row.sealing_files || []).length" size="small" link type="primary" :icon="Download"
-                               title="打包下载全部文件" @click="packCellFiles(row, row.sealing_files, '机架横梁图')" />
-                  </div>
-                  <el-button v-for="f in (row.sealing_files || [])" :key="'s' + f.id" size="small" link type="warning" :icon="Download"
-                             @click="downloadAttachment(f)">{{ f.name }}</el-button>
-                </div>
+                <!-- 文件不罗列在列表中：状态 + 打包下载（开抽屉预览/勾选/打包 zip） -->
+                <StatusPill :text="(row.sealing_files || []).length ? `已推送 ${(row.sealing_files || []).length}` : '待推送'"
+                            :variant="(row.sealing_files || []).length ? 'success' : 'muted'" />
+                <el-button v-if="(row.sealing_files || []).length" size="small" link type="primary" :icon="Download"
+                           title="预览 / 打包下载" @click="openCellPack(row, row.sealing_files, '机架横梁图')">打包下载</el-button>
               </template>
             </el-table-column>
             <el-table-column label="预计完成" min-width="150" align="center">
