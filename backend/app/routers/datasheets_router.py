@@ -400,15 +400,17 @@ async def delete_record(
 
 
 # ══════════════════════════════════════════════════════════
-# 生产组专用：钣金/装配角色编辑「钣金装配」数据表
+# 生产组专用：钣金/装配/封板角色编辑「钣金装配」等数据表
 # 绕开 require_can_view_detail（详单门槛），但有独立的双重校验：
-#   1. 角色必须是 sheetmetal / assembler（admin/manager 也通）
+#   1. 角色必须是 sheetmetal / assembler / sealing（admin/manager 也通）
 #   2. 当前用户必须已被派单到该项目（ProduceGroupTask），admin/manager 豁免
 # ══════════════════════════════════════════════════════════
 
 SHEETMETAL_DS_NAME = "钣金装配"
 # 🆕 反馈#258：装配组「外协加工」允许生产组编辑（可预览编辑，口径同钣金装配表；标准件清单不在其列）
 PRODUCE_EDIT_DS_NAMES = {SHEETMETAL_DS_NAME, "外协加工"}
+# 🆕 反馈#287：封板组(sealing)仅放行「钣金装配」（同钣金组「编辑装配表」），「外协加工」不放行
+PRODUCE_EDIT_SEALING_DS_NAMES = {SHEETMETAL_DS_NAME}
 
 
 async def _produce_edit_check(
@@ -418,11 +420,15 @@ async def _produce_edit_check(
 ) -> models.Datasheet:
     """验证数据表允许生产组编辑且用户有编辑权，返回 Datasheet 对象。
     反馈#230：封板组「激光件清单」编辑已撤销，不在白名单内。
-    反馈#258：白名单 = 钣金装配 + 外协加工（装配组「编辑外协加工表」，口径同钣金装配表）。"""
+    反馈#258：白名单 = 钣金装配 + 外协加工（装配组「编辑外协加工表」，口径同钣金装配表）。
+    反馈#287：封板组(sealing)经 require_roles 放进端点，但仅限「钣金装配」，外协加工仍拒。"""
     d = await _get_datasheet_or_404(db, did)
     if d.name not in PRODUCE_EDIT_DS_NAMES:
         raise HTTPException(403, "此端点仅限编辑「钣金装配/外协加工」数据表")
     if not current.has_role("admin", "manager"):
+        # 🆕 反馈#287：纯封板组身份（无钣金/装配角色）只放行「钣金装配」
+        if d.name not in PRODUCE_EDIT_SEALING_DS_NAMES and not current.has_role("sheetmetal", "assembler"):
+            raise HTTPException(403, "封板组仅可编辑「钣金装配」数据表")
         r = await db.execute(
             select(models.ProduceGroupTask).where(
                 models.ProduceGroupTask.project_id == d.project_id,
@@ -438,10 +444,10 @@ async def _produce_edit_check(
 async def produce_update_cell(
     did: int, rid: int,
     data: schemas.RecordCellUpdate,
-    current: models.User = Depends(require_roles("sheetmetal", "assembler")),
+    current: models.User = Depends(require_roles("sheetmetal", "assembler", "sealing")),
     db: AsyncSession = Depends(get_db),
 ):
-    """生产组（钣金/装配）编辑钣金装配表单元格，绕开详单闸门。"""
+    """生产组（钣金/装配/封板）编辑钣金装配表单元格，绕开详单闸门；封板组仅限「钣金装配」（#287）。"""
     await _produce_edit_check(did, current, db)
     res = await db.execute(select(models.Record).where(models.Record.id == rid))
     r = res.scalar_one_or_none()
@@ -468,7 +474,7 @@ async def produce_update_cell(
 async def produce_create_record(
     did: int,
     data: schemas.RecordCreate,
-    current: models.User = Depends(require_roles("sheetmetal", "assembler")),
+    current: models.User = Depends(require_roles("sheetmetal", "assembler", "sealing")),
     db: AsyncSession = Depends(get_db),
 ):
     """生产组新增钣金装配表行。"""
@@ -490,7 +496,7 @@ async def produce_create_record(
 @router.delete("/datasheets/{did}/produce-edit/records/{rid}", response_model=schemas.Msg)
 async def produce_delete_record(
     did: int, rid: int,
-    current: models.User = Depends(require_roles("sheetmetal", "assembler")),
+    current: models.User = Depends(require_roles("sheetmetal", "assembler", "sealing")),
     db: AsyncSession = Depends(get_db),
 ):
     """生产组删除钣金装配表行。"""

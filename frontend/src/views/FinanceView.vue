@@ -1140,7 +1140,7 @@ async function revokeInvoice(row: ViewRow) {
     <el-dialog v-model="payDialogVisible" title="记录付款" width="600px">
       <div v-if="payingPr" class="pay-info">
         <div class="pay-info-block">
-          <div class="pay-info-title">🏦 收款账户信息（供应商：{{ payingPr.supplier_name }}）</div>
+          <div class="pay-info-title">🏦 收款账户信息（供应商：{{ payingPr.supplier_name }}<el-button v-if="payingPr.supplier_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_name)">复制</el-button>）</div>
           <div class="pay-info-row"><span class="k">开户行</span>{{ payingPr.supplier_bank_name || '—' }}<el-button v-if="payingPr.supplier_bank_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_name)">复制</el-button></div>
           <div class="pay-info-row"><span class="k">银行账号</span><b>{{ payingPr.supplier_bank_account || '—' }}</b><el-button v-if="payingPr.supplier_bank_account" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_account)">复制</el-button></div>
           <div class="pay-info-row"><span class="k">税号</span>{{ payingPr.supplier_tax_no || '—' }}<el-button v-if="payingPr.supplier_tax_no" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_tax_no)">复制</el-button></div>

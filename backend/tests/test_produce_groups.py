@@ -172,6 +172,50 @@ async def main():
             o = (await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))).scalar_one()
             chk(o.status == "in_progress" and o.done_date is None, f"撤销一组→生产单回退: {o.status}")
 
+        # 🆕 反馈#287：封板组(sealing)可编辑「钣金装配」（produce-edit 放行），但「外协加工」不放行
+        slid = await mk("sl", "sealing")
+        await mk("sl2", "sealing")   # 未派单的封板组人员：派单校验仍生效
+        Hsl, Hsl2 = await login("sl"), await login("sl2")
+        async with SessionLocal() as db:
+            ds_sm = (await db.execute(select(models.Datasheet).where(
+                models.Datasheet.project_id == pid, models.Datasheet.name == "钣金装配"))).scalar_one()
+            ds_os = (await db.execute(select(models.Datasheet).where(
+                models.Datasheet.project_id == pid, models.Datasheet.name == "外协加工"))).scalar_one()
+            fld_sm = (await db.execute(select(models.Field).where(
+                models.Field.datasheet_id == ds_sm.id))).scalars().first()
+            rec_sm = models.Record(datasheet_id=ds_sm.id, values={})
+            rec_os = models.Record(datasheet_id=ds_os.id, values={})
+            db.add_all([rec_sm, rec_os])
+            # 封板组为可选组：补一条派单（同主管派发产生的 ProduceGroupTask）
+            db.add(models.ProduceGroupTask(order_id=oid, project_id=pid, group="sealing", worker_id=slid))
+            await db.flush()
+            did_sm, did_os = ds_sm.id, ds_os.id
+            rec_sm_id, rec_os_id = rec_sm.id, rec_os.id
+            fid_sm = fld_sm.id if fld_sm else 1
+            await db.commit()
+        # 封板组编辑钣金装配：改单元格 200（值生效）+ 新增行 200
+        r = await c.put(f"/api/datasheets/{did_sm}/produce-edit/records/{rec_sm_id}/cell", headers=Hsl,
+                        json={"field_id": fid_sm, "value": "封板改"})
+        chk(r.status_code == 200, f"封板组编辑钣金装配单元格→200: {r.status_code} {r.text[:100]}")
+        chk(r.status_code == 200 and r.json()["values"].get(str(fid_sm)) == "封板改",
+            f"封板组写入值生效: {r.json().get('values') if r.status_code == 200 else r.text[:80]}")
+        r = await c.post(f"/api/datasheets/{did_sm}/produce-edit/records", headers=Hsl, json={"values": {}})
+        chk(r.status_code == 200, f"封板组新增钣金装配行→200: {r.status_code} {r.text[:100]}")
+        # 不该放的仍 403：封板组→外协加工（改/增）、未派单的封板组人员、非生产组（设计）
+        chk((await c.put(f"/api/datasheets/{did_os}/produce-edit/records/{rec_os_id}/cell", headers=Hsl,
+             json={"field_id": 1, "value": "X"})).status_code == 403, "封板组编辑外协加工→403")
+        chk((await c.post(f"/api/datasheets/{did_os}/produce-edit/records", headers=Hsl,
+             json={"values": {}})).status_code == 403, "封板组新增外协加工行→403")
+        chk((await c.put(f"/api/datasheets/{did_sm}/produce-edit/records/{rec_sm_id}/cell", headers=Hsl2,
+             json={"field_id": fid_sm, "value": "X"})).status_code == 403, "未派单封板组人员→403")
+        chk((await c.put(f"/api/datasheets/{did_sm}/produce-edit/records/{rec_sm_id}/cell", headers=Hdl,
+             json={"field_id": fid_sm, "value": "X"})).status_code == 403, "设计(非生产组)编辑钣金装配→403")
+        # 原有口径不收窄：钣金组仍可编辑外协加工、装配组仍可编辑钣金装配
+        chk((await c.put(f"/api/datasheets/{did_os}/produce-edit/records/{rec_os_id}/cell", headers=Hsm,
+             json={"field_id": 1, "value": "钣金改"})).status_code == 200, "钣金组编辑外协加工仍放行")
+        chk((await c.put(f"/api/datasheets/{did_sm}/produce-edit/records/{rec_sm_id}/cell", headers=Hasm,
+             json={"field_id": fid_sm, "value": "装配改"})).status_code == 200, "装配组编辑钣金装配仍放行")
+
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")
     shutil.rmtree(tmp, ignore_errors=True)

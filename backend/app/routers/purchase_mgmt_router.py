@@ -112,13 +112,30 @@ def _sup_out(s: models.Supplier, creator_name: Optional[str] = None) -> schemas.
     )
 
 
+async def _check_supplier_code_unique(db: AsyncSession, code: Optional[str],
+                                      exclude_id: Optional[int] = None) -> None:
+    """🆕 反馈#274：供应商编码全表唯一（非空才校验；大小写不敏感；编辑时排除自身）。"""
+    code = (code or "").strip()
+    if not code:
+        return
+    stmt = select(models.Supplier.id).where(func.lower(models.Supplier.code) == code.lower())
+    if exclude_id is not None:
+        stmt = stmt.where(models.Supplier.id != exclude_id)
+    if (await db.execute(stmt)).first():
+        raise HTTPException(400, "供应商编码已存在")
+
+
 @router.post("/suppliers", response_model=schemas.SupplierOut)
 async def create_supplier(
     body: schemas.SupplierCreate,
     current: models.User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    s = models.Supplier(**body.model_dump(), created_by=current.id)  # 🆕 需求五：记录建档采购员
+    data = body.model_dump()
+    if data.get("code"):
+        data["code"] = data["code"].strip() or None   # 🆕 反馈#274：入库前去空格，堵住「GYS-003 」式尾空格绕过
+    s = models.Supplier(**data, created_by=current.id)  # 🆕 需求五：记录建档采购员
+    await _check_supplier_code_unique(db, s.code)   # 🆕 反馈#274：编码唯一
     db.add(s)
     await db.commit()
     await db.refresh(s)
@@ -136,7 +153,12 @@ async def update_supplier(
     s = r.scalar_one_or_none()
     if not s:
         raise HTTPException(404, "供应商不存在")
-    for k, v in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    if "code" in updates and updates["code"] is not None:
+        updates["code"] = updates["code"].strip() or None   # 🆕 反馈#274：入库前去空格
+    if "code" in updates and (updates["code"] or "") != (s.code or "").strip():
+        await _check_supplier_code_unique(db, updates["code"], exclude_id=sid)   # 🆕 反馈#274
+    for k, v in updates.items():
         setattr(s, k, v)
     await db.commit()
     await db.refresh(s)
@@ -572,7 +594,8 @@ async def download_order_pdf(
 
 async def _attach_pay_status(db: AsyncSession, outs: list) -> list:
     """按 已付金额 + 关联请款单状态 计算每条采购明细的付款状态（B1=a：记录付款才算已付）。
-    优先级：已付款 > 部分付款 > 已批待付 > 已请款 > 未付款。"""
+    优先级：已付款 > 部分付款 > 已批待付 > 已请款 > 未付款。
+    🆕 反馈#277：顺带挂最近一张已付款请款单的付款凭证（财务回执），申请人/采购在明细行可直接下载。"""
     if not outs:
         return outs
     ids = [o.id for o in outs]
@@ -585,6 +608,21 @@ async def _attach_pay_status(db: AsyncSession, outs: list) -> list:
     pr_by_item: dict[int, set] = {}
     for item_id, st in r.all():
         pr_by_item.setdefault(item_id, set()).add(st)
+    # 🆕 反馈#277：每条明细 ← 已付款请款单的付款凭证（同一明细可能被多张已付请款单覆盖，取最新一张带凭证的）
+    vr = await db.execute(
+        select(models.PaymentRequestItem.item_id,
+               models.PaymentRequest.pay_voucher_file_id,
+               models.Attachment.name)
+        .join(models.PaymentRequest, models.PaymentRequestItem.request_id == models.PaymentRequest.id)
+        .join(models.Attachment, models.Attachment.id == models.PaymentRequest.pay_voucher_file_id)
+        .where(models.PaymentRequestItem.item_id.in_(ids),
+               models.PaymentRequest.status == "paid",
+               models.PaymentRequest.pay_voucher_file_id.isnot(None))
+        .order_by(models.PaymentRequest.id.desc())
+    )
+    voucher_by_item: dict[int, tuple] = {}
+    for item_id, fid, fname in vr.all():
+        voucher_by_item.setdefault(item_id, (fid, fname))
     for o in outs:
         prs = pr_by_item.get(o.id, set())
         recv = o.received_amount or 0
@@ -599,6 +637,9 @@ async def _attach_pay_status(db: AsyncSession, outs: list) -> list:
             o.pay_status = "已请款"
         else:
             o.pay_status = "未付款"
+        vch = voucher_by_item.get(o.id)
+        if vch:
+            o.pay_voucher_file_id, o.pay_voucher_name = vch
     return outs
 
 

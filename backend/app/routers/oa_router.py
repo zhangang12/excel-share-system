@@ -445,6 +445,15 @@ async def create_request(
         rel = await db.execute(select(models.OaRequest.id).where(models.OaRequest.id == body.related_request_id))
         if not rel.scalar_one_or_none():
             raise HTTPException(400, "关联的业务申请不存在")
+    # 🆕 反馈#285 付款申请：服务端必填校验（收款单位/付款金额/付款事由），与前端校验同口径
+    if body.doc_type == "payment":
+        _d = body.detail or {}
+        if not str(_d.get("payee") or "").strip():
+            raise HTTPException(400, "请填写收款单位")
+        if body.amount is None or float(body.amount) <= 0:
+            raise HTTPException(400, "请填写付款金额")
+        if not str(_d.get("reason") or "").strip():
+            raise HTTPException(400, "请填写付款事由")
     req_no = await _next_oa_no(db)
     req = models.OaRequest(
         request_no=req_no, category=category, doc_type=body.doc_type, department_id=dept.id,

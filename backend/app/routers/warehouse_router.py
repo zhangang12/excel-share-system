@@ -134,6 +134,25 @@ async def list_materials(
                               low_count=sum(1 for o in outs if o.low))
 
 
+@router.get("/materials/suggest", response_model=List[schemas.WhMaterialSuggestOut])
+async def suggest_materials(
+    q: Optional[str] = Query(None),
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #278/#289 物料名称联想：按关键字模糊匹配物料主数据（WhMaterial）里已建档物料的
+    名称，返回 name+spec（最多 20 条，前缀命中的排前面）。权限同物料主数据（登录即可读）。
+    用途：采购申请弹窗「名称」、项目详单「名称」列的 el-autocomplete，选中带出规格型号。"""
+    k = (q or "").strip()
+    if not k:
+        return []
+    r = await db.execute(select(models.WhMaterial).where(
+        models.WhMaterial.name.ilike(f"%{k}%")))
+    mats = list(r.scalars().all())
+    mats.sort(key=lambda m: (0 if m.name.startswith(k) else 1, m.name, m.id))
+    return [schemas.WhMaterialSuggestOut(name=m.name, spec=m.spec) for m in mats[:20]]
+
+
 @router.post("/materials", response_model=schemas.WhMaterialOut)
 async def create_material(
     data: schemas.WhMaterialIn,

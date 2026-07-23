@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Setting, Edit, Search, VideoPlay } from '@element-plus/icons-vue'
 import { datasheetsApi } from '@/api/datasheets'
 import { permApi } from '@/api/permissions'
+import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 // 字段权限统一在「权限管理 → 权限矩阵」页配置，不再挂在表头
 import { useRealtime } from '@/composables/useRealtime'
@@ -421,6 +422,34 @@ function fetchColumnSuggestions(f: DataField) {
   }
 }
 
+// 🆕 #289 名称列：字段名恰为「名称」的列，编辑时用 el-autocomplete 联想**物料主数据**
+// （全系统已入库物料，走 GET /wh/materials/suggest 接口，与仓库采购申请 #278 共用）；
+// 选中后带出同行「规格型号」列（该 sheet 有这列时才写）。与 #270 工艺列（本列历史值）两套并存。
+const MATERIAL_NAME_FIELD = '名称'
+const MATERIAL_SPEC_FIELD = '规格型号'
+function isMaterialNameField(f: DataField): boolean {
+  return (f.name || '').trim() === MATERIAL_NAME_FIELD
+}
+interface MatSuggestItem { value: string; spec?: string | null }
+async function fetchMaterialSuggestions(q: string, cb: (list: MatSuggestItem[]) => void) {
+  if (!q.trim()) { cb([]); return }
+  try {
+    const r = await http.get<{ name: string; spec?: string | null }[]>('/wh/materials/suggest', { params: { q } })
+    cb(r.data.map(m => ({ value: m.name, spec: m.spec })))
+  } catch { cb([]) }
+}
+async function onMaterialNameSelect(r: DataRecord, f: DataField, it: MatSuggestItem) {
+  editingValue.value = it.value
+  await saveEdit(r, f)
+  // 带出同行「规格型号」（建议带规格、该 sheet 有此列且可编辑时才写；失败不阻塞名称保存）
+  if (it.spec) {
+    const sf = fields.value.find(x => (x.name || '').trim() === MATERIAL_SPEC_FIELD)
+    if (sf && fieldEditable(sf)) {
+      try { await applyCellValue(r, sf, it.spec) } catch { /* 规格带出失败忽略 */ }
+    }
+  }
+}
+
 // 整列着色：进度列的 td 按值染色（与项目一览状态列一致）
 // 用 columnIndex 精确定位字段：columnIndex 0 是 # 自动行号列，从 1 起对应 visibleFields[0..]
 // 严格匹配已知状态词，其他值（日期、人名、数字）一律不染色 —— 避免误伤
@@ -781,6 +810,21 @@ async function addRow() {
                              @blur="saveEdit(row, f)"
                              @keyup.enter="saveEdit(row, f)"
                              @keyup.escape="cancelEdit" />
+            <!-- 🆕 #289 名称列：联想全系统物料主数据（走接口，选中带出同行「规格型号」），可手输新值 -->
+            <el-autocomplete v-else-if="isMaterialNameField(f)"
+                             v-model="editingValue" size="small"
+                             :fetch-suggestions="fetchMaterialSuggestions"
+                             :trigger-on-focus="false"
+                             placeholder="输入名称，联想已入库物料"
+                             class="cell-edit-input" autofocus
+                             @select="(it: any) => onMaterialNameSelect(row, f, it)"
+                             @blur="saveEdit(row, f)"
+                             @keyup.enter="saveEdit(row, f)"
+                             @keyup.escape="cancelEdit">
+              <template #default="{ item }">
+                <span>{{ item.value }}</span><span v-if="item.spec" class="muted small"> · {{ item.spec }}</span>
+              </template>
+            </el-autocomplete>
             <el-input v-else v-model="editingValue" autofocus class="cell-edit-input"
                       @blur="saveEdit(row, f)" @keyup.enter="saveEdit(row, f)" @keyup.escape="cancelEdit" />
           </template>

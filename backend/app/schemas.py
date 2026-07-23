@@ -542,6 +542,13 @@ class WhStockOut(BaseModel):
     low_count: int = 0
 
 
+class WhMaterialSuggestOut(BaseModel):
+    """🆕 #278/#289 物料名称联想：返回 name+spec，选中后前端自动带出「规格型号」
+    （采购申请弹窗「名称」、项目详单「名称」列的 el-autocomplete 共用）。"""
+    name: str
+    spec: Optional[str] = None
+
+
 # ---------- 🆕 财务部 ----------
 class FinanceInvoiceRow(BaseModel):
     ledger_id: int
@@ -1290,6 +1297,9 @@ class PurchaseItemOut(BaseModel):
     prepay_ratio: Optional[float] = None
     invoice_status: str
     pay_status: str = "未付款"   # 🆕 未付款/已请款/已批待付/部分付款/已付款（B1=a：记录付款才算已付）
+    # 🆕 反馈#277：已付款请款单的付款凭证（财务回执）——明细行可直接下载；无则 None
+    pay_voucher_file_id: Optional[int] = None
+    pay_voucher_name: Optional[str] = None
     custom_values: dict = Field(default_factory=dict)   # 🆕 R6 自定义字段值
     buyer_id: Optional[int] = None
     buyer_name: Optional[str] = None

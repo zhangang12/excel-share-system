@@ -1463,15 +1463,19 @@ async def order_draft_resubmit(
     led.customer = data.customer.strip() or None
     led.cust_type = data.cust_type
     led.contract = data.contract if data.contract in ("有", "无") else "无"
-    led.amount = data.amount or 0
-    led.tax_rate = data.tax_rate
-    led.prepay = data.prepay or 0
-    led.before_ship = data.before_ship or 0
-    led.prepay_note = (data.prepay_note or "").strip() or None
-    led.before_ship_note = (data.before_ship_note or "").strip() or None
-    led.ship_receivable = data.ship_receivable or 0
-    led.balance = data.balance or 0
-    led.balance_date = (normalize_date_str(data.balance_date) or None) if (data.balance or 0) else None
+    # 🆕 反馈#284：金额/批注字段仅「调用方显式传了」才覆盖——schema 默认值会让漏带的
+    #    字段以 0/"" 到达这里，无条件 or 0 赋值会把台账已有尾款(及尾款日期)静默清零
+    _sent = data.model_fields_set
+    for f in ("amount", "tax_rate", "prepay", "before_ship", "ship_receivable", "balance"):
+        if f in _sent:
+            setattr(led, f, getattr(data, f))
+    for f in ("prepay_note", "before_ship_note"):
+        if f in _sent:
+            setattr(led, f, (getattr(data, f) or "").strip() or None)
+    if "balance_date" in _sent:
+        led.balance_date = (normalize_date_str(data.balance_date) or None) if (led.balance or 0) else None
+    elif (led.balance or 0) == 0:
+        led.balance_date = None   # 尾款为0时尾款日期兜底清空(与 update_ledger 同规则)
     req = data.req_text.strip() or f"（销售下单）{name}"
     rcv = data.receiver or schemas.SalesReceiverIn()
     extra = dict(p.extra or {}) if p else {}

@@ -1850,6 +1850,7 @@ async def backfill_oa_doc_types(db: AsyncSession) -> dict:
         ("sales_commission", "business", "销售提成申请"),   # 🆕 反馈#217 销售提成申请(专用表单)
         ("travel_expense", "reimbursement", "差旅费用报销"), ("expense", "reimbursement", "费用报销"),
         ("purchase", "purchase", "采购申请"),
+        ("payment", "business", "付款申请"),   # 🆕 反馈#285 付款申请(收款单位/金额/事由/期望付款日期)
     ]
     r = await db.execute(select(models.OaDocTypeDict.key))
     existing = {k for (k,) in r.all()}

@@ -161,6 +161,7 @@ interface PurchaseItemOut {
   received_amount: number; invoice_date?: string | null; invoice_no?: string | null; tax_rate?: string | null
   invoice_amount: number; paid_amount: number; paid_date?: string | null
   payment_method?: string | null; prepay_ratio?: number | null; pay_status?: string
+  pay_voucher_file_id?: number | null; pay_voucher_name?: string | null   // 🆕 #277 财务付款回执（已付款请款单的凭证）
   custom_values?: Record<string, any>
   invoice_status: string; buyer_id?: number | null; buyer_name?: string | null
   is_kit?: boolean; kit_parts?: { name: string; spec?: string | null; qty?: number | null }[] | null
@@ -183,6 +184,7 @@ interface PaymentRequestOut {
   finance_approver_id?: number | null; approver_name?: string | null
   approved_at?: string; paid_amount?: number; paid_date?: string
   payment_method?: string; reject_reason?: string; created_at: string
+  pay_voucher_file_id?: number | null; pay_voucher_name?: string | null   // 🆕 #276 付款凭证（申请人可看/下载）
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
   po_nos?: string[]
   items: Array<{ item_id: number; item_name: string; allocated_amount: number; po_no?: string | null; spec?: string | null; project_code?: string | null; received_amount?: number }>
@@ -1737,6 +1739,27 @@ async function rejectIncoming(row: IncomingReq) {
   ElMessage.success('已驳回')
   await loadIncomingReqs()
 }
+// 🆕 反馈#280：采购申请一键生成采购单——物料行(名称/规格/数量/项目编号)预填进现有「新建采购单」弹窗，
+//   采购员只需补供应商/预计到货等；来源申请编号记进行备注（不加表列）。
+function genOrderFromReq(row: IncomingReq) {
+  openNewOrder()
+  const srcLines = (row.lines || []).filter(l => (l.item_name || '').trim())
+  if (!srcLines.length) {
+    ElMessage.info('该申请没有逐行物料（仅上传文件），请按文件内容录入零件行')
+    return
+  }
+  orderForm.lines = srcLines.map(l => Object.assign(blankLine(), {
+    item_name: l.item_name.trim(),
+    spec: l.spec || '',
+    qty: l.qty ?? null,
+    project_code: (l.project_code || '').trim(),
+    notes: l.notes ? `${l.notes}（来源：采购申请 #${row.id}）` : `来源：采购申请 #${row.id}`,
+  }))
+  // 全部行同一项目编号 → 提到表头作默认订单编号（逐行仍可改）
+  const codes = Array.from(new Set(srcLines.map(l => (l.project_code || '').trim()).filter(Boolean)))
+  if (codes.length === 1 && codes[0]) orderForm.project_code = codes[0]
+  ElMessage.success(`已按采购申请 #${row.id} 预填 ${srcLines.length} 行，请补供应商/预计到货等信息`)
+}
 // 🆕 反馈#232：采购申请 → 新标签打开正式采购申请单 PDF(可查看+打印)
 async function viewPreqPdf(prid: number) {
   const w = window.open('', '_blank')
@@ -1988,12 +2011,15 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </template></el-table-column>
             <el-table-column label="状态" width="90" align="center"><template #default="{ row }"><el-tag :type="preqStatusTag(row.status)" size="small">{{ PREQ_STATUS[row.status] || row.status }}</el-tag></template></el-table-column>
             <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
-            <!-- 🆕 反馈#241：原 width=230 装不下「查看/打印+已处理+驳回」，驳回被裁成「…」采购员找不到——加宽 -->
-            <el-table-column label="操作" width="320" fixed="right" :show-overflow-tooltip="false">
+            <!-- 🆕 反馈#241：原 width=230 装不下「查看/打印+已处理+驳回」，驳回被裁成「…」采购员找不到——加宽；
+                 🆕 反馈#280：再加「生成采购单」，加宽到 400 -->
+            <el-table-column label="操作" width="400" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <!-- 🆕 反馈#232：查看/打印成正式采购申请单 -->
                 <el-button size="small" link type="primary" @click="viewPreqPdf(row.id)">查看/打印申请单</el-button>
                 <template v-if="row.status === 'pending' && canWrite">
+                  <!-- 🆕 反馈#280：一键生成采购单（物料行预填，只补供应商/时间等） -->
+                  <el-button size="small" type="success" plain @click="genOrderFromReq(row)">生成采购单</el-button>
                   <el-button size="small" type="primary" @click="handleIncoming(row)">已处理</el-button>
                   <el-button size="small" type="danger" plain @click="rejectIncoming(row)">驳回</el-button>
                 </template>
@@ -2168,9 +2194,14 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column prop="paid_amount" label="已付款" width="116" align="right" sortable>
               <template #default="{ row }">{{ row.paid_amount ? fmtMoney(row.paid_amount) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="付款状态" width="84" align="center">
+            <el-table-column label="付款状态" width="112" align="center">
               <template #default="{ row }">
                 <el-tag :type="payStatusTag(row.pay_status)" size="small" effect="light">{{ row.pay_status || '未付款' }}</el-tag>
+                <!-- 🆕 反馈#277：财务付款回执连到已付款行——有凭证即可下载 -->
+                <el-tooltip v-if="row.pay_voucher_file_id" :content="row.pay_voucher_name || '付款回执'" placement="top">
+                  <el-button link type="primary" size="small" style="margin-left:2px"
+                             @click="downloadAttachment({ id: row.pay_voucher_file_id, name: row.pay_voucher_name || '付款回执' })">回执</el-button>
+                </el-tooltip>
               </template>
             </el-table-column>
             <el-table-column label="对账状态" width="76">
@@ -2351,6 +2382,15 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column prop="paid_date" label="付款日期" width="102">
               <template #default="{ row }">{{ row.paid_date || '—' }}</template>
+            </el-table-column>
+            <!-- 🆕 反馈#276：已付款的请款单，申请人可查看/下载财务上传的付款凭证 -->
+            <el-table-column label="付款凭证" width="110" align="center">
+              <template #default="{ row }">
+                <el-button v-if="row.pay_voucher_file_id" size="small" link type="primary"
+                           @click="downloadAttachment({ id: row.pay_voucher_file_id, name: row.pay_voucher_name || '付款凭证' })">📎 凭证</el-button>
+                <span v-else-if="row.status === 'paid'" class="muted small">未上传</span>
+                <span v-else class="muted small">—</span>
+              </template>
             </el-table-column>
             <el-table-column v-if="isLeadOrAbove" prop="requester_name" label="申请人" width="88">
               <template #default="{ row }">{{ row.requester_name || '—' }}</template>

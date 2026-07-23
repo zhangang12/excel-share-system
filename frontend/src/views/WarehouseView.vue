@@ -291,6 +291,7 @@ interface RecvItem {
   qty?: number | null; unit_price?: number | null; received_amount: number
   stock_location?: string | null
   delivery_note_no?: string | null; arrival_date?: string | null
+  delivery_date?: string | null   // 🆕 #290 下单时间（采购下单填，PurchaseItem.delivery_date）
   receipt_count?: number   // 🆕 需求十四：已上传收货单数量
 }
 const recvItems = ref<RecvItem[]>([])
@@ -298,10 +299,22 @@ const recvLoading = ref(false)
 const recvReceived = ref(false)        // false=待收货 / true=已收货
 const recvSupplier = ref<number | ''>('')
 const recvPo = ref('')
+const recvName = ref('')               // 🆕 #286 物料名称关键字（前端模糊过滤）
+const recvOrderMonth = ref('')         // 🆕 #290 下单时间筛选（月份，前端过滤）
 const recvSupplierOptions = computed(() => {
   const m = new Map<number, string>()
   for (const i of recvItems.value) m.set(i.supplier_id, i.supplier_name)
   return Array.from(m, ([id, name]) => ({ id, name }))
+})
+
+// 🆕 #286 物料名称模糊过滤 + #290 下单时间(月份)过滤：收货接口只支持 supplier_id/po_no
+//   参数（在采购域，不动它），名称/下单时间在已拉取的列表上前端过滤，即时生效
+const filteredRecv = computed(() => {
+  const k = recvName.value.trim().toLowerCase()
+  const m = recvOrderMonth.value
+  return recvItems.value.filter(i =>
+    (!k || (i.item_name || '').toLowerCase().includes(k)) &&
+    (!m || (i.delivery_date || '').startsWith(m)))
 })
 
 // 🆕 需求二：采购收货列表也按采购单号(po_no)合并——同一采购单(≥2行)收成一个可展开的主汇总父行，
@@ -312,7 +325,7 @@ const grpRowClass = ({ row }: { row: any }) => (row._isGroup ? 'grp-row' : '')
 const groupedRecv = computed<any[]>(() => {
   const groups = new Map<string, any>()
   const out: any[] = []
-  for (const it of recvItems.value) {
+  for (const it of filteredRecv.value) {
     const po = it.po_no
     if (!po) { out.push(it); continue }
     let g = groups.get(po)
@@ -322,6 +335,7 @@ const groupedRecv = computed<any[]>(() => {
         supplier_name: it.supplier_name, supplier_id: it.supplier_id,
         qty: 0, received_amount: 0, receipt_count: 0, stock_location: null as string | null,
         _codes: new Set<string>(), _dnotes: new Set<string>(), _arrivals: new Set<string>(),
+        _odates: new Set<string>(),   // 🆕 #290 下单时间聚合
         children: [] as RecvItem[],
       }
       groups.set(po, g); out.push(g)
@@ -334,6 +348,7 @@ const groupedRecv = computed<any[]>(() => {
     if (it.project_code) g._codes.add(it.project_code)
     if (it.delivery_note_no) g._dnotes.add(it.delivery_note_no)
     if (it.arrival_date) g._arrivals.add(it.arrival_date)
+    if (it.delivery_date) g._odates.add(it.delivery_date)
   }
   return out.map((r) => {
     if (!r._isGroup) return r
@@ -345,6 +360,8 @@ const groupedRecv = computed<any[]>(() => {
     r.delivery_note_no = dnotes.length === 0 ? null : dnotes.length === 1 ? dnotes[0] : '多个'
     const arrivals = Array.from(r._arrivals) as string[]
     r.arrival_date = arrivals.length === 0 ? null : arrivals.length === 1 ? arrivals[0] : '多个'
+    const odates = Array.from(r._odates) as string[]   // 🆕 #290
+    r.delivery_date = odates.length === 0 ? null : odates.length === 1 ? odates[0] : '多个'
     return r
   })
 })
@@ -422,6 +439,16 @@ async function uploadReceipt(itemId: number, file: File) {
   const fd = new FormData(); fd.append('file', file)
   await http.post(`/purchase-mgmt/items/${itemId}/receipt`, fd)
 }
+// 🆕 #291：收货成功后本机当前页相关数据立即刷新，不再等关掉页面重进——
+//   库存总览只在 onMounted 拉一次、流水/物料需求按 tab 懒加载，这里统一补刷（已拉过的才刷）。
+//   注：ws 实时只有 datasheet/overview 房间的 cell_changed/presence 事件，没有仓库域广播机制，
+//   收货接口又在采购域——跨客户端推送需另立 ws 事件，本次只做本机刷新。
+function refreshAfterReceive() {
+  loadMaterials()
+  if (txns.value.length) loadTxns()
+  if (demandProj.value) loadDemand()
+  else if (demandOverview.value.length) loadDemandOverview()
+}
 async function submitReceive() {
   if (!recvForm.arrival_date) { ElMessage.warning('请填写到货日期'); return }
   if (!recvForm.stock_location) { ElMessage.warning('请选择库位（这批货放到哪个库；会同步到采购明细/装配/钣金/设计/电工）'); return }
@@ -438,7 +465,7 @@ async function submitReceive() {
     if (recvReceiptFile.value) await uploadReceipt(recvForm.id, recvReceiptFile.value)
     ElMessage.success('已确认收货')
     recvVisible.value = false
-    await loadReceiving(); loadBadgeCounts()
+    await loadReceiving(); loadBadgeCounts(); refreshAfterReceive()   // 🆕 #291
   } catch { /* handled */ } finally { recvSaving.value = false }
 }
 
@@ -534,7 +561,7 @@ async function submitBatchReceive() {
     }
     ElMessage.success(`已合并收货 ${batchRecvLines.value.length} 条`)
     batchRecvVisible.value = false
-    await loadReceiving(); loadBadgeCounts()
+    await loadReceiving(); loadBadgeCounts(); refreshAfterReceive()   // 🆕 #291
   } catch { /* handled */ } finally { batchRecvSaving.value = false }
 }
 
@@ -681,6 +708,16 @@ function onTab(name: string) {
 }
 
 // 🆕 #167 仓库采购申请：仓库列出要买什么 → 提交到采购部
+// 🆕 #278 名称联想物料主数据（已入库物料）：选中后自动带出「规格型号」。
+//   与 #289 项目详单「名称」列共用 GET /wh/materials/suggest 接口
+interface MatSuggest { value: string; spec?: string | null }
+async function fetchMatSuggestions(q: string, cb: (list: MatSuggest[]) => void) {
+  if (!q.trim()) { cb([]); return }
+  try {
+    const r = await http.get<{ name: string; spec?: string | null }[]>('/wh/materials/suggest', { params: { q } })
+    cb(r.data.map(m => ({ value: m.name, spec: m.spec })))
+  } catch { cb([]) }
+}
 interface PreqLine { item_name: string; spec: string; qty: number | null; project_code: string; notes: string }
 interface PreqRow { id: number; status: string; notes?: string | null; created_at: string
   handler_name?: string | null; reject_reason?: string | null
@@ -1030,6 +1067,9 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                 <el-option v-for="s in recvSupplierOptions" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
               <el-input v-model="recvPo" placeholder="采购单号" clearable style="width:150px" @change="loadReceiving" />
+              <!-- 🆕 #286 物料名称关键字 + #290 下单时间(月份)：前端即时过滤，不走接口 -->
+              <el-input v-model="recvName" placeholder="物料名称" clearable style="width:140px" />
+              <el-date-picker v-model="recvOrderMonth" type="month" value-format="YYYY-MM" placeholder="下单时间" clearable style="width:130px" />
               <el-button :icon="Search" @click="loadReceiving">查询</el-button>
               <el-button v-if="recvSelected.length" type="primary" @click="openBatchReceive">合并收货 ({{ recvSelected.length }})</el-button>
               <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。合并零件可勾选多条「合并收货」只填总价。</span>
@@ -1050,6 +1090,10 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-table-column prop="supplier_name" label="供应商" min-width="130" />
               <el-table-column prop="project_code" label="订单编号" width="110">
                 <template #default="{ row }">{{ row.project_code || '—' }}</template>
+              </el-table-column>
+              <!-- 🆕 #290 下单时间（采购下单填的下单日期；合并行多日期显示「多个」） -->
+              <el-table-column prop="delivery_date" label="下单时间" width="104">
+                <template #default="{ row }">{{ row.delivery_date || '—' }}</template>
               </el-table-column>
               <el-table-column prop="stock_location" label="库位" width="92">
                 <template #default="{ row }"><b v-if="row.stock_location" style="color:var(--el-color-primary)">{{ row.stock_location }}</b><span v-else class="muted">—</span></template>
@@ -1099,7 +1143,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                 </template>
               </el-table-column>
             </el-table>
-            <EmptyHint v-if="!recvLoading && !recvItems.length" :text="recvReceived ? '暂无已收货记录' : '暂无待收货物料'" size="sm" />
+            <EmptyHint v-if="!recvLoading && !filteredRecv.length" :text="recvReceived ? '暂无已收货记录' : '暂无待收货物料'" size="sm" />
           </template>
         </el-tab-pane>
 
@@ -1231,7 +1275,18 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </div>
         <el-table show-overflow-tooltip :data="preqForm.lines" size="small" border max-height="46vh">
           <el-table-column type="index" label="#" width="44" align="center" />
-          <el-table-column label="名称 *" min-width="160"><template #default="{ row }"><el-input v-model="row.item_name" placeholder="物料名称" /></template></el-table-column>
+          <el-table-column label="名称 *" min-width="160">
+            <template #default="{ row }">
+              <!-- 🆕 #278 名称联想物料主数据里已入库物料，选中自动带出规格型号 -->
+              <el-autocomplete v-model="row.item_name" :fetch-suggestions="fetchMatSuggestions"
+                               placeholder="物料名称" style="width:100%"
+                               @select="(it: any) => { if (it.spec) row.spec = it.spec }">
+                <template #default="{ item }">
+                  <span>{{ item.value }}</span><span v-if="item.spec" class="muted small"> · {{ item.spec }}</span>
+                </template>
+              </el-autocomplete>
+            </template>
+          </el-table-column>
           <el-table-column label="规格型号" min-width="140"><template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template></el-table-column>
           <el-table-column label="数量" width="110"><template #default="{ row }"><el-input-number v-model="row.qty" :min="0" :controls="false" style="width:100%" /></template></el-table-column>
           <el-table-column label="项目编号" width="120"><template #default="{ row }"><el-input v-model="row.project_code" placeholder="选填" /></template></el-table-column>

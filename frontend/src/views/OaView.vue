@@ -87,6 +87,8 @@ const DETAIL_FIELD_LABELS: Record<string, string> = {
   payback_amount: '回款金额', payback_type: '回款类型', commission_rate: '提成点(%)', commission_amount: '提成金额',
   // 🆕 反馈#236 按月 + 多项目明细
   period: '提成月份', payback_total: '回款合计', commission_total: '提成总计',
+  // 🆕 反馈#285 付款申请字段
+  payee: '收款单位', reason: '付款事由', expect_pay_date: '期望付款日期',
 }
 function detailFieldLabel(k: string): string { return DETAIL_FIELD_LABELS[k] || k }
 // 🆕 #236 详情里提成明细的「总计」行：只对回款金额/提成两列求和
@@ -119,6 +121,8 @@ const subForm = reactive({
   doc_type: '', department_id: '' as number | '', title: '', amount: null as number | null,
   related_request_id: null as number | '' | null,
   d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
+  // 🆕 反馈#285 付款申请：收款单位/付款事由/期望付款日期（金额复用通用 amount 字段）
+  p_payee: '', p_reason: '', p_pay_date: '',
   // 🆕 反馈#236 销售提成申请：改为「按月 + 多项目明细」，原单项目平铺字段(#217)已废弃
   c_period: '' as string,
   commission_items: [] as CommissionItem[],
@@ -170,6 +174,8 @@ const showTripFields = computed(() => subForm.doc_type === 'trip')   // 🆕 出
 const TRANSPORT_OPTIONS = ['高铁', '飞机', '火车', '私车公用', '公车']
 // 🆕 反馈#217/#236 销售提成申请：按月提交 + 多项目明细，每行提成=回款金额×提成点%，底部总计
 const showCommissionFields = computed(() => subForm.doc_type === 'sales_commission')
+// 🆕 反馈#285 付款申请：收款单位/付款金额/付款事由(必填) + 期望付款日期(选填)
+const showPaymentFields = computed(() => subForm.doc_type === 'payment')
 const PAYBACK_TYPES = ['预付款', '进度款', '到货款', '尾款', '质保金', '全款']
 // 单行提成（分转整，避免浮点误差）
 function rowCommission(r: CommissionItem) {
@@ -216,6 +222,7 @@ function resetSubForm() {
   Object.assign(subForm, {
     doc_type: '', department_id: '', title: '', amount: null, related_request_id: null,
     d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
+    p_payee: '', p_reason: '', p_pay_date: '',   // 🆕 反馈#285 付款申请
     c_period: new Date().toISOString().slice(0, 7),   // 🆕 #236 提成按月提交，默认本月
     commission_items: [],
     expense_items: [],
@@ -252,6 +259,12 @@ async function submitNew() {
       commission_total: commissionTotal.value,
       notes: subForm.d_notes || '',
     }
+  } else if (showPaymentFields.value) {
+    // 🆕 反馈#285 付款申请：收款单位/付款金额/付款事由必填，期望付款日期选填（服务端同口径校验）
+    if (!subForm.p_payee.trim()) { ElMessage.warning('请填写收款单位'); return }
+    if (!subForm.amount || Number(subForm.amount) <= 0) { ElMessage.warning('请填写付款金额'); return }
+    if (!subForm.p_reason.trim()) { ElMessage.warning('请填写付款事由'); return }
+    detail = { payee: subForm.p_payee.trim(), reason: subForm.p_reason.trim(), expect_pay_date: subForm.p_pay_date || '' }
   } else if (showBusinessFields.value) {
     detail = { destination: subForm.d_destination, start_date: subForm.d_start_date, end_date: subForm.d_end_date, notes: subForm.d_notes }
     if (showTripFields.value) detail.transport = subForm.d_transport
@@ -925,7 +938,7 @@ onMounted(async () => {
           </el-col>
           <el-col :xs="24" :sm="12"><el-form-item label="标题"><el-input v-model="subForm.title" placeholder="留空则用单据类型名" /></el-form-item></el-col>
           <el-col :xs="24" :sm="12" v-if="!showReimburseFields && !showCommissionFields">
-            <el-form-item :label="showPurchaseFields ? '预估采购金额' : '预估金额（选填）'">
+            <el-form-item :label="showPaymentFields ? '付款金额 *' : (showPurchaseFields ? '预估采购金额' : '预估金额（选填）')">
               <el-input-number v-model="subForm.amount" :min="0" :precision="2" :controls="false" style="width:100%" />
             </el-form-item>
           </el-col>
@@ -990,7 +1003,14 @@ onMounted(async () => {
             <el-col :span="24"><el-form-item label="备注（选填）"><el-input v-model="subForm.d_notes" type="textarea" :rows="2" placeholder="选填" /></el-form-item></el-col>
           </template>
 
-          <template v-if="showBusinessFields && !showCommissionFields">
+          <!-- 🆕 反馈#285 付款申请专属字段（不走业务类通用字段块） -->
+          <template v-if="showPaymentFields">
+            <el-col :xs="24" :sm="12"><el-form-item label="收款单位 *"><el-input v-model="subForm.p_payee" placeholder="收款单位全称" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item label="期望付款日期（选填）"><el-date-picker v-model="subForm.p_pay_date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="24"><el-form-item label="付款事由 *"><el-input v-model="subForm.p_reason" type="textarea" :rows="2" placeholder="为什么付这笔钱" /></el-form-item></el-col>
+          </template>
+
+          <template v-if="showBusinessFields && !showCommissionFields && !showPaymentFields">
             <el-col :xs="24" :sm="12"><el-form-item label="目的地/对象"><el-input v-model="subForm.d_destination" /></el-form-item></el-col>
             <el-col :xs="12" :sm="6"><el-form-item label="开始日期"><el-date-picker v-model="subForm.d_start_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item></el-col>
             <el-col :xs="12" :sm="6"><el-form-item label="结束日期"><el-date-picker v-model="subForm.d_end_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item></el-col>

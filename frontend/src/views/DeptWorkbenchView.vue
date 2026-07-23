@@ -477,11 +477,11 @@ async function submitRevision() {
   } finally { revSubmitting.value = false }
 }
 
-// 🆕 钣金装配表可编辑预览（钣金组/装配组共用）
+// 🆕 钣金装配表可编辑预览（钣金组/装配组/封板组共用；#287 封板组也可编辑）
 const viewVisible = ref(false)
 const viewTitle = ref('')
 const viewRow = ref<GroupProjectRow | null>(null)
-const canEditSheet = computed(() => isSheetmetal.value || isAssembler.value || isLead.value || isMgr.value)
+const canEditSheet = computed(() => isSheetmetal.value || isAssembler.value || isSealing.value || isLead.value || isMgr.value)
 function viewSheet(row: GroupProjectRow) {
   if (!row.sheetmetal_datasheet_id) { ElMessage.info('该项目暂无钣金装配表'); return }
   viewTitle.value = `${row.code} · 钣金装配表`
@@ -1283,7 +1283,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             </el-select>
             <span class="muted small">共 {{ smRowsView.length }} 项</span>
           </div>
-          <el-table show-overflow-tooltip :data="smRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
+          <el-table class="grp-x-table" show-overflow-tooltip :data="smRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="240" show-overflow-tooltip />
@@ -1361,7 +1361,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             </el-select>
             <span class="muted small">共 {{ asmRowsView.length }} 项</span>
           </div>
-          <el-table show-overflow-tooltip :data="asmRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
+          <el-table class="grp-x-table" show-overflow-tooltip :data="asmRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
@@ -1432,7 +1432,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             </el-select>
             <span class="muted small">共 {{ sealRowsView.length }} 项</span>
           </div>
-          <el-table show-overflow-tooltip :data="sealRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
+          <el-table class="grp-x-table" show-overflow-tooltip :data="sealRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
             <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
@@ -1454,9 +1454,11 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             </el-table-column>
             <!-- 反馈#230：封板组工人反馈「激光件清单(编辑)」列不要,已去掉;保留下面设计推送资料分列 -->
             <!-- 🆕 反馈#224 设计推送资料分列：钣金装配表 / CAD激光图纸(待推送-已推送N) / 机架横梁图 -->
+            <!-- 🆕 反馈#287：封板组也可「编辑装配表」（同钣金组，复用同一 SheetmetalGrid 弹窗）；无编辑权限角色维持「查看」 -->
             <el-table-column label="钣金装配表" min-width="120" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" :icon="Document" @click="viewSheet(row)">查看</el-button>
+                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" :icon="Document"
+                           @click="viewSheet(row)">{{ canEditSheet ? '编辑装配表' : '查看' }}</el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
@@ -1694,7 +1696,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
       </template>
     </el-dialog>
 
-    <!-- ===== 钣金装配表可编辑预览（钣金组/装配组） ===== -->
+    <!-- ===== 钣金装配表可编辑预览（钣金组/装配组/封板组） ===== -->
     <el-dialog v-model="viewVisible" :title="viewTitle" width="90vw" destroy-on-close>
       <SheetmetalGrid
         v-if="viewRow?.sheetmetal_datasheet_id"
@@ -1884,4 +1886,12 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
 .grp-filter { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .grp-filter .muted { color: var(--el-text-color-secondary); }
 .grp-filter .small { font-size: 12px; }
+/* 🆕 反馈#288：分组 tab 表格横向滚动条常驻——macOS overlay 滚动条不 hover 看不到。
+   el-table 内部 el-scrollbar 用 --hidden-default 抑制原生滚动条、改用它自家的自定义细条；
+   这里恢复原生横条（显式高度/底色），并隐藏自定义细条避免双条。scoped 仅本组件三个分组 tab 生效。 */
+.grp-x-table :deep(.el-scrollbar__wrap) { overflow-x: auto; scrollbar-width: auto; /* Firefox 恢复原生条 */ }
+.grp-x-table :deep(.el-scrollbar__wrap--hidden-default::-webkit-scrollbar) { display: block; height: 13px; }
+.grp-x-table :deep(.el-scrollbar__wrap::-webkit-scrollbar-track) { background: #eef1f5; }
+.grp-x-table :deep(.el-scrollbar__wrap::-webkit-scrollbar-thumb) { background: #b4bcc8; border-radius: 8px; }
+.grp-x-table :deep(.el-scrollbar__bar) { display: none; }
 </style>
