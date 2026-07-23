@@ -2676,6 +2676,21 @@ def _preq_warehouse_only(u: models.User) -> bool:
         "buyer", "buyer_lead", "buyer_standard", "buyer_outsource", "admin", "manager")
 
 
+def _preq_buyer_scoped(u: models.User) -> bool:
+    """🆕 反馈#283：可见权限跟着指定采购员走——只持有普通采购角色且非主管/管理层的账号，
+    采购申请列表/操作都只看「指定给我的 + 未指定的」。
+    注意判定看 buyer 身份而非绕开财务：王芹这类 buyer+finance 多角色账号照样受限；
+    纯财务（无采购角色）、采购主管、admin/manager 不受限。"""
+    return (u.has_role("buyer", "buyer_standard", "buyer_outsource")
+            and not u.has_role("admin", "manager", "buyer_lead"))
+
+
+def _preq_check_buyer_scope(pr: "models.PurchaseRequest", u: models.User):
+    """指定了采购员的申请，非指定采购员（非主管/管理层）不可查看/处理。"""
+    if pr.buyer_id and pr.buyer_id != u.id and _preq_buyer_scoped(u):
+        raise HTTPException(403, "该申请已指定采购员，仅指定采购员可见/处理")
+
+
 @router.get("/purchase-requests/{prid}/pdf")
 async def download_purchase_request_pdf(
     prid: int,
@@ -2689,6 +2704,7 @@ async def download_purchase_request_pdf(
         raise HTTPException(404, "采购申请不存在")
     if _preq_warehouse_only(current) and pr.requester_id != current.id:
         raise HTTPException(403, "只能查看自己提交的采购申请")
+    _preq_check_buyer_scope(pr, current)  # 🆕 #283：指定采购员的申请非指定采购员不可见
     pdf_bytes = _render_preq_pdf(pr, _uname(pr.requester), _uname(pr.buyer))
     fname = quote(f"采购申请单_SQ{pr.id:05d}.pdf")
     return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf",
@@ -2767,12 +2783,17 @@ async def list_purchase_requests(
     current: models.User = Depends(require_roles(*_PREQ_VIEW)),
     db: AsyncSession = Depends(get_db),
 ):
-    """采购申请列表：仓库/设计师(非采购)只看自己提的；采购员/主管看全部。"""
+    """采购申请列表：仓库/设计师(非采购)只看自己提的；
+    🆕 反馈#283：普通采购员只看「指定给我的 + 未指定的」（可见权限跟着指定采购员走），
+    采购主管/管理层/纯财务查看角色不受限。"""
     stmt = select(models.PurchaseRequest).order_by(models.PurchaseRequest.created_at.desc())
     if status:
         stmt = stmt.where(models.PurchaseRequest.status == status)
     if _preq_warehouse_only(current):
         stmt = stmt.where(models.PurchaseRequest.requester_id == current.id)
+    elif _preq_buyer_scoped(current):
+        stmt = stmt.where(or_(models.PurchaseRequest.buyer_id == current.id,
+                              models.PurchaseRequest.buyer_id.is_(None)))
     r = await db.execute(stmt)
     prs = list(r.scalars().all())
     atts = await _preq_atts(db, [pr.id for pr in prs])
@@ -2785,11 +2806,13 @@ async def handle_purchase_request(
     current: models.User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    """采购员/主管把申请标记为「已处理」(已按此下单)。"""
+    """采购员/主管把申请标记为「已处理」(已按此下单)。
+    🆕 反馈#283：指定了采购员的申请仅指定采购员（或主管/管理层）可处理。"""
     r = await db.execute(select(models.PurchaseRequest).where(models.PurchaseRequest.id == prid))
     pr = r.scalar_one_or_none()
     if not pr:
         raise HTTPException(404, "申请不存在")
+    _preq_check_buyer_scope(pr, current)
     pr.status = "done"
     pr.handled_by = current.id
     pr.handled_at = datetime.now(timezone.utc)
@@ -2811,6 +2834,7 @@ async def reject_purchase_request(
     pr = r.scalar_one_or_none()
     if not pr:
         raise HTTPException(404, "申请不存在")
+    _preq_check_buyer_scope(pr, current)  # 🆕 #283：指定采购员的申请仅指定人可驳回
     pr.status = "rejected"
     pr.handled_by = current.id
     pr.handled_at = datetime.now(timezone.utc)
