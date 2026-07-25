@@ -81,6 +81,14 @@ export const ordersApi = {
     return http.post<OrderAttachment[]>(`/orders/${id}/start-upload?kind=${kind}`, fd).then((r) => r.data)
   },
 
+  // 🆕 #303 上传与推送分离：把该单某类「待推送」文件统一下发下游（并推消息）
+  startPush: (id: number, kind: string) =>
+    http.post<{ message: string }>(`/orders/${id}/start-push`, { kind }).then((r) => r.data),
+
+  // 🆕 #303 本部门各任务单待推送附件计数：{ orderId: { kind: n } }（无记录=全部已推送）
+  pushState: (dept: string) =>
+    http.get<Record<number, Record<string, number>>>('/orders/push-state', { params: { dept } }).then((r) => r.data),
+
   outputUpload: (id: number, kind: string, files: File[]) => {
     const fd = new FormData()
     files.forEach((f) => fd.append('files', f))
@@ -160,20 +168,22 @@ export interface GroupProjectRow {
   laser_files?: { id: number; name: string }[] // 🆕 CAD激光图纸(可下载)：封板组+钣金组都聚合
   sealing_files?: { id: number; name: string }[] // 🆕 封板文件(机架图/横梁图,设计推送,可下载)
   coldwork_files?: { id: number; name: string }[] // 🆕 #269 钣金组:冷作图纸(设计推送,可下载)
+  fitter_files?: { id: number; name: string }[] // 🆕 #304 钳工组:钳工图纸(设计推送,可下载)
 }
 
 export interface DispatchOptions {
   sheetmetal: OptionUser[]
   assembly: OptionUser[]
   sealing: OptionUser[]              // 🆕 反馈#209 封板组
+  fitter: OptionUser[]               // 🆕 反馈#304 钳工组
 }
 
 export const produceApi = {
   dispatchOptions: () =>
     http.get<DispatchOptions>('/produce/dispatch-options').then((r) => r.data),
-  dispatch: (orderId: number, sheetmetalWorkerId: number | null, assemblyWorkerId: number | null, sealingWorkerId: number | null = null) =>
+  dispatch: (orderId: number, sheetmetalWorkerId: number | null, assemblyWorkerId: number | null, sealingWorkerId: number | null = null, fitterWorkerId: number | null = null) =>
     http.post(`/produce/dispatch/${orderId}`,
-      { sheetmetal_worker_id: sheetmetalWorkerId, assembly_worker_id: assemblyWorkerId, sealing_worker_id: sealingWorkerId }).then((r) => r.data),
+      { sheetmetal_worker_id: sheetmetalWorkerId, assembly_worker_id: assemblyWorkerId, sealing_worker_id: sealingWorkerId, fitter_worker_id: fitterWorkerId }).then((r) => r.data),
   groupDone: (taskId: number, done: boolean) =>
     http.post(`/produce/group/${taskId}/done`, { done }).then((r) => r.data),
   setGroupDue: (taskId: number, dueDate: string) =>
@@ -187,6 +197,8 @@ export const produceApi = {
     http.get<GroupProjectRow[]>('/produce/assembly-projects', { params: { year, proj_status } }).then((r) => r.data),
   sealingProjects: (year?: string, proj_status?: string) =>   // 🆕 反馈#209 封板组
     http.get<GroupProjectRow[]>('/produce/sealing-projects', { params: { year, proj_status } }).then((r) => r.data),
+  fitterProjects: (year?: string, proj_status?: string) =>   // 🆕 反馈#304 钳工组
+    http.get<GroupProjectRow[]>('/produce/fitter-projects', { params: { year, proj_status } }).then((r) => r.data),
 }
 
 // 附件下载（带鉴权的 blob 下载，沿用现有 fetch+blob 模式）

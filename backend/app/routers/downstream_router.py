@@ -62,12 +62,13 @@ async def sheetmetal_projects(
     if not pids:
         return []
 
-    # 图纸包附件（排除已作废来源单的图纸包 #7）
+    # 图纸包附件（排除已作废来源单的图纸包 #7；🆕 #303 仅已推送 pushed=1 的下游可见）
     res = await db.execute(select(models.Attachment)
         .join(models.DeptOrder, models.Attachment.biz_id == models.DeptOrder.id)
         .where(
             models.Attachment.biz_type == "order_start_output",
             models.Attachment.kind == "sheetpkg",
+            models.Attachment.pushed == True,  # noqa: E712
             models.Attachment.project_id.in_(pids),
             models.DeptOrder.status != "voided").order_by(models.Attachment.id))
     pkg_by_pid: dict[int, list] = {}
@@ -169,11 +170,12 @@ async def purchase_projects(
     for d in res.scalars().all():
         sheet_ids.setdefault(d.project_id, {})[_NAME2KEY[d.name]] = d.id
 
-    # 设计师推送的 CAD激光图纸 / 外购附图（排除已作废来源单）
+    # 设计师推送的 CAD激光图纸 / 外购附图（排除已作废来源单；🆕 #303 仅已推送 pushed=1 可见）
     res = await db.execute(select(models.Attachment)
         .join(models.DeptOrder, models.Attachment.biz_id == models.DeptOrder.id)
         .where(models.Attachment.biz_type == "order_start_output",
                models.Attachment.kind.in_(("sheetpkg", "outsource_img")),
+               models.Attachment.pushed == True,  # noqa: E712
                models.Attachment.project_id.in_(pids),
                models.DeptOrder.status != "voided").order_by(models.Attachment.id))
     cad_by_pid: dict[int, list] = {}
@@ -284,12 +286,13 @@ async def purchase_package(
                 wb.save(xbuf)
                 zf.writestr(_uniq_name(used, f"{p.code}_{_safe_fname(d.name)}.xlsx"), xbuf.getvalue())
                 count += 1
-        # 2) 设计推送附件 → 原始文件（仅限本项目的 sheetpkg/outsource_img）
+        # 2) 设计推送附件 → 原始文件（仅限本项目的 sheetpkg/outsource_img；🆕 #303 仅已推送可打包）
         if req.attachment_ids:
             ares = await db.execute(select(models.Attachment).where(
                 models.Attachment.id.in_(req.attachment_ids),
                 models.Attachment.project_id == req.project_id,
                 models.Attachment.biz_type == "order_start_output",
+                models.Attachment.pushed == True,  # noqa: E712
                 models.Attachment.kind.in_(("sheetpkg", "outsource_img"))))
             for a in ares.scalars().all():
                 fp = Path(settings.files_dir) / a.path
@@ -313,7 +316,8 @@ async def purchase_inbox(
         "buyer", "buyer_lead", "buyer_standard", "buyer_outsource", "finance", "finance_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """采购清单收件箱：电工接单上传的采购清单（撤回即消失）。"""
+    """采购清单收件箱：电工接单上传的采购清单（撤回即消失）。
+    🆕 #303 统一加 pushed=1 过滤（plist 目前维持上传即推送=1，行为不变；防御未来口径调整）。"""
     res = await db.execute(
         select(models.Attachment, models.Project)
         .join(models.Project, models.Attachment.project_id == models.Project.id)
@@ -321,6 +325,7 @@ async def purchase_inbox(
         .where(
             models.Attachment.biz_type == "order_start_output",
             models.Attachment.kind == "plist",
+            models.Attachment.pushed == True,  # noqa: E712
             models.Project.is_deleted == False,  # noqa: E712
             models.DeptOrder.status != "voided",  # 🆕 #7 作废的电工单不再出现在采购收件箱
         ).order_by(models.Attachment.id.desc()).limit(300)

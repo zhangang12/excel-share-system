@@ -16,8 +16,9 @@ from datetime import date, datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, or_, delete
+from sqlalchemy import select, update, or_, delete, func
 
 from ..database import get_db
 from .. import models, schemas
@@ -436,6 +437,32 @@ async def order_options(
     )
 
 
+@router.get("/push-state")
+async def push_state(
+    dept: str = Query(...),
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #303 上传与推送分离：本部门各任务单「待推送」附件计数 → {order_id: {kind: n}}。
+    前端卡片据此显示「待推送 N」+ 推送按钮；只返回有待推送文件的 kind（无记录=全部已推送）。"""
+    _dept_or_400(dept)
+    oid_sq = select(models.DeptOrder.id).where(models.DeptOrder.dept == dept)
+    res = await db.execute(
+        select(models.Attachment.biz_id, models.Attachment.kind,
+               func.count(models.Attachment.id))
+        .where(
+            models.Attachment.biz_type.in_(("order_start_output", "order_output")),
+            models.Attachment.biz_id.in_(oid_sq),
+            models.Attachment.pushed == False,  # noqa: E712
+        ).group_by(models.Attachment.biz_id, models.Attachment.kind)
+    )
+    out: dict[int, dict[str, int]] = {}
+    for oid, kind, n in res.all():
+        if kind:
+            out.setdefault(oid, {})[kind] = n
+    return out
+
+
 # ==================== 下单 ====================
 @router.post("", response_model=schemas.OrderOut)
 async def create_order(
@@ -575,7 +602,10 @@ async def start_upload(
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """接单后上传（设计图纸包→钣金 / 电工采购清单→采购），多文件累加。"""
+    """接单后上传（设计图纸包→钣金 / 电工采购清单→采购），多文件累加。
+    🆕 #303 上传与推送分离：设计图纸/电工电路图上传后置 pushed=0(待推送)，不推消息、下游不可见，
+    需再点「推送」(POST /{oid}/start-push)才下发；例外：电工采购清单(plist)维持旧口径=上传即推送
+    （其下游=采购收件箱+自动解析「电工采购单」，推送对象为 lixinxin 特判）。"""
     o = await _order_or_404(db, oid)
     cfg = DEPTS[o.dept]
     so = next((s for s in cfg["start_outputs"] if s["k"] == kind), None)
@@ -584,14 +614,17 @@ async def start_upload(
     if not (_is_mgr(current) or o.worker_id == current.id):
         raise HTTPException(403, "仅任务负责人可上传")
     # 🆕 #5 例外：设计部「设计资料」(CAD激光图纸/外购附图)在设计完成(done)后仍可更换
-    is_design_resource = o.dept == "design" and kind in ("sheetpkg", "outsource_img", "sealing_pkg", "coldwork_pkg")
+    is_design_resource = o.dept == "design" and kind in ("sheetpkg", "outsource_img", "sealing_pkg", "coldwork_pkg", "fitter_pkg")
     if o.status not in ("in_progress", "assigned") and not (is_design_resource and o.status == "done"):
         raise HTTPException(400, "任务未在进行中")
 
+    # 🆕 #303：仅电工采购清单(plist)维持「上传即推送」(pushed=1)，其余接单产物一律待推送(pushed=0)
+    push_on_upload = o.dept == "electric" and kind == "plist"
     outs = []
     for f in files:
         a = await save_upload(db, f, biz_type="order_start_output", biz_id=o.id,
                               kind=kind, project_id=o.project_id, user=current)
+        a.pushed = push_on_upload
         outs.append(a)
     p = o.project
     # 🆕 M12：电工采购清单 → 首次自动解析写入项目「电工采购单」第5表（兼容 .xls/.xlsx）
@@ -611,7 +644,8 @@ async def start_upload(
                            biz_type="project", biz_id=o.project_id)
 
     # 电工采购清单：直接推送给 lixinxin（李新新），不广播给全体采购角色
-    if o.dept == "electric" and kind == "plist":
+    # 🆕 #303：其余接单产物(设计图纸等)上传不再发消息——推送挪到 POST /{oid}/start-push
+    if push_on_upload:
         res2 = await db.execute(select(models.User).where(
             models.User.username == "lixinxin",
             models.User.is_active == True,  # noqa: E712
@@ -621,16 +655,72 @@ async def start_upload(
             await push_message(db, to_user_id=lxx.id, kind="info",
                                text=f"【采购清单】{p.code} {cfg['name']}已上传采购清单 {len(outs)} 个文件，请查收。",
                                biz_type="order", biz_id=o.id)
-    else:
-        # 🆕 CAD激光图纸(sheetpkg)：配置目标(采购)之外同步推钣金组——钣金组工作台「CAD激光图纸」列同源可见
-        roles = [so["to_role"], "sheetmetal"] if (o.dept == "design" and kind == "sheetpkg") else [so["to_role"]]
-        for r in roles:
-            await push_message(db, to_role=r, kind="info",
-                               text=f"【{so['label']}】{cfg['name']}已上传 {p.code} {so['label']} {len(outs)} 个文件，请查收。",
-                               biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="upload", target_type="dept_order",
                       target_id=o.id, detail=f"start:{kind} x{len(outs)}")
     return [schemas.AttachmentOut.model_validate(a) for a in outs]
+
+
+# 🆕 #303 上传与推送分离：推送请求体
+class StartPushIn(BaseModel):
+    kind: str
+
+
+@router.post("/{oid}/start-push", response_model=schemas.Msg)
+async def start_push(
+    oid: int,
+    data: StartPushIn,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #303 推送下游：把该单某类接单产物中「待推送」(pushed=0)的文件全部置为已推送，
+    并按该 output 的 to_role 推消息（sheetpkg 双推 采购+钣金组，与 f6410f5 双推口径一致）。
+    权限与 start-upload 同口径（任务负责人/管理层）。
+    🆕 #294：电工「电路图」(order_output/circuit)同走本口径——进行中可上传，点推送才下发物流。"""
+    o = await _order_or_404(db, oid)
+    cfg = DEPTS[o.dept]
+    so = next((s for s in cfg["start_outputs"] if s["k"] == data.kind), None)
+    biz_type = "order_start_output"
+    label = so["label"] if so else None
+    to_role = so["to_role"] if so else None
+    if not so and o.dept == "electric" and data.kind == "circuit":
+        # 🆕 #294 电路图是完成产物(outputs)，前置上传后同样「待推送→推送下发」
+        ot = next((x for x in cfg["outputs"] if x["k"] == "circuit"), None)
+        if ot:
+            biz_type, label, to_role = "order_output", ot["label"], ot["to_role"]
+    if not label:
+        raise HTTPException(400, f"{cfg['name']}没有 {data.kind} 类型可推送的资料")
+    if not (_is_mgr(current) or o.worker_id == current.id):
+        raise HTTPException(403, "仅任务负责人可推送")
+    # 状态守卫与 start-upload 同口径：进行中/待接单；设计资料与电工电路图在 done 后仍可更换→可推送
+    is_replaceable_done = (
+        o.dept == "design" and data.kind in ("sheetpkg", "outsource_img", "sealing_pkg", "coldwork_pkg", "fitter_pkg")
+    ) or (o.dept == "electric" and data.kind == "circuit")
+    if o.status not in ("in_progress", "assigned") and not (is_replaceable_done and o.status == "done"):
+        raise HTTPException(400, "任务未在进行中")
+
+    res = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == biz_type,
+        models.Attachment.biz_id == o.id,
+        models.Attachment.kind == data.kind,
+        models.Attachment.pushed == False,  # noqa: E712
+    ).order_by(models.Attachment.id))
+    atts = list(res.scalars().all())
+    if not atts:
+        raise HTTPException(400, "没有待推送的文件（请先上传）")
+    for a in atts:
+        a.pushed = True
+    await db.commit()
+
+    p = o.project
+    # 🆕 CAD激光图纸(sheetpkg)：配置目标(采购)之外同步推钣金组——钣金组工作台「CAD激光图纸」列同源可见
+    roles = [to_role, "sheetmetal"] if (o.dept == "design" and data.kind == "sheetpkg") else [to_role]
+    for r in roles:
+        await push_message(db, to_role=r, kind="info",
+                           text=f"【{label}】{cfg['name']}已上传 {p.code} {label} {len(atts)} 个文件，请查收。",
+                           biz_type="order", biz_id=o.id)
+    await write_audit(db, user=current, action="push", target_type="dept_order",
+                      target_id=o.id, detail=f"start-push:{data.kind} x{len(atts)}")
+    return schemas.Msg(message=f"已推送 {len(atts)} 个文件到下游")
 
 
 @router.post("/{oid}/output-upload", response_model=List[schemas.AttachmentOut])
@@ -641,7 +731,8 @@ async def output_upload(
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """完成产物上传（完成弹窗内逐项上传，complete 时校验必传项）。"""
+    """完成产物上传（完成弹窗/卡片内逐项上传；#4 起必传校验已放开）。
+    🆕 #294 电工「电路图」前置：进行中即可上传，上传后待推送，点推送才下发物流。"""
     o = await _order_or_404(db, oid)
     cfg = DEPTS[o.dept]
     if not any(x["k"] == kind for x in cfg["outputs"]):
@@ -659,12 +750,17 @@ async def output_upload(
     for f in files:
         a = await save_upload(db, f, biz_type="order_output", biz_id=o.id,
                               kind=kind, project_id=o.project_id, user=current)
+        # 🆕 #294 电工「电路图」与 #303 同口径：上传后置待推送(pushed=0)、不发消息，
+        #   点「推送」(POST /{oid}/start-push kind=circuit)才下发物流
+        if o.dept == "electric" and kind == "circuit":
+            a.pushed = False
         outs.append(a)
     await db.commit()
 
     # 产物上传后按 dept_config.outputs[].to_role 推送给下游部门
+    # 🆕 #294 例外：电工电路图上传即推送改为「待推送→点推送」，此处不再发消息
     ot_cfg = next((x for x in cfg["outputs"] if x["k"] == kind), None)
-    if ot_cfg and ot_cfg.get("to_role"):
+    if ot_cfg and ot_cfg.get("to_role") and not (o.dept == "electric" and kind == "circuit"):
         p = o.project
         await push_message(
             db, to_role=ot_cfg["to_role"], kind="info",

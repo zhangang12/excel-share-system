@@ -1243,6 +1243,12 @@ class PurchaseItemUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+class PurchaseBatchExpectedArrivalIn(BaseModel):
+    """🆕 反馈#297：批量修改采购明细预计到货日期（expected_arrival 传 null/空串 = 清空）。"""
+    ids: list[int] = Field(default_factory=list)
+    expected_arrival: Optional[str] = None
+
+
 class PurchaseReceiveIn(BaseModel):
     """仓库收货：填送货单号 / 到货日期；后填价格流程可一并补单价与收货金额。"""
     delivery_note_no: Optional[str] = None
@@ -1483,6 +1489,8 @@ class PaymentRequestOut(BaseModel):
     supplier_bank_account: Optional[str] = None
     supplier_tax_no: Optional[str] = None
     po_nos: list[str] = Field(default_factory=list)
+    # 🆕 反馈#298：请款单关联采购明细的项目编号（去重排序；财务请款审批列表「项目编号」列用）
+    project_codes: list[str] = Field(default_factory=list)
     # 🆕 盈利改善2·应付账期利用：最早到期日=min(到货日)+供应商账期天数;距到期天数(负=已逾期)。
     #   供应商未维护 credit_days 或明细未到货时为 None。
     earliest_due: Optional[str] = None

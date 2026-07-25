@@ -61,7 +61,7 @@ async def main():
         chk(len(row["pkg_files"])==0, "初始无图纸包")
         chk(row["sheetmetal_datasheet_id"] is not None, "钣金装配表id存在(只读引用)")
 
-        # 设计接单上传图纸包 → 钣金看到
+        # 设计接单上传图纸包 → 🆕 #303 上传与推送分离：上传后待推送(下游不可见/无消息)，点推送才下发
         od = [o for o in (await c.get("/api/orders?dept=design", headers=Hdl)).json() if o["project_id"]==pid][0]["id"]
         await c.post(f"/api/orders/{od}/assign", headers=Hdl, json={"worker_id":ids["d1"]})
         await c.post(f"/api/orders/{od}/start", headers=Hd1, json={"start_date":"2026-06-01","due_date":"2026-12-31"})
@@ -69,11 +69,19 @@ async def main():
                           files=[("files", ("总装图.pdf", io.BytesIO(b"P1"), "application/pdf")),
                                  ("files", ("钣金件图.pdf", io.BytesIO(b"P2"), "application/pdf"))])
         att_id = up.json()[0]["id"]
+        # 🆕 #303 上传≠推送：下游不可见、采购无消息
+        row = [x for x in (await c.get("/api/sheetmetal/projects", headers=Hsm)).json() if x["code"]==code][0]
+        chk(len(row["pkg_files"])==0, f"#303 未推送时钣金不可见: {len(row['pkg_files'])}")
+        msgs = (await c.get("/api/messages", headers=Hbu)).json()
+        chk(not any("CAD激光图纸" in m["text"] for m in msgs), "#303 未推送时采购部无消息")
+        # 点「推送」→ 下游可见 + 推消息
+        r = await c.post(f"/api/orders/{od}/start-push", headers=Hd1, json={"kind":"sheetpkg"})
+        chk(r.status_code==200, f"#303 推送图纸包: {r.status_code} {r.text[:80]}")
         # CAD激光图纸推送给采购部(2026-06-19 改向，不再推钣金)；钣金组仍可只读引用图纸包附件
         msgs = (await c.get("/api/messages", headers=Hbu)).json()
-        chk(any("CAD激光图纸" in m["text"] for m in msgs), "采购部收CAD激光图纸推送")
+        chk(any("CAD激光图纸" in m["text"] for m in msgs), "推送后采购部收CAD激光图纸推送")
         row = [x for x in (await c.get("/api/sheetmetal/projects", headers=Hsm)).json() if x["code"]==code][0]
-        chk(len(row["pkg_files"])==2, f"钣金仍可见2个图纸包附件: {len(row['pkg_files'])}")
+        chk(len(row["pkg_files"])==2, f"推送后钣金可见2个图纸包附件: {len(row['pkg_files'])}")
         # 钣金下载图纸包
         r = await c.get(f"/api/attachments/{att_id}/download", headers=Hsm)
         chk(r.status_code==200, "钣金下载图纸包")

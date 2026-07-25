@@ -43,10 +43,11 @@ const LEAD_ROLES: Record<string, string> = { design: 'design_lead', electric: 'e
 const isMgr = computed(() => auth.isAdmin)
 const isLead = computed(() => auth.hasRole(LEAD_ROLES[dept.value]))
 const isWorker = computed(() => auth.hasRole(WORKER_ROLES[dept.value]))
-// 🆕 生产部分组（钣金组/装配组/封板组）；钣金组角色 sheetmetal、装配组 assembler、封板组 sealing
+// 🆕 生产部分组（钣金组/装配组/封板组/钳工组）；钣金组角色 sheetmetal、装配组 assembler、封板组 sealing、钳工组 fitter
 const isSheetmetal = computed(() => auth.hasRole('sheetmetal'))
 const isAssembler = computed(() => auth.hasRole('assembler'))
 const isSealing = computed(() => auth.hasRole('sealing'))   // 🆕 反馈#209 封板组
+const isFitter = computed(() => auth.hasRole('fitter'))     // 🆕 反馈#304 钳工组
 const isProduce = computed(() => dept.value === 'produce')
 
 // 🆕 备机下单：仅设计部工作台、且 设计部负责人/管理层 可见
@@ -94,20 +95,24 @@ const loading = ref(false)
 const orders = ref<DeptOrder[]>([])
 const options = ref<DeptOptions | null>(null)
 const activeTab = ref('')
-// 🆕 生产部三组项目列表（钣金/装配/封板）
+// 🆕 生产部四组项目列表（钣金/装配/封板/钳工）
 const sheetmetalRows = ref<GroupProjectRow[]>([])
 const assemblyRows = ref<GroupProjectRow[]>([])
 const sealingRows = ref<GroupProjectRow[]>([])   // 🆕 反馈#209 封板组
-// 🆕 #1 钣金/装配/封板组 人员筛选
+const fitterRows = ref<GroupProjectRow[]>([])    // 🆕 反馈#304 钳工组
+// 🆕 #1 钣金/装配/封板/钳工组 人员筛选
 const smWorkerFilter = ref('')
 const asmWorkerFilter = ref('')
 const sealWorkerFilter = ref('')
+const fitWorkerFilter = ref('')
 const smWorkers = computed(() => Array.from(new Set(sheetmetalRows.value.map(r => r.worker_name).filter((n): n is string => !!n))))
 const asmWorkers = computed(() => Array.from(new Set(assemblyRows.value.map(r => r.worker_name).filter((n): n is string => !!n))))
 const sealWorkers = computed(() => Array.from(new Set(sealingRows.value.map(r => r.worker_name).filter((n): n is string => !!n))))
+const fitWorkers = computed(() => Array.from(new Set(fitterRows.value.map(r => r.worker_name).filter((n): n is string => !!n))))
 const smRowsView = computed(() => smWorkerFilter.value ? sheetmetalRows.value.filter(r => (r.worker_name || '') === smWorkerFilter.value) : sheetmetalRows.value)
 const asmRowsView = computed(() => asmWorkerFilter.value ? assemblyRows.value.filter(r => (r.worker_name || '') === asmWorkerFilter.value) : assemblyRows.value)
 const sealRowsView = computed(() => sealWorkerFilter.value ? sealingRows.value.filter(r => (r.worker_name || '') === sealWorkerFilter.value) : sealingRows.value)
+const fitRowsView = computed(() => fitWorkerFilter.value ? fitterRows.value.filter(r => (r.worker_name || '') === fitWorkerFilter.value) : fitterRows.value)
 
 const curYear = String(new Date().getFullYear())
 const yearFilter = ref(curYear)
@@ -140,15 +145,17 @@ async function load() {
         tasks.push(produceApi.sheetmetalProjects(yearFilter.value, projStatusFilter.value).then((r) => { sheetmetalRows.value = r }))
         tasks.push(produceApi.assemblyProjects(yearFilter.value, projStatusFilter.value).then((r) => { assemblyRows.value = r }))
         tasks.push(produceApi.sealingProjects(yearFilter.value, projStatusFilter.value).then((r) => { sealingRows.value = r }))   // 🆕 反馈#209
+        tasks.push(produceApi.fitterProjects(yearFilter.value, projStatusFilter.value).then((r) => { fitterRows.value = r }))     // 🆕 反馈#304
       } else {
         if (isSheetmetal.value) tasks.push(produceApi.sheetmetalProjects(yearFilter.value, projStatusFilter.value).then((r) => { sheetmetalRows.value = r }))
         if (isAssembler.value) tasks.push(produceApi.assemblyProjects(yearFilter.value, projStatusFilter.value).then((r) => { assemblyRows.value = r }))
         if (isSealing.value) tasks.push(produceApi.sealingProjects(yearFilter.value, projStatusFilter.value).then((r) => { sealingRows.value = r }))   // 🆕 反馈#209
+        if (isFitter.value) tasks.push(produceApi.fitterProjects(yearFilter.value, projStatusFilter.value).then((r) => { fitterRows.value = r }))     // 🆕 反馈#304
       }
       await Promise.all(tasks)
       if (!activeTab.value) {
         activeTab.value = (isLead.value || isMgr.value) ? 'assign'
-          : (isSheetmetal.value ? 'sm' : (isAssembler.value ? 'asm' : 'seal'))
+          : (isSheetmetal.value ? 'sm' : (isAssembler.value ? 'asm' : (isSealing.value ? 'seal' : 'fit')))
       }
       return
     }
@@ -158,6 +165,8 @@ async function load() {
     ])
     orders.value = os
     options.value = opt
+    // 🆕 #303 上传与推送分离：拉本部门各单「待推送」附件计数（卡片显示 待推送 N + 推送按钮）
+    ordersApi.pushState(dept.value).then((s) => { pushState.value = s }).catch(() => { /* 不阻塞卡片 */ })
     // 🆕 设计部：拉本人进行中任务的五表导入状态（卡片内「上传一个 Excel 导入五表」）
     if (dept.value === 'design') {
       for (const o of os) {
@@ -174,27 +183,29 @@ async function load() {
 // 🆕 生产派发（主管手动）：分别选钣金组、装配组各一名人员（两组都必选）
 const dispatchVisible = ref(false)
 const dispatchOrder = ref<DeptOrder | null>(null)
-const dispatchOpts = ref<DispatchOptions>({ sheetmetal: [], assembly: [], sealing: [] })
+const dispatchOpts = ref<DispatchOptions>({ sheetmetal: [], assembly: [], sealing: [], fitter: [] })
 const dispatchSmWid = ref<number | null>(null)
 const dispatchAsmWid = ref<number | null>(null)
 const dispatchSealWid = ref<number | null>(null)   // 🆕 反馈#209 封板组
+const dispatchFitWid = ref<number | null>(null)    // 🆕 反馈#304 钳工组
 const dispatching = ref(false)
 async function openDispatch(o: DeptOrder) {
   dispatchOrder.value = o
   dispatchSmWid.value = null
   dispatchAsmWid.value = null
   dispatchSealWid.value = null
+  dispatchFitWid.value = null
   dispatchVisible.value = true
   try { dispatchOpts.value = await produceApi.dispatchOptions() } catch { /* 忽略 */ }
 }
 async function doDispatch() {
   const o = dispatchOrder.value
   if (!o) return
-  if (!dispatchSmWid.value && !dispatchAsmWid.value && !dispatchSealWid.value) { ElMessage.warning('至少选择一组（钣金组/装配组/封板组）'); return }
+  if (!dispatchSmWid.value && !dispatchAsmWid.value && !dispatchSealWid.value && !dispatchFitWid.value) { ElMessage.warning('至少选择一组（钣金组/装配组/封板组/钳工组）'); return }
   dispatching.value = true
   try {
-    await produceApi.dispatch(o.id, dispatchSmWid.value, dispatchAsmWid.value, dispatchSealWid.value)
-    const label = [dispatchSmWid.value && '钣金组', dispatchAsmWid.value && '装配组', dispatchSealWid.value && '封板组'].filter(Boolean).join('、')
+    await produceApi.dispatch(o.id, dispatchSmWid.value, dispatchAsmWid.value, dispatchSealWid.value, dispatchFitWid.value)
+    const label = [dispatchSmWid.value && '钣金组', dispatchAsmWid.value && '装配组', dispatchSealWid.value && '封板组', dispatchFitWid.value && '钳工组'].filter(Boolean).join('、')
     ElMessage.success(`已派发到${label}`)
     dispatchVisible.value = false
     await load()
@@ -247,11 +258,14 @@ function importTemplateTables(o: DeptOrder) {
 
 // 🆕 组内标记完成（两组都完成→生产任务单 done）
 // 🆕 #194 组任务换人（主管/管理层）：从派发人选里挑新负责人
+// 生产各组中文名（组 code → 显示名；DispatchOptions 的 key 与组 code 一致，可直接 dispatchOpts[组]）
+const GROUP_LABEL: Record<string, string> = { sheetmetal: '钣金组', assembly: '装配组', sealing: '封板组', fitter: '钳工组' }
+type ProduceGroup = 'sheetmetal' | 'assembly' | 'sealing' | 'fitter'
 const grpReVisible = ref(false)
 const grpReRow = ref<GroupProjectRow | null>(null)
-const grpReGroup = ref<'sheetmetal' | 'assembly' | 'sealing'>('assembly')
+const grpReGroup = ref<ProduceGroup>('assembly')
 const grpReWid = ref<number | null>(null)
-async function openGroupReassign(row: GroupProjectRow, group: 'sheetmetal' | 'assembly' | 'sealing') {
+async function openGroupReassign(row: GroupProjectRow, group: ProduceGroup) {
   grpReRow.value = row; grpReGroup.value = group; grpReWid.value = null
   if (!dispatchOpts.value.sheetmetal.length && !dispatchOpts.value.assembly.length) {
     try { dispatchOpts.value = await produceApi.dispatchOptions() } catch { /* 忽略 */ }
@@ -386,7 +400,8 @@ async function pickCardOutputUpload(o: DeptOrder, kind: string) {
     const files = Array.from(input.files || [])
     if (!files.length) return
     await ordersApi.outputUpload(o.id, kind, files)
-    ElMessage.success('已上传')
+    // 🆕 #294 电路图上传后=待推送，点「推送」才下发物流
+    ElMessage.success('已上传（待推送，点「推送」下发物流）')
     await load()
   }
   input.click()
@@ -412,7 +427,7 @@ const resSections = computed(() => resMode.value === 'shipprep'
   ? (dept.value === 'electric'   // 🆕 #197 电工发货准备 = 电路图
       ? [{ k: 'circuit', label: '电路图 (PDF)', btn: '上传电路图' }]
       : [{ k: 'manual', label: '产品说明书 (Word)', btn: '上传说明书' }, { k: 'nameplate', label: '铭牌 (CAD)', btn: '上传铭牌' }])
-  : [{ k: 'sheetpkg', label: 'CAD激光图纸', btn: '上传CAD激光图纸' }, { k: 'outsource_img', label: '外购附图', btn: '上传外购附图' }, { k: 'coldwork_pkg', label: '冷作图纸', btn: '上传冷作图纸' }])
+  : [{ k: 'sheetpkg', label: 'CAD激光图纸', btn: '上传CAD激光图纸' }, { k: 'outsource_img', label: '外购附图', btn: '上传外购附图' }, { k: 'coldwork_pkg', label: '冷作图纸', btn: '上传冷作图纸' }, { k: 'fitter_pkg', label: '钳工图纸', btn: '上传钳工图纸' }])
 function openRes(o: DeptOrder, mode: ResMode) { resId.value = o.id; resMode.value = mode; resVisible.value = true }
 function resFiles(o: DeptOrder, kind: string) {
   return (resMode.value === 'design' ? o.start_files : o.output_files).filter(f => f.kind === kind)
@@ -424,7 +439,9 @@ async function resPick(o: DeptOrder, kind: string) {
     try {
       if (resMode.value === 'design') await ordersApi.startUpload(o.id, kind, files)
       else await ordersApi.outputUpload(o.id, kind, files)
-      ElMessage.success('已上传'); await load()
+      // 🆕 #303/#294：设计资料更换与电工电路图的新文件=待推送；说明书/铭牌维持原口径
+      const gated = resMode.value === 'design' || (dept.value === 'electric' && kind === 'circuit')
+      ElMessage.success(gated ? '已上传（待推送，需点「推送」下发下游）' : '已上传'); await load()
     } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '上传失败') }
   }
   input.click()
@@ -549,6 +566,34 @@ async function doStart(o: DeptOrder) {
 }
 
 // ---- 接单后上传（图纸包/采购清单） ----
+// 🆕 #303 上传与推送分离：上传后文件为「待推送」(pushed=0)，点「推送」才下发下游并推消息
+const pushState = ref<Record<number, Record<string, number>>>({})
+function unpushedOf(o: DeptOrder, kind: string): number {
+  return pushState.value[o.id]?.[kind] || 0
+}
+const pushing = ref('')
+async function doStartPush(o: DeptOrder, kind: string, label: string) {
+  pushing.value = `${o.id}:${kind}`
+  try {
+    const r = await ordersApi.startPush(o.id, kind)
+    ElMessage.success(r?.message || `已推送${label}到下游`)
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '推送失败')
+  } finally {
+    pushing.value = ''
+  }
+}
+// 🆕 图纸区分态显示：无文件=待上传；有未推送=待推送 N（醒目推送按钮）；全部已推送=已推送 N
+function startSecText(o: DeptOrder, kind: string, total: number): string {
+  if (!total) return '待上传'
+  const n = unpushedOf(o, kind)
+  return n ? `待推送 ${n}` : `已推送 ${total}`
+}
+function startSecVariant(o: DeptOrder, kind: string, total: number): 'success' | 'warn' | 'danger' {
+  if (!total) return 'warn'
+  return unpushedOf(o, kind) ? 'danger' : 'success'
+}
 async function pickStartUpload(o: DeptOrder, kind: string) {
   const input = document.createElement('input')
   input.type = 'file'
@@ -557,7 +602,8 @@ async function pickStartUpload(o: DeptOrder, kind: string) {
     const files = Array.from(input.files || [])
     if (!files.length) return
     await ordersApi.startUpload(o.id, kind, files)
-    ElMessage.success('已上传并推送下游')
+    // 🆕 #303：上传只进「待推送」，需再点「推送」才下发下游
+    ElMessage.success('已上传（待推送，点「推送」下发下游）')
     await load()
   }
   input.click()
@@ -870,7 +916,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     </el-dialog>
 
     <!-- ===== 部门工作台：负责人(待分派/跟踪) + 工人(待办/已完成) 并存；多角色用户全部显示 ===== -->
-    <template v-if="isWorker || isLead || isMgr || isSheetmetal || isSealing">
+    <template v-if="isWorker || isLead || isMgr || isSheetmetal || isSealing || isFitter">
       <el-tabs v-model="activeTab">
         <!-- ===== 待接单 tab ===== -->
         <el-tab-pane v-if="isWorker && !isProduce" :label="`📩 我的订单（待接单 ${myPending.length}）`" name="pending">
@@ -948,9 +994,10 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                   <div class="up-h">
                     <el-icon><UploadFilled /></el-icon> {{ so.label }}
                     <span style="margin-left: auto">
+                      <!-- 🆕 #303 上传与推送分离：待上传 / 待推送 N(醒目) / 已推送 N -->
                       <StatusPill
-                        :text="startFilesOf(o, so.k).length ? `已推送 ${startFilesOf(o, so.k).length} 个` : '待上传 → 推送下游'"
-                        :variant="startFilesOf(o, so.k).length ? 'success' : 'warn'" />
+                        :text="startSecText(o, so.k, startFilesOf(o, so.k).length)"
+                        :variant="startSecVariant(o, so.k, startFilesOf(o, so.k).length)" />
                     </span>
                   </div>
                   <div class="up-b">
@@ -960,9 +1007,15 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                         <el-icon class="rm" @click="removeAtt(o, f)"><Close /></el-icon>
                       </el-tag>
                     </div>
-                    <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickStartUpload(o, so.k)">
-                      {{ startFilesOf(o, so.k).length ? '继续添加' : '上传' }}{{ so.label }}
-                    </el-button>
+                    <div style="display:flex; gap:8px">
+                      <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickStartUpload(o, so.k)">
+                        {{ startFilesOf(o, so.k).length ? '继续添加' : '上传' }}{{ so.label }}
+                      </el-button>
+                      <el-button v-if="unpushedOf(o, so.k)" size="small" type="warning" :icon="Promotion"
+                                 :loading="pushing === `${o.id}:${so.k}`" @click="doStartPush(o, so.k, so.label)">
+                        推送{{ so.label }}到下游
+                      </el-button>
+                    </div>
                   </div>
                 </div>
 
@@ -1000,6 +1053,32 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 </template>
                 <!-- 电工部两步完成流 -->
                 <template v-else-if="dept === 'electric'">
+                  <!-- 🆕 #294 电路图前置：进行中即可上传（上传后待推送，点「推送」才下发物流） -->
+                  <div class="up-sec">
+                    <div class="up-h">
+                      <el-icon><UploadFilled /></el-icon> 电路图 (PDF)
+                      <span style="margin-left:auto">
+                        <StatusPill :text="startSecText(o, 'circuit', cardOutputFiles(o,'circuit').length)"
+                                    :variant="startSecVariant(o, 'circuit', cardOutputFiles(o,'circuit').length)" />
+                      </span>
+                    </div>
+                    <div class="up-b">
+                      <div v-if="cardOutputFiles(o,'circuit').length" class="tc-files">
+                        <el-tag v-for="f in cardOutputFiles(o,'circuit')" :key="f.id" size="small" effect="plain" class="file-chip">
+                          <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
+                        </el-tag>
+                      </div>
+                      <div style="display:flex; gap:8px">
+                        <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickCardOutputUpload(o,'circuit')">
+                          {{ cardOutputFiles(o,'circuit').length ? '继续添加' : '上传电路图' }}
+                        </el-button>
+                        <el-button v-if="unpushedOf(o, 'circuit')" size="small" type="warning" :icon="Promotion"
+                                   :loading="pushing === `${o.id}:circuit`" @click="doStartPush(o, 'circuit', '电路图')">
+                          推送电路图到物流
+                        </el-button>
+                      </div>
+                    </div>
+                  </div>
                   <!-- 第一步：接线完成（采购清单已上传） -->
                   <template v-if="!o.electric_done_flag">
                     <el-button type="primary" size="small" :icon="Check"
@@ -1008,28 +1087,9 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                                @click="doElectricDone(o)">接线完成</el-button>
                     <div v-if="!canElectricDone(o)" class="tc-hint">需上传采购清单</div>
                   </template>
-                  <!-- 第二步：上传电路图 + 发货准备 -->
+                  <!-- 第二步：发货准备（存量二步流单子；电路图上方卡片可继续补传/推送） -->
                   <template v-else>
                     <el-tag type="success" size="small" style="margin-bottom:8px">✅ 接线已完成</el-tag>
-                    <div class="up-sec">
-                      <div class="up-h">
-                        <el-icon><UploadFilled /></el-icon> 电路图 (PDF)
-                        <span style="margin-left:auto">
-                          <StatusPill :text="cardOutputFiles(o,'circuit').length ? `已上传 ${cardOutputFiles(o,'circuit').length} 个` : '待上传'"
-                                      :variant="cardOutputFiles(o,'circuit').length ? 'success' : 'warn'" />
-                        </span>
-                      </div>
-                      <div class="up-b">
-                        <div v-if="cardOutputFiles(o,'circuit').length" class="tc-files">
-                          <el-tag v-for="f in cardOutputFiles(o,'circuit')" :key="f.id" size="small" effect="plain" class="file-chip">
-                            <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
-                          </el-tag>
-                        </div>
-                        <el-button size="small" plain type="primary" :icon="UploadFilled" @click="pickCardOutputUpload(o,'circuit')">
-                          {{ cardOutputFiles(o,'circuit').length ? '继续添加' : '上传电路图' }}
-                        </el-button>
-                      </div>
-                    </div>
                     <el-button type="success" size="small" :icon="Check"
                                :disabled="!canElectricShipReady(o)"
                                @click="openComplete(o)">发货准备完成</el-button>
@@ -1120,7 +1180,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
               </div>
               <!-- 🆕 生产部：派发到钣金组+装配组（取代单人分派） -->
               <div v-if="isProduce" class="assign-bar">
-                <el-button type="primary" size="small" :icon="Promotion" @click="openDispatch(o)">派发钣金/装配/封板</el-button>
+                <el-button type="primary" size="small" :icon="Promotion" @click="openDispatch(o)">派发钣金/装配/封板/钳工</el-button>
                 <el-button size="small" @click="doVoid(o)">作废单号</el-button>
               </div>
               <div v-else class="assign-bar">
@@ -1186,6 +1246,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                   <span>钣金 {{ pgDue(row, 'sheetmetal') }}</span>
                   <span>装配 {{ pgDue(row, 'assembly') }}</span>
                   <span v-if="hasGroup(row, 'sealing')">封板 {{ pgDue(row, 'sealing') }}</span>
+                  <span v-if="hasGroup(row, 'fitter')">钳工 {{ pgDue(row, 'fitter') }}</span>
                 </div>
                 <!-- 🆕 设计/电工：管理层可直接改预计完成(不受本人锁定) -->
                 <el-date-picker v-else-if="isMgr" :model-value="row.due_date || ''" type="date"
@@ -1200,6 +1261,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                   <span>钣金 {{ pgDone(row, 'sheetmetal') }}</span>
                   <span>装配 {{ pgDone(row, 'assembly') }}</span>
                   <span v-if="hasGroup(row, 'sealing')">封板 {{ pgDone(row, 'sealing') }}</span>
+                  <span v-if="hasGroup(row, 'fitter')">钳工 {{ pgDone(row, 'fitter') }}</span>
                 </div>
                 <template v-else>{{ row.done_date ? fmtDate(row.done_date) : '—' }}</template>
               </template>
@@ -1322,15 +1384,14 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            title="预览 / 打包下载" @click="openCellPack(row, row.laser_files, 'CAD激光图纸')">打包下载</el-button>
               </template>
             </el-table-column>
-            <!-- 🆕 #269 冷作图纸：设计部上传推送钣金组（待推送-已推送N + 文件下载，同封板组 CAD激光图纸列模式） -->
+            <!-- 🆕 #269/#295 冷作图纸：设计部上传推送钣金组（状态 + 打包下载抽屉，交互同 CAD激光图纸列） -->
             <el-table-column label="冷作图纸" min-width="150" align="center">
               <template #default="{ row }">
-                <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
-                  <StatusPill :text="(row.coldwork_files || []).length ? `已推送 ${(row.coldwork_files || []).length}` : '待推送'"
-                              :variant="(row.coldwork_files || []).length ? 'success' : 'muted'" />
-                  <el-button v-for="f in (row.coldwork_files || [])" :key="'c' + f.id" size="small" link type="success" :icon="Download"
-                             @click="downloadAttachment(f)">{{ f.name }}</el-button>
-                </div>
+                <!-- 文件不罗列在列表中：状态 + 打包下载（开抽屉预览/勾选/打包 zip） -->
+                <StatusPill :text="(row.coldwork_files || []).length ? `已推送 ${(row.coldwork_files || []).length}` : '待推送'"
+                            :variant="(row.coldwork_files || []).length ? 'success' : 'muted'" />
+                <el-button v-if="(row.coldwork_files || []).length" size="small" link type="primary" :icon="Download"
+                           title="预览 / 打包下载" @click="openCellPack(row, row.coldwork_files, '冷作图纸')">打包下载</el-button>
               </template>
             </el-table-column>
             <el-table-column label="预计完成" min-width="150" align="center">
@@ -1499,6 +1560,64 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           <EmptyHint v-if="!loading && !sealingRows.length" text="暂无派发给封板组的项目" size="sm" />
         </el-tab-pane>
 
+        <!-- ===== 🆕 反馈#304 生产部-钳工组 tab（被派发项目 + 钳工图纸 = 设计部推送，可选组口径同封板组） ===== -->
+        <el-tab-pane v-if="isProduce && (isFitter || isLead || isMgr)" :label="`🔨 钳工组 (${fitterRows.length})`" name="fit">
+          <div class="grp-filter">
+            <span class="muted small">按人员筛选：</span>
+            <el-select v-model="fitWorkerFilter" placeholder="全部人员" clearable filterable size="small" style="width:160px">
+              <el-option v-for="w in fitWorkers" :key="w" :label="w" :value="w" />
+            </el-select>
+            <span class="muted small">共 {{ fitRowsView.length }} 项</span>
+          </div>
+          <el-table class="grp-x-table" show-overflow-tooltip :data="fitRowsView" stripe v-loading="loading" max-height="calc(100vh - 300px)" :scrollbar-always-on="true">
+            <el-table-column type="index" label="#" width="56" align="center" />
+            <el-table-column label="项目编号" min-width="130"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+            <el-table-column prop="name" label="项目名称" min-width="220" show-overflow-tooltip />
+            <el-table-column label="设计师" min-width="90" align="center"><template #default="{ row }">{{ row.designer || '—' }}</template></el-table-column>
+            <el-table-column label="材料库位" min-width="130">
+              <template #default="{ row }">
+                <span v-if="row.material_locations && row.material_locations.length">
+                  <el-tag v-for="l in row.material_locations" :key="l" size="small" type="warning" effect="plain" style="margin:1px 3px 1px 0">{{ l }}</el-tag>
+                </span>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="派给" min-width="130" align="center">
+              <template #default="{ row }">
+                {{ row.worker_name || '—' }}
+                <el-button v-if="(isLead || isMgr) && !row.group_done" size="small" link type="primary"
+                           @click="openGroupReassign(row, 'fitter')">换人</el-button>
+              </template>
+            </el-table-column>
+            <!-- 🆕 钳工图纸：设计部上传推送钳工组（状态 + 打包下载抽屉，交互同封板组 CAD激光图纸列） -->
+            <el-table-column label="钳工图纸" min-width="150" align="center">
+              <template #default="{ row }">
+                <!-- 文件不罗列在列表中：状态 + 打包下载（开抽屉预览/勾选/打包 zip） -->
+                <StatusPill :text="(row.fitter_files || []).length ? `已推送 ${(row.fitter_files || []).length}` : '待推送'"
+                            :variant="(row.fitter_files || []).length ? 'success' : 'muted'" />
+                <el-button v-if="(row.fitter_files || []).length" size="small" link type="primary" :icon="Download"
+                           title="预览 / 打包下载" @click="openCellPack(row, row.fitter_files, '钳工图纸')">打包下载</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="预计完成" min-width="150" align="center">
+              <template #default="{ row }">
+                <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
+                  size="small" placeholder="设置" style="width:132px" :clearable="false"
+                  :disabled="!!row.due_date && !isMgr" @change="(v: string | null) => setGroupDue(row, v)" />
+              </template>
+            </el-table-column>
+            <el-table-column label="钳工完成" min-width="180" align="center">
+              <template #default="{ row }">
+                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
+                <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
+                  {{ row.group_done ? '撤销' : '标记完成' }}
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <EmptyHint v-if="!loading && !fitRowsView.length" text="暂无派发给钳工组的项目" size="sm" />
+        </el-tab-pane>
+
         <!-- 🆕 设计师请购单：列清单推给采购员（与仓库采购申请同一流程） -->
         <el-tab-pane v-if="dept === 'design' || dept === 'electric' || dept === 'produce'" label="🛒 请购单" name="preq">
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
@@ -1653,12 +1772,11 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     </el-dialog>
 
     <!-- ===== 🆕 #194 组任务换人弹窗 ===== -->
-    <el-dialog v-model="grpReVisible" :title="`🔁 换人 · ${grpReRow?.code || ''}（${grpReGroup === 'sheetmetal' ? '钣金组' : (grpReGroup === 'assembly' ? '装配组' : '封板组')}）`" width="380px">
+    <el-dialog v-model="grpReVisible" :title="`🔁 换人 · ${grpReRow?.code || ''}（${GROUP_LABEL[grpReGroup] || ''}）`" width="380px">
       <el-form label-position="top">
         <el-form-item :label="`当前负责人：${grpReRow?.worker_name || '—'}，改派给`" required>
           <el-select v-model="grpReWid" filterable placeholder="选择新负责人" style="width:100%">
-            <el-option v-for="w in (grpReGroup === 'sheetmetal' ? dispatchOpts.sheetmetal : (grpReGroup === 'assembly' ? dispatchOpts.assembly : dispatchOpts.sealing))"
-                       :key="w.id" :label="w.name" :value="w.id" />
+            <el-option v-for="w in dispatchOpts[grpReGroup]" :key="w.id" :label="w.name" :value="w.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -1671,7 +1789,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     <!-- ===== 🆕 生产派发弹窗（派给钣金组+装配组） ===== -->
     <el-dialog v-model="dispatchVisible" :title="`🚀 派发生产任务 · ${dispatchOrder?.project_code || ''}`" width="460px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
-                title="钣金组、装配组、封板组可各自选派，至少选择一组；钣金/装配两组完成即视为生产完成（可发货），封板组为可选组，派了则也须完成。" />
+                title="钣金组、装配组、封板组、钳工组可各自选派，至少选择一组；钣金/装配两组完成即视为生产完成（可发货），封板/钳工组为可选组，派了则也须完成。" />
       <el-form label-position="top">
         <el-form-item label="派给 · 生产部-钣金组（可不选）">
           <el-select v-model="dispatchSmWid" placeholder="不派发钣金组则留空" clearable style="width: 100%">
@@ -1687,6 +1805,12 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         <el-form-item label="派给 · 生产部-封板组（可不选，激光图会推送给该组）">
           <el-select v-model="dispatchSealWid" placeholder="不派发封板组则留空" clearable style="width: 100%">
             <el-option v-for="w in dispatchOpts.sealing" :key="w.id" :label="w.name" :value="w.id" />
+          </el-select>
+        </el-form-item>
+        <!-- 🆕 反馈#304 钳工组（可选，钳工图纸会推送给该组） -->
+        <el-form-item label="派给 · 生产部-钳工组（可不选，钳工图纸会推送给该组）">
+          <el-select v-model="dispatchFitWid" placeholder="不派发钳工组则留空" clearable style="width: 100%">
+            <el-option v-for="w in dispatchOpts.fitter" :key="w.id" :label="w.name" :value="w.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -1736,11 +1860,17 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     <el-dialog v-model="resVisible" :title="`${resTitle} · ${resOrder?.project_code || ''}`" width="600px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
                 :title="resMode === 'shipprep'
-                  ? '补传 / 替换 产品说明书、铭牌（发货资料，选填、不计考核）。文件上点 × 删除后可重新上传替换。备齐后点「发货准备完成」通知物流。'
-                  : '更换 CAD激光图纸 / 外购附图：上传新文件，旧文件点 × 删除即替换，更新后自动同步采购部。'" />
+                  ? '补传 / 替换 产品说明书、铭牌（发货资料，选填、不计考核）。文件上点 × 删除后可重新上传替换。备齐后点「发货准备完成」通知物流。（电工电路图：上传后为待推送，需点「推送」才下发物流）'
+                  : '更换 CAD激光图纸 / 外购附图：上传新文件，旧文件点 × 删除即替换。新上传的文件为「待推送」，需点「推送」才会同步下游（采购部/生产各组）。'" />
       <template v-if="resOrder">
         <div class="up-sec" v-for="g in resSections" :key="g.k">
-          <div class="up-h"><el-icon><UploadFilled /></el-icon> {{ g.label }}</div>
+          <div class="up-h">
+            <el-icon><UploadFilled /></el-icon> {{ g.label }}
+            <!-- 🆕 #303 更换的新文件同样待推送，点推送才下去 -->
+            <span v-if="unpushedOf(resOrder, g.k)" style="margin-left:auto">
+              <StatusPill :text="`待推送 ${unpushedOf(resOrder, g.k)}`" variant="danger" />
+            </span>
+          </div>
           <div class="up-b">
             <div v-if="resFiles(resOrder, g.k).length" class="tc-files">
               <el-tag v-for="f in resFiles(resOrder, g.k)" :key="f.id" size="small" effect="plain"
@@ -1748,9 +1878,15 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
               </el-tag>
             </div>
-            <el-button size="small" plain :icon="UploadFilled" @click="resPick(resOrder!, g.k)">
-              {{ resFiles(resOrder, g.k).length ? '继续添加' : g.btn }}
-            </el-button>
+            <div style="display:flex; gap:8px">
+              <el-button size="small" plain :icon="UploadFilled" @click="resPick(resOrder!, g.k)">
+                {{ resFiles(resOrder, g.k).length ? '继续添加' : g.btn }}
+              </el-button>
+              <el-button v-if="unpushedOf(resOrder, g.k)" size="small" type="warning" :icon="Promotion"
+                         :loading="pushing === `${resOrder.id}:${g.k}`" @click="doStartPush(resOrder!, g.k, g.label)">
+                推送到下游
+              </el-button>
+            </div>
           </div>
         </div>
         <!-- 🆕 发货清单：上传发货清单 -> 推送仓库备货 -> 仓库备货完成 -> 物流可见 -->
@@ -1842,7 +1978,8 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
   grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
   gap: 14px;
 }
-.todo-card { border-left: 4px solid var(--primary, #2563eb); border-radius: 10px; }
+/* 🆕 #299 卡片边框加深+轻阴影：笔记本低对比屏也能看清订单卡片边界（scoped 仅本组件，不动全局） */
+.todo-card { border: 1px solid #cbd5e1; border-left: 4px solid var(--primary, #2563eb); border-radius: 10px; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.10); }
 .todo-card.urgent { border-left-color: var(--danger); }
 .todo-card.assign { border-left-color: var(--warning); }
 .tc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }

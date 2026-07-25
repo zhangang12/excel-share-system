@@ -109,8 +109,13 @@ async def main():
         chk(r.status_code==200 and len(r.json())==2, f"CAD激光图纸多文件上传: {r.text[:150]}")
         att_pkg = r.json()[0]["id"]
         Hbu = await login("bu")
+        # 🆕 #303 上传与推送分离：上传后待推送(无消息)，点「推送」才下发
         msgs = (await c.get("/api/messages", headers=Hbu)).json()
-        chk(any("CAD激光图纸" in m["text"] for m in msgs), "采购部收到CAD激光图纸推送")
+        chk(not any("CAD激光图纸" in m["text"] for m in msgs), "#303 未推送时采购部无图纸消息")
+        r = await c.post(f"/api/orders/{o_design}/start-push", headers=Hd, json={"kind":"sheetpkg"})
+        chk(r.status_code==200, f"#303 推送CAD激光图纸: {r.status_code} {r.text[:80]}")
+        msgs = (await c.get("/api/messages", headers=Hbu)).json()
+        chk(any("CAD激光图纸" in m["text"] for m in msgs), "推送后采购部收到CAD激光图纸推送")
         r = await c.post(f"/api/orders/{o_elec}/start-upload?kind=plist", headers=He1,
                          files=[("files", ("采购清单.xlsx", io.BytesIO(b"XL"), "application/vnd.ms-excel"))])
         chk(r.status_code==200, "电工采购清单上传")

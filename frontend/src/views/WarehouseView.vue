@@ -511,6 +511,12 @@ function splitShare(line: { qty: number | null }): number {
   if (tq > 0) return Number((batchRecvForm.total_amount * (line.qty || 0) / tq).toFixed(2))
   return Number((batchRecvForm.total_amount / (batchRecvLines.value.length || 1)).toFixed(2))
 }
+// 🆕 #293 合并收货逐行：填单价 → 收货金额自动=数量×单价(两位小数)；金额仍可手动覆盖，再改单价时重算
+function onBatchLinePriceCalc(line: { qty: number | null; unit_price: number | null; received_amount: number | null }) {
+  if (line.qty != null && line.unit_price != null) {
+    line.received_amount = Number((line.qty * line.unit_price).toFixed(2))
+  }
+}
 function openBatchReceive() {
   if (recvSelected.value.length < 1) { ElMessage.info('请先在列表勾选要合并收货的明细'); return }
   if (!projects.value.length) loadProjects()   // 🆕 #253
@@ -1572,7 +1578,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <el-option v-for="p in projects" :key="p.id" :label="`${p.code}　${p.name}`" :value="p.code" />
           </el-select>
         </el-form-item>
-        <div class="muted small" style="margin:2px 0 8px">逐行填单价/收货金额（单价可留空，货到再补）。</div>
+        <div class="muted small" style="margin:2px 0 8px">逐行填单价/收货金额（单价可留空，货到再补；填单价自动按数量算收货金额，金额可再手动改）。</div>
       </el-form>
       <el-table show-overflow-tooltip :data="batchRecvLines" size="small" border max-height="34vh">
         <el-table-column label="名称" min-width="130">
@@ -1580,7 +1586,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-table-column>
         <el-table-column label="数量" width="80" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
         <el-table-column label="单价" width="130" align="right">
-          <template #default="{ row }"><el-input-number v-model="row.unit_price" :min="0" :precision="2" :controls="false" style="width:110px" /></template>
+          <template #default="{ row }"><el-input-number v-model="row.unit_price" :min="0" :precision="2" :controls="false" style="width:110px" @change="onBatchLinePriceCalc(row)" /></template>
         </el-table-column>
         <el-table-column label="收货金额" width="140" align="right">
           <template #default="{ row }"><el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:120px" /></template>

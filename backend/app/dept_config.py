@@ -4,7 +4,10 @@
 - worker_role / lead_role：工人与负责人角色 code（对应 seed.ROLES）
 - sheet_check：完成前置校验"四表已导入"（仅设计，D1 口径=有 Excel 导入记录 P-16）
 - start_outputs：接单后上传并推送下游（设计→图纸包→采购+钣金；电工→采购清单→采购）
+  🆕 #303：上传与推送分离——上传后附件 pushed=0(待推送)、下游不可见，点「推送」(start-push)才下发；
+  例外：电工采购清单(plist)维持上传即推送
 - outputs：完成时上传产物并推送下游（required=必传，如电工电路图）
+  🆕 #294：电工电路图(circuit)前置——进行中即可上传，同 #303 口径待推送、点推送才下发物流(logistics)
 - notify_pool：完成弹窗"通知人"候选角色（必选其一，企微/站内通知）
 - 标签：start_label/end_label/done_label 供前端展示
 """
@@ -16,7 +19,8 @@ DEPTS: dict[str, dict] = {
         "lead_role": "design_lead",
         "sheet_check": True,
         # 🆕 2026-06-19：图纸包改为「CAD激光图纸」并推送采购部；新增「外购附图」也推采购部
-        # 🆕 2026-07-22：CAD激光图纸(sheetpkg)上传时除采购外同步推钣金组(start_upload 特判)，钣金组工作台图纸列同源可见
+        # 🆕 2026-07-22：CAD激光图纸(sheetpkg)推送时除采购外同步推钣金组(start_push 特判)，钣金组工作台图纸列同源可见
+        # 🆕 #303：上传≠推送——上传后待推送(pushed=0)，点「推送」才下发对应 to_role 并推消息
         "start_outputs": [
             {"k": "sheetpkg", "label": "CAD激光图纸", "to_role": "buyer"},
             {"k": "outsource_img", "label": "外购附图", "to_role": "buyer"},
@@ -24,6 +28,7 @@ DEPTS: dict[str, dict] = {
             {"k": "sealing_pkg", "label": "封板文件(机架图/横梁图)", "to_role": "sealing"},
             # 🆕 #269 冷作图纸→推送钣金组(sheetmetal);钣金组 tab 里可下载
             {"k": "coldwork_pkg", "label": "冷作图纸", "to_role": "sheetmetal"},
+            {"k": "fitter_pkg", "label": "钳工图纸", "to_role": "fitter"},
         ],
         "outputs": [
             {"k": "manual",    "label": "说明书 (Word)", "to_role": "logistics", "required": False},
@@ -44,6 +49,8 @@ DEPTS: dict[str, dict] = {
             {"k": "plist", "label": "电器清单 (Excel)", "to_role": "buyer"},
         ],
         "outputs": [
+            # 🆕 #294 电路图前置：进行中卡片即可上传（上传后待推送，点推送下发 logistics）；
+            #   已完成 tab 发货准备保留补传/更换（同待推送口径）
             {"k": "circuit", "label": "电路图 (PDF)", "to_role": "logistics", "required": True},
         ],
         "notify_pool": "logistics",

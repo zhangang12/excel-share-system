@@ -28,10 +28,12 @@ router = APIRouter(prefix="/api/produce", tags=["生产部分组"])
 # 🆕 反馈#209：新增「封板组(sealing)」为第三生产小组。
 #   钣金组/装配组为「必派」组(父生产单完成的前置)；封板组为「可选」组——
 #   若某单派了封板组则它也须完成才算生产完成,没派封板组则不影响(向后兼容存量)。
-GROUPS = ("sheetmetal", "assembly", "sealing")
+# 🆕 反馈#304：新增「钳工组(fitter)」为第四生产小组，同为「可选」组(口径同封板组)；
+#   设计部上传「钳工图纸」(order_start_output kind=fitter_pkg)推送该组，tab 内可打包下载。
+GROUPS = ("sheetmetal", "assembly", "sealing", "fitter")
 REQUIRED_GROUPS = ("sheetmetal", "assembly")   # 父单完成必须两组都派且都完成
-GROUP_NAME = {"sheetmetal": "钣金组", "assembly": "装配组", "sealing": "封板组"}
-GROUP_ROLE = {"sheetmetal": "sheetmetal", "assembly": "assembler", "sealing": "sealing"}
+GROUP_NAME = {"sheetmetal": "钣金组", "assembly": "装配组", "sealing": "封板组", "fitter": "钳工组"}
+GROUP_ROLE = {"sheetmetal": "sheetmetal", "assembly": "assembler", "sealing": "sealing", "fitter": "fitter"}
 # 装配组「备齐」判定依据的两张表（项目详单中「进度」列全为「完成」才算已备齐）
 ASSEMBLY_READY_SHEETS = ("标准件清单", "外协加工")
 
@@ -57,6 +59,7 @@ class DispatchOptions(BaseModel):
     sheetmetal: list[schemas.OrderOptionUser] = []
     assembly: list[schemas.OrderOptionUser] = []
     sealing: list[schemas.OrderOptionUser] = []   # 🆕 反馈#209 封板组
+    fitter: list[schemas.OrderOptionUser] = []    # 🆕 反馈#304 钳工组
 
 
 async def _role_users(db: AsyncSession, code: str) -> list[schemas.OrderOptionUser]:
@@ -76,11 +79,12 @@ async def dispatch_options(
     _: models.User = Depends(require_roles("pm_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """派发下拉：钣金组(sheetmetal)、装配组(assembler)、封板组(sealing) 各自的可派发人员。"""
+    """派发下拉：钣金组(sheetmetal)、装配组(assembler)、封板组(sealing)、钳工组(fitter) 各自的可派发人员。"""
     return DispatchOptions(
         sheetmetal=await _role_users(db, "sheetmetal"),
         assembly=await _role_users(db, "assembler"),
         sealing=await _role_users(db, "sealing"),   # 🆕 反馈#209 封板组
+        fitter=await _role_users(db, "fitter"),     # 🆕 反馈#304 钳工组
     )
 
 
@@ -89,6 +93,7 @@ class DispatchIn(BaseModel):
     sheetmetal_worker_id: Optional[int] = None   # 派给钣金组的人（可选）
     assembly_worker_id: Optional[int] = None     # 派给装配组的人（可选）
     sealing_worker_id: Optional[int] = None      # 🆕 反馈#209 派给封板组的人（可选）
+    fitter_worker_id: Optional[int] = None       # 🆕 反馈#304 派给钳工组的人（可选）
 
 
 @router.post("/dispatch/{order_id}", response_model=schemas.Msg)
@@ -107,9 +112,10 @@ async def dispatch_produce(
         ("sheetmetal", data.sheetmetal_worker_id),
         ("assembly",   data.assembly_worker_id),
         ("sealing",    data.sealing_worker_id),   # 🆕 反馈#209 封板组
+        ("fitter",     data.fitter_worker_id),    # 🆕 反馈#304 钳工组
     ] if wid is not None}
     if not worker_of:
-        raise HTTPException(400, "至少选择一组（钣金组/装配组/封板组）进行派发")
+        raise HTTPException(400, "至少选择一组（钣金组/装配组/封板组/钳工组）进行派发")
 
     # 校验各组人员角色
     for g, wid in worker_of.items():
@@ -314,6 +320,8 @@ class GroupProjectRow(BaseModel):
     sealing_files: List[dict] = []
     # 🆕 #269 冷作图纸：设计推送给钣金组的产出(order_start_output kind=coldwork_pkg,可下载)
     coldwork_files: List[dict] = []
+    # 🆕 #304 钳工图纸：设计推送给钳工组的产出(order_start_output kind=fitter_pkg,可下载)
+    fitter_files: List[dict] = []
 
 
 async def _designer_by_pid(db: AsyncSession, pids: list[int]) -> dict[int, str]:
@@ -357,7 +365,8 @@ async def _sheet_ready(db: AsyncSession, ds: Optional[models.Datasheet]) -> bool
 async def _laser_files_by_pid(db: AsyncSession, pids: list[int], kind: str = "sheetpkg") -> dict[int, list[dict]]:
     """🆕 反馈#209「推送设计产物」：项目的设计任务产出文件(order_start_output)。
     kind=sheetpkg→CAD激光图纸;kind=sealing_pkg→封板文件(机架图/横梁图);kind=coldwork_pkg→冷作图纸(#269→钣金组)。
-    封板组/钣金组 tab 里可直接下载。"""
+    封板组/钣金组 tab 里可直接下载。
+    🆕 #303：仅已推送(pushed=1)的图纸对下游可见（上传≠推送，未推送的不惊动下游）。"""
     if not pids:
         return {}
     dord = await db.execute(select(models.DeptOrder.id, models.DeptOrder.project_id).where(
@@ -368,6 +377,7 @@ async def _laser_files_by_pid(db: AsyncSession, pids: list[int], kind: str = "sh
     ar = await db.execute(select(models.Attachment).where(
         models.Attachment.biz_type == "order_start_output",
         models.Attachment.kind == kind,
+        models.Attachment.pushed == True,  # noqa: E712  # 🆕 #303 下游只见已推送
         models.Attachment.biz_id.in_(list(oid2pid.keys()))).order_by(models.Attachment.id))
     out: dict[int, list[dict]] = {}
     for a in ar.scalars().all():
@@ -437,6 +447,7 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
     laser_files_by_pid: dict = {}
     sealing_files_by_pid: dict = {}   # 🆕 封板文件(机架图/横梁图)
     coldwork_files_by_pid: dict = {}  # 🆕 #269 冷作图纸(设计→钣金组)
+    fitter_files_by_pid: dict = {}    # 🆕 #304 钳工图纸(设计→钳工组)
     if group == "sheetmetal":
         laser_files_by_pid = await _laser_files_by_pid(db, pids)   # 🆕 CAD激光图纸(sheetpkg)也推钣金组
         coldwork_files_by_pid = await _laser_files_by_pid(db, pids, "coldwork_pkg")
@@ -444,6 +455,8 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
         laser_ds_by_pid = await _sheets_by_pid(db, pids, ("激光件清单",))
         laser_files_by_pid = await _laser_files_by_pid(db, pids)
         sealing_files_by_pid = await _laser_files_by_pid(db, pids, "sealing_pkg")
+    if group == "fitter":
+        fitter_files_by_pid = await _laser_files_by_pid(db, pids, "fitter_pkg")
 
     rows: List[GroupProjectRow] = []
     for t, _o in pairs:
@@ -478,6 +491,8 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
         if group == "sheetmetal":
             row.laser_files = laser_files_by_pid.get(p.id, [])         # 🆕 CAD激光图纸(sheetpkg,同封板组口径)
             row.coldwork_files = coldwork_files_by_pid.get(p.id, [])   # 🆕 #269 冷作图纸
+        if group == "fitter":
+            row.fitter_files = fitter_files_by_pid.get(p.id, [])       # 🆕 #304 钳工图纸
         rows.append(row)
     rows.sort(key=lambda x: x.code, reverse=True)
     return rows
@@ -512,3 +527,14 @@ async def sealing_projects(
 ):
     """🆕 反馈#209 封板组 tab：被派发项目 + 激光件清单(只读) + CAD激光图纸(可下载)。"""
     return await _group_rows(db, current, "sealing", year=year, proj_status=proj_status)
+
+
+@router.get("/fitter-projects", response_model=List[GroupProjectRow])
+async def fitter_projects(
+    year: Optional[str] = None,
+    proj_status: Optional[str] = None,
+    current: models.User = Depends(require_roles("fitter", "pm_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#304 钳工组 tab：被派发项目 + 钳工图纸(fitter_pkg,可下载)。"""
+    return await _group_rows(db, current, "fitter", year=year, proj_status=proj_status)

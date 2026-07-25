@@ -24,6 +24,16 @@ from app.seed import seed
 from app.data_migration import run_all, ensure_schema_columns
 from app import models
 from app.overdue import scan_po_arrival_overdue, _try_acquire_scheduler_lock
+import app.overdue as ov
+
+
+class _FakeDT(datetime):   # #292：扫描函数新增 15:00(业务时区)首发时间窗，固定到 16:00 使本测试与运行时刻无关
+    @classmethod
+    def now(cls, tz=None):
+        return datetime.now(CN).replace(hour=16, minute=0, second=0, microsecond=0)
+
+
+ov.datetime = _FakeDT
 
 FAIL = []
 def chk(c, m):

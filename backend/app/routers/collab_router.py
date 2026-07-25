@@ -145,10 +145,11 @@ async def project_workflow(
             groups=groups,
         ))
 
-    # 下游产物计数
+    # 下游产物计数（🆕 #303 上传/推送分离：只计已推送的，待推送的不进看板）
     async def _count(biz_type: str, kind: Optional[str] = None) -> int:
         q = select(models.Attachment).where(
-            models.Attachment.project_id == pid, models.Attachment.biz_type == biz_type)
+            models.Attachment.project_id == pid, models.Attachment.biz_type == biz_type,
+            models.Attachment.pushed == True)
         if kind:
             q = q.where(models.Attachment.kind == kind)
         r3 = await db.execute(q)

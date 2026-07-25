@@ -152,10 +152,12 @@ async def board(
         order_dept[o.id] = o.dept
 
     # 产物附件批量（设计/电工完成产物 → 物流资料列）
+    # 🆕 #303/#294 上传/推送分离：只显示已推送的，待推送的电路图/图纸不进物流资料列
     files_by_pid_dept: dict[tuple[int, str], list] = {}
     if order_ids:
         res = await db.execute(select(models.Attachment).where(
             models.Attachment.biz_type == "order_output",
+            models.Attachment.pushed == True,
             models.Attachment.biz_id.in_(order_ids)))
         for a in res.scalars().all():
             d = order_dept.get(a.biz_id)

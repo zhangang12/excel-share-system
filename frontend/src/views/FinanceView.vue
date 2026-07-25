@@ -24,6 +24,7 @@ interface PaymentRequestOut {
   // 🆕 需求十六：付款时可见收款账户信息 + 关联采购单
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
   po_nos?: string[]
+  project_codes?: string[]   // 🆕 反馈#298 请款审批列表「项目编号」列（关联采购明细的项目编号，去重）
   // 🆕 盈利改善2·应付账期：最早到期日(到货+账期) 与 距到期天数(负=已逾期)
   earliest_due?: string | null; due_in_days?: number | null
   items: { item_id: number; allocated_amount: number; item_name?: string; po_no?: string | null; spec?: string | null; project_code?: string | null; received_amount?: number }[]
@@ -288,8 +289,21 @@ const paymentCounts = computed(() => ({
   approved: paymentReqs.value.filter(r => r.status === 'approved').length,
   paid: paymentReqs.value.filter(r => r.status === 'paid').length,
 }))
-const filteredPaymentReqs = computed(() =>
-  paymentTab.value === 'all' ? paymentReqs.value : paymentReqs.value.filter(r => r.status === paymentTab.value))
+const paySearch = ref('')
+const filteredPaymentReqs = computed(() => {
+  const base = paymentTab.value === 'all' ? paymentReqs.value : paymentReqs.value.filter(r => r.status === paymentTab.value)
+  const kw = paySearch.value.trim().toLowerCase()
+  if (!kw) return base
+  // 🆕 #300：付款情况搜索（编号/供应商/申请人/项目编号/金额/备注，大小写不敏感）
+  return base.filter(r =>
+    String(r.id).includes(kw)
+    || (r.supplier_name || '').toLowerCase().includes(kw)
+    || (r.requester_name || '').toLowerCase().includes(kw)
+    || (r.project_codes || []).join(' ').toLowerCase().includes(kw)
+    || String(r.requested_amount ?? '').includes(kw)
+    || String(r.paid_amount ?? '').includes(kw)
+    || (r.notes || '').toLowerCase().includes(kw))
+})
 
 // 🆕 #237 内控：不能审批自己提交的请款单（兼任采购+财务的账号最容易踩）
 function isMyPayReq(row: PaymentRequestOut) { return !!row.requester_id && row.requester_id === auth.user?.id }
@@ -616,6 +630,10 @@ async function revokeInvoice(row: ViewRow) {
           <el-table show-overflow-tooltip :data="filteredPayReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
             <el-table-column prop="id" label="申请编号" width="80" />
             <el-table-column prop="supplier_name" label="供应商" min-width="130" />
+            <!-- 🆕 反馈#298：项目编号列——取请款单关联采购明细的项目编号，多个不同编号逗号拼接 -->
+            <el-table-column label="项目编号" min-width="110" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.project_codes?.length ? row.project_codes.join('，') : '—' }}</template>
+            </el-table-column>
             <el-table-column prop="requester_name" label="申请人" width="90" />
             <el-table-column label="申请金额" width="120" align="right">
               <template #default="{ row }">{{ fmtMoney(row.requested_amount) }}</template>
@@ -680,6 +698,8 @@ async function revokeInvoice(row: ViewRow) {
               <el-radio-button value="paid">已付款 ({{ paymentCounts.paid }})</el-radio-button>
             </el-radio-group>
             <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
+            <!-- 🆕 #300：搜索所有付款情况（已付款 tab 后面加搜索栏） -->
+            <el-input v-model="paySearch" placeholder="搜索编号/供应商/申请人/项目编号/金额/备注" clearable style="width:300px" />
             <span class="muted small">💡 仅对已审批通过的请款单付款；审批人不能给自己审过的单付款（后端校验）。</span>
           </div>
           <el-table show-overflow-tooltip :data="filteredPaymentReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">

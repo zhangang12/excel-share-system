@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
 import LineChart from '@/components/LineChart.vue'
+import AttachmentPreview from '@/components/AttachmentPreview.vue'   // 🆕 反馈#296 凭证/回执在线预览
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
@@ -382,6 +383,36 @@ const selUnpaidTotal = computed(() =>
 const selSameSupplier = computed(() =>
   selLeaves.value.length > 0 && selLeaves.value.every(i => i.supplier_id === selLeaves.value[0].supplier_id))
 function clearSelection() { itemsTableRef.value?.clearSelection() }
+
+// 🆕 反馈#296：付款凭证/回执点击改为在线预览弹窗（图片/PDF 直接看，弹窗里也可下载；原直接下载）
+const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
+function previewVoucher(att: { id: number; name: string }) { previewRef.value?.open(att) }
+
+// 🆕 反馈#297：批量修改预计到货日期（催货后供应商给了确定时间，逐条改太麻烦；留空=清空）
+const batchEaVisible = ref(false)
+const batchEaDate = ref<string | null>(null)
+const batchEaSaving = ref(false)
+function openBatchEa() {
+  if (!selLeaves.value.length) { ElMessage.warning('请先勾选要修改的明细（可勾选合并行=自动含其下全部零件）'); return }
+  batchEaDate.value = null
+  batchEaVisible.value = true
+}
+async function submitBatchEa() {
+  const ids = selLeaves.value.map(i => i.id)
+  if (!ids.length) { ElMessage.warning('请先勾选要修改的明细'); return }
+  batchEaSaving.value = true
+  try {
+    const r = await http.put<{ updated: number }>('/purchase-mgmt/items/batch-expected-arrival', {
+      ids, expected_arrival: batchEaDate.value || null,
+    })
+    ElMessage.success(batchEaDate.value
+      ? `已将 ${r.data.updated} 条明细的预计到货改为 ${batchEaDate.value}（清单详单已同步回写）`
+      : `已清空 ${r.data.updated} 条明细的预计到货（清单详单已同步回写）`)
+    batchEaVisible.value = false
+    clearSelection()
+    await loadItems()
+  } catch { /* handled */ } finally { batchEaSaving.value = false }
+}
 
 // 🆕 #144 采购明细按采购单号折叠分组：同一采购单(≥2行)收成一个可展开的父行，
 //    单行采购单/无采购单号的散单仍平铺。父行显示汇总(共N件+收货/开票/已付合计)。
@@ -2083,6 +2114,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <span v-if="!selSameSupplier" class="warn">跨供应商不能一起请款/维护开票号，请选择同一供应商的明细</span>
             <el-button size="small" type="warning" :disabled="!selSameSupplier" @click="openPaymentRequest">发起请款</el-button>
             <el-button size="small" type="primary" plain :disabled="!selSameSupplier" @click="openBatchInvoiceNo">维护开票号</el-button>
+            <el-button size="small" type="primary" plain @click="openBatchEa">批量修改预计到货</el-button>
             <el-button size="small" link @click="clearSelection">取消选择</el-button>
           </div>
 
@@ -2197,10 +2229,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column label="付款状态" width="112" align="center">
               <template #default="{ row }">
                 <el-tag :type="payStatusTag(row.pay_status)" size="small" effect="light">{{ row.pay_status || '未付款' }}</el-tag>
-                <!-- 🆕 反馈#277：财务付款回执连到已付款行——有凭证即可下载 -->
+                <!-- 🆕 反馈#277：财务付款回执连到已付款行；🆕 反馈#296：点击改在线预览(弹窗内可下载) -->
                 <el-tooltip v-if="row.pay_voucher_file_id" :content="row.pay_voucher_name || '付款回执'" placement="top">
                   <el-button link type="primary" size="small" style="margin-left:2px"
-                             @click="downloadAttachment({ id: row.pay_voucher_file_id, name: row.pay_voucher_name || '付款回执' })">回执</el-button>
+                             @click="previewVoucher({ id: row.pay_voucher_file_id, name: row.pay_voucher_name || '付款回执' })">回执</el-button>
                 </el-tooltip>
               </template>
             </el-table-column>
@@ -2383,11 +2415,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column prop="paid_date" label="付款日期" width="102">
               <template #default="{ row }">{{ row.paid_date || '—' }}</template>
             </el-table-column>
-            <!-- 🆕 反馈#276：已付款的请款单，申请人可查看/下载财务上传的付款凭证 -->
+            <!-- 🆕 反馈#276：已付款的请款单，申请人可查看财务上传的付款凭证；🆕 反馈#296：点击改在线预览(弹窗内可下载) -->
             <el-table-column label="付款凭证" width="110" align="center">
               <template #default="{ row }">
                 <el-button v-if="row.pay_voucher_file_id" size="small" link type="primary"
-                           @click="downloadAttachment({ id: row.pay_voucher_file_id, name: row.pay_voucher_name || '付款凭证' })">📎 凭证</el-button>
+                           @click="previewVoucher({ id: row.pay_voucher_file_id, name: row.pay_voucher_name || '付款凭证' })">📎 凭证</el-button>
                 <span v-else-if="row.status === 'paid'" class="muted small">未上传</span>
                 <span v-else class="muted small">—</span>
               </template>
@@ -3048,6 +3080,22 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </template>
     </el-dialog>
 
+    <!-- ==================== 🆕 反馈#297 批量修改预计到货 ==================== -->
+    <el-dialog v-model="batchEaVisible" title="批量修改预计到货" width="460px">
+      <el-alert type="info" :closable="false" style="margin-bottom:14px"
+        :title="`将把已勾选的 ${selLeaves.length} 条明细的预计到货统一改为所选日期；来自项目清单的明细会同步回写详单「预计到货」列。`" />
+      <el-form label-position="top">
+        <el-form-item label="预计到货日期（留空 = 清空）">
+          <el-date-picker v-model="batchEaDate" type="date" value-format="YYYY-MM-DD" clearable
+                          style="width:100%" placeholder="选择日期；清空则不填预计到货" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchEaVisible = false">取消</el-button>
+        <el-button type="primary" :loading="batchEaSaving" @click="submitBatchEa">确认修改</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ==================== 🆕 #4 合并父行「整单维护」==================== -->
     <el-dialog v-model="groupSumVisible" title="整单维护（合并单）" width="480px">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
@@ -3455,6 +3503,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-button type="primary" :loading="mdSaving" @click="mdSave">{{ mdEditingId ? '保存修改' : '新增取值' }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- 🆕 反馈#296 附件在线预览弹窗（凭证/回执） -->
+    <AttachmentPreview ref="previewRef" />
   </div>
 </template>
 

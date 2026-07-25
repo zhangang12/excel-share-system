@@ -1496,6 +1496,49 @@ async def import_suppliers(
     return {"message": msg, "created": created, "updated": updated, "errors": errors[:20]}
 
 
+# 注意：本路由须在 PUT /items/{iid} 之前，否则 "batch-expected-arrival" 会被解析为 id 参数
+@router.put("/items/batch-expected-arrival")
+async def batch_expected_arrival(
+    body: schemas.PurchaseBatchExpectedArrivalIn,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#297：批量修改预计到货日期（催货后供应商给了确定时间，逐条改太麻烦）。
+    口径与单条编辑(PUT /items/{iid})完全一致：值有变化才回写来源清单「预计到货」列
+    （复用同一 _writeback_sheet_row，清空日期则清空单元格），并推改期留痕通知给主管/管理层。"""
+    if not body.ids:
+        raise HTTPException(400, "请至少选择一条采购明细")
+    new_ea = (body.expected_arrival or "").strip() or None
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.ids)))
+    items = list(r.scalars().all())
+    if _buyer_restricted(current):
+        items = [i for i in items if i.buyer_id == current.id]
+    if not items:
+        raise HTTPException(404, "明细不存在或无权限")
+    changed: list[tuple[int, Optional[str], str, Optional[str]]] = []   # (id, po_no, item_name, old_ea)
+    for item in items:
+        old_ea = item.expected_arrival or None
+        if old_ea == new_ea:
+            continue
+        item.expected_arrival = new_ea
+        if item.source_sheet_id and item.source_record_id:
+            # 与单条编辑同一回写函数：保持项目详单「预计到货」列与采购明细一致
+            wb = {c: (new_ea or "") for c in _ALL_EXPECTED_ARRIVAL_COLS}
+            await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
+        changed.append((item.id, item.po_no, item.item_name, old_ea))
+    await db.commit()
+    # 改期留痕通知（事务提交后再推，避免幻影通知）；排除操作人本人
+    uname = current.full_name or current.username
+    for iid, po_no, item_name, old_ea in changed:
+        text = (f"【预计到货变更】采购单 {po_no or '（无单号）'}「{item_name}」预计到货日期"
+                f"由 {old_ea or '未填'} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
+        for role in ("buyer_lead", "manager", "admin"):
+            await push_message(db, to_role=role, kind="warn", text=text,
+                               biz_type="po_expected_changed", biz_id=iid,
+                               exclude_user_ids={current.id})
+    return {"updated": len(items), "changed": len(changed)}
+
+
 @router.put("/items/{iid}", response_model=schemas.PurchaseItemOut)
 async def update_item(
     iid: int,
@@ -2127,6 +2170,8 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         except ValueError:
             pass
     po_nos = sorted({r["po_no"] for r in item_rows if r["po_no"]})
+    # 🆕 反馈#298：请款单关联采购明细的项目编号（去重排序；财务请款审批列表「项目编号」列用）
+    project_codes = sorted({r["project_code"] for r in item_rows if r["project_code"]})
     voucher_name = None
     if pr.pay_voucher_file_id:
         ar = await db.execute(select(models.Attachment.name).where(
@@ -2153,6 +2198,7 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         supplier_bank_account=(sup.bank_account if sup else None),
         supplier_tax_no=(sup.tax_no if sup else None),
         po_nos=po_nos,
+        project_codes=project_codes,
         earliest_due=earliest_due, due_in_days=due_in_days,
         created_at=pr.created_at,
         items=item_rows,

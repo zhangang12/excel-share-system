@@ -314,8 +314,14 @@ async def scan_po_arrival_overdue(db: AsyncSession) -> dict:
 
     幂等键 =(biz_type='po_arrival_overdue', biz_id=purchase_item.id, 当日)：同一条同一天只推一次；
     货到(填了到货日期)即不再命中扫描、自动停推；预计到货留空的明细不提醒。返回 {scanned, notified}。
+    时间窗(#292)：货车中午才发车，15:00 前的提醒多为误报——当日提醒 15:00(业务时区)后才首发。
     """
-    today = datetime.now(_CN_TZ).date()
+    # #292：当前业务时间 <15:00 则跳过（幂等键是当日级，15 点后第一次扫描正常首发、当日重扫仍去重）
+    now = datetime.now(_CN_TZ)
+    if now.hour < 15:
+        log.info("[scan_po_arrival_overdue] 业务时间 %02d 时 <15 时，跳过当日未到货提醒(#292)", now.hour)
+        return {"scanned": 0, "notified": 0}
+    today = now.date()
     today_s = today.isoformat()
     r = await db.execute(
         select(models.PurchaseItem).where(

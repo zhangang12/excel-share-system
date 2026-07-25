@@ -80,6 +80,7 @@ ROLE_DEFAULT_MENUS: dict[str, list[str]] = {
     "pm_lead":          ["catalog", "list", "produce"],
     "sheetmetal":       ["catalog", "produce"],                 # 🆕 钣金组并入生产部菜单(tab)；无详单（同 assembler 口径）
     "sealing":          ["catalog", "produce"],                 # 🆕 反馈#209 封板组并入生产部菜单(tab)；无详单（同装配/钣金口径）
+    "fitter":           ["catalog", "produce"],                 # 🆕 反馈#304 钳工组并入生产部菜单(tab)；无详单（同钣金/封板口径）
     "buyer":            ["catalog", "list", "purchase_mgmt"],
     "buyer_lead":       ["catalog", "list", "purchase_mgmt"],  # 🆕 采购主管
     "warehouse_lead":   ["catalog", "list", "warehouse"],

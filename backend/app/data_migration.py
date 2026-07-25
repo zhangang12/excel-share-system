@@ -29,7 +29,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("done_flag", "BOOLEAN DEFAULT FALSE"),  # §十七 装配前置完成标记
         ("done_at", "TIMESTAMP"),
     ],
-    "attachments": [("kind", "VARCHAR(32)")],      # 附件业务内细分
+    "attachments": [("kind", "VARCHAR(32)"),      # 附件业务内细分
+                    ("pushed", "BOOLEAN DEFAULT TRUE")],  # 🆕 #303 上传与推送分离(存量=已推送,行为不变)
     "wh_materials": [("material_grade", "VARCHAR(32)"), ("custom_values", "JSON"),
                      ("unit_price", "FLOAT")],   # 🆕 材质（字典管理）+ 自定义字段值 + 需求三 参考单价
     "produce_group_tasks": [("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)")],  # 🆕 派给具体人 + 本组预计完成

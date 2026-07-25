@@ -81,6 +81,13 @@ async def main():
             rr = await c.post(f"/api/orders/{od}/start-upload?kind={kind}", headers=Hd1,
                               files=[("files", (f"{kind}.pdf", b"X", "application/pdf"))])
             chk(rr.status_code == 200, f"上传 {kind}: {rr.status_code} {rr.text[:80]}")
+        # 🆕 #303 上传与推送分离：上传后待推送，点推送才对采购可见
+        pp0 = {x["project_id"]: x for x in (await c.get("/api/purchase/projects", headers=Hbo)).json()}
+        chk(len(pp0[pid2]["cad_laser_files"]) == 0 and len(pp0[pid2]["outsource_img_files"]) == 0,
+            "#303 未推送时采购不可见")
+        for kind in ("sheetpkg", "outsource_img"):
+            rr = await c.post(f"/api/orders/{od}/start-push", headers=Hd1, json={"kind": kind})
+            chk(rr.status_code == 200, f"推送 {kind}: {rr.status_code} {rr.text[:80]}")
         # 采购部项目列表（外协采购员）含该项目的 CAD激光图纸/外购附图 + 数据表引用
         pp = {x["project_id"]: x for x in (await c.get("/api/purchase/projects", headers=Hbo)).json()}
         chk(pid2 in pp, "采购部项目列表含备机乙")
