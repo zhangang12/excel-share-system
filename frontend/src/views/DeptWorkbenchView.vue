@@ -7,7 +7,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Document, Download, Close, UploadFilled, Check, RefreshLeft, Switch as SwitchIcon, Lock,
-  Promotion, CircleCheck, Delete, View, Van, Plus,
+  Promotion, CircleCheck, Delete, View, Van, Plus, EditPen,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -1358,9 +1358,11 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="钣金装配表" min-width="200" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
-                  <el-button size="small" link type="primary" @click="viewSheet(row)">
-                    编辑装配表<el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
-                  </el-button>
+                  <!-- 🆕 编辑装配表改图标按钮（悬停出文字），完成态保留绿勾 -->
+                  <el-tooltip content="编辑装配表" placement="top">
+                    <el-button link type="primary" :icon="EditPen" @click="viewSheet(row)" />
+                  </el-tooltip>
+                  <el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
                 </template>
                 <span v-else class="muted">—</span>
               </template>
@@ -1435,7 +1437,10 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="钣金装配表" min-width="180" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
-                  <el-button size="small" link type="primary" @click="viewSheet(row)">编辑装配表</el-button>
+                  <!-- 🆕 编辑装配表改图标按钮（悬停出文字） -->
+                  <el-tooltip content="编辑装配表" placement="top">
+                    <el-button link type="primary" :icon="EditPen" @click="viewSheet(row)" />
+                  </el-tooltip>
                 </template>
                 <span v-else class="muted">—</span>
               </template>
@@ -1518,8 +1523,10 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <!-- 🆕 反馈#287：封板组也可「编辑装配表」（同钣金组，复用同一 SheetmetalGrid 弹窗）；无编辑权限角色维持「查看」 -->
             <el-table-column label="钣金装配表" min-width="120" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary" :icon="Document"
-                           @click="viewSheet(row)">{{ canEditSheet ? '编辑装配表' : '查看' }}</el-button>
+                <!-- 🆕 反馈#287：封板组也可「编辑装配表」（同钣金组，复用同一 SheetmetalGrid 弹窗）；无编辑权限角色维持「查看」；图标按钮悬停出文字 -->
+                <el-tooltip v-if="row.sheetmetal_datasheet_id" :content="canEditSheet ? '编辑装配表' : '查看'" placement="top">
+                  <el-button link type="primary" :icon="canEditSheet ? EditPen : View" @click="viewSheet(row)" />
+                </el-tooltip>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
