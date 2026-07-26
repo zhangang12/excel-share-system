@@ -11,6 +11,12 @@ const loading = ref(false)
 const showPwd = ref(false)   // 仅 UI：密码明文/密文切换
 const form = reactive({ username: '', password: '' })
 
+// 🆕 记住用户名：勾选后登录成功把账号存本地，下次开页自动回填；取消勾选即清除
+const remember = ref(false)
+const REMEMBER_KEY = 'pms_remember_name'
+const savedName = localStorage.getItem(REMEMBER_KEY)
+if (savedName) { form.username = savedName; remember.value = true }
+
 async function onSubmit() {
   if (!form.username || !form.password) {
     ElMessage.warning('请输入用户名和密码')
@@ -19,6 +25,8 @@ async function onSubmit() {
   loading.value = true
   try {
     await auth.login(form.username, form.password)
+    if (remember.value) localStorage.setItem(REMEMBER_KEY, form.username)
+    else localStorage.removeItem(REMEMBER_KEY)
     ElMessage.success('登录成功')
     router.push('/overview')
   } catch {
@@ -71,6 +79,11 @@ async function onSubmit() {
                placeholder="请输入密码" autocomplete="current-password" @keyup.enter="onSubmit" />
         <span class="lg-toggle" @click="showPwd = !showPwd">{{ showPwd ? '隐藏' : '显示' }}</span>
       </div>
+
+      <label class="lg-remember">
+        <input type="checkbox" v-model="remember" />
+        <span>记住用户名</span>
+      </label>
 
       <button class="lg-submit" type="submit" :disabled="loading">
         {{ loading ? '登 录 中…' : '登 录' }}
@@ -167,6 +180,13 @@ async function onSubmit() {
 .lg-field input::placeholder { color: rgba(255,255,255,.42); }
 .lg-toggle { font-size: 12.5px; color: rgba(255,255,255,.55); cursor: pointer; user-select: none; padding-left: 10px; }
 .lg-toggle:hover { color: #e0c98a; }
+/* 🆕 记住用户名 */
+.lg-remember {
+  display: flex; align-items: center; gap: 8px; margin: -6px 0 14px;
+  font-size: 12.5px; color: rgba(255,255,255,.66); cursor: pointer; user-select: none;
+}
+.lg-remember input { accent-color: #c8a24f; width: 14px; height: 14px; cursor: pointer; }
+.lg-remember:hover { color: #e0c98a; }
 .lg-submit {
   width: 100%; height: 48px; margin-top: 8px; cursor: pointer;
   border: 0; border-radius: 12px;
