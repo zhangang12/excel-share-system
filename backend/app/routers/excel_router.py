@@ -24,6 +24,10 @@ from ..sheet_templates import SHEET_TEMPLATES, is_known_sheet, map_excel_to_temp
 
 router = APIRouter(prefix="/api", tags=["Excel 导入导出"])
 
+# 🆕 2026-07-27：导入后进度列空白自动填「进行中」（与前端 DatasheetGrid 的
+#   进度列字段名白名单/「一键标记进行中」同口径：空白才填，Excel 里已填值的不动）
+_PROGRESS_FIELD_NAMES = {"进度", "进度100%", "完成度", "状态", "完工度"}
+
 
 # ============== 类型推断 ==============
 DATE_PATTERN = re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$")
@@ -497,6 +501,8 @@ async def import_excel(
         await db.flush()
 
         # 行入库（跳过被忽略的列）
+        # 🆕 本表进度列（进度/状态 等白名单字段名）：导入后空白自动填「进行中」
+        progress_fields = [f for f in fields if (f.name or '').strip() in _PROGRESS_FIELD_NAMES]
         for ri, row in enumerate(rows):
             values: dict[str, Any] = {}
             # 按 field 的源列序号去 row 里取值
@@ -510,6 +516,9 @@ async def import_excel(
                     nv = _normalize_value(row[ci], f.type)
                     if nv is not None:
                         values[str(f.id)] = nv
+            for pf in progress_fields:
+                if not values.get(str(pf.id)):
+                    values[str(pf.id)] = "进行中"
             r = models.Record(
                 datasheet_id=d.id, sort_order=ri, values=values,
                 created_by=current.id, updated_by=current.id,
