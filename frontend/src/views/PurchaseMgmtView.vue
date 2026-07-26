@@ -1720,12 +1720,12 @@ async function saveOpeningBalance() {
   } catch { /* handled */ } finally { openingBalanceSaving.value = false }
 }
 
-// 🆕 供应商账目合计行（列对齐：供应商/分类/状态/期初/收货/开票/待开票/已付/欠款/明细数/操作）
+// 🆕 供应商账目合计行（列对齐：供应商/分类/状态/收货/开票/待开票/已付/欠款/明细数/操作；期初欠款列已隐藏）
 function stmtSummary() {
   const rows = filteredStatementRows.value
   const sum = (k: keyof SupplierStatementRow) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0)
   return ['合计', '', '',
-    fmtMoney(sum('opening_balance')), fmtMoney(sum('received_total')),
+    fmtMoney(sum('received_total')),
     fmtMoney(sum('invoice_total')), fmtMoney(sum('uninvoiced')),
     fmtMoney(sum('paid_total')), fmtMoney(sum('outstanding')),
     String(rows.reduce((a, r) => a + (r.item_count || 0), 0)), '']
@@ -2319,9 +2319,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="opening_balance" label="期初欠款" width="118" align="right" sortable>
-              <template #default="{ row }">{{ fmtMoney(row.opening_balance) }}</template>
-            </el-table-column>
+            <!-- 🆕 反馈：期初欠款列不需要，隐藏（维护期初的功能保留在编辑供应商里） -->
             <el-table-column prop="received_total" label="收货合计" width="122" align="right" sortable>
               <template #default="{ row }"><b>{{ fmtMoney(row.received_total) }}</b></template>
             </el-table-column>
