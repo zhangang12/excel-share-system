@@ -12,8 +12,9 @@ import StatusPill from '@/components/StatusPill.vue'
 
 const auth = useAuthStore()
 // 🆕 2026-07-20：提交权限由仅装配组放宽到 装配/钣金/封板 三组（直达设计师，不审批）
+// 🆕 2026-07-26：各部门问题反馈不需要主管审批——再放开电工部（在手电工任务）
 // 多角色：按并集判断（任一角色命中即显示对应能力）
-const canSubmit = computed(() => auth.hasRole('assembler', 'sheetmetal', 'sealing'))
+const canSubmit = computed(() => auth.hasRole('assembler', 'sheetmetal', 'sealing', 'electrician', 'electric_lead'))
 // 🆕 反馈#227/#228：装配反馈直达设计,取消生产主管审批环节——不再显示"问题反馈审批"面板
 const isDesigner = computed(() => auth.hasRole('designer'))
 // 🆕 #29 断链修复：设计负责人/管理层此前看不到本面板，死信反馈(无在岗设计师)无处可指派

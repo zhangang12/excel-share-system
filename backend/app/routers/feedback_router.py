@@ -4,6 +4,7 @@
 
 🆕 2026-07-20：提交权限由仅装配组(assembler)放宽到 装配/钣金/封板 三组
 （assembler/sheetmetal/sealing），同样直达设计师、不审批。
+🆕 2026-07-26：各部门的问题反馈不需要主管审批——再放开电工部（在手电工任务），直达设计师。
 
 设计师反查：用项目当前 design 任务的 worker_id（非姓名匹配，修正原型缺陷）；
 无 design 任务时降级推 design_lead 池。
@@ -113,8 +114,16 @@ async def list_feedbacks(
 
 
 # 🆕 2026-07-20 可提交问题反馈的生产三组（装配/钣金/封板）及其 ProduceGroupTask.group 取值
+# 🆕 2026-07-26：各部门的问题反馈不需要主管审批——放开到电工部（在手电工任务），同样直达设计师
 _FEEDBACK_GROUPS = ("assembly", "sheetmetal", "sealing")
-_FEEDBACK_ROLES = ("assembler", "sheetmetal", "sealing")
+_FEEDBACK_ROLES = ("assembler", "sheetmetal", "sealing", "electrician", "electric_lead")
+
+
+def _electric_in_hand_cond(uid: int):
+    """电工部在手任务条件：派给本人且未完成的电工任务单。"""
+    return and_(models.DeptOrder.dept == "electric",
+                models.DeptOrder.worker_id == uid,
+                models.DeptOrder.status.in_(("assigned", "in_progress")))
 
 
 @router.get("/projects", response_model=List[schemas.FeedbackProjOption])
@@ -122,9 +131,9 @@ async def my_projects(
     current: models.User = Depends(require_roles(*_FEEDBACK_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    """在手项目列表：返回派给本人(装配/钣金/封板任一组)且进行中的项目供提交问题反馈时选择。
-    🆕 反馈#210「对应不上」：下拉与提交校验同源(ProduceGroupTask 分组派单)，
-    避免过去下拉列全部在手项目、提交却被「只能对自己在手的项目提交反馈」拦下的错配。"""
+    """在手项目列表：返回派给本人且进行中的项目供提交问题反馈时选择。
+    生产三组=ProduceGroupTask 分组派单（🆕 反馈#210 下拉与提交校验同源）；
+    🆕 2026-07-26 电工部=DeptOrder 电工任务（assigned/in_progress），两路并集。"""
     r = await db.execute(
         select(models.Project.id, models.Project.code, models.Project.name)
         .join(models.ProduceGroupTask, models.ProduceGroupTask.project_id == models.Project.id)
@@ -133,7 +142,17 @@ async def my_projects(
                models.Project.status == "进行中", models.Project.is_deleted == False)
         .distinct().order_by(models.Project.code)
     )
-    return [schemas.FeedbackProjOption(id=i, code=c, name=n) for i, c, n in r.all()]
+    seen = {i: (i, c, n) for i, c, n in r.all()}
+    r2 = await db.execute(
+        select(models.Project.id, models.Project.code, models.Project.name)
+        .join(models.DeptOrder, models.DeptOrder.project_id == models.Project.id)
+        .where(_electric_in_hand_cond(current.id),
+               models.Project.status == "进行中", models.Project.is_deleted == False)
+        .distinct().order_by(models.Project.code)
+    )
+    for i, c, n in r2.all():
+        seen.setdefault(i, (i, c, n))
+    return [schemas.FeedbackProjOption(id=i, code=c, name=n) for i, c, n in sorted(seen.values(), key=lambda x: x[1])]
 
 
 @router.post("", response_model=schemas.Msg)
@@ -149,15 +168,21 @@ async def create_feedback(
     🆕 #193 改 multipart：可附现场照片(多张,选填)，设计师接收时可查看。"""
     if not content.strip():
         raise HTTPException(400, "请填写问题内容")
-    # 校验是本人在手(装配/钣金/封板任一组)项目——与 /projects 下拉同源(ProduceGroupTask 分组派单)。
-    # 🆕 反馈#210：工人的在手项目走分组派单(worker_id 在 ProduceGroupTask,非 DeptOrder),
-    #   过去这里查 DeptOrder.worker_id 恒为空 → 与下拉对不上,一提交就被拦。
+    # 校验是本人在手项目——与 /projects 下拉同源：
+    # 生产三组走 ProduceGroupTask 分组派单（反馈#210），电工部走 DeptOrder 电工任务（2026-07-26 放开）。
     r = await db.execute(select(models.ProduceGroupTask).where(
         models.ProduceGroupTask.project_id == project_id,
         models.ProduceGroupTask.group.in_(_FEEDBACK_GROUPS),
         models.ProduceGroupTask.worker_id == current.id,
     ))
-    if not r.scalars().first():
+    in_hand = r.scalars().first() is not None
+    if not in_hand:
+        r2 = await db.execute(select(models.DeptOrder).where(
+            models.DeptOrder.project_id == project_id,
+            _electric_in_hand_cond(current.id),
+        ))
+        in_hand = r2.scalars().first() is not None
+    if not in_hand:
         raise HTTPException(403, "只能对自己在手的项目提交反馈")
     rp = await db.execute(select(models.Project).where(models.Project.id == project_id))
     proj = rp.scalar_one()
