@@ -167,23 +167,33 @@ a:hover { text-decoration: none; opacity: .85; }
 }
 
 /* 🆕 折叠合并表：父(汇总)行 与 子(零件)行 的层级 + 配色区分，让折叠数据一眼看清归属 */
-/* 父/汇总行：主题浅色底 + 加粗，像分组标题 */
+/* 父/汇总行：主题浅色底 + 加粗，像分组标题（🆕 反馈：底色加深到 light-7，折叠项更明显） */
 .el-table .el-table__row.grp-row > td.el-table__cell {
-  background: var(--el-color-primary-light-9, #ecf3fe) !important;
+  background: var(--el-color-primary-light-7, #c6dbfb) !important;
   font-weight: 600;
 }
 .el-table--enable-row-hover .el-table__row.grp-row:hover > td.el-table__cell {
-  background: var(--el-color-primary-light-8, #d9e7fd) !important;
+  background: var(--el-color-primary-light-6, #a9c8f8) !important;
 }
-/* 子行(树形第1层零件)：浅灰底 + 左侧主题色竖条，明显“隶属于上面的汇总行” */
+/* 子行(树形第1层零件)：浅灰底 + 左侧主题色竖条，明显“隶属于上面的汇总行”（🆕 竖条加粗加深） */
 .el-table .el-table__row--level-1 > td.el-table__cell {
   background: var(--el-fill-color-lighter, #fafafa) !important;
 }
 .el-table .el-table__row--level-1 > td.el-table__cell:first-child {
-  box-shadow: inset 3px 0 0 0 var(--el-color-primary-light-5, #a0cfff);
+  box-shadow: inset 4px 0 0 0 var(--el-color-primary-light-3, #79b0f8);
 }
 .el-table--enable-row-hover .el-table__row--level-1:hover > td.el-table__cell {
   background: var(--el-fill-color-light, #f0f2f5) !important;
+}
+/* 🆕 折叠展开箭头更明显：主题色加深 + 加大 + 圆底衬（采购明细/供应商账目/收货合并统一生效） */
+.el-table .el-table__expand-icon {
+  color: var(--el-color-primary) !important;
+  font-size: 16px;
+}
+.el-table .el-table__expand-icon .el-icon {
+  background: var(--el-color-primary-light-8, #d9e7fd);
+  border-radius: 4px;
+  font-weight: 700;
 }
 
 .el-tag {
