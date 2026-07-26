@@ -356,22 +356,12 @@ async def scan_po_arrival_overdue(db: AsyncSession) -> dict:
         else:
             text = (f"【未到货提醒】{po}{it.item_name}（供应商：{sup}）预计 {it.expected_arrival} 到货，"
                     f"已超期 {over_days} 天仍未到货，请尽快跟进。")
-        # 采购员本人（无归属采购员则只推主管/管理层）+ 采购主管 + 全体管理层(admin/manager)；
-        # 角色扇出排除采购员本人，避免其兼有主管/管理角色时同日收到两条相同文本
-        excl = {it.buyer_id} if it.buyer_id else None
+        # 🆕 2026-07-26 口径收窄：只推采购下单人本人提醒及时跟进，不再推主管/管理层（反馈信息太多）。
+        # 无归属采购员的明细不再推任何人（原兜底推主管/管理层，一并去掉）。
         if it.buyer_id:
             await push_message(db, to_user_id=it.buyer_id, kind="warn",
                                text=text, biz_type="po_arrival_overdue", biz_id=it.id)
-        await push_message(db, to_role="buyer_lead", kind="warn",
-                           text=text, biz_type="po_arrival_overdue", biz_id=it.id,
-                           exclude_user_ids=excl)
-        await push_message(db, to_role="manager", kind="warn",
-                           text=text, biz_type="po_arrival_overdue", biz_id=it.id,
-                           exclude_user_ids=excl)
-        await push_message(db, to_role="admin", kind="warn",
-                           text=text, biz_type="po_arrival_overdue", biz_id=it.id,
-                           exclude_user_ids=excl)
-        notified += 1
+            notified += 1
 
     if notified:
         log.info("[scan_po_arrival_overdue] 推送 %d 条到期未到货提醒（共扫描 %d）", notified, len(items))

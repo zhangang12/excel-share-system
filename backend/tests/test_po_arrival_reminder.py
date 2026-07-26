@@ -100,9 +100,10 @@ async def main():
             res = await scan_po_arrival_overdue(db)
             chk(res["notified"] == 1, f"预计今天到货且未收 → 提醒1条: {res}")
             chk(len(await msgs_for(db, b1, "po_arrival_overdue", it1)) == 1, "采购员本人收到提醒")
-            chk(len(await msgs_for(db, bl, "po_arrival_overdue", it1)) == 1, "采购主管收到提醒")
-            chk(len(await msgs_for(db, m1, "po_arrival_overdue", it1)) == 1, "管理层收到提醒")
-            chk(len(await msgs_for(db, admin_id, "po_arrival_overdue", it1)) == 1, "admin 收到提醒")
+            # 🆕 2026-07-26 口径收窄：只推采购下单人，主管/管理层不再收到
+            chk(len(await msgs_for(db, bl, "po_arrival_overdue", it1)) == 0, "采购主管不再收到")
+            chk(len(await msgs_for(db, m1, "po_arrival_overdue", it1)) == 0, "管理层不再收到")
+            chk(len(await msgs_for(db, admin_id, "po_arrival_overdue", it1)) == 0, "admin 不再收到")
             res2 = await scan_po_arrival_overdue(db)
             chk(res2["notified"] == 0, f"当日重扫幂等不重复: {res2}")
 
