@@ -216,66 +216,35 @@ async def main():
         chk((await c.put(f"/api/datasheets/{did_sm}/produce-edit/records/{rec_sm_id}/cell", headers=Hasm,
              json={"field_id": fid_sm, "value": "装配改"})).status_code == 200, "装配组编辑钣金装配仍放行")
 
-        # 🆕 反馈#304 钳工组(fitter)：设计「钳工图纸」(order_start_output/fitter_pkg)推送钳工组；可选组口径同封板组
-        chk(roles["fitter"]["name"] == "生产部-钳工组", f"钳工组角色: {roles['fitter']['name']}")
-        fitid = await mk("fit", "fitter")
-        fit2id = await mk("fit2", "fitter")
-        Hfit, Hfit2 = await login("fit"), await login("fit2")
-        # 钳工组菜单并入生产部：含 produce、不含 sheet（同钣金/封板口径）
-        ks = [m["key"] for m in (await c.get("/api/auth/menus", headers=Hfit)).json()["menus"]]
-        chk("produce" in ks and "sheet" not in ks, f"钳工组菜单=生产部(无sheet): {ks}")
-        # 派发下拉含钳工组人员
+        # 🆕 反馈#304 更正：钳工不搞独立组(钳工=装配组的人)，钳工图纸(fitter_pkg)并入装配组
+        # fitter 角色已撤：roles 接口不再有 fitter
+        chk("fitter" not in roles, f"fitter 角色已撤(roles 接口无): {list(roles)}")
+        # /produce/fitter-projects 端点已删除 → 404（任何角色都一样）
+        chk((await c.get("/api/produce/fitter-projects", headers=Hpm)).status_code == 404, "fitter-projects 端点已删(404)")
+        # 派发下拉不再有 fitter 键；派发接口不认 fitter_worker_id（pydantic 忽略多余字段，不建 fitter 组任务）
         opts = (await c.get("/api/produce/dispatch-options", headers=Hpm)).json()
-        chk(fitid in [u["id"] for u in opts["fitter"]], f"派发下拉含钳工组人员: {list(opts)}")
-        # 设计任务产出(fitter_pkg)：同一张设计任务单的产出，聚合到钳工组项目行 fitter_files
+        chk("fitter" not in opts, f"派发下拉无钳工组: {list(opts)}")
+        # 设计任务产出(fitter_pkg，pushed 默认=1 同现有口径)：聚合到装配组项目行 fitter_files
         async with SessionLocal() as db:
             dord = (await db.execute(select(models.DeptOrder).where(
                 models.DeptOrder.project_id == pid, models.DeptOrder.dept == "design"))).scalar_one()
             db.add(models.Attachment(biz_type="order_start_output", biz_id=dord.id, kind="fitter_pkg",
                                      project_id=pid, name="钳工图A.dwg", ext="dwg", size=1, path="x/fitter_a.dwg"))
             await db.commit()
-        # 主管派发给钳工组 → 建 fitter 组任务（重复派发=换人不重复建组）
-        r = await c.post(f"/api/produce/dispatch/{oid}", headers=Hpm, json={"fitter_worker_id": fitid})
-        chk(r.status_code == 200, f"主管派发钳工组: {r.text[:120]}")
-        async with SessionLocal() as db:
-            t = (await db.execute(select(models.ProduceGroupTask).where(
-                models.ProduceGroupTask.order_id == oid, models.ProduceGroupTask.group == "fitter"))).scalar_one()
-            chk(t.worker_id == fitid, "钳工组任务记派给的人")
-        # 角色不符校验：把钣金组的人填到钳工组位 → 400
-        chk((await c.post(f"/api/produce/dispatch/{oid}", headers=Hpm,
-             json={"fitter_worker_id": smid})).status_code == 400, "钳工组派发对象角色校验")
-        # 按人可见：fit 看到派给自己的项目，行内聚合钳工图纸；fit2 看不到；越权 403
-        frows = (await c.get("/api/produce/fitter-projects", headers=Hfit)).json()
-        chk(len(frows) == 1 and frows[0]["project_id"] == pid, f"钳工组看到派给自己的项目: {frows}")
-        chk(frows[0]["worker_name"] == "fit", f"钳工组派给列=fit: {frows[0].get('worker_name')}")
-        chk([f["name"] for f in frows[0].get("fitter_files", [])] == ["钳工图A.dwg"],
-            f"钳工组行聚合钳工图纸(fitter_pkg): {frows[0].get('fitter_files')}")
-        chk((await c.get("/api/produce/fitter-projects", headers=Hfit2)).json() == [], "另一钳工组人看不到非自己的")
-        chk((await c.get("/api/produce/fitter-projects", headers=Hsm)).status_code == 403, "钣金组越权钳工列表403")
-        chk((await c.get("/api/produce/sheetmetal-projects", headers=Hfit)).status_code == 403, "钳工组越权钣金列表403")
-        # 本组预计完成（组员可设）
-        r = await c.post(f"/api/produce/group/{frows[0]['task_id']}/due", headers=Hfit, json={"due_date": "2026-08-01"})
-        chk(r.status_code == 200, f"钳工组设预计完成: {r.text[:80]}")
-        # 主管换人 fit→fit2（复用组换人机制，校验 fitter 角色）
-        r = await c.post(f"/api/produce/group/{frows[0]['task_id']}/reassign", headers=Hpm, json={"worker_id": fit2id})
-        chk(r.status_code == 200, f"钳工组换人: {r.text[:80]}")
-        frows = (await c.get("/api/produce/fitter-projects", headers=Hfit2)).json()
-        chk(len(frows) == 1 and frows[0]["worker_name"] == "fit2", f"换人后任务归 fit2: {frows}")
-        # 完成链：装配补 done + 封板 done 后，钳工(可选组,派了须完成)未完 → 父单仍 in_progress；钳工 done → 父单 done
+        asmrows = (await c.get("/api/produce/assembly-projects", headers=Hasm)).json()
+        chk(len(asmrows) == 1 and [f["name"] for f in asmrows[0].get("fitter_files", [])] == ["钳工图A.dwg"],
+            f"装配组行聚合钳工图纸(fitter_pkg): {asmrows[0].get('fitter_files') if asmrows else asmrows}")
+        # 完成链：装配补 done + 封板 done → 全部已派组(钣金/装配/封板)完成 → 父单 done（不再有 fitter 组任务）
         async with SessionLocal() as db:
             gt = {t.group: t for t in (await db.execute(select(models.ProduceGroupTask).where(
                 models.ProduceGroupTask.order_id == oid))).scalars().all()}
-            asm_tid, seal_tid, fit_tid = gt["assembly"].id, gt["sealing"].id, gt["fitter"].id
+            chk(set(gt) == {"sheetmetal", "assembly", "sealing"}, f"无 fitter 组任务: {list(gt)}")
+            asm_tid, seal_tid = gt["assembly"].id, gt["sealing"].id
         await c.post(f"/api/produce/group/{asm_tid}/done", headers=Hasm, json={"done": True})
         await c.post(f"/api/produce/group/{seal_tid}/done", headers=Hsl, json={"done": True})
         async with SessionLocal() as db:
             o = (await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))).scalar_one()
-            chk(o.status == "in_progress", f"钳工未完→生产单未done(可选组派了须完成): {o.status}")
-        r = await c.post(f"/api/produce/group/{fit_tid}/done", headers=Hfit2, json={"done": True})
-        chk(r.status_code == 200, f"钳工组标记完成: {r.text[:80]}")
-        async with SessionLocal() as db:
-            o = (await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))).scalar_one()
-            chk(o.status == "done" and o.done_date, f"全部已派组(含钳工)完成→生产单 done: {o.status}/{o.done_date}")
+            chk(o.status == "done" and o.done_date, f"全部已派组完成→生产单 done: {o.status}/{o.done_date}")
 
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")

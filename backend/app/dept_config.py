@@ -28,7 +28,8 @@ DEPTS: dict[str, dict] = {
             {"k": "sealing_pkg", "label": "封板文件(机架图/横梁图)", "to_role": "sealing"},
             # 🆕 #269 冷作图纸→推送钣金组(sheetmetal);钣金组 tab 里可下载
             {"k": "coldwork_pkg", "label": "冷作图纸", "to_role": "sheetmetal"},
-            {"k": "fitter_pkg", "label": "钳工图纸", "to_role": "fitter"},
+            # 🆕 #304 钳工图纸→推送装配组(assembler)：钳工不搞独立组，就是装配组的人，图纸链路并入装配组
+            {"k": "fitter_pkg", "label": "钳工图纸", "to_role": "assembler"},
         ],
         "outputs": [
             {"k": "manual",    "label": "说明书 (Word)", "to_role": "logistics", "required": False},

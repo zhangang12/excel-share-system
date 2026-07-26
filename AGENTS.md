@@ -63,7 +63,7 @@ bash desktop/release.sh      # 同步发桌面客户端：版本号 bump 应随�
 
 ## 当前状态（2026-07-25）
 
-- **第 15 批反馈 13 条（未提交，发版中）**：#304 新建钳工组（fitter 角色 seed+生产部工作台钳工组 tab+fitter_pkg 推送，组注册=produce_router GROUPS/GROUP_ROLE 三张表+每组薄端点，REQUIRED_GROUPS 不含=可选组）；#303 上传/推送分离（Attachment.pushed 列=存量默认1，start-upload 不再发消息，新端点 POST /orders/{oid}/start-push，下游全部过滤 pushed：produce_router/downstream_router/collab_router 看板计数/logistics_router 资料列；plist 电工清单刻意维持上传即推）；#294 电路图前置（order_output/circuit 也走 pushed 口径，进行中卡片可传+推送，to_role=logistics）；#295=#302 冷作列改打包下载同款；#296 凭证/回执在线预览（AttachmentPreview）；#297 批量改预计到货（复用 _writeback_sheet_row 回写详单）；#298 请款审批项目编号列；#300 财务部付款 tab 搜索框；#301 预计到货列日期选择器（isDateField 加字段名判定）；#292 未到货提醒 15:00 后（scan_po_arrival_overdue 开头时间窗）；#293 合并收货金额自动=数量×单价；#299 卡片边框加深。测试：7 个测试文件全 PASSED，vue-tsc exit=0
+- **第 15 批反馈 13 条（未提交，发版中）**：#304 钳工图纸推装配组（**07-26 更正：钳工组不独立成组，撤掉 fitter 角色/页签，fitter_pkg 的 to_role=assembler，「钳工图纸」列在装配组页签**，组注册=produce_router GROUPS/GROUP_ROLE 三张表+每组薄端点）；#303 上传/推送分离（Attachment.pushed 列=存量默认1，start-upload 不再发消息，新端点 POST /orders/{oid}/start-push，下游全部过滤 pushed：produce_router/downstream_router/collab_router 看板计数/logistics_router 资料列；plist 电工清单刻意维持上传即推）；#294 电路图前置（order_output/circuit 也走 pushed 口径，进行中卡片可传+推送，to_role=logistics）；#295=#302 冷作列改打包下载同款；#296 凭证/回执在线预览（AttachmentPreview）；#297 批量改预计到货（复用 _writeback_sheet_row 回写详单）；#298 请款审批项目编号列；#300 财务部付款 tab 搜索框；#301 预计到货列日期选择器（isDateField 加字段名判定）；#292 未到货提醒 15:00 后（scan_po_arrival_overdue 开头时间窗）；#293 合并收货金额自动=数量×单价；#299 卡片边框加深。测试：7 个测试文件全 PASSED，vue-tsc exit=0
 - **第 14 批反馈 15 条已上线**（`16b0304`，客户端 1.0.5；15 条已自动回复；#283 可见性修正 `3f45728`）：仓库/采购/生产/销售/OA 五域，详见 git log
 - 最近三期交付：
   1. **采购预计到货全链路**（`6de4548`/`d47afa1`）：`PurchaseItem.expected_arrival` 行级字段，清单下单逐行维护并回写五张项目详单，到期未到货每日提醒（`scan_po_arrival_overdue`）
