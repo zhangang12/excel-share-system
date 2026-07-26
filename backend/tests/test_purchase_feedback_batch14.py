@@ -155,16 +155,31 @@ async def main():
         chk(r.status_code == 200, f"建采购明细: {r.status_code} {r.text[:150]}")
         item_id = r.json()["id"] if r.status_code == 200 else None
 
-        # b1 发起请款
+        # b1 发起请款（先建财务账号，验证请款提交通知财务）
+        f1_id = await mkuser("f1", "finance")
+        f2_id = await mkuser("f2", "finance")
         r = await c.post("/api/purchase-mgmt/payment-requests", headers=Hb1,
                          json={"supplier_id": s1, "requested_amount": 500,
                                "items": [{"item_id": item_id, "allocated_amount": 500}]})
         chk(r.status_code == 200, f"发起请款: {r.status_code} {r.text[:150]}")
         payreq_id = r.json()["id"] if r.status_code == 200 else None
 
+        # 🆕 请款提交 → 推财务（站内消息；push_message 双通道，企微在无绑定环境下只落站内）
+        async def msgs_for(uid, biz_type=None, biz_id=None):
+            async with SessionLocal() as db:
+                q = select(models.Message).where(models.Message.to_user_id == uid)
+                if biz_type: q = q.where(models.Message.biz_type == biz_type)
+                if biz_id: q = q.where(models.Message.biz_id == biz_id)
+                return list((await db.execute(q)).scalars().all())
+        fin_msgs = await msgs_for(f1_id, "payment_request", payreq_id)
+        chk(len(fin_msgs) == 1 and "请款待审批" in fin_msgs[0].text,
+            f"请款提交推财务: {len(fin_msgs)}")
+        fin2_msgs = await msgs_for(f2_id, "payment_request", payreq_id)
+        chk(len(fin2_msgs) == 1, f"全体财务都收到(含副角色逻辑): {len(fin2_msgs)}")
+        b1_msgs0 = await msgs_for(b1_id, "payment_request", payreq_id)
+        chk(not any("请款待审批" in m.text for m in b1_msgs0), "请款人兼财务口径：本人不重复收")
+
         # 财务审批 + 另一个财务付款（职责分离：审批≠付款）
-        f1_id = await mkuser("f1", "finance")
-        f2_id = await mkuser("f2", "finance")
         Hf1 = await login('f1', 'pass123')
         Hf2 = await login('f2', 'pass123')
         r = await c.put(f"/api/purchase-mgmt/payment-requests/{payreq_id}/approve", headers=Hf1)
@@ -174,6 +189,12 @@ async def main():
                         data={"paid_amount": "500", "paid_date": "2026-07-22", "payment_method": "对公全款"},
                         files={"file": ("回执单.pdf", b"%PDF-1.4 fake", "application/pdf")})
         chk(r.status_code == 200, f"财务付款(带凭证): {r.status_code} {r.text[:150]}")
+
+        # 🆕 付款后 → 推给请款申请人（含凭证提示）
+        b1_msgs = await msgs_for(b1_id, "payment_request", payreq_id)
+        paid_msgs = [m for m in b1_msgs if "请款已付款" in m.text]
+        chk(len(paid_msgs) == 1 and "500.00" in paid_msgs[0].text and "凭证" in paid_msgs[0].text,
+            f"付款后推申请人: {len(paid_msgs)}")
 
         # #276：请款记录（申请人视角）带付款凭证
         r = await c.get("/api/purchase-mgmt/payment-requests", headers=Hb1)

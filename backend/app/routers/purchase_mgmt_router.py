@@ -2249,22 +2249,15 @@ async def create_payment_request(
             item_id=item_in.item_id,
             allocated_amount=item_in.allocated_amount,
         ))
+    # 🆕 请款提交 → 推财务（站内+企微双通道 push_message；finance 自动含 finance_lead 及副角色，
+    #   替代原先手写 Message（无企微、只覆盖锚点 role_id）。请款人兼财务时排除本人。
+    sup_name = (await db.execute(select(models.Supplier.name).where(
+        models.Supplier.id == body.supplier_id))).scalar_one_or_none() or "—"
     await db.commit()
-    # notify finance users
-    try:
-        fin_r = await db.execute(
-            select(models.User).join(models.Role, models.User.role_id == models.Role.id)
-            .where(models.Role.code == "finance", models.User.is_active == True)  # noqa: E712
-        )
-        for u in fin_r.scalars().all():
-            db.add(models.Message(
-                to_user_id=u.id, kind="info",
-                text=f"采购请款：{_uname(current)} 发起请款 ¥{body.requested_amount:.2f}，请审批",
-                biz_type="payment_request", biz_id=pr.id,
-            ))
-        await db.commit()
-    except Exception:
-        pass
+    await push_message(db, to_role="finance", kind="info",
+                       text=f"【请款待审批】{_uname(current)} 发起请款 ¥{body.requested_amount:.2f}（供应商：{sup_name}），请及时审批。",
+                       biz_type="payment_request", biz_id=pr.id,
+                       exclude_user_ids={current.id})
     return await _pr_out(db, pr.id)
 
 
@@ -2392,7 +2385,17 @@ async def pay_payment_request(
                 item.paid_date = paid_date
                 _maybe_auto_reconcile(item)
 
+    # 🆕 财务付款后 → 推给请款申请人（站内+企微双通道）：你的请款已付款，及时知悉。
+    #   取值须在 commit 前（commit 后属性过期，懒加载会 MissingGreenlet）
+    voucher_uploaded = pr.pay_voucher_file_id is not None
+    voucher_note = "，付款凭证已同步上传可查看" if voucher_uploaded else ""
+    sup_name = (await db.execute(select(models.Supplier.name).where(
+        models.Supplier.id == pr.supplier_id))).scalar_one_or_none() or "—"
     await db.commit()
+    if pr.requester_id:
+        await push_message(db, to_user_id=pr.requester_id, kind="info",
+                           text=f"【请款已付款】你发起的请款（供应商：{sup_name}）已于 {paid_date} 付款 ¥{paid_amount:.2f}{voucher_note}。",
+                           biz_type="payment_request", biz_id=pr.id)
     return {"ok": True}
 
 
