@@ -145,6 +145,20 @@ function matLabel(m: WhMaterial) { return `${m.name}${m.spec ? '·' + m.spec : '
 // ===== 流水 =====
 const txns = ref<WhTxn[]>([])
 const txnDir = ref('')
+// 🆕 出入库流水搜索（单号/物料/库位/来源用途/供应商领用方/项目/日期，大小写不敏感）
+const txnSearch = ref('')
+const filteredTxns = computed(() => {
+  const kw = txnSearch.value.trim().toLowerCase()
+  if (!kw) return txns.value
+  return txns.value.filter(t =>
+    (t.ref_no || '').toLowerCase().includes(kw)
+    || `${t.material_name || ''}${t.spec ? '·' + t.spec : ''}`.toLowerCase().includes(kw)
+    || (t.location || '').toLowerCase().includes(kw)
+    || (t.source || '').toLowerCase().includes(kw)
+    || (t.party || '').toLowerCase().includes(kw)
+    || (t.project_code || '').toLowerCase().includes(kw)
+    || (t.biz_date || '').includes(kw))
+})
 async function loadTxns() {
   txns.value = await whApi.txns({ direction: txnDir.value || undefined })
 }
@@ -877,14 +891,16 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
 
         <!-- 流水 -->
         <el-tab-pane v-if="tv('txn')" label="出入库流水" name="txn">
-          <div style="margin-bottom:10px">
+          <div style="margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <el-radio-group v-model="txnDir" @change="loadTxns" size="small">
               <el-radio-button value="">全部</el-radio-button>
               <el-radio-button value="in">入库</el-radio-button>
               <el-radio-button value="out">出库</el-radio-button>
             </el-radio-group>
+            <!-- 🆕 出入库流水搜索 -->
+            <el-input v-model="txnSearch" placeholder="搜索单号/物料/库位/供应商领用方/项目" clearable size="small" style="width:280px" />
           </div>
-          <el-table show-overflow-tooltip :data="txns" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="filteredTxns" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="ref_no" label="单号" width="140" />
             <el-table-column prop="biz_date" label="日期" width="110">
               <template #default="{ row }">{{ fmtDate(row.biz_date) }}</template>
@@ -908,7 +924,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               </template>
             </el-table-column>
           </el-table>
-          <EmptyHint v-if="!txns.length" text="暂无出入库流水" size="sm" />
+          <EmptyHint v-if="!filteredTxns.length" :text="txnSearch ? '无匹配流水' : '暂无出入库流水'" size="sm" />
         </el-tab-pane>
 
         <!-- 物料主数据 -->
