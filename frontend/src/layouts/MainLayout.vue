@@ -30,8 +30,9 @@ const MENU_ICONS: Record<string, any> = {
   hr: Avatar,   // 🆕 人事部
   agent: MagicStick,   // 🆕 Agent 助手（只读问数 POC）
   desktop: Monitor,    // 🆕 桌面端在线版本统计
+  'gate-config': Key,  // 🆕 外网登录闸门配置
 }
-const ADMIN_EXTRA = ['approve', 'wxbind', 'user-feedback', 'agent', 'desktop']
+const ADMIN_EXTRA = ['approve', 'wxbind', 'user-feedback', 'agent', 'desktop', 'gate-config']
 // 业务部门菜单（排除 messages 单独放底部、管理组的归管理组）
 const bizMenus = computed(() =>
   auth.deptMenus.filter(m => !['messages', ...ADMIN_EXTRA].includes(m.key)))

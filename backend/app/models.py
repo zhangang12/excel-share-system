@@ -1076,3 +1076,18 @@ class DesktopClient(Base):
     username: Mapped[Optional[str]] = mapped_column(String(64))                 # 最近登录用户名（仅展示用）
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))        # 最近一次带统计头请求的时间
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------- 🆕 外网登录验证码（浏览器外网登录两步闸门，码经 push_message 发管理层企微/站内） ----------
+class LoginGateCode(Base):
+    """🆕 外网登录验证码：一次一码（pre_token 关联登录会话），库中只存 sha256 哈希不存明文。
+    由 gate.py 的 issue_code/verify_code 读写；表由 Base.metadata.create_all 自动创建。"""
+    __tablename__ = "login_gate_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)  # 登录人
+    code_hash: Mapped[str] = mapped_column(String(64))                        # sha256(6位数字码)
+    pre_token: Mapped[str] = mapped_column(String(64), index=True)            # 登录第一步下发的临时凭证
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))     # 10 分钟有效
+    used: Mapped[bool] = mapped_column(default=False)                         # 已用/已作废（重发即作废旧码）
+    fail_count: Mapped[int] = mapped_column(default=0)                        # 连续错码次数（>=5 锁定）

@@ -53,6 +53,7 @@ bash desktop/release.sh      # 同步发桌面客户端：版本号 bump 应随�
 - **菜单可见性唯一权威** = `User.menus`（按账号 JSON 清单，业务+管理组 key 混合）：`user_menu_keys()`（menus.py）对 admin/manager 全量 bypass，其余读 `User.menus`（NULL→`DEFAULT_ACCOUNT_MENUS`=catalog/list/messages/oa）。`ROLE_DEFAULT_MENUS`（原 ROLE_MENUS）**仅是建号预填/backfill 的默认模板，运行时不读**；建号后改角色不影响菜单。管理端配置入口：用户管理→「菜单权限」弹窗（`PUT /admin/users/{uid}/menus`）；`PUT /grant-menus` 是桌面端旧版兼容包装（只增删管理组 key）。前端 `MainLayout.vue` 全部菜单项（含 dict-admin/管理组硬编码三项）已 menus 驱动；auth store 的 `isAdmin` = admin **或** manager
 - **建表**：新表靠 `Base.metadata.create_all` 启动自动建；存量表加列走 `app/data_migration.py`（存量数据回填也在这，模板 `backfill_user_menus`）
 - **角色**：不再管菜单（2026-07-21 起按账号配置）；角色仍管业务归属（部门工作台、downstream 推送、restricted_dir_pids 行级过滤、finance_lead⊇finance 隐含）
+- **外网登录闸门（`backend/app/gate.py`）**：只卡**浏览器外网**登录——免闸顺序：admin 角色 → `X-PMS-Client` 头（桌面客户端）→ 内网 IP → `gate_enabled=0`。过闸流程：login 验密码后 `issue_code`（6 位码只存 sha256、10 分钟、1条/分+10条/天限频、错5次锁）→ 码经 push_message 发 **manager 角色**企微（管理层核实后告知用户）→ `login/verify-gate` 验码发 token。配置：管理→外网访问（app_settings `gate_enabled`/`intranet_cidrs`；回环+私网 IP 恒判内网，故测试/本地不受影响）。**客户端真实 IP 优先取 X-Real-IP（nginx $remote_addr 覆写不可伪造），次取 XFF 末段**（首段可被伪造）
 - **桌面客户端（desktop/）**：Electron 壳，内置打包 `frontend/dist`（`webSecurity:false` 绕 CORS，窗口只载内置页面+外链全交系统浏览器作补偿）；版本号 = `desktop/package.json`。前端以 `VITE_API_BASE` 区分：桌面打包设 `http://8.141.123.141`（axios baseURL/ws 直连服务器），浏览器构建不设（保持 `/api`）。统计头契约：preload 注入 `window.pmsDesktop{isDesktop,version,deviceId}` → axios 加 `X-PMS-Client/X-PMS-Device/X-PMS-User` → 后端中间件 60s 节流 upsert `desktop_clients` 表（main.py 模块级）。**API 只增不改**（老客户端长期并存），破坏性变更只能走 `--min-version` 强制升级流程
 
 ## 已知坑
@@ -61,10 +62,11 @@ bash desktop/release.sh      # 同步发桌面客户端：版本号 bump 应随�
 - 前端 `npm run dev` 与 docker 里的构建是两回事；发版构建在服务器上做
 - `docs/` 下的 HTML 设计稿是历史需求稿，不代表当前实现；`README.md` 内容偏旧（v2 时代），以本文件和 `docs/项目交接文档.md` 为准
 
-## 当前状态（2026-07-25）
+## 当前状态（2026-07-28）
 
-- **第 15 批反馈 13 条（未提交，发版中）**：#304 钳工图纸推装配组（**07-26 更正：钳工组不独立成组，撤掉 fitter 角色/页签，fitter_pkg 的 to_role=assembler，「钳工图纸」列在装配组页签**，组注册=produce_router GROUPS/GROUP_ROLE 三张表+每组薄端点）；#303 上传/推送分离（Attachment.pushed 列=存量默认1，start-upload 不再发消息，新端点 POST /orders/{oid}/start-push，下游全部过滤 pushed：produce_router/downstream_router/collab_router 看板计数/logistics_router 资料列；plist 电工清单刻意维持上传即推）；#294 电路图前置（order_output/circuit 也走 pushed 口径，进行中卡片可传+推送，to_role=logistics）；#295=#302 冷作列改打包下载同款；#296 凭证/回执在线预览（AttachmentPreview）；#297 批量改预计到货（复用 _writeback_sheet_row 回写详单）；#298 请款审批项目编号列；#300 财务部付款 tab 搜索框；#301 预计到货列日期选择器（isDateField 加字段名判定）；#292 未到货提醒 15:00 后（scan_po_arrival_overdue 开头时间窗）；#293 合并收货金额自动=数量×单价；#299 卡片边框加深。测试：7 个测试文件全 PASSED，vue-tsc exit=0
-- **第 14 批反馈 15 条已上线**（`16b0304`，客户端 1.0.5；15 条已自动回复；#283 可见性修正 `3f45728`）：仓库/采购/生产/销售/OA 五域，详见 git log
+- **外网登录闸门已上线（本批）**：浏览器外网登录需随机码（码发 manager 角色企微），admin/桌面客户端/内网 IP 免闸；管理→外网访问 配置开关与内网网段。**上线后第一件事：把公司出口公网 IP 配进内网名单，否则办公室全员都要找管理层要码**
+- **第 16 批反馈 #306-#310 + #309 已上线**（`785840e`/`0b4c024`，客户端 1.0.10/1.0.11）：五表独立上传、合并收货开单即算、供应商下拉可搜索、从清单下单跨项目模糊搜索未下单零件（purchasable-cross）；登录成功自动检查更新（1.0.12）
+- 第 15/14 批反馈：见 git log（钳工入装配、上传推送分离、采购/仓库/生产/销售/OA 五域）
 - 最近三期交付：
   1. **采购预计到货全链路**（`6de4548`/`d47afa1`）：`PurchaseItem.expected_arrival` 行级字段，清单下单逐行维护并回写五张项目详单，到期未到货每日提醒（`scan_po_arrival_overdue`）
   2. **Agent 助手 POC**（`86a1fa1`）：`POST /api/agent/chat` 只读问数，OpenAI 兼容 function calling，未配 Key 自动规则降级；页面化配置（admin 专属，存 `app_settings`，优先级 DB > env），模型白名单选择

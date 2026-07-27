@@ -171,6 +171,12 @@ const router = createRouter({
           component: () => import('@/views/admin/DesktopClientsPage.vue'),
           meta: { menuKey: 'desktop' },
         },
+        {
+          path: 'admin/gate-config',
+          name: 'gate-config',  // 🆕 外网登录验证码闸门配置；菜单 key=gate-config，仅 admin/manager 下发
+          component: () => import('@/views/admin/GateConfigView.vue'),
+          meta: { menuKey: 'gate-config' },
+        },
       ],
     },
   ],

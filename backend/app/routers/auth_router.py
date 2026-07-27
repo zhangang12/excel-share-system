@@ -1,11 +1,12 @@
 """认证：登录 / me / 改密 / 登出"""
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Union
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from ..database import get_db
-from .. import models, schemas
+from .. import models, schemas, gate
 from ..auth import verify_password, hash_password, create_access_token
 from ..deps import get_current_user
 from ..utils import write_audit
@@ -44,8 +45,26 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
     )
 
 
-@router.post("/login", response_model=schemas.TokenOut)
-async def login(data: schemas.LoginIn, db: AsyncSession = Depends(get_db)):
+def _client_ip(request: Request) -> str:
+    """客户端真实 IP：优先 X-Real-IP（nginx 用 $remote_addr 覆写，外部无法伪造）；
+    次取 X-Forwarded-For **末段**（nginx $proxy_add_x_forwarded_for 是把真实地址**追加**到链尾，
+    取首段会被客户端伪造的 XFF 骗过）；兜底直连地址。"""
+    rip = (request.headers.get("x-real-ip") or "").strip()
+    if rip:
+        return rip
+    parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    return parts[-1] if parts else (request.client.host if request.client else "")
+
+
+async def _issue_token(db: AsyncSession, u: models.User, *, ip: str = "") -> schemas.TokenOut:
+    """登录成功签发 token + 写审计（login 免闸路径与 verify-gate 共用）。"""
+    token = create_access_token(u.id)
+    await write_audit(db, user=u, action="login", ip=ip or None)
+    return schemas.TokenOut(access_token=token, user=_user_to_out(u))
+
+
+@router.post("/login", response_model=Union[schemas.TokenOut, schemas.GateRequiredOut])
+async def login(data: schemas.LoginIn, request: Request, db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(models.User).where(models.User.username == data.username))
     u = res.scalar_one_or_none()
     if not u or not verify_password(data.password, u.password_hash):
@@ -57,9 +76,44 @@ async def login(data: schemas.LoginIn, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(u)
 
-    token = create_access_token(u.id)
-    await write_audit(db, user=u, action="login")
-    return schemas.TokenOut(access_token=token, user=_user_to_out(u))
+    # ---- 🆕 外网登录两步闸门（免闸：admin 角色 / 桌面客户端 / 内网 IP / 开关关闭）----
+    ip = _client_ip(request)
+    is_desktop = request.headers.get("x-pms-client", "").startswith("desktop/")
+    if not u.has_role("admin") and not is_desktop:
+        cfg = await gate.get_gate_config(db)
+        if cfg["enabled"] and not gate.is_intranet(ip, cfg["cidrs"]):
+            try:
+                pre_token = await gate.issue_code(db, u)
+            except HTTPException as e:
+                await write_audit(db, user=u, action="login_gate_fail",
+                                  detail=str(e.detail), ip=ip or None)
+                raise
+            await write_audit(db, user=u, action="login_gate_issue", ip=ip or None)
+            return schemas.GateRequiredOut(
+                gate_required=True, pre_token=pre_token,
+                message="已通知管理层，请联系管理层获取验证码")
+    return await _issue_token(db, u, ip=ip)
+
+
+@router.post("/login/verify-gate", response_model=schemas.TokenOut)
+async def login_verify_gate(data: schemas.GateVerifyIn, request: Request,
+                            db: AsyncSession = Depends(get_db)):
+    """🆕 外网登录第二步：校验 6 位随机码，通过才发 token。"""
+    res = await db.execute(select(models.User).where(models.User.username == data.username))
+    u = res.scalar_one_or_none()
+    if not u or not u.is_active:
+        raise HTTPException(400, "验证码无效或已过期，请重新获取")
+    ip = _client_ip(request)
+    try:
+        await gate.verify_code(db, u, data.pre_token, data.code)
+    except HTTPException as e:
+        await write_audit(db, user=u, action="login_gate_fail",
+                          detail=str(e.detail), ip=ip or None)
+        raise
+    u.last_login = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(u)
+    return await _issue_token(db, u, ip=ip)
 
 
 @router.get("/me", response_model=schemas.UserOut)

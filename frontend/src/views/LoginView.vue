@@ -2,6 +2,8 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { authApi } from '@/api/auth'
+import type { LoginResp } from '@/types'
 import { ElMessage } from 'element-plus'
 import logoUrl from '@/assets/logo.png'
 
@@ -11,11 +13,34 @@ const loading = ref(false)
 const showPwd = ref(false)   // 仅 UI：密码明文/密文切换
 const form = reactive({ username: '', password: '' })
 
+// 🆕 外网登录两步闸门：第一步命中闸门（gate_required）→ 第二步输 6 位码（码由管理层企微告知）。
+//   桌面客户端共用此页，但客户端请求头免闸、永远不会走到第二步，无需特判。
+const step = ref<'pwd' | 'gate'>('pwd')
+const preToken = ref('')
+const gateCode = ref('')
+
 // 🆕 记住用户名：勾选后登录成功把账号存本地，下次开页自动回填；取消勾选即清除
 const remember = ref(false)
 const REMEMBER_KEY = 'pms_remember_name'
 const savedName = localStorage.getItem(REMEMBER_KEY)
 if (savedName) { form.username = savedName; remember.value = true }
+
+// 登录成功收尾（与 stores/auth.login 同一套持久化；闸门流程需先按响应分支，故不走 store.login）
+async function finishLogin(resp: LoginResp) {
+  auth.token = resp.access_token
+  auth.user = resp.user
+  localStorage.setItem('pms_token', resp.access_token)
+  localStorage.setItem('pms_user', JSON.stringify(resp.user))
+  auth.menus = null  // 切换账号清菜单缓存，登录后重新拉取
+  localStorage.removeItem('pms_menus')
+  await auth.fetchMenus()
+  if (remember.value) localStorage.setItem(REMEMBER_KEY, form.username)
+  else localStorage.removeItem(REMEMBER_KEY)
+  // 🆕 每次登录成功触发客户端静默检查更新（仅桌面端；30 分钟节流，有新版静默下载后提示重启）
+  window.pmsDesktop?.checkUpdateSilent?.()
+  ElMessage.success('登录成功')
+  router.push('/overview')
+}
 
 async function onSubmit() {
   if (!form.username || !form.password) {
@@ -24,18 +49,60 @@ async function onSubmit() {
   }
   loading.value = true
   try {
-    await auth.login(form.username, form.password)
-    if (remember.value) localStorage.setItem(REMEMBER_KEY, form.username)
-    else localStorage.removeItem(REMEMBER_KEY)
-    // 🆕 每次登录成功触发客户端静默检查更新（仅桌面端；30 分钟节流，有新版静默下载后提示重启）
-    window.pmsDesktop?.checkUpdateSilent?.()
-    ElMessage.success('登录成功')
-    router.push('/overview')
+    const resp = await authApi.login(form.username, form.password)
+    if (resp.gate_required && resp.pre_token) {
+      preToken.value = resp.pre_token
+      gateCode.value = ''
+      step.value = 'gate'
+      return
+    }
+    await finishLogin(resp)
   } catch {
-    /* */
+    /* 拦截器已弹错误 */
   } finally {
     loading.value = false
   }
+}
+
+async function onVerify() {
+  if (!/^\d{6}$/.test(gateCode.value)) {
+    ElMessage.warning('请输入 6 位数字验证码')
+    return
+  }
+  loading.value = true
+  try {
+    const resp = await authApi.verifyGate(form.username, preToken.value, gateCode.value)
+    await finishLogin(resp)
+  } catch {
+    /* 拦截器已弹错误（验证码错误/过期/锁定） */
+  } finally {
+    loading.value = false
+  }
+}
+
+// 重新发送：用当前表单账号密码重调 login 发码（后端限频 1 条/分，超限由拦截器弹 429 提示）
+async function onResend() {
+  loading.value = true
+  try {
+    const resp = await authApi.login(form.username, form.password)
+    if (resp.gate_required && resp.pre_token) {
+      preToken.value = resp.pre_token
+      gateCode.value = ''
+      ElMessage.success(resp.message || '已重新通知管理层')
+    } else {
+      await finishLogin(resp)   // 闸门恰被关闭/网络变内网：直接完成登录
+    }
+  } catch {
+    /* 拦截器已弹错误 */
+  } finally {
+    loading.value = false
+  }
+}
+
+function backToPwd() {
+  step.value = 'pwd'
+  gateCode.value = ''
+  preToken.value = ''
 }
 </script>
 
@@ -64,8 +131,8 @@ async function onSubmit() {
       </div>
     </div>
 
-    <!-- 毛玻璃登录卡 -->
-    <form class="lg-card" @submit.prevent="onSubmit">
+    <!-- 毛玻璃登录卡（第一步：账号密码） -->
+    <form v-if="step === 'pwd'" class="lg-card" @submit.prevent="onSubmit">
       <div class="lg-sys">同辉智能项目管理系统</div>
       <div class="lg-welcome">欢迎登录</div>
       <div class="lg-rule"></div>
@@ -90,6 +157,30 @@ async function onSubmit() {
       <button class="lg-submit" type="submit" :disabled="loading">
         {{ loading ? '登 录 中…' : '登 录' }}
       </button>
+    </form>
+
+    <!-- 🆕 外网登录第二步：验证码卡（码已发管理层企微，联系管理层获取） -->
+    <form v-else class="lg-card" @submit.prevent="onVerify">
+      <div class="lg-sys">同辉智能项目管理系统</div>
+      <div class="lg-welcome">外网登录验证</div>
+      <div class="lg-rule"></div>
+
+      <div class="lg-gate-tip">已通知管理层，请联系管理层获取验证码（10 分钟内有效）</div>
+
+      <label class="lg-label">验证码</label>
+      <div class="lg-field">
+        <input v-model="gateCode" placeholder="请输入 6 位验证码" maxlength="6"
+               inputmode="numeric" autocomplete="one-time-code" @keyup.enter="onVerify" />
+      </div>
+
+      <button class="lg-submit" type="submit" :disabled="loading">
+        {{ loading ? '验 证 中…' : '验证并登录' }}
+      </button>
+
+      <div class="lg-gate-links">
+        <span class="lg-gate-link" @click="onResend">重新发送</span>
+        <span class="lg-gate-link" @click="backToPwd">返回重输</span>
+      </div>
     </form>
 
     <div class="lg-foot">同辉智能装备（无锡）有限公司 · 项目管理系统</div>
@@ -200,6 +291,15 @@ async function onSubmit() {
 .lg-submit:hover { filter: brightness(1.06); }
 .lg-submit:active { transform: translateY(1px); }
 .lg-submit:disabled { opacity: .7; cursor: default; }
+/* 🆕 外网登录第二步验证码卡 */
+.lg-gate-tip {
+  font-size: 13px; line-height: 1.7; color: rgba(255,255,255,.72);
+  background: rgba(200,162,79,.1); border: 1px solid rgba(200,162,79,.28);
+  border-radius: 10px; padding: 10px 14px; margin-bottom: 22px;
+}
+.lg-gate-links { display: flex; justify-content: space-between; margin-top: 16px; }
+.lg-gate-link { font-size: 12.5px; color: rgba(255,255,255,.55); cursor: pointer; user-select: none; }
+.lg-gate-link:hover { color: #e0c98a; }
 .lg-foot {
   position: absolute; bottom: 22px; left: 0; right: 0; z-index: 3; text-align: center;
   color: rgba(255,255,255,.34); font-size: 12px; letter-spacing: .02em;

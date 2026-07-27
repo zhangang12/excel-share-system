@@ -633,6 +633,30 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+# ---------- 🆕 外网登录两步闸门 ----------
+class GateRequiredOut(BaseModel):
+    """登录第一步命中外网闸门：不发 token，只回 pre_token，前端转第二步输码。"""
+    gate_required: bool
+    pre_token: str
+    message: str
+
+
+class GateVerifyIn(BaseModel):
+    username: str
+    pre_token: str
+    code: str
+
+
+class GateConfigIn(BaseModel):
+    enabled: bool
+    cidrs: list[str] = []
+
+
+class GateConfigOut(BaseModel):
+    enabled: bool
+    cidrs: list[str]
+
+
 class ChangePasswordIn(BaseModel):
     old_password: str
     new_password: str = Field(min_length=6, max_length=128)

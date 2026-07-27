@@ -396,3 +396,27 @@ async def list_audit(
         .order_by(_desc(models.AuditLog.created_at)).limit(limit)
     )
     return [schemas.AuditOut.model_validate(r) for r in res.scalars().all()]
+
+
+# ---------- 🆕 外网登录闸门配置（存 app_settings，保存即全局生效） ----------
+@router.get("/gate-config", response_model=schemas.GateConfigOut)
+async def get_gate_config(
+    _: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    from .. import gate
+    return schemas.GateConfigOut(**(await gate.get_gate_config(db)))
+
+
+@router.put("/gate-config", response_model=schemas.GateConfigOut)
+async def set_gate_config(
+    data: schemas.GateConfigIn,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    from .. import gate
+    cidrs = [c.strip() for c in data.cidrs if c and c.strip()]
+    await gate.set_gate_config(db, enabled=data.enabled, cidrs=cidrs)
+    await write_audit(db, user=current, action="set_gate_config",
+                      detail=f"enabled={data.enabled} cidrs={cidrs}")
+    return schemas.GateConfigOut(enabled=data.enabled, cidrs=cidrs)
