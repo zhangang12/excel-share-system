@@ -240,6 +240,19 @@ ipcMain.on('pms-desktop:check-update', () => {
   });
 });
 
+// 🆕 登录成功后静默检查更新（LoginView 每次登录成功调用）：
+// 30 分钟节流防频繁登录重复检查；不动 manualChecking（不往布局按钮推状态），
+// 有新版走 autoDownload 静默下载，下完 update-downloaded 里统一弹「立即重启更新」。
+let lastSilentCheck = 0;
+ipcMain.on('pms-desktop:check-update-silent', () => {
+  if (!app.isPackaged || forceMode) return;
+  const now = Date.now();
+  if (now - lastSilentCheck < 30 * 60 * 1000) { log('登录触发检查更新：30 分钟内已查过，跳过'); return; }
+  lastSilentCheck = now;
+  log('登录触发检查更新');
+  autoUpdater.checkForUpdates().catch((err) => log('登录触发检查失败（已忽略）：', err && err.message));
+});
+
 function setupAutoUpdate() {
   autoUpdater.autoDownload = true;
   autoUpdater.logger = { info: log, warn: log, error: log };

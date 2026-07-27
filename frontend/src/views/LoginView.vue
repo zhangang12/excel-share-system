@@ -27,6 +27,8 @@ async function onSubmit() {
     await auth.login(form.username, form.password)
     if (remember.value) localStorage.setItem(REMEMBER_KEY, form.username)
     else localStorage.removeItem(REMEMBER_KEY)
+    // 🆕 每次登录成功触发客户端静默检查更新（仅桌面端；30 分钟节流，有新版静默下载后提示重启）
+    window.pmsDesktop?.checkUpdateSilent?.()
     ElMessage.success('登录成功')
     router.push('/overview')
   } catch {

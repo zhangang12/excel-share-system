@@ -19,5 +19,7 @@ interface Window {
     checkUpdate?: () => void
     /** 订阅更新状态：checking / available / not-available / downloaded / error */
     onUpdateStatus?: (cb: (s: { status: string; version?: string; message?: string }) => void) => void
+    /** 🆕 登录成功后静默检查更新（30 分钟节流，有新版静默下载后提示重启） */
+    checkUpdateSilent?: () => void
   }
 }

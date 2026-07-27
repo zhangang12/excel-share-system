@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld('pmsDesktop', {
   checkUpdate: () => ipcRenderer.send('pms-desktop:check-update'),
   onUpdateStatus: (cb) => ipcRenderer.on('pms-desktop:update-status', (_e, s) => cb(s)),
 
+  // ---- 登录成功后静默检查更新（LoginView 调用；30 分钟节流，不推状态、不打扰，
+  //   有新版本则静默下载，下完由主进程弹「立即重启更新」原生框）----
+  checkUpdateSilent: () => ipcRenderer.send('pms-desktop:check-update-silent'),
+
   // ---- 强制更新页专用最小 IPC ----
   forceUpdateNotes: info.forceNotes || '',
   onProgress: (cb) => ipcRenderer.on('force-update:progress', (_e, p) => cb(p)),
