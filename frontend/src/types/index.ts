@@ -50,6 +50,7 @@ export interface Datasheet {
   field_count: number; record_count: number
   header_lines?: string[][] | null
   imported?: boolean      // 🆕 v3 四表校验：是否已导入 Excel
+  imported_at?: string | null  // 🆕 单表逐张导入：导入时间（ISO，前端显示已导入日期）
   done_flag?: boolean     // 🆕 v3 装配前置完成标记
   created_at: string; updated_at: string
 }

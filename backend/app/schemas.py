@@ -727,6 +727,7 @@ class DatasheetOut(BaseModel):
     record_count: int = 0
     header_lines: Optional[list[list[str]]] = None
     imported: bool = False      # 🆕 四表校验：是否已导入 Excel
+    imported_at: Optional[datetime] = None  # 🆕 单表逐张导入：导入时间（前端显示已导入日期）
     done_flag: bool = False     # 🆕 装配前置完成标记
     created_at: datetime
     updated_at: datetime

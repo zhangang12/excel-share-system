@@ -2,7 +2,7 @@
 import json
 import re
 import tempfile
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional
@@ -245,34 +245,22 @@ def _is_rownum_column(values: list[Any]) -> bool:
 
 
 # ============== 导入 ==============
-@router.post("/projects/{pid}/import-excel", response_model=schemas.Msg)
-async def import_excel(
-    pid: int, file: UploadFile = File(...),
-    current: models.User = Depends(require_not_viewer),
-    db: AsyncSession = Depends(get_db),
-):
-    """上传 Excel：每个 sheet → 一个 datasheet。自动识别表头 + 字段类型。"""
-    res = await db.execute(
-        select(models.Project).where(models.Project.id == pid, models.Project.is_deleted == False)
-    )
-    p = res.scalar_one_or_none()
-    if not p:
-        raise HTTPException(404, "项目不存在")
-    if not await user_can_edit_project(db, current, p):
-        raise HTTPException(403, "无权导入")
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in (".xlsx", ".xlsm", ".xls"):
-        raise HTTPException(400, "仅支持 .xlsx/.xlsm/.xls")
-    content = await file.read()
-    tmp = Path(tempfile.gettempdir()) / f"_imp_{pid}_{file.filename}"
-    tmp.write_bytes(content)
+# 解析结果：sheet 名 / 表头 / 数据行 / 项目头 preamble（项目整导 + 单表导入共用）
+_SheetMeta = tuple[str, list[str], list[list[Any]], list[list[str]]]
 
+
+def _parse_excel_file(tmp: Path, suffix: str) -> tuple[list[_SheetMeta], dict[str, set[int]]]:
+    """解析上传的 Excel：每个 sheet → (sheet名, headers, rows, preamble)。
+
+    自动定位"列名表头行"（兼容有/无项目头两种排版）+ 数据区合并单元格填充。
+    返回 (sheets_meta, 各 sheet 的"表头合并延续列")；解析失败抛 400。
+    """
     # 每个 sheet 的"表头合并延续列"（用户场景：如 F、G 合并显示"品牌"，
     # G 列本身不算单独的字段，跳过它）
     sheet_header_merge_skip: dict[str, set[int]] = {}
 
     try:
-        sheets_meta: list[tuple[str, list[str], list[list[Any]]]] = []
+        sheets_meta: list[_SheetMeta] = []
         if suffix == ".xls":
             import xlrd
             from xlrd.xldate import xldate_as_datetime
@@ -391,12 +379,15 @@ async def import_excel(
                 sheets_meta.append((sn, headers, rows, preamble))
     except Exception as e:
         raise HTTPException(400, f"解析失败：{e}")
+    return sheets_meta, sheet_header_merge_skip
 
-    if not sheets_meta:
-        raise HTTPException(400, "Excel 中没有可识别的数据")
 
-    # ===== 模板对齐：已知 sheet 类型按模板重排字段（钣金装配 / 标准件清单 / 外协加工 / 不锈钢原料下料单 / 激光件清单）=====
-    aligned_meta = []
+def _align_sheets_to_templates(
+    sheets_meta: list[_SheetMeta],
+    sheet_header_merge_skip: dict[str, set[int]],
+) -> list[_SheetMeta]:
+    """模板对齐：已知 sheet 类型按模板重排字段（钣金装配 / 标准件清单 / 外协加工 / 不锈钢原料下料单 / 激光件清单）。"""
+    aligned_meta: list[_SheetMeta] = []
     for sname, headers, rows, preamble in sheets_meta:
         if is_known_sheet(sname):
             # 传入"表头合并延续列"：如 F、G 合并显示"品牌"，G 不算单独字段
@@ -408,7 +399,110 @@ async def import_excel(
                 aligned_meta.append((sname, tpl_headers, tpl_rows, preamble))
                 continue
         aligned_meta.append((sname, headers, rows, preamble))
-    sheets_meta = aligned_meta
+    return aligned_meta
+
+
+async def _rebuild_datasheet_rows(
+    db: AsyncSession, d: models.Datasheet,
+    headers: list[str], rows: list[list[Any]], user_id: int,
+) -> int:
+    """把解析出的 headers/rows 灌入 datasheet：推断各列类型建 Field、逐行建 Record。
+
+    - "序号"列：避免和表格 # 列重复
+    - 空白填充列：Excel 模板宽但实际未用到的尾列（"列N" + 数据全空），
+      用全量数据判断（不只是前 50 行样本，避免误判），否则表格被撑得很宽
+    - 本表进度列（进度/状态 等白名单字段名）：导入后空白自动填「进行中」
+    返回入库行数。
+    """
+    col_count = len(headers)
+    fields: list[models.Field] = []
+    skipped_cols: set[int] = set()
+    for ci, hname in enumerate(headers):
+        col_samples = [r[ci] if ci < len(r) else None for r in rows[:50]]
+        # 1) 序号列：内容是连续整数 1,2,3...
+        if is_rownum_field_name(hname) and _is_rownum_column(col_samples):
+            skipped_cols.add(ci)
+            continue
+        # 2) 空白填充列
+        col_full = [r[ci] if ci < len(r) else None for r in rows]
+        if is_empty_filler_column(hname, col_full):
+            skipped_cols.add(ci)
+            continue
+        ftype = _infer_field_type(col_samples)
+        f = models.Field(
+            datasheet_id=d.id, name=hname, type=ftype, sort_order=ci,
+        )
+        db.add(f)
+        fields.append(f)
+    await db.flush()
+
+    # 行入库（跳过被忽略的列）
+    progress_fields = [f for f in fields if (f.name or '').strip() in _PROGRESS_FIELD_NAMES]
+    count = 0
+    for ri, row in enumerate(rows):
+        values: dict[str, Any] = {}
+        # 按 field 的源列序号去 row 里取值
+        field_idx = 0
+        for ci in range(col_count):
+            if ci in skipped_cols:
+                continue
+            f = fields[field_idx]
+            field_idx += 1
+            if ci < len(row):
+                nv = _normalize_value(row[ci], f.type)
+                if nv is not None:
+                    values[str(f.id)] = nv
+        for pf in progress_fields:
+            if not values.get(str(pf.id)):
+                values[str(pf.id)] = "进行中"
+        r = models.Record(
+            datasheet_id=d.id, sort_order=ri, values=values,
+            created_by=user_id, updated_by=user_id,
+        )
+        db.add(r)
+        count += 1
+    return count
+
+
+async def _clear_datasheet_rows(db: AsyncSession, did: int) -> None:
+    """清空单个 datasheet 的字段权限/字段/记录（datasheet 本身保留）。"""
+    from sqlalchemy import delete as _del
+    fres = await db.execute(
+        select(models.Field.id).where(models.Field.datasheet_id == did)
+    )
+    field_ids = [r[0] for r in fres.all()]
+    if field_ids:
+        await db.execute(_del(models.FieldPermission).where(models.FieldPermission.field_id.in_(field_ids)))
+        await db.execute(_del(models.Field).where(models.Field.id.in_(field_ids)))
+    await db.execute(_del(models.Record).where(models.Record.datasheet_id == did))
+
+
+@router.post("/projects/{pid}/import-excel", response_model=schemas.Msg)
+async def import_excel(
+    pid: int, file: UploadFile = File(...),
+    current: models.User = Depends(require_not_viewer),
+    db: AsyncSession = Depends(get_db),
+):
+    """上传 Excel：每个 sheet → 一个 datasheet。自动识别表头 + 字段类型。"""
+    res = await db.execute(
+        select(models.Project).where(models.Project.id == pid, models.Project.is_deleted == False)
+    )
+    p = res.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "项目不存在")
+    if not await user_can_edit_project(db, current, p):
+        raise HTTPException(403, "无权导入")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in (".xlsx", ".xlsm", ".xls"):
+        raise HTTPException(400, "仅支持 .xlsx/.xlsm/.xls")
+    content = await file.read()
+    tmp = Path(tempfile.gettempdir()) / f"_imp_{pid}_{file.filename}"
+    tmp.write_bytes(content)
+
+    sheets_meta, sheet_header_merge_skip = _parse_excel_file(tmp, suffix)
+    if not sheets_meta:
+        raise HTTPException(400, "Excel 中没有可识别的数据")
+    sheets_meta = _align_sheets_to_templates(sheets_meta, sheet_header_merge_skip)
 
     # ===== 全量替换：先删本项目现有数据表（含字段、记录、字段权限） =====
     # 🆕 v3：白名单保护「电工采购单」（第 6 表）——它由电工部上传生成、非用户导入文件的一部分，
@@ -460,7 +554,6 @@ async def import_excel(
     total_records = 0
     # 导入的表从 0 开始排（全量替换模板表）；受保护的电工采购单已被置 sort_order=100 留在末尾
     base_order = 0
-    from datetime import datetime as _dt, timezone as _tz
     for idx, (sname, headers, rows, preamble) in enumerate(sheets_meta):
         # 🆕 跳过与受保护表(电工采购单)同名的导入 sheet：该表由电工部上传采购清单生成、
         #    导入时已被保护保留，不应再按导入文件重建，否则与原表形成重复 tab（修复 2026-037A 两个电工采购单）。
@@ -469,62 +562,11 @@ async def import_excel(
         d = models.Datasheet(
             project_id=pid, name=sname, sort_order=base_order + idx,
             header_lines=json.dumps(preamble, ensure_ascii=False) if preamble else None,
-            imported_at=_dt.now(_tz.utc),  # 🆕 v3 P-16：导入标记（D1 四表校验依据）
+            imported_at=datetime.now(timezone.utc),  # 🆕 v3 P-16：导入标记（D1 四表校验依据）
         )
         db.add(d)
         await db.flush()  # 拿到 d.id
-
-        # 推断各列类型 + 识别需要跳过的列
-        # - "序号"列：避免和表格 # 列重复
-        # - 空白尾列：Excel 模板宽但实际未用到的尾列（"列N" + 数据全空），
-        #            否则表格被撑得很宽，窗口卡得很难缩放
-        col_count = len(headers)
-        fields: list[models.Field] = []
-        skipped_cols: set[int] = set()
-        for ci, hname in enumerate(headers):
-            col_samples = [r[ci] if ci < len(r) else None for r in rows[:50]]
-            # 1) 序号列：内容是连续整数 1,2,3...
-            if is_rownum_field_name(hname) and _is_rownum_column(col_samples):
-                skipped_cols.add(ci)
-                continue
-            # 2) 空白填充列：用全量数据判断（不只是前 50 行样本，避免误判）
-            col_full = [r[ci] if ci < len(r) else None for r in rows]
-            if is_empty_filler_column(hname, col_full):
-                skipped_cols.add(ci)
-                continue
-            ftype = _infer_field_type(col_samples)
-            f = models.Field(
-                datasheet_id=d.id, name=hname, type=ftype, sort_order=ci,
-            )
-            db.add(f)
-            fields.append(f)
-        await db.flush()
-
-        # 行入库（跳过被忽略的列）
-        # 🆕 本表进度列（进度/状态 等白名单字段名）：导入后空白自动填「进行中」
-        progress_fields = [f for f in fields if (f.name or '').strip() in _PROGRESS_FIELD_NAMES]
-        for ri, row in enumerate(rows):
-            values: dict[str, Any] = {}
-            # 按 field 的源列序号去 row 里取值
-            field_idx = 0
-            for ci in range(col_count):
-                if ci in skipped_cols:
-                    continue
-                f = fields[field_idx]
-                field_idx += 1
-                if ci < len(row):
-                    nv = _normalize_value(row[ci], f.type)
-                    if nv is not None:
-                        values[str(f.id)] = nv
-            for pf in progress_fields:
-                if not values.get(str(pf.id)):
-                    values[str(pf.id)] = "进行中"
-            r = models.Record(
-                datasheet_id=d.id, sort_order=ri, values=values,
-                created_by=current.id, updated_by=current.id,
-            )
-            db.add(r)
-            total_records += 1
+        total_records += await _rebuild_datasheet_rows(db, d, headers, rows, current.id)
 
     await db.commit()
     return schemas.Msg(
@@ -533,6 +575,57 @@ async def import_excel(
             f"新建 {len(sheets_meta)} 个数据表 / {total_records} 行"
         )
     )
+
+
+@router.post("/datasheets/{did}/import-excel", response_model=schemas.Msg)
+async def import_datasheet_excel(
+    did: int, file: UploadFile = File(...),
+    current: models.User = Depends(require_not_viewer),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 2026-07-27 单表导入（设计部五表逐张上传）：取文件第一个 sheet 解析，
+    只替换该 datasheet 的字段和行（id/name/sort_order 保留；header_lines 更新；
+    imported_at=now），项目内其他表不动。模板对齐按目标表名（往哪张表传就按哪张表的模板排）。"""
+    res = await db.execute(select(models.Datasheet).where(models.Datasheet.id == did))
+    d = res.scalar_one_or_none()
+    if not d:
+        raise HTTPException(404, "数据表不存在")
+    pres = await db.execute(
+        select(models.Project).where(
+            models.Project.id == d.project_id, models.Project.is_deleted == False
+        )
+    )
+    p = pres.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "项目不存在")
+    if not await user_can_edit_project(db, current, p):
+        raise HTTPException(403, "无权导入")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in (".xlsx", ".xlsm", ".xls"):
+        raise HTTPException(400, "仅支持 .xlsx/.xlsm/.xls")
+    content = await file.read()
+    tmp = Path(tempfile.gettempdir()) / f"_imp_ds{did}_{file.filename}"
+    tmp.write_bytes(content)
+
+    sheets_meta, sheet_header_merge_skip = _parse_excel_file(tmp, suffix)
+    if not sheets_meta:
+        raise HTTPException(400, "Excel 中没有可识别的数据")
+    sname, headers, rows, preamble = sheets_meta[0]
+    # 模板对齐按目标表名（文件内 sheet 名叫什么都行）
+    if is_known_sheet(d.name):
+        skip = sheet_header_merge_skip.get(sname, set())
+        tpl = map_excel_to_template(d.name, headers, rows, header_merge_skip_cols=skip)
+        if tpl:
+            headers, rows = tpl
+
+    # 只替换该表：删旧字段/记录重建；datasheet 本身 id/name/sort_order 不动
+    await _clear_datasheet_rows(db, did)
+    d.header_lines = json.dumps(preamble, ensure_ascii=False) if preamble else None
+    d.imported_at = datetime.now(timezone.utc)
+    await db.flush()
+    n = await _rebuild_datasheet_rows(db, d, headers, rows, current.id)
+    await db.commit()
+    return schemas.Msg(message=f"「{d.name}」导入完成：{n} 行")
 
 
 # ============== 导出公共工具：preamble 公式列实时计算 ==============

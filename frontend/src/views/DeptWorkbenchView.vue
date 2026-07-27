@@ -206,21 +206,52 @@ async function doDispatch() {
   } finally { dispatching.value = false }
 }
 
-// 🆕 设计部卡片内「上传一个 Excel 导入五表」+ 五表导入状态（与项目详情同一导入接口）
+// 🆕 设计部卡片内五表导入：🆕 2026-07-27 改为逐张单独上传（先导入先用，不强制五表齐全）；
+//   保留「上传一个 Excel 导入五表」为次要入口（与项目详情同一导入接口）
 // 2026-06-24 起新增「激光件清单」（钣金装配拆出的采购信息），故为五张
 const TEMPLATE_SHEETS = ['钣金装配', '标准件清单', '外协加工', '不锈钢原料下料单', '激光件清单']
-const sheetStatus = ref<Record<number, { name: string; imported: boolean }[]>>({})
+interface SheetImportState { name: string; did: number | null; imported: boolean; imported_at: string | null }
+const sheetStatus = ref<Record<number, SheetImportState[]>>({})
 async function loadSheetStatus(pid: number) {
   try {
     const ds: any[] = await datasheetsApi.list(pid)
-    sheetStatus.value[pid] = TEMPLATE_SHEETS.map((n) => ({
-      name: n, imported: !!ds.find((d) => d.name === n)?.imported,
-    }))
+    sheetStatus.value[pid] = TEMPLATE_SHEETS.map((n) => {
+      const d = ds.find((x) => x.name === n)
+      return { name: n, did: d?.id ?? null, imported: !!d?.imported, imported_at: d?.imported_at || null }
+    })
   } catch { /* 无权限/异常忽略，不阻塞卡片 */ }
 }
 function sheetsReady(pid: number) {
   const s = sheetStatus.value[pid]
   return !!s && s.length === TEMPLATE_SHEETS.length && s.every((x) => x.imported)
+}
+// 单表上传：选 xlsx → 调单表导入端点（只重建该表，其他表不动）
+const importingSheet = ref('')   // `${pid}:${表名}`，上传中的那张
+function importOneSheet(o: DeptOrder, s: SheetImportState) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.xls,.xlsx'
+  input.onchange = async () => {
+    const f = (input.files || [])[0]
+    if (!f) return
+    try {
+      await ElMessageBox.confirm(
+        `导入「${f.name}」到「${s.name}」？将取文件第一个 sheet 重建该表数据（不影响其他表）。`,
+        `导入${s.name}`, { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消' })
+    } catch { return }
+    importingSheet.value = `${o.project_id}:${s.name}`
+    try {
+      // 该表还不存在（从未导入过）→ 先按表名建空表再导入
+      let did = s.did
+      if (!did) did = (await datasheetsApi.create(o.project_id, s.name)).id
+      const r = await datasheetsApi.importExcel(did, f)
+      ElMessage.success(r.message || '导入成功')
+      await loadSheetStatus(o.project_id)
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.detail || '导入失败')
+    } finally { importingSheet.value = '' }
+  }
+  input.click()
 }
 const importingPid = ref<number | null>(null)
 function importTemplateTables(o: DeptOrder) {
@@ -1011,7 +1042,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                   </div>
                 </div>
 
-                <!-- 🆕 设计部：五个数据表导入（卡片内上传一个 Excel 一次性导入五表，与项目详情同口径） -->
+                <!-- 🆕 设计部：五个数据表导入（🆕 2026-07-27 逐张单独上传；一个 Excel 一次导入五表保留为次要入口） -->
                 <div v-if="options?.sheet_check" class="up-sec">
                   <div class="up-h">
                     📋 五个数据表导入
@@ -1021,17 +1052,20 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                     </span>
                   </div>
                   <div class="up-b">
-                    <div class="four-chips">
-                      <el-tag v-for="s in sheetStatus[o.project_id] || []" :key="s.name" size="small"
-                              :type="s.imported ? 'success' : 'info'" effect="plain">
-                        {{ s.name }} {{ s.imported ? '✅' : '⬜' }}
-                      </el-tag>
+                    <div v-for="s in sheetStatus[o.project_id] || []" :key="s.name" class="sheet-row">
+                      <span class="sheet-name">{{ s.name }}</span>
+                      <span class="sheet-st" :class="{ ok: s.imported }">
+                        {{ s.imported ? '已导入 ' + fmtDate(s.imported_at) : '未导入' }}
+                      </span>
+                      <el-button size="small" plain type="primary" :icon="UploadFilled"
+                                 :loading="importingSheet === `${o.project_id}:${s.name}`"
+                                 @click="importOneSheet(o, s)">上传</el-button>
                     </div>
-                    <el-button size="small" plain type="primary" :icon="UploadFilled"
+                    <el-button size="small" link type="primary"
                                :loading="importingPid === o.project_id" @click="importTemplateTables(o)">
                       上传一个 Excel 导入五表
                     </el-button>
-                    <div class="tc-hint">上传含「钣金装配/标准件清单/外协加工/不锈钢原料下料单/激光件清单」五个 sheet 的 Excel，一次性导入；完成前五表须齐全。</div>
+                    <div class="tc-hint">可以逐张单独上传，也可以一个含「钣金装配/标准件清单/外协加工/不锈钢原料下料单/激光件清单」五 sheet 的 Excel 一次导入；先导入先用，不要求五表齐全。</div>
                   </div>
                 </div>
 
@@ -1041,7 +1075,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                   <el-button type="primary" size="small" :icon="Check"
                              :disabled="!canDesignDone(o)" :loading="markingDesignDone === o.id"
                              @click="doDesignDone(o)">设计完成</el-button>
-                  <div class="tc-hint">{{ canDesignDone(o) ? '设计完成后到「已完成」tab 做发货准备（传说明书/铭牌）与资料更换' : '需上传 CAD激光图纸、外购附图并完成五表导入即可完成' }}</div>
+                  <div class="tc-hint">{{ canDesignDone(o) ? '设计完成后到「已完成」tab 做发货准备（传说明书/铭牌）与资料更换' : '需订单进行中才能完成' }}</div>
                 </template>
                 <!-- 电工部两步完成流 -->
                 <template v-else-if="dept === 'electric'">
@@ -1954,7 +1988,10 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 .up-b { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-.four-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sheet-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+.sheet-row .sheet-name { font-size: 12.5px; }
+.sheet-row .sheet-st { margin-left: auto; font-size: 12px; color: var(--el-text-color-placeholder); }
+.sheet-row .sheet-st.ok { color: var(--success); }
 .assign-bar { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 .eff-good { color: var(--success); font-weight: 700; }
 .eff-bad { color: var(--danger); font-weight: 700; }

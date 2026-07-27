@@ -63,6 +63,7 @@ async def _datasheet_to_out(d: models.Datasheet, db: AsyncSession) -> schemas.Da
         field_count=fres.scalar() or 0, record_count=rres.scalar() or 0,
         header_lines=header_lines,
         imported=d.imported_at is not None,  # 🆕 四表校验：是否已导入
+        imported_at=d.imported_at,           # 🆕 单表逐张导入：导入时间（前端显示已导入日期）
         done_flag=bool(d.done_flag),         # 🆕 装配前置完成标记
         created_at=d.created_at, updated_at=d.updated_at,
     )

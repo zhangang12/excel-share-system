@@ -12,6 +12,13 @@ export const datasheetsApi = {
   remove: (id: number) =>
     http.delete<{ message: string }>(`/datasheets/${id}`).then(r => r.data),
 
+  // 🆕 单表导入：上传 Excel 重建该数据表（取文件第一个 sheet，只替换本表字段/行）
+  importExcel: (id: number, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return http.post<{ message: string }>(`/datasheets/${id}/import-excel`, fd).then(r => r.data)
+  },
+
   // 字段
   listFields: (datasheetId: number) =>
     http.get<DataField[]>(`/datasheets/${datasheetId}/fields`).then(r => r.data),

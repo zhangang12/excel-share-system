@@ -542,6 +542,8 @@ function openBatchReceive() {
     item_id: i.id, item_name: i.item_name, spec: i.spec, qty: i.qty ?? null,
     unit_price: i.unit_price ?? null, received_amount: i.received_amount || null,
   }))
+  // 🆕 #308：弹窗打开即按预填单价先算一轮（仅补空，已填金额不动）；之后改单价仍走 onBatchLinePriceCalc 重算
+  batchRecvLines.value.forEach(l => { if (l.received_amount == null) onBatchLinePriceCalc(l) })
   batchRecvVisible.value = true
 }
 // 🆕 需求二：主汇总父行「合并收货」——直接对该采购单下所有零件行整批收货/维护送货单号
@@ -560,6 +562,8 @@ function openBatchReceiveGroup(row: any) {
     item_id: i.id, item_name: i.item_name, spec: i.spec, qty: i.qty ?? null,
     unit_price: i.unit_price ?? null, received_amount: i.received_amount || null,
   }))
+  // 🆕 #308：同 openBatchReceive，打开即补算空金额
+  batchRecvLines.value.forEach(l => { if (l.received_amount == null) onBatchLinePriceCalc(l) })
   batchRecvVisible.value = true
 }
 async function submitBatchReceive() {
@@ -1085,7 +1089,8 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                 <el-radio-button :value="false">待收货（{{ recvPendingCount }}）</el-radio-button>
                 <el-radio-button :value="true">已收货（{{ recvDoneCount }}）</el-radio-button>
               </el-radio-group>
-              <el-select v-model="recvSupplier" placeholder="全部供应商" clearable style="width:180px" @change="loadReceiving">
+              <!-- 🆕 #310 供应商下拉可搜索 -->
+              <el-select v-model="recvSupplier" placeholder="全部供应商" filterable clearable style="width:180px" @change="loadReceiving">
                 <el-option v-for="s in recvSupplierOptions" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
               <el-input v-model="recvPo" placeholder="采购单号" clearable style="width:150px" @change="loadReceiving" />
