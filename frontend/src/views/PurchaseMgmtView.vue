@@ -1009,6 +1009,19 @@ const listSheet = ref<string>('standard')
 const purchasableRows = ref<PurchasableRow[]>([])
 const purchasableFilter = ref('')
 const onlyGap = ref(false)   // 🆕 只看有缺口（建议采购>0）的行
+// 🆕 跨项目搜索：有搜索词=跨项目模式（搜所有进行中项目的该类型清单未下单行，项目选择器禁用、忽略项目）；
+// 清空搜索词=回到按项目浏览模式。仅普通模式（成套按项目打包不适用）。
+const crossQ = ref('')
+const crossMode = computed(() => !!crossQ.value.trim())
+let crossTimer: ReturnType<typeof setTimeout> | null = null
+function onCrossQInput() {   // 防抖 300ms
+  if (crossTimer) clearTimeout(crossTimer)
+  crossTimer = setTimeout(() => { void loadPurchasable() }, 300)
+}
+function onCrossQEnter() {   // 回车立即搜
+  if (crossTimer) { clearTimeout(crossTimer); crossTimer = null }
+  void loadPurchasable()
+}
 // 🆕 A4：去掉表头供应商，改逐行选；🆕 付款方式也改逐行(见 _payment_method)，表头只留 项目/清单/下单日期
 const listOrderForm = reactive({
   project_id: '' as number | '', project_code: '',
@@ -1109,7 +1122,7 @@ async function openListOrder(mode?: unknown) {
     project_id: '', project_code: '',
     delivery_date: new Date().toISOString().slice(0, 10), expected_arrival: '',
   })
-  purchasableRows.value = []; purchasableFilter.value = ''; onlyGap.value = false
+  purchasableRows.value = []; purchasableFilter.value = ''; onlyGap.value = false; crossQ.value = ''
   batchSupplier.value = ''; batchBrand.value = ''; batchPaymentMethod.value = ''; batchPrepayRatio.value = null; batchExpected.value = ''; listSheet.value = myDefaultSheet.value
   try {
     const r = await http.get<any[]>('/purchase/projects', { params: { proj_status: '进行中' } })
@@ -1131,25 +1144,45 @@ async function onListProjectChange() {
   listSheet.value = defaultSheetFor(pid)
   await loadPurchasable()
 }
+// 🆕 行数据请求序号：防抖搜索/切换模式并发时丢弃过期响应（旧响应不得覆盖新结果）
+let purchReq = 0
+function _fillRows(list: PurchasableRow[]) {
+  // 默认只勾选「未下单且有缺口(建议采购>0)」的行；采购数量默认取建议采购量，避免买多
+  purchasableRows.value = list.map(x => ({
+    ...x,
+    _checked: x.status === '未下单' && (x.suggest_purchase || 0) > 0,
+    _price: null,
+    _buyqty: x.suggest_purchase > 0 ? x.suggest_purchase : (x.qty ?? null),
+    _supplier_id: '' as number | '',
+    _brand: x.brand || '',
+    _expected: '',
+    _payment_method: '',
+    _prepay_ratio: null,
+  }))
+}
 async function loadPurchasable() {
+  // 🆕 跨项目搜索模式：忽略项目选择，搜所有进行中项目的该类型清单未下单行；清空搜索词回到按项目浏览
+  if (crossMode.value) { await searchCrossPurchasable(); return }
   const pid = listOrderForm.project_id
-  if (!pid) { purchasableRows.value = []; return }
+  if (!pid) { purchReq++; purchasableRows.value = []; return }
+  const my = ++purchReq
   purchasableLoading.value = true
   try {
     const r = await http.get<PurchasableRow[]>(`/purchase-mgmt/purchasable/${pid}`, { params: { sheet: listSheet.value } })
-    // 默认只勾选「未下单且有缺口(建议采购>0)」的行；采购数量默认取建议采购量，避免买多
-    purchasableRows.value = r.data.map(x => ({
-      ...x,
-      _checked: x.status === '未下单' && (x.suggest_purchase || 0) > 0,
-      _price: null,
-      _buyqty: x.suggest_purchase > 0 ? x.suggest_purchase : (x.qty ?? null),
-      _supplier_id: '' as number | '',
-      _brand: x.brand || '',
-      _expected: '',
-      _payment_method: '',
-      _prepay_ratio: null,
-    }))
-  } finally { purchasableLoading.value = false }
+    if (my !== purchReq) return   // 期间又切了项目/清单/搜索词，丢弃旧响应
+    _fillRows(r.data)
+  } finally { if (my === purchReq) purchasableLoading.value = false }
+}
+// 🆕 跨项目模糊搜索：q 空格分隔多关键字全部命中（名称/规格、大小写不敏感），只出未下单行，行带项目编号
+async function searchCrossPurchasable() {
+  const my = ++purchReq
+  purchasableLoading.value = true
+  try {
+    const r = await http.get<PurchasableRow[]>('/purchase-mgmt/purchasable-cross',
+      { params: { sheet: listSheet.value, q: crossQ.value.trim() } })
+    if (my !== purchReq) return
+    _fillRows(r.data)
+  } finally { if (my === purchReq) purchasableLoading.value = false }
 }
 function supplierName(sid: number | ''): string {
   return suppliers.value.find(s => s.id === sid)?.name || ''
@@ -1199,7 +1232,8 @@ async function submitListOrder() {
         supplier_id: sid,
         delivery_date: listOrderForm.delivery_date || null,
         expected_arrival: null,   // 🆕 预计到货已改逐行维护（跟着零件走），整单级不再使用
-        project_code: listOrderForm.project_code || null,
+        // 🆕 跨项目搜索模式行来自多个项目：整单项目编号留空，后端逐行从来源清单回溯项目编号(#253)
+        project_code: crossMode.value ? null : (listOrderForm.project_code || null),
         stock_location: null,   // 🆕 #204 采购下单不再填库位,改由仓库收货时填
         lines: rows.map(r => ({
           source_sheet_id: r.sheet_id, source_record_id: r.record_id,
@@ -2546,20 +2580,22 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <el-alert v-if="listOrderMode === 'kit'" type="success" :closable="false" style="margin-bottom:14px"
         title="按套下单：选项目 + 清单 → 勾选一组零件 → 填「套名称/套数/套总价/供应商」→ 打包成一套（一条成套明细）。勾中的零件成为套内清单并回写清单为「已下单」；整套按一个总走收货/入库/开票/请款/付款，作一个库存单位入库、按套领料。一套=同一供应商。" />
       <el-alert v-else type="info" :closable="false" style="margin-bottom:14px"
-        title="选项目 + 清单类型（标准件/电工/不锈钢/外协/激光）→ 逐行选「供应商」「品牌」「预计到货」（都可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的下单日期/采购负责人/预计到货（逐行回写对应零件行）。外协/激光无数量，采购数量手填。" />
+        title="选项目 + 清单类型（标准件/电工/不锈钢/外协/激光）→ 逐行选「供应商」「品牌」「预计到货」（都可批量填）→ 点生成，系统按供应商自动拆成多张采购单。下单会回写清单的下单日期/采购负责人/预计到货（逐行回写对应零件行）。外协/激光无数量，采购数量手填。🆕 不选项目时可用「跨项目搜索」：按名称/规格关键字搜所有进行中项目的未下单零件（空格分隔多关键字），勾选下单流程相同。" />
       <el-form :model="listOrderForm" label-position="top" class="order-form listorder-head-form">
         <el-row :gutter="14">
-          <el-col :xs="24" :sm="10" :md="10">
+          <el-col :xs="24" :sm="10" :md="8">
             <el-form-item label="项目 *">
-              <el-select v-model="listOrderForm.project_id" filterable placeholder="选择项目"
+              <!-- 🆕 跨项目搜索模式（右侧搜索框有词）时禁用项目选择器：此时行来自所有进行中项目，项目选择无意义 -->
+              <el-select v-model="listOrderForm.project_id" filterable :disabled="crossMode" placeholder="选择项目"
                          style="width:100%" @change="onListProjectChange">
                 <el-option v-for="p in listProjects" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :xs="12" :sm="6" :md="6">
+          <el-col :xs="12" :sm="6" :md="5">
             <el-form-item label="清单类型 *">
-              <el-select v-model="listSheet" :disabled="!listOrderForm.project_id" placeholder="选清单"
+              <!-- 🆕 不再要求先选项目：跨项目搜索模式只需清单类型 -->
+              <el-select v-model="listSheet" placeholder="选清单"
                          style="width:100%" @change="loadPurchasable">
                 <el-option v-for="t in availableSheets" :key="t.key" :label="t.label" :value="t.key" />
               </el-select>
@@ -2574,6 +2610,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-col v-if="listOrderMode === 'kit'" :xs="12" :sm="4" :md="4">
             <el-form-item label="预计到货（整套，选填）">
               <el-date-picker v-model="listOrderForm.expected_arrival" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <!-- 🆕 跨项目搜索：不选项目，按名称/规格关键字搜所有进行中项目的未下单行（仅普通模式；成套按项目打包不适用） -->
+          <el-col v-if="listOrderMode !== 'kit'" :xs="24" :sm="8" :md="7">
+            <el-form-item label="跨项目搜索（未下单）">
+              <el-input v-model="crossQ" placeholder="输入名称/规格关键字，跨项目搜未下单" clearable
+                        :prefix-icon="Search" @input="onCrossQInput" @clear="onCrossQInput" @keyup.enter="onCrossQEnter" />
             </el-form-item>
           </el-col>
           <!-- 🆕 #204 库位不再由采购下单填,统一改由仓库收货时填 -->
@@ -2644,7 +2687,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <span class="muted">已勾选 <b>{{ listSelCount }}</b> / {{ purchasableRows.length }} 行</span>
       </div>
       <el-table show-overflow-tooltip :data="filteredPurchasable" v-loading="purchasableLoading" size="small" border stripe
-                :empty-text="listOrderForm.project_id ? '该清单为空' : '请先选择项目和清单类型'"
+                :empty-text="crossMode ? '跨项目未搜到未下单的零件' : (listOrderForm.project_id ? '该清单为空' : (listOrderMode === 'kit' ? '请先选择项目和清单类型' : '请先选择项目和清单类型，或直接用跨项目搜索'))"
                 max-height="calc(100vh - 430px)" class="compact-tbl">
         <el-table-column width="46" align="center" fixed>
           <template #header>
@@ -2652,6 +2695,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                          @change="toggleAllPurchasable" />
           </template>
           <template #default="{ row }"><el-checkbox v-model="row._checked" /></template>
+        </el-table-column>
+        <!-- 🆕 跨项目搜索模式：行来自多个项目，显示项目编号列 -->
+        <el-table-column v-if="crossMode" label="项目编号" width="110" fixed>
+          <template #default="{ row }"><b class="code">{{ row.project_code || '—' }}</b></template>
         </el-table-column>
         <el-table-column label="名称" min-width="150" prop="item_name" fixed show-overflow-tooltip />
         <el-table-column v-if="sheetMeta(listSheet).hasDrawing" label="图纸名称" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ row.drawing || '—' }}</template></el-table-column>

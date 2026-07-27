@@ -1037,6 +1037,72 @@ async def _purchasable_rows(db: AsyncSession, ds: models.Datasheet, conf: tuple,
     return out
 
 
+@router.get("/purchasable-cross", response_model=List[schemas.PurchasableRow])
+async def purchasable_cross(
+    sheet: str = Query(..., description="清单类型: standard/elec_po/material/outsource/laser"),
+    q: Optional[str] = Query(None, description="名称/规格模糊关键字；空格分隔多个=全部命中(AND)"),
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 跨项目模糊搜索未下单行（从清单下单弹窗「跨项目搜索」用）：不传 project_id，
+    遍历所有进行中项目的该类型清单，只出 status=未下单 的行；
+    q 对 名称/规格 做包含式、大小写不敏感匹配，空格分隔多关键字须全部命中。
+    每行带 project_id/project_code/project_name（弹窗显示项目编号列）。
+    采购员受 _allowed_sheet_keys 限制：搜自己不负责的清单类型 → 403（与单项目端点同口径）。"""
+    conf = _PURCHASABLE_SHEETS.get(sheet)
+    if not conf:
+        raise HTTPException(400, "未知清单类型")
+    allowed = _allowed_sheet_keys(current)
+    if allowed is not None and sheet not in allowed:
+        raise HTTPException(403, "你没有该清单的采购权限")
+    # 进行中项目（排除已删除，与采购部项目列表同口径）
+    pr = await db.execute(select(models.Project).where(
+        models.Project.status == "进行中",
+        models.Project.is_deleted == False))  # noqa: E712
+    projects = {p.id: p for p in pr.scalars().all()}
+    if not projects:
+        return []
+    dsr = await db.execute(select(models.Datasheet).where(
+        models.Datasheet.project_id.in_(projects.keys()),
+        models.Datasheet.name == conf[0]))
+    sheets = list(dsr.scalars().all())
+    if not sheets:
+        return []
+    sheet_ids = [d.id for d in sheets]
+    # 批量预取 字段映射/下单引用/行，跨项目聚合避免逐张清单 N+1（_purchasable_rows 支持传入复用）
+    fr = await db.execute(select(models.Field).where(models.Field.datasheet_id.in_(sheet_ids)))
+    fmap_by_sheet: dict[int, dict] = {}
+    for f in fr.scalars().all():
+        fmap_by_sheet.setdefault(f.datasheet_id, {})[f.name] = str(f.id)
+    lr = await db.execute(select(models.PurchaseItem).where(
+        models.PurchaseItem.source_sheet_id.in_(sheet_ids)))
+    pi_by_sheet: dict[int, dict] = {}
+    for pi in lr.scalars().all():
+        pi_by_sheet.setdefault(pi.source_sheet_id, {}).setdefault(pi.source_record_id, []).append(pi)
+    rr = await db.execute(select(models.Record).where(
+        models.Record.datasheet_id.in_(sheet_ids))
+        .order_by(models.Record.datasheet_id, models.Record.sort_order, models.Record.id))
+    recs_by_sheet: dict[int, list] = {}
+    for rec in rr.scalars().all():
+        recs_by_sheet.setdefault(rec.datasheet_id, []).append(rec)
+    stock_by_key = await _build_stock_by_key(db)
+    out: list = []
+    for ds in sheets:
+        p = projects.get(ds.project_id)
+        out.extend(await _purchasable_rows(
+            db, ds, conf, sheet, stock_by_key, only_pending=True,
+            project_id=ds.project_id,
+            project_code=p.code if p else None, project_name=p.name if p else None,
+            name2id=fmap_by_sheet.get(ds.id, {}),
+            by_rec=pi_by_sheet.get(ds.id, {}),
+            records=recs_by_sheet.get(ds.id, [])))
+    # q：名称/规格 包含式、大小写不敏感；空格分隔多关键字全部命中（AND），行量级小在 Python 过滤
+    kws = (q or "").lower().split()
+    if kws:
+        out = [r for r in out if all(
+            kw in (r.item_name or "").lower() or kw in (r.spec or "").lower() for kw in kws)]
+    return out
+
 
 @router.post("/orders/from-list", response_model=List[schemas.PurchaseItemOut])
 async def create_order_from_list(
