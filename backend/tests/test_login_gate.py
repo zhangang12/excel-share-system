@@ -2,7 +2,7 @@
 1. is_intranet：CIDR 网段 / 单 IP(按/32) / 非法条目跳过 / 空名单；
 2. 内网 IP 登录 → 直接发 token（免闸）；
 3. 外网浏览器登录 → gate_required + 无 token + manager 收到含 6 位码的站内消息（库中只存哈希）；
-4. 正确码 → 发 token；错误码 → 400 且 fail_count+1；连续错 5 次 → 429；过期 → 400；
+4. 正确码 → 发 token；错误码 → 400 且 fail_count+1；🆕 错码不锁定（连错 6 次仍 400 非 429，正确码仍可用）；过期 → 400；
 5. 外网请求带 X-PMS-Client: desktop/... 头 → 直接发 token（客户端免闸）；
 6. admin 外网登录 → 直接发 token（admin 除外）；
 7. gate_enabled=0 → 直接发 token；
@@ -143,22 +143,23 @@ async def main():
                          json={"username": "w1", "pre_token": pre1, "code": code1})
         chk(r.status_code == 400, f"已用的码再验 400: {r.status_code}")
 
-        # ===== 4. 连续错 5 次 → 429；过期 → 400（用 w2 避免限频串扰）=====
+        # ===== 4. 错码不锁定（🆕 2026-07-28 应要求去掉错5次锁定）：连错 6 次仍 400 非 429，正确码仍可用；
+        #          过期 → 400（用 w2 避免限频串扰）=====
         r = await c.post("/api/auth/login", json={"username": "w2", "password": "pass123"}, headers=EXT)
         pre2 = r.json().get("pre_token", "")
         msg = await last_manager_msg()
         m = re.search(r"验证码：(\d{6})", msg.text if msg else "")
         code2 = m.group(1) if m else ""
         wrong2 = "111111" if code2 != "111111" else "222222"
-        for i in range(5):
+        for i in range(6):
             r = await c.post("/api/auth/login/verify-gate", headers=EXT,
                              json={"username": "w2", "pre_token": pre2, "code": wrong2})
-            chk(r.status_code == 400, f"第{i+1}次错码 400: {r.status_code}")
+            chk(r.status_code == 400, f"第{i+1}次错码仍 400 不锁定: {r.status_code}")
         _, rows = await gate_rows("w2")
-        chk(rows and rows[0].fail_count == 5, f"错 5 次 fail_count=5: {rows[0].fail_count if rows else None}")
+        chk(rows and rows[0].fail_count == 6, f"错 6 次 fail_count=6: {rows[0].fail_count if rows else None}")
         r = await c.post("/api/auth/login/verify-gate", headers=EXT,
                          json={"username": "w2", "pre_token": pre2, "code": code2})
-        chk(r.status_code == 429, f"错 5 次后锁定 429: {r.status_code} {r.text[:80]}")
+        chk(r.status_code == 200, f"连错后正确码仍可登录: {r.status_code} {r.text[:80]}")
         # 过期 → 400（直接把码行 expires_at 拨到过去）
         async with SessionLocal() as db:
             await db.execute(update(models.LoginGateCode).where(

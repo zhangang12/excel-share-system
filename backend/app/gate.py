@@ -16,9 +16,7 @@ from . import models
 from .notify import push_message
 
 CODE_TTL_MIN = 10          # 验证码有效期（分钟）
-_FAIL_LOCK_COUNT = 5       # 连续错码锁定阈值
-_RATE_PER_MIN = 1          # 同账号发码限频：每分钟
-_RATE_PER_DAY = 10         # 同账号发码限频：每天
+_RATE_PER_MIN = 1          # 同账号发码限频：每分钟（防误点刷屏；🆕 2026-07-28 应要求去掉每日上限与错码锁定）
 
 _CFG_ENABLED = "gate_enabled"
 _CFG_CIDRS = "intranet_cidrs"
@@ -84,19 +82,14 @@ async def set_gate_config(db: AsyncSession, *, enabled: bool, cidrs: list[str]) 
 
 
 async def issue_code(db: AsyncSession, user: models.User) -> str:
-    """发码：限频（同账号 1 条/分、10 条/天，超限 429）→ 作废旧未用码 →
-    生成 6 位码（库中只存 sha256 哈希）+ pre_token → push_message 通知管理层。返回 pre_token。"""
+    """发码：限频（同账号 1 条/分，防误点刷屏；🆕 2026-07-28 应要求去掉每日上限）→
+    作废旧未用码 → 生成 6 位码（库中只存 sha256 哈希）+ pre_token → push_message 通知管理层。返回 pre_token。"""
     now = _now()
-    base = select(func.count(models.LoginGateCode.id)).where(
-        models.LoginGateCode.user_id == user.id)
-    cnt_min = (await db.execute(base.where(
+    cnt_min = (await db.execute(select(func.count(models.LoginGateCode.id)).where(
+        models.LoginGateCode.user_id == user.id,
         models.LoginGateCode.created_at >= now - timedelta(minutes=1)))).scalar_one()
     if cnt_min >= _RATE_PER_MIN:
         raise HTTPException(429, "验证码发送过于频繁，请 1 分钟后再试")
-    cnt_day = (await db.execute(base.where(
-        models.LoginGateCode.created_at >= now - timedelta(days=1)))).scalar_one()
-    if cnt_day >= _RATE_PER_DAY:
-        raise HTTPException(429, "今日验证码获取次数已达上限，请联系管理员")
 
     # 作废旧未用码（同一账号同时只有一个有效码）
     await db.execute(update(models.LoginGateCode).where(
@@ -121,9 +114,9 @@ async def issue_code(db: AsyncSession, user: models.User) -> str:
 
 
 async def verify_code(db: AsyncSession, user: models.User, pre_token: str, code: str) -> None:
-    """验码：按 pre_token+user_id 找未用行；不存在/已用/过期 → 400；
-    连续错 5 次（末次失败必在 10 分钟内，因行未过期）→ 429；哈希不符 → fail_count+1 后 400；
-    成功 → used=True。异常一律 HTTPException，由调用方写审计。"""
+    """验码：按 pre_token+user_id 找未用行；不存在/已用/过期 → 400；哈希不符 → fail_count+1 后 400；
+    成功 → used=True。异常一律 HTTPException，由调用方写审计。
+    （🆕 2026-07-28 应要求去掉「错 5 次锁定」：不再锁，错误仅计 fail_count）"""
     row = (await db.execute(select(models.LoginGateCode).where(
         models.LoginGateCode.user_id == user.id,
         models.LoginGateCode.pre_token == pre_token,
@@ -131,8 +124,6 @@ async def verify_code(db: AsyncSession, user: models.User, pre_token: str, code:
     ))).scalar_one_or_none()
     if not row or _aware(row.expires_at) < _now():
         raise HTTPException(400, "验证码无效或已过期，请重新获取")
-    if row.fail_count >= _FAIL_LOCK_COUNT:
-        raise HTTPException(429, "验证码错误次数过多，已锁定，请 10 分钟后重新获取")
     if hashlib.sha256(code.strip().encode()).hexdigest() != row.code_hash:
         row.fail_count += 1
         await db.commit()
