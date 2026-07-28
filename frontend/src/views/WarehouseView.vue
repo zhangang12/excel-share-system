@@ -313,6 +313,10 @@ const recvLoading = ref(false)
 const recvReceived = ref(false)        // false=待收货 / true=已收货
 const recvSupplier = ref<number | ''>('')
 const recvPo = ref('')                   // 🆕 #315 采购单号/项目编号关键字（前端模糊过滤）
+// 🆕 #321 合并组默认收起（自动合并、手动展开），「全部展开/收起」靠 key 强制重渲染
+const recvExpandAll = ref(false)
+const recvExpandKey = ref(0)
+function toggleRecvExpandAll() { recvExpandAll.value = !recvExpandAll.value; recvExpandKey.value++ }
 const recvName = ref('')               // 🆕 #286 物料名称关键字（前端模糊过滤）
 const recvOrderMonth = ref('')         // 🆕 #290 下单时间筛选（月份，前端过滤）
 const recvSupplierOptions = computed(() => {
@@ -1103,11 +1107,15 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-input v-model="recvName" placeholder="物料名称" clearable style="width:140px" />
               <el-date-picker v-model="recvOrderMonth" type="month" value-format="YYYY-MM" placeholder="下单时间" clearable style="width:130px" />
               <el-button :icon="Search" @click="loadReceiving">查询</el-button>
+              <!-- 🆕 #321 自动合并、手动展开：合并组默认收起，一键全展/全收 -->
+              <el-button link type="primary" size="small" @click="toggleRecvExpandAll">
+                {{ recvExpandAll ? '全部收起' : '全部展开' }}
+              </el-button>
               <el-button v-if="recvSelected.length" type="primary" @click="openBatchReceive">合并收货 ({{ recvSelected.length }})</el-button>
               <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。合并零件可勾选多条「合并收货」只填总价。</span>
             </div>
             <el-table show-overflow-tooltip :data="groupedRecv" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
-                      :row-key="recvRowKey" :tree-props="{ children: 'children' }" default-expand-all
+                      :key="recvExpandKey" :row-key="recvRowKey" :tree-props="{ children: 'children' }" :default-expand-all="recvExpandAll"
                       :row-class-name="grpRowClass"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column type="selection" width="40" :selectable="(row: any) => !row._isGroup" />
