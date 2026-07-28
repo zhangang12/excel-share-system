@@ -18,6 +18,14 @@ export interface MgmtTodoTarget {
   extend_reason?: string | null
 }
 
+// 🆕 #311 待办附图（后端随待办返回，点击走 AttachmentPreview 在线预览）
+export interface TodoAttachment {
+  id: number
+  name: string
+  ext?: string | null
+  size: number
+}
+
 export interface MgmtTodo {
   id: number
   title: string
@@ -32,6 +40,7 @@ export interface MgmtTodo {
   done_count: number
   overdue_count: number
   pending_reply_count: number
+  attachments?: TodoAttachment[]   // 🆕 #311 待办附图
 }
 
 export interface MyTodoRow {
@@ -51,6 +60,7 @@ export interface MyTodoRow {
   extend_status?: ExtendStatus
   extend_to?: string | null
   extend_reason?: string | null
+  attachments?: TodoAttachment[]   // 🆕 #311 待办附图
 }
 
 export const managementTodoApi = {
@@ -74,4 +84,13 @@ export const managementTodoApi = {
     http.post<MyTodoRow>(`/management-todos/${targetId}/done`, { progress }).then((r) => r.data),
   requestExtend: (targetId: number, extend_to: string, reason: string) =>
     http.post<MyTodoRow>(`/management-todos/${targetId}/extend`, { extend_to, reason }).then((r) => r.data),
+
+  // 🆕 #311 待办附图：创建后逐张上传（biz_type=management_todo, biz_id=待办ID），同 OA #264 链路
+  uploadAttachment: (todoId: number, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('biz_type', 'management_todo')
+    fd.append('biz_id', String(todoId))
+    return http.post<{ id: number; name: string }>('/attachments', fd).then((r) => r.data)
+  },
 }

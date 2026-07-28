@@ -21,6 +21,7 @@ from .. import models, schemas
 from ..deps import get_current_user, require_admin_or_manager
 from ..notify import push_message
 from ..utils import write_audit
+from .attachments_router import delete_attachment_file
 
 router = APIRouter(prefix="/api/management-todos", tags=["管理层待办"])
 
@@ -56,6 +57,17 @@ def _uname(u: Optional[models.User]) -> Optional[str]:
     return u.full_name or u.username
 
 
+async def _todo_atts(db: AsyncSession, todo_id: int) -> list[schemas.AttachmentOut]:
+    """🆕 #311 待办附图（biz_type=management_todo, biz_id=待办ID）。
+    可见口径跟随待办本身：管理层（监控全部）与收件人（我收到的）在各自视图里看到。"""
+    res = await db.execute(
+        select(models.Attachment)
+        .where(models.Attachment.biz_type == "management_todo",
+               models.Attachment.biz_id == todo_id)
+        .order_by(models.Attachment.id))
+    return [schemas.AttachmentOut.model_validate(a) for a in res.scalars().all()]
+
+
 def _target_out(t: models.ManagementTodoTarget, today: date,
                 due_date: Optional[str] = None) -> schemas.MgmtTodoTargetOut:
     return schemas.MgmtTodoTargetOut(
@@ -66,7 +78,7 @@ def _target_out(t: models.ManagementTodoTarget, today: date,
     )
 
 
-def _todo_out(todo: models.ManagementTodo, today: date) -> schemas.MgmtTodoOut:
+async def _todo_out(db: AsyncSession, todo: models.ManagementTodo, today: date) -> schemas.MgmtTodoOut:
     targets = [_target_out(t, today, todo.due_date) for t in todo.targets]
     return schemas.MgmtTodoOut(
         id=todo.id, title=todo.title, content=todo.content, priority=todo.priority,
@@ -77,10 +89,11 @@ def _todo_out(todo: models.ManagementTodo, today: date) -> schemas.MgmtTodoOut:
         done_count=sum(1 for x in targets if x.status == "done"),
         overdue_count=sum(1 for x in targets if x.overdue),
         pending_reply_count=sum(1 for x in targets if x.status == "pending"),
+        attachments=await _todo_atts(db, todo.id),
     )
 
 
-def _my_row(t: models.ManagementTodoTarget, today: date) -> schemas.MyTodoRow:
+async def _my_row(db: AsyncSession, t: models.ManagementTodoTarget, today: date) -> schemas.MyTodoRow:
     todo = t.todo
     return schemas.MyTodoRow(
         target_id=t.id, todo_id=t.todo_id, title=todo.title, content=todo.content,
@@ -89,6 +102,7 @@ def _my_row(t: models.ManagementTodoTarget, today: date) -> schemas.MyTodoRow:
         status=t.status, committed_at=t.committed_at, progress=t.progress,
         done_at=t.done_at, overdue=_is_overdue(t, today, todo.due_date),
         extend_status=t.extend_status, extend_to=t.extend_to, extend_reason=t.extend_reason,
+        attachments=await _todo_atts(db, todo.id),
     )
 
 
@@ -150,7 +164,7 @@ async def _get_todo_out(db: AsyncSession, todo_id: int) -> schemas.MgmtTodoOut:
     todo = res.scalar_one_or_none()
     if not todo:
         raise HTTPException(404, "待办不存在")
-    return _todo_out(todo, _cn_today())
+    return await _todo_out(db, todo, _cn_today())
 
 
 @router.get("/sent", response_model=list[schemas.MgmtTodoOut])
@@ -162,7 +176,7 @@ async def list_sent(
     res = await db.execute(
         select(models.ManagementTodo).order_by(models.ManagementTodo.created_at.desc()))
     today = _cn_today()
-    return [_todo_out(t, today) for t in res.scalars().all()]
+    return [await _todo_out(db, t, today) for t in res.scalars().all()]
 
 
 @router.delete("/{todo_id}", response_model=schemas.Msg)
@@ -176,6 +190,12 @@ async def delete_todo(
     todo = res.scalar_one_or_none()
     if not todo:
         raise HTTPException(404, "待办不存在")
+    # 🆕 #311 待办附图随撤销一并删除（记录+磁盘文件），同 OA 删除申请口径
+    ar = await db.execute(select(models.Attachment).where(
+        models.Attachment.biz_type == "management_todo",
+        models.Attachment.biz_id == todo_id))
+    for a in ar.scalars().all():
+        await delete_attachment_file(db, a)
     await db.execute(sa_delete(models.ManagementTodo).where(models.ManagementTodo.id == todo_id))
     await db.commit()
     await write_audit(db, user=current, action="delete", target_type="management_todo",
@@ -209,7 +229,7 @@ async def list_mine(
         urgent = 0 if (t.status == "pending" or _is_overdue(t, today, t.todo.due_date)) else 1
         return (done, urgent, -t.todo.created_at.timestamp())
     rows.sort(key=_order)
-    return [_my_row(t, today) for t in rows]
+    return [await _my_row(db, t, today) for t in rows]
 
 
 @router.get("/mine/count")
@@ -272,7 +292,7 @@ async def reply_commit(
         db, to_user_id=t.todo.created_by, kind="info",
         text=f"{_uname(current)} {verb}「{t.todo.title}」于 {body.committed_at} 前完成。",
         biz_type="mgmt_todo", biz_id=t.todo_id)
-    return _my_row(t, _cn_today())
+    return await _my_row(db, t, _cn_today())
 
 
 @router.post("/{target_id}/progress", response_model=schemas.MyTodoRow)
@@ -286,7 +306,7 @@ async def update_progress(
     t.progress = (body.progress or "").strip() or None
     await db.commit()
     await db.refresh(t)
-    return _my_row(t, _cn_today())
+    return await _my_row(db, t, _cn_today())
 
 
 @router.post("/{target_id}/done", response_model=schemas.MyTodoRow)
@@ -298,7 +318,7 @@ async def mark_done(
 ):
     t = await _my_target(db, target_id, current.id)
     if t.status == "done":
-        return _my_row(t, _cn_today())
+        return await _my_row(db, t, _cn_today())
     if body and body.progress is not None:
         t.progress = body.progress.strip() or None
     t.status = "done"
@@ -309,7 +329,7 @@ async def mark_done(
         db, to_user_id=t.todo.created_by, kind="info",
         text=f"{_uname(current)} 已完成待办「{t.todo.title}」。",
         biz_type="mgmt_todo", biz_id=t.todo_id)
-    return _my_row(t, _cn_today())
+    return await _my_row(db, t, _cn_today())
 
 
 @router.post("/{target_id}/extend", response_model=schemas.MyTodoRow)
@@ -341,7 +361,7 @@ async def request_extend(
         text=f"{_uname(current)} 申请把「{t.todo.title}」顺延到 {body.extend_to}"
              f"（原 {t.committed_at}）：{t.extend_reason}，请审批。",
         biz_type="mgmt_todo_extend", biz_id=t.todo_id)
-    return _my_row(t, _cn_today())
+    return await _my_row(db, t, _cn_today())
 
 
 @router.post("/{target_id}/extend/decide", response_model=schemas.MgmtTodoTargetOut)

@@ -312,7 +312,7 @@ const recvItems = ref<RecvItem[]>([])
 const recvLoading = ref(false)
 const recvReceived = ref(false)        // false=待收货 / true=已收货
 const recvSupplier = ref<number | ''>('')
-const recvPo = ref('')
+const recvPo = ref('')                   // 🆕 #315 采购单号/项目编号关键字（前端模糊过滤）
 const recvName = ref('')               // 🆕 #286 物料名称关键字（前端模糊过滤）
 const recvOrderMonth = ref('')         // 🆕 #290 下单时间筛选（月份，前端过滤）
 const recvSupplierOptions = computed(() => {
@@ -322,11 +322,15 @@ const recvSupplierOptions = computed(() => {
 })
 
 // 🆕 #286 物料名称模糊过滤 + #290 下单时间(月份)过滤：收货接口只支持 supplier_id/po_no
-//   参数（在采购域，不动它），名称/下单时间在已拉取的列表上前端过滤，即时生效
+//   参数（在采购域，不动它），名称/下单时间在已拉取的列表上前端过滤，即时生效。
+// 🆕 #315 单号框同口径前端过滤：一个框同时模糊匹配 采购单号(po_no)/订单编号(project_code)，
+//   不再走后端 po_no 参数（后端只按采购单号过滤，输项目编号会搜不到）
 const filteredRecv = computed(() => {
+  const p = recvPo.value.trim().toLowerCase()
   const k = recvName.value.trim().toLowerCase()
   const m = recvOrderMonth.value
   return recvItems.value.filter(i =>
+    (!p || (i.po_no || '').toLowerCase().includes(p) || (i.project_code || '').toLowerCase().includes(p)) &&
     (!k || (i.item_name || '').toLowerCase().includes(k)) &&
     (!m || (i.delivery_date || '').startsWith(m)))
 })
@@ -386,7 +390,7 @@ async function loadReceiving() {
       params: {
         received: recvReceived.value,
         supplier_id: recvSupplier.value || undefined,
-        po_no: recvPo.value || undefined,
+        // 🆕 #315 单号过滤挪到前端（filteredRecv），后端 po_no 参数只按采购单号过滤会漏项目编号
       },
     })
     recvItems.value = r.data
@@ -1093,7 +1097,8 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-select v-model="recvSupplier" placeholder="全部供应商" filterable clearable style="width:180px" @change="loadReceiving">
                 <el-option v-for="s in recvSupplierOptions" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
-              <el-input v-model="recvPo" placeholder="采购单号" clearable style="width:150px" @change="loadReceiving" />
+              <!-- 🆕 #315 一个框同时模糊匹配采购单号/订单编号(项目编号)，前端即时过滤 -->
+              <el-input v-model="recvPo" placeholder="采购单号/项目编号" clearable style="width:170px" />
               <!-- 🆕 #286 物料名称关键字 + #290 下单时间(月份)：前端即时过滤，不走接口 -->
               <el-input v-model="recvName" placeholder="物料名称" clearable style="width:140px" />
               <el-date-picker v-model="recvOrderMonth" type="month" value-format="YYYY-MM" placeholder="下单时间" clearable style="width:130px" />
@@ -1106,7 +1111,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                       :row-class-name="grpRowClass"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column type="selection" width="40" :selectable="(row: any) => !row._isGroup" />
-              <el-table-column prop="po_no" label="采购单号" width="160">
+              <el-table-column prop="po_no" label="采购单号" width="205" :show-overflow-tooltip="false">
                 <template #default="{ row }">
                   <el-tag v-if="row._isGroup" size="small" type="warning" effect="plain" style="margin-right:4px">合并{{ row._count }}</el-tag>
                   <!-- 🆕 反馈#234/#235：点采购单号查看/打印采购单 -->

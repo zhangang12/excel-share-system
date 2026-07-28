@@ -2315,12 +2315,14 @@ async def create_payment_request(
             item_id=item_in.item_id,
             allocated_amount=item_in.allocated_amount,
         ))
-    # 🆕 请款提交 → 推财务（站内+企微双通道 push_message；finance 自动含 finance_lead 及副角色，
-    #   替代原先手写 Message（无企微、只覆盖锚点 role_id）。请款人兼财务时排除本人。
+    # 🆕 请款提交 → 推财务（站内+企微双通道 push_message；替代原先手写 Message——无企微、只覆盖锚点 role_id）。
+    #   请款人兼财务时排除本人。
+    # 🆕 反馈#313：推送收窄到 finance_lead——请款审批只财务主管能做，plain finance 无审批权限不打扰
+    #   （push_message 对 finance 会隐含扇出 finance_lead，直接指 finance_lead 即只达审批人）。
     sup_name = (await db.execute(select(models.Supplier.name).where(
         models.Supplier.id == body.supplier_id))).scalar_one_or_none() or "—"
     await db.commit()
-    await push_message(db, to_role="finance", kind="info",
+    await push_message(db, to_role="finance_lead", kind="info",
                        text=f"【请款待审批】{_uname(current)} 发起请款 ¥{body.requested_amount:.2f}（供应商：{sup_name}），请及时审批。",
                        biz_type="payment_request", biz_id=pr.id,
                        exclude_user_ids={current.id})

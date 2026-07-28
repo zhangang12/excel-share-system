@@ -1054,7 +1054,7 @@ async def mark_electric_done(
         await push_message(db, to_role="manager", kind="warn", text=text, biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="electric_done", target_type="dept_order",
                       target_id=o.id, detail=f"done eff={eff}% on_time={on_time}")
-    return schemas.Msg(message="接线完成，已计入考核。可到「已完成」里上传电路图并做发货准备（不影响考核）"
+    return schemas.Msg(message="接线完成，已计入考核。可先在当前卡片上传电路图并推送物流，也可到「已完成」补传（不影响考核）"
                        + (f"；逾期 {overdue_days} 天已提醒主管" if overdue_days else ""))
 
 

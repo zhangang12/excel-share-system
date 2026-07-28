@@ -632,6 +632,8 @@ const itemForm = reactive({
   contract_no: '', project_code: '', delivery_note_no: '',
   item_name: '', spec: '', brand: '', qty: null as number | null, unit_price: null as number | null,
   received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
+  // 🆕 反馈#314：现金直付——编辑明细可直接维护已付款金额/付款日期（付款方式沿用上方字段，可手填"现金"）
+  paid_amount: 0, paid_date: '',
   payment_method: '', prepay_ratio: null as number | null, invoice_status: '待对账', notes: '',
   custom_values: {} as Record<string, any>,   // 🆕 R6
 })
@@ -980,6 +982,12 @@ function foldDrawingSpec(r: { drawing?: string | null; spec?: string | null }): 
   const d = (r.drawing || '').trim(), s = (r.spec || '').trim()
   if (d && s) return `${d} · ${s}`
   return d || s || null
+}
+// 🆕 反馈#318：外协/激光清单的「规格」列就是「图纸名称」列，下单折叠后 spec 存成「X · X」（同一值两遍）。
+// 存量数据不动，展示层去重：以 · 分隔后完全相同的片段只显示一份（如 "J05-反转限位轴 · J05-反转限位轴" → "J05-反转限位轴"）。
+function dedupSpec(spec?: string | null): string {
+  const parts = (spec || '').split('·').map(p => p.trim()).filter(Boolean)
+  return [...new Set(parts)].join(' · ')
 }
 const listOrderVisible = ref(false)
 const listOrderSaving = ref(false)
@@ -1438,6 +1446,7 @@ function openNewItem() {
     contract_no: '', project_code: '',
     delivery_note_no: '', item_name: '', spec: '', brand: '', qty: null, unit_price: null,
     received_amount: 0, invoice_date: '', tax_rate: '', invoice_amount: 0,
+    paid_amount: 0, paid_date: '',
     payment_method: '', prepay_ratio: null, invoice_status: '待对账', notes: '',
     custom_values: {},
   })
@@ -1454,6 +1463,7 @@ function openEditItem(row: PurchaseItemOut) {
     spec: row.spec || '', brand: row.brand || '', qty: row.qty, unit_price: row.unit_price,
     received_amount: row.received_amount, invoice_date: row.invoice_date || '',
     tax_rate: row.tax_rate || '', invoice_amount: row.invoice_amount,
+    paid_amount: row.paid_amount ?? 0, paid_date: row.paid_date || '',
     payment_method: row.payment_method || '', prepay_ratio: row.prepay_ratio ?? null,
     invoice_status: row.invoice_status, notes: row.notes || '',
     custom_values: { ...(row.custom_values || {}) },
@@ -1481,6 +1491,8 @@ async function saveItem() {
       invoice_date: itemForm.invoice_date || null,
       tax_rate: itemForm.tax_rate || null,
       invoice_amount: itemForm.invoice_amount,
+      paid_amount: itemForm.paid_amount,   // 🆕 #314 现金直付（仅编辑区展示；新建为0，create 端忽略）
+      paid_date: itemForm.paid_date || null,
       payment_method: itemForm.payment_method || null,
       prepay_ratio: isPrepayMethod(itemForm.payment_method) ? itemForm.prepay_ratio : null,
       invoice_status: itemForm.invoice_status,
@@ -2234,7 +2246,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </template>
             </el-table-column>
             <el-table-column prop="spec" :label="itemSheetType && itemSheetType !== 'loose' ? sheetMeta(itemSheetType).specLabel : '规格'" min-width="120">
-              <template #default="{ row }">{{ row.spec || '—' }}</template>
+              <!-- 🆕 #318：展示层去重（外协/激光 名称=图纸名称 时不再显示两遍；tooltip 同源） -->
+              <template #default="{ row }">{{ dedupSpec(row.spec) || '—' }}</template>
             </el-table-column>
             <el-table-column prop="brand" label="品牌" width="88">
               <template #default="{ row }">{{ row.brand || '—' }}</template>
@@ -2961,8 +2974,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="付款方式">
-              <el-select v-model="itemForm.payment_method" clearable filterable
-                         placeholder="选择" style="width:100%">
+              <!-- 🆕 #314：allow-create 支持手填（现金场景可直填"现金"） -->
+              <el-select v-model="itemForm.payment_method" clearable filterable allow-create
+                         placeholder="选择或手填" style="width:100%">
                 <el-option v-for="m in PAY_METHODS" :key="m" :label="m" :value="m" />
               </el-select>
             </el-form-item>
@@ -3048,6 +3062,17 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-col :xs="24" :sm="12" :md="8">
               <el-form-item label="开票金额">
                 <el-input-number v-model="itemForm.invoice_amount" :precision="2" :min="0" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <!-- 🆕 #314 现金直付：不走请款链路的(淘宝现金买等)直接维护已付款；保存后付款状态/供应商账目自动更新 -->
+            <el-col :xs="24" :sm="12" :md="8">
+              <el-form-item label="已付款金额">
+                <el-input-number v-model="itemForm.paid_amount" :precision="2" :min="0" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :sm="12" :md="8">
+              <el-form-item label="付款日期">
+                <el-date-picker v-model="itemForm.paid_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
               </el-form-item>
             </el-col>
             <el-col :xs="24" :sm="12" :md="8">

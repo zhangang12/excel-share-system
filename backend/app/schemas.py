@@ -1259,6 +1259,11 @@ class PurchaseItemUpdate(BaseModel):
     tax_rate: Optional[str] = None
     invoice_amount: Optional[float] = None
     payment_method: Optional[str] = None
+    # 🆕 反馈#314：现金采购直付通道——不走请款链路的(如淘宝现金买)可在编辑明细时直接维护
+    #   已付款金额/付款日期；payment_method 本就可写(可手填"现金")。与请款付款回写共用同字段，
+    #   写后 _maybe_auto_reconcile 按既有口径自动对账。
+    paid_amount: Optional[float] = None
+    paid_date: Optional[str] = None
     prepay_ratio: Optional[float] = None
     # 注意：不允许在这里开放 arrival_date——到货日期只能由仓库收货接口写入，
     # 否则采购员可绕过收货流程直接填/清到货日期，让「到期未到货提醒」失真（且不入库、不回写清单）。
@@ -1784,6 +1789,7 @@ class MgmtTodoOut(BaseModel):
     done_count: int = 0
     overdue_count: int = 0
     pending_reply_count: int = 0
+    attachments: list[AttachmentOut] = []            # 🆕 #311 待办附图（biz_type=management_todo）
 
 
 class MyTodoRow(BaseModel):
@@ -1804,3 +1810,4 @@ class MyTodoRow(BaseModel):
     extend_status: Optional[str] = None
     extend_to: Optional[str] = None
     extend_reason: Optional[str] = None
+    attachments: list[AttachmentOut] = []            # 🆕 #311 待办附图（biz_type=management_todo）

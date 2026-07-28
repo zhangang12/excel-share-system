@@ -7,9 +7,14 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { adminApi } from '@/api/admin'
-import { managementTodoApi, type MyTodoRow, type MgmtTodo } from '@/api/managementTodo'
+import { managementTodoApi, type MyTodoRow, type MgmtTodo, type TodoAttachment } from '@/api/managementTodo'
 import type { User } from '@/types'
 import { fmtRelative } from '@/utils/format'
+import AttachmentPreview from './AttachmentPreview.vue'   // 🆕 #311 待办附图在线预览
+
+// 🆕 #311 附件预览（图片内嵌，其它格式按类型预览/下载）
+const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
+function previewAtt(a: TodoAttachment) { previewRef.value?.open({ id: a.id, name: a.name }) }
 
 const auth = useAuthStore()
 const isMgr = computed(() => auth.isAdmin) // hasRole('admin','manager')
@@ -104,8 +109,23 @@ const createDlg = ref(false)
 const users = ref<User[]>([])
 const createForm = ref<{ title: string; content: string; priority: string; due_date: string; recipient_ids: number[] }>(
   { title: '', content: '', priority: 'normal', due_date: '', recipient_ids: [] })
+// 🆕 #311 附件（选填，图片多张）：照 OA #264 链路——先选文件，待办创建成功后逐张上传
+const createFiles = ref<File[]>([])
+function pickCreateFiles() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.multiple = true
+  input.accept = '.jpg,.jpeg,.png,.gif,.bmp,.webp'
+  input.onchange = () => {
+    for (const f of Array.from(input.files || [])) {
+      if (!createFiles.value.some(x => x.name === f.name && x.size === f.size)) createFiles.value.push(f)
+    }
+  }
+  input.click()
+}
+function removeCreateFile(i: number) { createFiles.value.splice(i, 1) }
 async function openCreate() {
   createForm.value = { title: '', content: '', priority: 'normal', due_date: '', recipient_ids: [] }
+  createFiles.value = []
   createDlg.value = true
   if (!users.value.length) {
     try { users.value = await adminApi.listUsers() } catch { /* 静默 */ }
@@ -117,13 +137,22 @@ async function submitCreate() {
   if (!createForm.value.recipient_ids.length) { ElMessage.warning('请至少勾选一个收件人'); return }
   creating.value = true
   try {
-    await managementTodoApi.create({
+    const todo = await managementTodoApi.create({
       title: createForm.value.title.trim(),
       content: createForm.value.content.trim() || undefined,
       priority: createForm.value.priority,
       due_date: createForm.value.due_date || undefined,
       recipient_ids: createForm.value.recipient_ids,
     })
+    // 🆕 #311：随待办一并上传附图（失败不阻塞，提示后可重新新建带图待办）
+    if (createFiles.value.length) {
+      let fail = 0
+      for (const f of createFiles.value) {
+        try { await managementTodoApi.uploadAttachment(todo.id, f) } catch { fail++ }
+      }
+      if (fail) ElMessage.warning(`${fail} 张图片上传失败，其余已随待办发出`)
+      createFiles.value = []
+    }
     ElMessage.success('待办已下发')
     createDlg.value = false
     await loadSent()
@@ -212,6 +241,10 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
               <span class="tc-from">来自 {{ row.creator_name || '管理层' }} · {{ fmtRelative(row.created_at) }}</span>
             </div>
             <div v-if="row.content" class="tc-content">{{ row.content }}</div>
+            <!-- 🆕 #311 待办附图：点击在线预览 -->
+            <div v-if="row.attachments?.length" class="tc-atts">
+              <span v-for="a in row.attachments" :key="a.id" class="att-chip" :title="a.name" @click="previewAtt(a)">📎 {{ a.name }}</span>
+            </div>
             <div class="tc-meta">
               <span v-if="row.due_date">截止：<b :class="{ over: row.overdue }">{{ row.due_date }}</b></span>
               <span v-if="row.committed_at">承诺完成：<b :class="{ over: row.overdue }">{{ row.committed_at }}</b></span>
@@ -254,6 +287,10 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
               <el-button type="danger" link size="small" @click="removeTodo(t)">撤销</el-button>
             </div>
             <div v-if="t.content" class="tc-content">{{ t.content }}</div>
+            <!-- 🆕 #311 待办附图：点击在线预览 -->
+            <div v-if="t.attachments?.length" class="tc-atts">
+              <span v-for="a in t.attachments" :key="a.id" class="att-chip" :title="a.name" @click="previewAtt(a)">📎 {{ a.name }}</span>
+            </div>
             <table class="tg-table">
               <thead><tr><th>收件人</th><th>状态</th><th>承诺完成</th><th>进展</th><th>操作</th></tr></thead>
               <tbody>
@@ -348,12 +385,27 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                      :label="(u.full_name || u.username) + (u.role_names?.length ? ` (${u.role_names.join('/')})` : '')" />
         </el-select>
       </el-form-item>
+      <!-- 🆕 #311 附件（选填，图片多张）：随待办一并下发，收件人/管理层都可在线预览 -->
+      <el-form-item label="附件（选填）">
+        <div class="att-picker">
+          <el-button size="small" @click="pickCreateFiles">＋ 添加图片</el-button>
+          <span v-if="!createFiles.length" class="muted-tip" style="margin-top:0">可附现场照片/截图（jpg/png/webp 等，多张）</span>
+        </div>
+        <div v-if="createFiles.length" class="tc-atts" style="margin-top:6px">
+          <span v-for="(f, i) in createFiles" :key="f.name + f.size" class="att-chip">
+            📎 {{ f.name }} <b class="att-x" @click="removeCreateFile(i)">×</b>
+          </span>
+        </div>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="createDlg = false">取消</el-button>
       <el-button type="primary" :loading="creating" @click="submitCreate">下发</el-button>
     </template>
   </el-dialog>
+
+  <!-- 🆕 #311 附件在线预览 -->
+  <AttachmentPreview ref="previewRef" />
 </template>
 
 <style scoped>
@@ -404,6 +456,19 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 .tc-meta .rej { color: #dc2626; }
 .tc-progress { font-size: 12.5px; color: #4b5563; margin-top: 6px; background: #f9fafb; border-radius: 6px; padding: 6px 10px; white-space: pre-wrap; word-break: break-word; }
 .tc-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* 🆕 #311 附件 chips */
+.tc-atts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.att-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 240px;
+  font-size: 12px; color: #0f766e; background: #f0fdfa; border: 1px solid #ccfbf1;
+  border-radius: 6px; padding: 2px 8px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.att-chip:hover { background: #ccfbf1; }
+.att-x { color: #94a3b8; font-weight: 700; margin-left: 2px; }
+.att-x:hover { color: #dc2626; }
+.att-picker { display: flex; align-items: center; gap: 10px; }
 
 .sent-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .sent-tip { color: var(--text-3, #9ca3af); font-size: 12.5px; }

@@ -9,6 +9,12 @@
 #276/#277 付款凭证链路回归：
   - 请款单付款（带凭证附件）后，请款单返回 pay_voucher_file_id/name；
     采购明细 /items 行也带出同一凭证（申请人/采购在明细行可下载回执）
+#313 请款审批推送收窄到 finance_lead：
+  - 请款提交 → finance_lead 收到「请款待审批」；plain finance 不再收到
+#314 现金采购直接维护已付款：
+  - 编辑明细直写 paid_amount/paid_date/payment_method（可手填"现金"）→ 付款状态/供应商账目已付合计同步
+#318 外协图纸名称展示去重：
+  - 存量 spec "X · X"（名称=图纸名称 折两遍）API 原样返回（不改数据）；展示去重规则只显示单份
 """
 import asyncio, os, sys, tempfile, shutil
 
@@ -155,7 +161,8 @@ async def main():
         chk(r.status_code == 200, f"建采购明细: {r.status_code} {r.text[:150]}")
         item_id = r.json()["id"] if r.status_code == 200 else None
 
-        # b1 发起请款（先建财务账号，验证请款提交通知财务）
+        # b1 发起请款（先建财务账号：fl1=财务主管/审批人，f1/f2=普通财务；验证请款提交通知财务）
+        fl1_id = await mkuser("fl1", "finance_lead")
         f1_id = await mkuser("f1", "finance")
         f2_id = await mkuser("f2", "finance")
         r = await c.post("/api/purchase-mgmt/payment-requests", headers=Hb1,
@@ -164,18 +171,21 @@ async def main():
         chk(r.status_code == 200, f"发起请款: {r.status_code} {r.text[:150]}")
         payreq_id = r.json()["id"] if r.status_code == 200 else None
 
-        # 🆕 请款提交 → 推财务（站内消息；push_message 双通道，企微在无绑定环境下只落站内）
+        # 🆕 #313：请款提交 → 收窄到 finance_lead（审批人）；plain finance 无审批权限不再收到
+        # （站内消息；push_message 双通道，企微在无绑定环境下只落站内）
         async def msgs_for(uid, biz_type=None, biz_id=None):
             async with SessionLocal() as db:
                 q = select(models.Message).where(models.Message.to_user_id == uid)
                 if biz_type: q = q.where(models.Message.biz_type == biz_type)
                 if biz_id: q = q.where(models.Message.biz_id == biz_id)
                 return list((await db.execute(q)).scalars().all())
+        fl_msgs = await msgs_for(fl1_id, "payment_request", payreq_id)
+        chk(len(fl_msgs) == 1 and "请款待审批" in fl_msgs[0].text,
+            f"请款提交推财务主管(finance_lead): {len(fl_msgs)}")
         fin_msgs = await msgs_for(f1_id, "payment_request", payreq_id)
-        chk(len(fin_msgs) == 1 and "请款待审批" in fin_msgs[0].text,
-            f"请款提交推财务: {len(fin_msgs)}")
+        chk(len(fin_msgs) == 0, f"plain finance 不再收到请款审批推送: {len(fin_msgs)}")
         fin2_msgs = await msgs_for(f2_id, "payment_request", payreq_id)
-        chk(len(fin2_msgs) == 1, f"全体财务都收到(含副角色逻辑): {len(fin2_msgs)}")
+        chk(len(fin2_msgs) == 0, f"plain finance(f2) 不再收到请款审批推送: {len(fin2_msgs)}")
         b1_msgs0 = await msgs_for(b1_id, "payment_request", payreq_id)
         chk(not any("请款待审批" in m.text for m in b1_msgs0), "请款人兼财务口径：本人不重复收")
 
@@ -217,6 +227,53 @@ async def main():
             r = await c.get(f"/api/attachments/{rows[0]['pay_voucher_file_id']}/download", headers=Hb1)
             chk(r.status_code == 200 and r.content == b"%PDF-1.4 fake",
                 f"凭证可下载且内容一致: {r.status_code}")
+
+        # ==================== #314 现金采购直接维护已付款 ====================
+        # 现金场景（淘宝现金买）：不走请款链路，编辑明细直接写 已付款金额/付款日期/付款方式（可手填"现金"）
+        r = await c.post("/api/purchase-mgmt/items", headers=Hb1,
+                         json={"supplier_id": s2, "item_name": "现金现货", "qty": 2,
+                               "unit_price": 50, "received_amount": 100, "project_code": "P-001"})
+        chk(r.status_code == 200, f"建现金采购明细: {r.status_code} {r.text[:150]}")
+        cash_id = r.json()["id"] if r.status_code == 200 else None
+
+        r = await c.put(f"/api/purchase-mgmt/items/{cash_id}", headers=Hb1,
+                        json={"paid_amount": 100, "paid_date": "2026-07-21", "payment_method": "现金"})
+        chk(r.status_code == 200 and r.json().get("paid_amount") == 100
+            and r.json().get("paid_date") == "2026-07-21" and r.json().get("payment_method") == "现金",
+            f"直接维护已付款(金额/日期/方式): {r.status_code} {r.text[:150]}")
+
+        # 明细付款状态：已付 >= 收货金额 → 已付款（无需走请款）
+        r = await c.get("/api/purchase-mgmt/items", headers=Hb1)
+        crows = [x for x in r.json() if x["id"] == cash_id]
+        chk(crows and crows[0].get("pay_status") == "已付款",
+            f"直付后明细付款状态=已付款: {crows[0].get('pay_status') if crows else None}")
+
+        # 供应商账目：已付合计随之更新（乙供应商只有这一笔）
+        r = await c.get("/api/purchase-mgmt/statements", headers=Hb1)
+        srow = [x for x in r.json().get("rows", []) if x["supplier_id"] == s2]
+        chk(srow and abs(srow[0]["paid_total"] - 100) < 0.005,
+            f"供应商账目已付合计=100: {srow[0].get('paid_total') if srow else None}")
+
+        # ==================== #318 外协图纸名称展示去重 ====================
+        # 源头：外协/激光清单的「规格」列就是「图纸名称」列，下单时 foldDrawingSpec 把同一值折两遍，
+        # spec 存成 "J05-反转限位轴 · J05-反转限位轴"。修在展示层（PurchaseMgmtView.dedupSpec，列+tooltip 同源），
+        # 存量数据不动。这里锁两件事：API 原样返回存量 spec（不改数据）；展示去重规则（与前端 dedupSpec 同口径）只显示一份。
+        def dedup_spec(spec):
+            parts = [p.strip() for p in (spec or "").split("·") if p.strip()]
+            return " · ".join(dict.fromkeys(parts))
+
+        r = await c.post("/api/purchase-mgmt/items", headers=Hb1,
+                         json={"supplier_id": s2, "item_name": "J05-反转限位轴",
+                               "spec": "J05-反转限位轴 · J05-反转限位轴", "qty": 1})
+        chk(r.status_code == 200, f"建重复图纸名明细: {r.status_code} {r.text[:150]}")
+        dup_id = r.json()["id"] if r.status_code == 200 else None
+        r = await c.get("/api/purchase-mgmt/items", headers=Hb1)
+        drows = [x for x in r.json() if x["id"] == dup_id]
+        chk(drows and drows[0].get("spec") == "J05-反转限位轴 · J05-反转限位轴",
+            f"存量 spec 原样返回(不改数据): {drows[0].get('spec') if drows else None}")
+        chk(bool(drows) and dedup_spec(drows[0]["spec"]) == "J05-反转限位轴",
+            "名称=图纸名称时展示去重为单份")
+        chk(dedup_spec("图A · 规B") == "图A · 规B", "不同片段不吞(图纸名称 · 规格型号 正常保留)")
 
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")

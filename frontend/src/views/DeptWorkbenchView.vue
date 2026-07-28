@@ -405,7 +405,7 @@ async function doElectricDone(o: DeptOrder) {
   markingElectricDone.value = o.id
   try {
     const r: any = await ordersApi.markElectricDone(o.id)
-    ElMessage.success(r?.message || '接线完成，已计入考核。到「已完成」里补传电路图/做发货准备')
+    ElMessage.success(r?.message || '接线完成，已计入考核。可先在当前卡片上传电路图并推送物流，也可到「已完成」补传')
     await load()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
