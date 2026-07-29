@@ -786,6 +786,68 @@ async def create_txn(
     return schemas.Msg(message=f"已登记 {ref}")
 
 
+@router.post("/txns/batch-out", response_model=schemas.Msg)
+async def batch_out_txns(
+    data: schemas.WhBatchOutIn,
+    current: models.User = Depends(require_roles(*WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #325 批量出库（消耗品一次出多种物料）：共用 业务日期/用途/领用方/领用项目，
+    每行生成一条出库流水。校验与超库存拦截口径同单条出库——先全量校验（不落库），
+    任一行失败整体报错并指明第几行；全部通过再一次 commit（同事务）。
+    单价随物料参考单价自动算金额（同 demand/issue 领用口径）。"""
+    # 非项目领用口径与单条一致：出库必须挂项目，或明确勾「非项目领用」+原因
+    src = (data.source or "").strip()
+    party = (data.party or "").strip()
+    if not data.project_id:
+        reason = (data.non_project_reason or "").strip()
+        if not data.non_project or not reason:
+            raise HTTPException(400, "出库必须选择领用项目；确属非项目领用请勾选「非项目领用」并填写原因")
+        src = src or "非项目领用"
+        party = (f"{party}〔非项目:{reason}〕" if party else f"非项目:{reason}")[:128]
+    bd = normalize_date_str(data.biz_date) or date.today().isoformat()
+    # ---- 全量校验（不落库）：物料存在 / 数量>0 / 累计出库不超现存（同物料多行按剩余量递减校验）
+    mids = [ln.material_id for ln in data.lines]
+    mrows = {m.id: m for m in (await db.execute(
+        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)))).scalars().all()}
+    remain = await _stock_map(db, mids)
+    for i, ln in enumerate(data.lines, 1):
+        m = mrows.get(ln.material_id)
+        label = f"第{i}行" + (f"「{m.name}{('·' + m.spec) if m.spec else ''}」" if m else "")
+        if not m:
+            raise HTTPException(400, f"{label}物料不存在")
+        if not ln.qty or ln.qty <= 0:
+            raise HTTPException(400, f"{label}数量必须为正数")
+        stock = remain.get(ln.material_id, m.init_stock or 0)
+        if ln.qty > stock:
+            raise HTTPException(400, f"{label}出库数量 {ln.qty} 超过现存 {stock}")
+        remain[ln.material_id] = stock - ln.qty
+    # ---- 全部通过，统一落库（一次 commit）
+    refs: list[str] = []
+    for ln in data.lines:
+        m = mrows[ln.material_id]
+        ref = await _next_ref(db, "out", bd)
+        up = m.unit_price
+        db.add(models.WhTxn(
+            material_id=m.id, biz_date=bd, direction="out", qty=ln.qty,
+            unit_price=up, amount=(round(ln.qty * up, 4) if up is not None else None),
+            source=src or "领料出库", party=party or None, project_id=data.project_id,
+            location=m.location, ref_no=ref, operator_id=current.id))
+        refs.append(ref)
+    await db.commit()
+    # 低库存预警（口径同单条：出库后现存低于安全库存推 warehouse_lead）
+    stock = await _stock_map(db, mids)
+    for m in mrows.values():
+        cur = stock.get(m.id, 0)
+        if cur < (m.safety_stock or 0):
+            await push_message(db, to_role="warehouse_lead", kind="warn",
+                               text=f"【低库存预警】{m.name}{('·'+m.spec) if m.spec else ''} 现存 {cur} 低于安全库存 {m.safety_stock}",
+                               biz_type="wh_material", biz_id=m.id)
+    await write_audit(db, user=current, action="wh_batch_out", target_type="wh_txn",
+                      target_id=None, detail=f"批量出库 {len(refs)} 项：{refs[0]}~{refs[-1]}")
+    return schemas.Msg(message=f"已批量出库 {len(refs)} 项（{refs[0]} ~ {refs[-1]}）")
+
+
 @router.post("/txns/{tid}/reverse", response_model=schemas.Msg)
 async def reverse_txn(
     tid: int,

@@ -504,6 +504,25 @@ class WhTxnIn(BaseModel):
     non_project_reason: Optional[str] = None
 
 
+class WhBatchOutLine(BaseModel):
+    """🆕 #325 批量出库行：逐行选物料+数量。"""
+    material_id: int
+    qty: float
+
+
+class WhBatchOutIn(BaseModel):
+    """🆕 #325 批量出库（消耗品一次出多种物料）：共用 业务日期/用途/领用方/领用项目，
+    lines 逐行 物料+数量；校验与超库存拦截口径同单条出库，任一行失败整体回滚并报行号。
+    单价随物料参考单价自动算金额（同 demand/issue 领用口径），行内不再手填。"""
+    biz_date: str
+    source: Optional[str] = None
+    party: Optional[str] = None
+    project_id: Optional[int] = None
+    non_project: bool = False
+    non_project_reason: Optional[str] = None
+    lines: list[WhBatchOutLine] = Field(min_length=1)
+
+
 class WhTxnOut(BaseModel):
     id: int
     material_id: int
@@ -1156,6 +1175,25 @@ class PurchaseImportResult(BaseModel):
     suppliers_created: int = 0
     failed: int = 0
     errors: list[str] = Field(default_factory=list)
+
+
+# ---------- 🆕 反馈#322：向已有采购单追加零件行 ----------
+class OrderAppendLine(PurchaseOrderLine):
+    """追加行结构与新建采购单的行一致，另可带来源清单（回写与从清单下单一致）。"""
+    source_sheet_id: Optional[int] = None
+    source_record_id: Optional[int] = None
+
+
+class OrderAppendIn(BaseModel):
+    """向已有采购单(按 po_no 定位)追加零件行；表头(供应商/下单日期/付款方式等)沿用原单。"""
+    lines: list[OrderAppendLine] = Field(min_length=1)
+
+
+class SheetImportStatus(BaseModel):
+    """🆕 反馈#327：采购部项目一览「预览」列红绿状态——该表是否已导入内容。"""
+    imported: bool = False            # imported_at 有值 或 行数>0
+    imported_at: Optional[datetime] = None
+    record_count: int = 0
 
 
 # ---------- 🆕 清单 → 采购下单 / 仓库需求 ----------

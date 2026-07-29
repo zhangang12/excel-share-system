@@ -37,7 +37,8 @@ async def main():
         ids = {}
         for u, rc, fn in [("s1","sales","赵仁辉"),("dl","design_lead","陈工"),("d1","designer","张工"),
                           ("el","electric_lead","许工"),("e1","electrician","刘工"),
-                          ("sm","sheetmetal","何师傅"),("bu","buyer","林采购"),("lo","logistics","马师傅")]:
+                          ("sm","sheetmetal","何师傅"),("bu","buyer","林采购"),("lo","logistics","马师傅"),
+                          ("wangqin","buyer","王芹")]:  # 🆕 #324 laser域采购员（按 username 命中分工映射）
             ids[u] = await mk(u, rc, fn)
         async def login(u):
             r = await c.post("/api/auth/login", json={"username":u,"password":"pass123"})
@@ -45,6 +46,7 @@ async def main():
 
         Hs1, Hdl, Hd1, Hel, He1, Hsm, Hbu = (await login("s1"), await login("dl"), await login("d1"),
                                              await login("el"), await login("e1"), await login("sm"), await login("bu"))
+        Hwq = await login("wangqin")
 
         # 销售下单（设计+电工）
         r = await c.post("/api/sales/orders", headers=Hs1, json={
@@ -77,9 +79,14 @@ async def main():
         # 点「推送」→ 下游可见 + 推消息
         r = await c.post(f"/api/orders/{od}/start-push", headers=Hd1, json={"kind":"sheetpkg"})
         chk(r.status_code==200, f"#303 推送图纸包: {r.status_code} {r.text[:80]}")
-        # CAD激光图纸推送给采购部(2026-06-19 改向，不再推钣金)；钣金组仍可只读引用图纸包附件
+        # CAD激光图纸推送给采购部(2026-06-19 改向，不再推钣金角色池)；钣金组仍可只读引用图纸包附件
+        # 🆕 #324 推送按域路由：laser域=wangqin 收到；非域内采购 bu 收不到；钣金组(sheetmetal)仍收到
+        msgs = (await c.get("/api/messages", headers=Hwq)).json()
+        chk(any("CAD激光图纸" in m["text"] for m in msgs), "#324 推送后laser域采购(wangqin)收CAD激光图纸推送")
         msgs = (await c.get("/api/messages", headers=Hbu)).json()
-        chk(any("CAD激光图纸" in m["text"] for m in msgs), "推送后采购部收CAD激光图纸推送")
+        chk(not any("CAD激光图纸" in m["text"] for m in msgs), "#324 非域内采购(bu)不收CAD激光图纸推送")
+        msgs = (await c.get("/api/messages", headers=Hsm)).json()
+        chk(any("CAD激光图纸" in m["text"] for m in msgs), "推送后钣金组仍收CAD激光图纸推送")
         row = [x for x in (await c.get("/api/sheetmetal/projects", headers=Hsm)).json() if x["code"]==code][0]
         chk(len(row["pkg_files"])==2, f"推送后钣金可见2个图纸包附件: {len(row['pkg_files'])}")
         # 钣金下载图纸包

@@ -23,7 +23,7 @@ from sqlalchemy import select, update, or_, delete, func
 from ..database import get_db
 from .. import models, schemas
 from ..deps import get_current_user, require_roles
-from ..dept_config import DEPTS, OUTSOURCE_WORKERS, compute_efficiency
+from ..dept_config import DEPTS, OUTSOURCE_WORKERS, BUYER_SHEET_MAP, compute_efficiency
 from ..notify import push_message
 from ..utils import write_audit
 from ..sheet_templates import SHEET_TEMPLATES, OVERVIEW_HEADER_ALIAS
@@ -675,13 +675,17 @@ async def start_push(
     """🆕 #303 推送下游：把该单某类接单产物中「待推送」(pushed=0)的文件全部置为已推送，
     并按该 output 的 to_role 推消息（sheetpkg 双推 采购+钣金组，与 f6410f5 双推口径一致）。
     权限与 start-upload 同口径（任务负责人/管理层）。
-    🆕 #294：电工「电路图」(order_output/circuit)同走本口径——进行中可上传，点推送才下发物流。"""
+    🆕 #294：电工「电路图」(order_output/circuit)同走本口径——进行中可上传，点推送才下发物流。
+    🆕 #324：配置了 to_domain 的产物（sheetpkg/outsource_img）按采购员分工域(BUYER_SHEET_MAP)
+    路由——只推负责该域的采购员（逐人 to_user_id）；域内无匹配活跃用户时回退原 to_role 池。
+    🆕 #323：该 kind 已有推送过的文件时（二次/补充推送），消息改「【更新】…请以最新为准」口径。"""
     o = await _order_or_404(db, oid)
     cfg = DEPTS[o.dept]
     so = next((s for s in cfg["start_outputs"] if s["k"] == data.kind), None)
     biz_type = "order_start_output"
     label = so["label"] if so else None
     to_role = so["to_role"] if so else None
+    to_domain = so.get("to_domain") if so else None
     if not so and o.dept == "electric" and data.kind == "circuit":
         # 🆕 #294 电路图是完成产物(outputs)，前置上传后同样「待推送→推送下发」
         ot = next((x for x in cfg["outputs"] if x["k"] == "circuit"), None)
@@ -707,16 +711,44 @@ async def start_push(
     atts = list(res.scalars().all())
     if not atts:
         raise HTTPException(400, "没有待推送的文件（请先上传）")
+    # 🆕 #323：推送前查该 kind 是否已有推送过(pushed=1)的文件——有则本次为二次/补充推送
+    prev = await db.execute(select(func.count(models.Attachment.id)).where(
+        models.Attachment.biz_type == biz_type,
+        models.Attachment.biz_id == o.id,
+        models.Attachment.kind == data.kind,
+        models.Attachment.pushed == True,  # noqa: E712
+    ))
+    is_update = (prev.scalar() or 0) > 0
     for a in atts:
         a.pushed = True
     await db.commit()
 
     p = o.project
+    if is_update:  # 🆕 #323 二次/补充推送：提醒下游以最新为准
+        text = f"【更新】{cfg['name']}已更新 {p.code} {label}（新增 {len(atts)} 个文件），请以最新为准"
+    else:
+        text = f"【{label}】{cfg['name']}已上传 {p.code} {label} {len(atts)} 个文件，请查收。"
+    # 🆕 #324：配置了 to_domain 的产物按采购员分工域(BUYER_SHEET_MAP)路由，逐人推送；
+    #   域内无匹配活跃用户时回退原 to_role 池（防没人收到）
+    domain_uids: list[int] = []
+    if to_domain:
+        names = [n for n, sheets in BUYER_SHEET_MAP.items() if to_domain in sheets]
+        if names:
+            r2 = await db.execute(select(models.User.id).where(
+                models.User.username.in_(names),
+                models.User.is_active == True,  # noqa: E712
+            ))
+            domain_uids = [r[0] for r in r2.all()]
+    if domain_uids:
+        for uid in domain_uids:
+            await push_message(db, to_user_id=uid, kind="info", text=text,
+                               biz_type="order", biz_id=o.id)
+    else:
+        await push_message(db, to_role=to_role, kind="info", text=text,
+                           biz_type="order", biz_id=o.id)
     # 🆕 CAD激光图纸(sheetpkg)：配置目标(采购)之外同步推钣金组——钣金组工作台「CAD激光图纸」列同源可见
-    roles = [to_role, "sheetmetal"] if (o.dept == "design" and data.kind == "sheetpkg") else [to_role]
-    for r in roles:
-        await push_message(db, to_role=r, kind="info",
-                           text=f"【{label}】{cfg['name']}已上传 {p.code} {label} {len(atts)} 个文件，请查收。",
+    if o.dept == "design" and data.kind == "sheetpkg":
+        await push_message(db, to_role="sheetmetal", kind="info", text=text,
                            biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="push", target_type="dept_order",
                       target_id=o.id, detail=f"start-push:{data.kind} x{len(atts)}")

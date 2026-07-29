@@ -202,6 +202,9 @@ const loading = ref(false)
 // ===== 采购部 state =====
 const purchaseLoading = ref(false)
 const purchaseRows = ref<PurchaseRow[]>([])
+// 🆕 反馈#327：各清单「是否已导入内容」状态（sheet_id → imported），驱动预览列红绿显示
+const sheetStatus = ref<Record<number, { imported: boolean }>>({})
+function sheetImported(id?: number | null): boolean { return !!(id && sheetStatus.value[id]?.imported) }
 
 const isFangbusen = computed(() => auth.user?.username === 'fangbusen')
 const isWangqin   = computed(() => auth.user?.username === 'wangqin')
@@ -228,6 +231,20 @@ async function loadPurchaseRows() {
     purchaseRows.value = (await http.get<PurchaseRow[]>('/purchase/projects', {
       params: { year: pYearFilter.value, proj_status: pProjStatusFilter.value || undefined }
     })).data
+    // 🆕 反馈#327：批量取各清单导入状态（红绿显示用）；失败时保持空表=全部按未导入红显
+    const ids = new Set<number>()
+    for (const r of purchaseRows.value)
+      for (const d of SHEET_DEFS) { const v = r[d.key]; if (v) ids.add(v) }
+    if (ids.size) {
+      try {
+        const st = (await http.get<Record<string, { imported: boolean }>>('/purchase-mgmt/sheets/import-status', {
+          params: { ids: [...ids].join(',') }
+        })).data
+        const m: Record<number, { imported: boolean }> = {}
+        for (const [k, v] of Object.entries(st)) m[Number(k)] = v
+        sheetStatus.value = m
+      } catch { sheetStatus.value = {} }
+    } else sheetStatus.value = {}
   } finally { purchaseLoading.value = false }
 }
 
@@ -655,6 +672,8 @@ function blankLine(): OrderLine {
 }
 const orderDialogVisible = ref(false)
 const orderSaving = ref(false)
+// 🆕 反馈#322：追加模式——非空时表示「向该采购单号追加零件」（表头供应商锁定原单供应商，保存走追加端点）
+const orderAppendPoNo = ref('')
 // 🆕 库位下拉取值(仓库「库位管理」维护;只取启用的)
 const whLocations = ref<{ id: number; name: string }[]>([])
 async function loadWhLocations() {
@@ -692,9 +711,25 @@ async function loadProjectCodes() {
 }
 
 function openNewOrder() {
+  orderAppendPoNo.value = ''
   Object.assign(orderForm, {
     supplier_id: '', delivery_date: new Date().toISOString().slice(0, 10), expected_arrival: '',
     contract_no: '', project_code: '', payment_method: '', prepay_ratio: null,
+    stock_location: '', lines: [blankLine()],
+  })
+  loadProjectCodes()
+  loadOrderNoDict()
+  orderDialogVisible.value = true
+}
+// 🆕 反馈#322：合并父行「追加零件」——复用新建采购单弹窗的追加模式：
+//   供应商锁定为该单供应商、零件行从空开始逐行加，保存调 POST /orders/{po_no}/items
+function openAppendOrder(row: any) {
+  orderAppendPoNo.value = row.po_no
+  Object.assign(orderForm, {
+    supplier_id: row.supplier_id, delivery_date: row.delivery_date || new Date().toISOString().slice(0, 10),
+    expected_arrival: '', contract_no: '',
+    project_code: row.project_code && row.project_code !== '多个' ? row.project_code : '',
+    payment_method: '', prepay_ratio: null,
     stock_location: '', lines: [blankLine()],
   })
   loadProjectCodes()
@@ -729,6 +764,28 @@ async function saveOrder() {
   }
   orderSaving.value = true
   try {
+    const linePayload = lines.map(l => ({
+      item_name: l.item_name.trim(),
+      spec: l.spec || null,
+      project_code: l.project_code || null,
+      qty: l.qty,
+      unit_price: l.unit_price,
+      received_amount: l.received_amount,
+      expected_arrival: l.expected_arrival || null,   // 🆕 逐行预计到货（留空用表头/原单值）
+      tax_rate: l.tax_rate || null,
+      notes: l.notes || null,
+      custom_values: l.custom_values || {},
+    }))
+    // 🆕 反馈#322：追加模式——只发零件行，表头沿用原单；保存后刷新列表
+    if (orderAppendPoNo.value) {
+      const poNo = orderAppendPoNo.value
+      await http.post<PurchaseItemOut[]>(`/purchase-mgmt/orders/${encodeURIComponent(poNo)}/items`, { lines: linePayload })
+      ElMessage.success(`已向 ${poNo} 追加 ${lines.length} 个零件`)
+      orderDialogVisible.value = false
+      await loadItems()
+      offerPrint(poNo)
+      return
+    }
     const resp = await http.post<PurchaseItemOut[]>('/purchase-mgmt/orders', {
       supplier_id: orderForm.supplier_id,
       delivery_date: orderForm.delivery_date || null,
@@ -738,18 +795,7 @@ async function saveOrder() {
       stock_location: null,   // 🆕 #204 采购下单不再填库位,改由仓库收货时填
       payment_method: orderForm.payment_method || null,
       prepay_ratio: isPrepayMethod(orderForm.payment_method) ? orderForm.prepay_ratio : null,
-      lines: lines.map(l => ({
-        item_name: l.item_name.trim(),
-        spec: l.spec || null,
-        project_code: l.project_code || null,
-        qty: l.qty,
-        unit_price: l.unit_price,
-        received_amount: l.received_amount,
-        expected_arrival: l.expected_arrival || null,   // 🆕 逐行预计到货（留空用表头值）
-        tax_rate: l.tax_rate || null,
-        notes: l.notes || null,
-        custom_values: l.custom_values || {},
-      })),
+      lines: linePayload,
     })
     ElMessage.success(`采购单已保存（${lines.length} 个零件行）`)
     orderDialogVisible.value = false
@@ -1968,54 +2014,55 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
             <el-table-column v-if="showSheetmetal" label="钣金装配表" min-width="100" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.sheetmetal_sheet_id" size="small" link type="primary"
+                <!-- 🆕 反馈#327：已导入=绿色「预览」，未导入=红色「未导入」（均可点开预览） -->
+                <el-button v-if="row.sheetmetal_sheet_id" size="small" link :type="sheetImported(row.sheetmetal_sheet_id) ? 'success' : 'danger'"
                            @click="openPreview(row.sheetmetal_sheet_id, `${row.code} · 钣金装配表`)">
-                  <el-icon><View /></el-icon>预览
+                  <el-icon><View /></el-icon>{{ sheetImported(row.sheetmetal_sheet_id) ? '预览' : '未导入' }}
                 </el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
             <el-table-column v-if="showStandardSheet" label="标准件清单" min-width="100" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.standard_sheet_id" size="small" link type="primary"
+                <el-button v-if="row.standard_sheet_id" size="small" link :type="sheetImported(row.standard_sheet_id) ? 'success' : 'danger'"
                            @click="openPreview(row.standard_sheet_id, `${row.code} · 标准件清单`)">
-                  <el-icon><View /></el-icon>预览
+                  <el-icon><View /></el-icon>{{ sheetImported(row.standard_sheet_id) ? '预览' : '未导入' }}
                 </el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
             <el-table-column v-if="showOutsource" label="外协加工表" min-width="100" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.outsource_sheet_id" size="small" link type="primary"
+                <el-button v-if="row.outsource_sheet_id" size="small" link :type="sheetImported(row.outsource_sheet_id) ? 'success' : 'danger'"
                            @click="openPreview(row.outsource_sheet_id, `${row.code} · 外协加工表`)">
-                  <el-icon><View /></el-icon>预览
+                  <el-icon><View /></el-icon>{{ sheetImported(row.outsource_sheet_id) ? '预览' : '未导入' }}
                 </el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
             <el-table-column v-if="showMaterial" label="不锈钢原料下料单" min-width="120" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.material_sheet_id" size="small" link type="primary"
+                <el-button v-if="row.material_sheet_id" size="small" link :type="sheetImported(row.material_sheet_id) ? 'success' : 'danger'"
                            @click="openPreview(row.material_sheet_id, `${row.code} · 不锈钢原料下料单`)">
-                  <el-icon><View /></el-icon>预览
+                  <el-icon><View /></el-icon>{{ sheetImported(row.material_sheet_id) ? '预览' : '未导入' }}
                 </el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
             <el-table-column v-if="showLaser" label="激光件清单" min-width="100" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.laser_sheet_id" size="small" link type="primary"
+                <el-button v-if="row.laser_sheet_id" size="small" link :type="sheetImported(row.laser_sheet_id) ? 'success' : 'danger'"
                            @click="openPreview(row.laser_sheet_id, `${row.code} · 激光件清单`)">
-                  <el-icon><View /></el-icon>预览
+                  <el-icon><View /></el-icon>{{ sheetImported(row.laser_sheet_id) ? '预览' : '未导入' }}
                 </el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
             <el-table-column v-if="showElecPo" label="电工采购单" min-width="100" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.elec_po_sheet_id" size="small" link type="primary"
+                <el-button v-if="row.elec_po_sheet_id" size="small" link :type="sheetImported(row.elec_po_sheet_id) ? 'success' : 'danger'"
                            @click="openPreview(row.elec_po_sheet_id, `${row.code} · 电工采购单`)">
-                  <el-icon><View /></el-icon>预览
+                  <el-icon><View /></el-icon>{{ sheetImported(row.elec_po_sheet_id) ? '预览' : '未导入' }}
                 </el-button>
                 <span v-else class="muted">—</span>
               </template>
@@ -2029,7 +2076,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                   </template>
                   <el-tag size="small" type="success" effect="light" round>已推送 {{ row.cad_laser_files.length }}</el-tag>
                 </el-tooltip>
-                <span v-else class="muted">待推送</span>
+                <!-- 🆕 反馈#327：待推送改红色警示（与已推送的绿对齐红绿口径） -->
+                <el-tag v-else size="small" type="danger" effect="light" round>待推送</el-tag>
               </template>
             </el-table-column>
             <el-table-column v-if="showOutImg" label="外购附图" min-width="116" align="center">
@@ -2040,7 +2088,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                   </template>
                   <el-tag size="small" type="success" effect="light" round>已推送 {{ row.outsource_img_files.length }}</el-tag>
                 </el-tooltip>
-                <span v-else class="muted">待推送</span>
+                <el-tag v-else size="small" type="danger" effect="light" round>待推送</el-tag>
               </template>
             </el-table-column>
 
@@ -2295,13 +2343,17 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column v-if="isLeadOrAbove" prop="buyer_name" label="采购员" width="80">
               <template #default="{ row }">{{ row.buyer_name || '—' }}</template>
             </el-table-column>
-            <el-table-column v-if="canWrite" label="操作" width="120" fixed="right" :show-overflow-tooltip="false">
+            <el-table-column v-if="canWrite" label="操作" width="200" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <template v-if="!row._isGroup">
                   <el-button size="small" link type="primary" @click="openEditItem(row)">编辑</el-button>
                   <el-button size="small" link type="danger" @click="deleteItem(row)">删除</el-button>
                 </template>
-                <el-button v-else size="small" link type="primary" @click="openGroupSummary(row)">整单维护</el-button>
+                <template v-else>
+                  <el-button size="small" link type="primary" @click="openGroupSummary(row)">整单维护</el-button>
+                  <!-- 🆕 反馈#322：漏下的零件追加进同一张采购单（不新起单号） -->
+                  <el-button size="small" link type="success" @click="openAppendOrder(row)">追加零件</el-button>
+                </template>
               </template>
             </el-table-column>
             <template #empty>
@@ -2794,14 +2846,17 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 采购单弹窗（同一供应商多个零件行）==================== -->
-    <el-dialog v-model="orderDialogVisible" title="新建采购单" width="min(1180px, 98vw)" top="4vh" class="compact-dialog-scroll compact-tbl" :close-on-click-modal="false" :before-close="onOrderDialogClose">
-      <el-alert type="info" :closable="false" style="margin-bottom:14px"
+    <el-dialog v-model="orderDialogVisible" :title="orderAppendPoNo ? `追加零件到 ${orderAppendPoNo}` : '新建采购单'" width="min(1180px, 98vw)" top="4vh" class="compact-dialog-scroll compact-tbl" :close-on-click-modal="false" :before-close="onOrderDialogClose">
+      <!-- 🆕 反馈#322：追加模式——供应商锁定原单，表头其余项沿用原单（此处显示但不提交），零件行从空逐行加 -->
+      <el-alert v-if="orderAppendPoNo" type="warning" :closable="false" style="margin-bottom:14px"
+        :title="`向已有采购单 ${orderAppendPoNo} 追加零件：漏下的零件补进同一张单，不新起单号；供应商/下单日期/付款方式等表头沿用原单。`" />
+      <el-alert v-else type="info" :closable="false" style="margin-bottom:14px"
         title="同一供应商一次录入多个零件：表头（供应商 / 下单日期 / 合同 / 默认项目 / 预计到货整单默认）在上，零件逐行填（预计到货可逐行改，留空跟整单）。单价「选填」——已谈好价先填；激光板材等到货送货单才带价的，单价留空，货到仓库再补。保存后自动生成采购单号；可「打印采购单」发供应商。" />
       <el-form :model="orderForm" label-position="top" class="order-form">
         <el-row :gutter="20">
           <el-col :xs="24" :sm="12" :md="6">
             <el-form-item label="供应商 *">
-              <el-select v-model="orderForm.supplier_id" filterable placeholder="选择供应商" style="width:100%">
+              <el-select v-model="orderForm.supplier_id" filterable placeholder="选择供应商" style="width:100%" :disabled="!!orderAppendPoNo">
                 <el-option v-for="s in suppliers.filter(x=>x.status==='active')" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
             </el-form-item>
@@ -2925,7 +2980,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <template #footer>
         <el-button @click="orderDialogVisible = false">取消</el-button>
         <el-button :icon="Printer" @click="printPurchaseOrder">打印采购单</el-button>
-        <el-button type="primary" :loading="orderSaving" @click="saveOrder">保存采购单</el-button>
+        <el-button type="primary" :loading="orderSaving" @click="saveOrder">{{ orderAppendPoNo ? '保存追加' : '保存采购单' }}</el-button>
       </template>
     </el-dialog>
 

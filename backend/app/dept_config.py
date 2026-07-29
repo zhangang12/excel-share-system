@@ -21,9 +21,11 @@ DEPTS: dict[str, dict] = {
         # 🆕 2026-06-19：图纸包改为「CAD激光图纸」并推送采购部；新增「外购附图」也推采购部
         # 🆕 2026-07-22：CAD激光图纸(sheetpkg)推送时除采购外同步推钣金组(start_push 特判)，钣金组工作台图纸列同源可见
         # 🆕 #303：上传≠推送——上传后待推送(pushed=0)，点「推送」才下发对应 to_role 并推消息
+        # 🆕 #324：to_domain=按采购员分工域(BUYER_SHEET_MAP)路由推送，只推该域采购员；
+        #   域内无匹配活跃用户时回退原 to_role 池（防没人收到）。sheetpkg 同步推钣金组不变。
         "start_outputs": [
-            {"k": "sheetpkg", "label": "CAD激光图纸", "to_role": "buyer"},
-            {"k": "outsource_img", "label": "外购附图", "to_role": "buyer"},
+            {"k": "sheetpkg", "label": "CAD激光图纸", "to_role": "buyer", "to_domain": "laser"},
+            {"k": "outsource_img", "label": "外购附图", "to_role": "buyer", "to_domain": "standard"},
             # 🆕 封板文件(机架图/横梁图)→推送封板组(sealing);封板组 tab 里可下载
             {"k": "sealing_pkg", "label": "封板文件(机架图/横梁图)", "to_role": "sealing"},
             # 🆕 #269 冷作图纸→推送钣金组(sheetmetal);钣金组 tab 里可下载
@@ -82,6 +84,17 @@ ORDER_STATUS = ("pending_assign", "assigned", "in_progress", "done", "voided")
 #   —— 改这里即可增减外协人员，不要把账号名写进路由/前端。
 OUTSOURCE_WORKERS: dict[str, list[str]] = {
     "electric": ["zhourui"],
+}
+
+# 🆕 R4/A6：采购员按清单分工（username -> 负责的清单域集合）。
+# 用途一（purchase_mgmt）：采购下单「按人分表」的可见性——仅限这三名采购员各管自己的清单，
+#   其他采购员 + 采购主管 + admin/manager 不受限（看全部）。
+# 用途二（🆕 #324，orders_router.start_push）：设计部图纸推送按 start_outputs[].to_domain
+#   路由到负责该域的采购员（sheetpkg→laser=王芹域；outsource_img→standard=李新新域）。
+BUYER_SHEET_MAP: dict[str, set[str]] = {
+    "lixinxin": {"standard", "elec_po"},   # 李新新：标准件清单 + 电工采购单
+    "wangqin": {"material", "laser"},       # 王芹：不锈钢原料下料单 + 激光件清单
+    "fangbusen": {"outsource"},             # 方步森：外协加工
 }
 
 

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from .. import models, schemas
 from ..deps import require_roles, get_current_user
+from ..dept_config import BUYER_SHEET_MAP as _BUYER_SHEET_MAP  # 🆕 #324 配置挪到 dept_config（推送路由共用），此处仅改名引用
 from ..notify import push_message
 from ..utils import write_audit
 
@@ -28,11 +29,7 @@ _RECEIVE_ROLES = ("warehouse", "warehouse_lead")
 
 # 🆕 R4/A6：采购员按清单分工（沿用采购部项目目录「按人分表」的可见性）。
 # 仅限这三名采购员各管自己的清单；其他采购员 + 采购主管 + admin/manager 不受限（看全部）。
-_BUYER_SHEET_MAP: dict[str, set[str]] = {
-    "lixinxin": {"standard", "elec_po"},   # 李新新：标准件清单 + 电工采购单
-    "wangqin": {"material", "laser"},       # 王芹：不锈钢原料下料单 + 激光件清单
-    "fangbusen": {"outsource"},             # 方步森：外协加工
-}
+# 🆕 #324：映射本体挪到 dept_config.BUYER_SHEET_MAP（设计部推送按域路由共用），上方 import 别名引用。
 
 
 def _allowed_sheet_keys(user: Optional[models.User]) -> Optional[set[str]]:
@@ -1172,6 +1169,118 @@ async def create_order_from_list(
     r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
                          .order_by(models.PurchaseItem.id))
     return [_item_out(x) for x in r.scalars().all()]
+
+
+@router.post("/orders/{po_no}/items", response_model=List[schemas.PurchaseItemOut])
+async def append_order_items(
+    po_no: str,
+    body: schemas.OrderAppendIn,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#322：向已有采购单追加零件行（漏下的零件补进同一张单，不新起单号）。
+
+    - 按 po_no 定位整单，不存在 404；表头（供应商/下单日期/合同/付款方式/预付比例/库位）沿用原单
+    - 行结构与新建采购单的行一致，另可带 source_sheet_id+source_record_id（选填）：
+      带来源清单时回写 采购负责人/下单日期/预计到货，与从清单下单完全同口径
+    - 受限采购员(_buyer_restricted)只能给自己的单追加；按清单分工(_allowed_sheet_keys)同 from-list 口径
+    """
+    lines = [ln for ln in body.lines if (ln.item_name or "").strip()]
+    if not lines:
+        raise HTTPException(400, "请至少填写一行有效明细（名称必填）")
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
+                         .order_by(models.PurchaseItem.id))
+    rows = list(r.scalars().all())
+    if not rows:
+        raise HTTPException(404, "采购单不存在")
+    # 🆕 受限采购员只能给自己的采购单追加（与 get_order/下载PDF 的行级隔离同口径）
+    if _buyer_restricted(current) and any(x.buyer_id != current.id for x in rows):
+        raise HTTPException(403, "只能给自己的采购单追加零件")
+    # 🆕 R4/A6：采购员只能追加自己负责清单的来源行（与从清单下单同口径）
+    allowed = _allowed_sheet_keys(current)
+    if allowed is not None:
+        sheet_ids = {l.source_sheet_id for l in lines if l.source_sheet_id}
+        if sheet_ids:
+            name2key = {conf[0]: k for k, conf in _PURCHASABLE_SHEETS.items()}
+            dsr = await db.execute(select(models.Datasheet).where(models.Datasheet.id.in_(sheet_ids)))
+            for ds in dsr.scalars().all():
+                key = name2key.get(ds.name)
+                if key and key not in allowed:
+                    raise HTTPException(403, f"你没有「{ds.name}」的采购权限")
+    first = rows[0]
+    today = _date.today().isoformat()
+    uname = current.full_name or current.username
+    for ln in lines:
+        recv = ln.received_amount
+        if not recv and ln.qty and ln.unit_price:
+            recv = round((ln.qty or 0) * (ln.unit_price or 0), 4)
+        cv = await _clean_custom(db, ln.custom_values)
+        # 🆕 预计到货：逐行值优先，原单值兜底（同新建采购单的表头兜底逻辑）
+        line_ea = ((ln.expected_arrival or first.expected_arrival) or None)
+        db.add(models.PurchaseItem(
+            po_no=po_no,
+            source_sheet_id=ln.source_sheet_id, source_record_id=ln.source_record_id,
+            supplier_id=first.supplier_id,
+            delivery_date=first.delivery_date,
+            expected_arrival=line_ea,
+            contract_no=first.contract_no,
+            project_code=(ln.project_code or first.project_code),
+            item_name=ln.item_name.strip(),
+            spec=ln.spec, brand=ln.brand, qty=ln.qty, unit_price=ln.unit_price,
+            received_amount=recv or 0,
+            tax_rate=ln.tax_rate, notes=ln.notes,
+            payment_method=first.payment_method, prepay_ratio=first.prepay_ratio,
+            custom_values=cv,
+            buyer_id=current.id,
+            stock_location=first.stock_location,
+        ))
+        if ln.source_sheet_id and ln.source_record_id:
+            # 回写与从清单下单一致：采购负责人(已手填不覆盖) + 下单日期(沿用原单下单日期) + 预计到货
+            wb = {"采购负责人": uname}
+            for c in _ALL_ORDER_DATE_COLS:
+                wb[c] = (first.delivery_date or today)
+            for c in _ALL_EXPECTED_ARRIVAL_COLS:
+                wb[c] = line_ea
+            await _writeback_sheet_row(db, ln.source_sheet_id, ln.source_record_id, wb,
+                                       only_if_empty={"采购负责人"})
+    await db.commit()
+    await write_audit(db, user=current, action="append_items", target_type="purchase_order",
+                      target_id=None, detail=f"{po_no} 追加 {len(lines)} 行零件")
+    r = await db.execute(
+        select(models.PurchaseItem).where(models.PurchaseItem.po_no == po_no)
+        .order_by(models.PurchaseItem.id)
+    )
+    return [_item_out(x) for x in r.scalars().all()]
+
+
+@router.get("/sheets/import-status", response_model=Dict[int, schemas.SheetImportStatus])
+async def sheets_import_status(
+    ids: str = Query(..., description="逗号分隔的数据表 id 列表"),
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#327：采购部项目一览「预览」列红绿状态——批量返回各数据表是否已导入内容。
+    判定：imported_at 有值（最近一次 Excel 导入时间）或 行数>0（手工建行也算有内容）。"""
+    id_list = []
+    for x in ids.split(","):
+        x = x.strip()
+        if x.isdigit():
+            id_list.append(int(x))
+    if not id_list:
+        return {}
+    dsr = await db.execute(select(models.Datasheet.id, models.Datasheet.imported_at)
+                           .where(models.Datasheet.id.in_(id_list)))
+    imported_at_map = {sid: ts for sid, ts in dsr.all()}
+    cr = await db.execute(select(models.Record.datasheet_id, func.count())
+                          .where(models.Record.datasheet_id.in_(id_list))
+                          .group_by(models.Record.datasheet_id))
+    count_map = {sid: n for sid, n in cr.all()}
+    out: Dict[int, schemas.SheetImportStatus] = {}
+    for sid in id_list:
+        ts = imported_at_map.get(sid)
+        n = count_map.get(sid, 0)
+        out[sid] = schemas.SheetImportStatus(imported=bool(ts) or n > 0, imported_at=ts, record_count=n)
+    return out
 
 
 @router.post("/orders/kit-from-list", response_model=schemas.PurchaseItemOut)
