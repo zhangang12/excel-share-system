@@ -290,8 +290,13 @@ async def list_orders(
     q = q.where(models.DeptOrder.project_id.not_in(delivery_pids))
     if year:
         q = q.where(models.Project.code.like(f"{year}-%"))
-    if proj_status:
-        q = q.where(models.Project.status == proj_status)
+    # 🆕 2026-07-30 修筛选口径（举一反三排查）：工作台「进行中/已完成」下拉按**任务单状态**
+    #   （DeptOrder.status，即各 tab 状态列同源）过滤，不再按项目整体状态——否则项目已完结但
+    #   任务单未完成的行会在「已完成」筛选下以「进行中」显示（筛选与列对不上）
+    if proj_status == "已完成":
+        q = q.where(models.DeptOrder.status == "done")
+    elif proj_status == "进行中":
+        q = q.where(models.DeptOrder.status != "done")
     if month:
         # 按接单/制图开始月份过滤（start_date 为 'YYYY-MM-DD' 字符串，前缀匹配）
         q = q.where(models.DeptOrder.start_date.like(f"{month}%"))

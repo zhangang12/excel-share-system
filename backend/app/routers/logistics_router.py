@@ -98,17 +98,16 @@ async def board(
     """发货看板（物流/管理层；其它角色只读不限制——数据无敏感金额）。"""
 
     if proj_status == "已完成":
-        # 历史存量兼容：从 Project 出发查，再 LEFT 取 Shipment 数据。
-        # 原 INNER JOIN 查法会漏掉没有 Shipment 记录的历史已完成项目。
+        # 🆕 2026-07-30 修筛选口径（举一反三排查）：「已完成」只看真实发货（Shipment.status==shipped）。
+        #   原逻辑把「项目手动置已完成」也并入——导致没发货的行在已完成筛选下显示「待齐/可发货」
+        #   且按钮被禁、 tooltip 为空（筛选与状态列对不上）。
+        #   历史存量兼容保留：从 Project 出发查再 LEFT 取 Shipment（不漏无 Shipment 记录的历史项目）。
         proj_q = select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
         if year:
             proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
         proj_q = proj_q.where(
-            or_(
-                models.Project.id.in_(
-                    select(models.Shipment.project_id).where(models.Shipment.status == "shipped")
-                ),
-                models.Project.status == "已完成",
+            models.Project.id.in_(
+                select(models.Shipment.project_id).where(models.Shipment.status == "shipped")
             )
         )
         res = await db.execute(proj_q.order_by(models.Project.code.desc()).limit(300))
