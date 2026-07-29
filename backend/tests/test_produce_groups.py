@@ -172,6 +172,17 @@ async def main():
             o = (await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))).scalar_one()
             chk(o.status == "in_progress" and o.done_date is None, f"撤销一组→生产单回退: {o.status}")
 
+        # 🆕 2026-07-29 状态筛选口径：tab「进行中/已完成」筛选按本组任务状态（group_done），不按项目整体状态
+        #   当前：钣金组 done=True、装配组 done=False（刚撤销）
+        r = await c.get("/api/produce/sheetmetal-projects", headers=Hpm, params={"proj_status": "已完成"})
+        chk(len(r.json()) == 1 and r.json()[0]["group_done"] is True, f"已完成筛选出钣金已完成组: {len(r.json())}")
+        r = await c.get("/api/produce/sheetmetal-projects", headers=Hpm, params={"proj_status": "进行中"})
+        chk(r.json() == [], f"进行中筛选不含已完成钣金组: {len(r.json())}")
+        r = await c.get("/api/produce/assembly-projects", headers=Hpm, params={"proj_status": "进行中"})
+        chk(len(r.json()) == 1 and r.json()[0]["group_done"] is False, f"进行中筛选出未完成装配组: {len(r.json())}")
+        r = await c.get("/api/produce/assembly-projects", headers=Hpm, params={"proj_status": "已完成"})
+        chk(r.json() == [], f"已完成筛选不含未完成装配组: {len(r.json())}")
+
         # 🆕 反馈#287：封板组(sealing)可编辑「钣金装配」（produce-edit 放行），但「外协加工」不放行
         slid = await mk("sl", "sealing")
         await mk("sl2", "sealing")   # 未派单的封板组人员：派单校验仍生效

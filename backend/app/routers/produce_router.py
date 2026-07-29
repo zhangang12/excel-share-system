@@ -411,6 +411,13 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
     q = (select(models.ProduceGroupTask, models.DeptOrder)
          .join(models.DeptOrder, models.ProduceGroupTask.order_id == models.DeptOrder.id)
          .where(models.ProduceGroupTask.group == group, models.DeptOrder.status != "voided"))
+    # 🆕 2026-07-29 修筛选口径：tab 的「进行中/已完成」筛选按**本组任务状态**（ProduceGroupTask.status，
+    #   即 tab 里「标记完成」那一列），不再按项目整体状态——否则项目已完结但本组未点完成的行
+    #   会在「已完成」筛选下以「进行中」显示，筛选与列对不上（赵仁辉反馈状态查询逻辑不对）
+    if proj_status == "已完成":
+        q = q.where(models.ProduceGroupTask.status == "done")
+    elif proj_status == "进行中":
+        q = q.where(models.ProduceGroupTask.status != "done")
     is_boss = current.has_role("pm_lead", "manager", "admin")
     if not is_boss:
         q = q.where(models.ProduceGroupTask.worker_id == current.id)
@@ -430,8 +437,6 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
         models.Project.id.in_(pids), models.Project.is_deleted == False)  # noqa: E712
     if year:
         proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
-    if proj_status:
-        proj_q = proj_q.where(models.Project.status == proj_status)
     res = await db.execute(proj_q)
     proj_by_id = {p.id: p for p in res.scalars().all()}
     designer_by_pid = await _designer_by_pid(db, pids)
