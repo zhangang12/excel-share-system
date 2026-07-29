@@ -1091,3 +1091,21 @@ class LoginGateCode(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))     # 10 分钟有效
     used: Mapped[bool] = mapped_column(default=False)                         # 已用/已作废（重发即作废旧码）
     fail_count: Mapped[int] = mapped_column(default=0)                        # 连续错码次数（>=5 锁定）
+
+
+# ---------- 🆕 AI 助手对话审计日志（记录用户/问题/模型输出，agent_router._log_chat 写入） ----------
+class AgentChatLog(Base):
+    """🆕 AI 助手审计日志：每次 /api/agent/chat 问答一行（LLM 与规则降级两条路径都记）。
+    question/answer 入库前截断到 5000 字符防超大；写日志失败只记 log 不影响聊天主流程。
+    表由 Base.metadata.create_all 自动创建，无需迁移脚本。"""
+    __tablename__ = "agent_chat_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)  # 提问人
+    username: Mapped[str] = mapped_column(String(64))                         # 用户名快照（改名/删号后仍可查）
+    question: Mapped[str] = mapped_column(Text)                               # 用户输入（截断 5000）
+    answer: Mapped[str] = mapped_column(Text)                                 # 最终返回给用户的文本（截断 5000）
+    tools_used: Mapped[Optional[list]] = mapped_column(PortableJSON())        # 实际调用的数据工具名列表
+    via: Mapped[str] = mapped_column(String(8))                               # "llm"=大模型 / "rule"=规则降级
+    model: Mapped[str] = mapped_column(String(64))                            # 实际模型名；"rule-fallback" 或 "rule-fallback:<失败原因>"
+    duration_ms: Mapped[Optional[int]] = mapped_column()                      # 从进来到出去的毫秒数
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

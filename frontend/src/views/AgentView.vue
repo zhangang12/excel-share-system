@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { MagicStick, Promotion, Setting } from '@element-plus/icons-vue'
+import { MagicStick, Promotion, Refresh, Setting } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
-import { agentApi, type ChatHistoryItem } from '@/api/agent'
+import { agentApi, type ChatHistoryItem, type AgentChatLogItem } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
+import { fmtDateTime } from '@/utils/format'
 
 interface ChatItem {
   role: 'user' | 'assistant'
@@ -96,6 +97,47 @@ async function saveConfig() {
     cfgSaving.value = false
   }
 }
+
+// ==================== 🆕 审计日志（仅 admin 可见）：问答全量记录，可折叠 ====================
+const auditCollapsed = ref(false)
+const auditLoading = ref(false)
+const auditList = ref<AgentChatLogItem[]>([])
+const auditTotal = ref(0)
+const auditPage = ref(1)
+const auditSize = ref(20)
+const auditUser = ref('')
+
+// 工具名 → 中文标签（与后端 TOOL_LABELS 一致，原始名兜底）
+const AUDIT_TOOL_LABELS: Record<string, string> = {
+  morning_report: '晨报聚合',
+  po_arrival_overdue: '采购到期未到货',
+  po_arriving: '预计到货',
+  po_overdue_by_supplier: '未到货·按供应商汇总',
+  balance_due: '尾款到期清单',
+  overdue_orders: '部门逾期任务',
+  project_status: '项目进度查询',
+}
+const toolLabel = (n: string) => AUDIT_TOOL_LABELS[n] || n
+const fmtDuration = (ms: number | null) =>
+  ms == null ? '—' : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
+
+async function loadAuditLogs() {
+  auditLoading.value = true
+  try {
+    const res = await agentApi.getChatLogs({
+      page: auditPage.value, size: auditSize.value,
+      username: auditUser.value.trim() || undefined,
+    })
+    auditList.value = res.items
+    auditTotal.value = res.total
+  } catch { /* 失败由拦截器弹 detail */ } finally {
+    auditLoading.value = false
+  }
+}
+// 过滤条件变了从第 1 页重新查
+function reloadAudit() { auditPage.value = 1; loadAuditLogs() }
+
+onMounted(() => { if (isAdmin.value) loadAuditLogs() })
 
 async function scrollBottom() {
   await nextTick()
@@ -221,6 +263,90 @@ async function send(text?: string) {
       </div>
     </el-card>
 
+    <!-- 🆕 审计日志卡片（仅 admin 可见）：问答全量记录，可按用户名过滤，行展开看全文 -->
+    <el-card v-if="isAdmin" shadow="never" class="audit-card">
+      <template #header>
+        <div class="audit-header">
+          <span class="audit-title">审计日志</span>
+          <span class="audit-tip">问答全量记录（含规则降级），按时间倒序</span>
+          <div class="spacer"></div>
+          <el-input
+            v-model="auditUser"
+            size="small"
+            placeholder="按用户名过滤"
+            clearable
+            style="width: 150px"
+            @keyup.enter="reloadAudit"
+            @clear="reloadAudit"
+          />
+          <el-button size="small" @click="reloadAudit">查询</el-button>
+          <el-button size="small" :icon="Refresh" :loading="auditLoading" @click="loadAuditLogs" />
+          <el-button size="small" text @click="auditCollapsed = !auditCollapsed">
+            {{ auditCollapsed ? '展开' : '收起' }}
+          </el-button>
+        </div>
+      </template>
+      <template v-if="!auditCollapsed">
+        <el-table :data="auditList" v-loading="auditLoading" stripe size="small" max-height="360">
+          <el-table-column type="expand">
+            <template #default="{ row }">
+              <div class="audit-expand">
+                <div class="audit-qa">
+                  <div class="audit-qa-label">问题</div>
+                  <div class="audit-text">{{ row.question }}</div>
+                </div>
+                <div class="audit-qa">
+                  <div class="audit-qa-label">回答</div>
+                  <div class="audit-text">{{ row.answer }}</div>
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="时间" width="140">
+            <template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column label="用户" prop="username" width="100" show-overflow-tooltip />
+          <el-table-column label="问题" min-width="170" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.question }}</template>
+          </el-table-column>
+          <el-table-column label="回答" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.answer }}</template>
+          </el-table-column>
+          <el-table-column label="工具" min-width="150">
+            <template #default="{ row }">
+              <template v-if="row.tools_used?.length">
+                <el-tag
+                  v-for="t in row.tools_used" :key="t"
+                  size="small" effect="plain" style="margin-right: 4px"
+                >{{ toolLabel(t) }}</el-tag>
+              </template>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="方式 / 模型" width="190">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.via === 'llm' ? 'primary' : 'info'">
+                {{ row.via === 'llm' ? 'LLM' : '规则' }}
+              </el-tag>
+              <span class="audit-model" :title="row.model">{{ row.model }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="耗时" width="80" align="right">
+            <template #default="{ row }">{{ fmtDuration(row.duration_ms) }}</template>
+          </el-table-column>
+        </el-table>
+        <div class="audit-pager">
+          <el-pagination
+            v-model:current-page="auditPage"
+            layout="total, prev, pager, next"
+            :total="auditTotal"
+            :page-size="auditSize"
+            @current-change="loadAuditLogs"
+          />
+        </div>
+      </template>
+    </el-card>
+
     <!-- 🆕 LLM 配置弹窗（仅 admin；保存后全局生效） -->
     <el-dialog v-model="cfgVisible" title="LLM 配置（全局生效）" width="480px">
       <el-form label-position="top">
@@ -337,6 +463,22 @@ async function send(text?: string) {
 
 .input-row { display: flex; gap: 10px; padding-top: 12px; align-items: flex-end; }
 .input-row .el-input { flex: 1; }
+
+/* 🆕 审计日志卡片（admin）：页内滚出空间，行展开看问答全文 */
+.agent-page { overflow-y: auto; }
+.audit-card { flex: none; margin-top: 12px; }
+.audit-header { display: flex; align-items: center; gap: 8px; }
+.audit-header .spacer { flex: 1; }
+.audit-title { font-weight: 600; }
+.audit-tip { font-size: 12px; color: var(--el-text-color-secondary); font-weight: 400; }
+.audit-model { margin-left: 6px; font-size: 12px; color: var(--el-text-color-secondary); }
+.audit-expand { padding: 8px 12px; display: flex; flex-direction: column; gap: 10px; }
+.audit-qa-label { font-size: 12px; font-weight: 600; color: var(--el-text-color-secondary); margin-bottom: 2px; }
+.audit-text {
+  white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.6;
+  max-height: 260px; overflow-y: auto;
+}
+.audit-pager { display: flex; justify-content: flex-end; padding-top: 10px; }
 
 /* 🆕 助手气泡内的 Markdown 排版（scoped 需 :deep 穿透 v-html） */
 .md-body { word-break: break-word; }

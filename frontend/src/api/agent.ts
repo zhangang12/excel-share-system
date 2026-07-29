@@ -35,6 +35,24 @@ export interface AgentConfigPatch {
   models?: string
 }
 
+// 🆕 对话审计日志（仅 admin/manager 可查）
+export interface AgentChatLogItem {
+  id: number
+  username: string
+  question: string
+  answer: string
+  tools_used: string[]       // 实际调用的数据工具名
+  via: string                // "llm"=大模型 / "rule"=规则降级
+  model: string              // 实际模型名 / "rule-fallback[:原因]"
+  duration_ms: number | null
+  created_at: string
+}
+
+export interface AgentChatLogList {
+  total: number
+  items: AgentChatLogItem[]
+}
+
 export const agentApi = {
   chat: (message: string, history: ChatHistoryItem[] = [], model?: string) =>
     http.post<AgentChatReply>('/agent/chat', { message, history, ...(model ? { model } : {}) })
@@ -46,4 +64,7 @@ export const agentApi = {
 
   saveConfig: (body: AgentConfigPatch) =>
     http.put<AgentConfig>('/agent/config', body).then((r) => r.data),
+
+  getChatLogs: (params: { page: number; size: number; username?: string }) =>
+    http.get<AgentChatLogList>('/agent/chat-logs', { params }).then((r) => r.data),
 }

@@ -13,6 +13,8 @@
   api_key 任何接口/日志都不输出明文
 - 降级：生效配置无 api_key、或 LLM 调用任何异常 → 规则意图匹配 + 模板格式化，
   fallback=true；降级路径不依赖任何外部服务，永远可用
+- 🆕 审计：两条路径的问答都写 agent_chat_logs（用户/问题/回答/工具/模型/耗时）；
+  写日志失败只记 log 不影响聊天；GET /api/agent/chat-logs（admin/manager）分页查询
 - 只读红线：本模块所有数据工具仅 SELECT，不做任何写库操作
 - 查询口径照抄 overdue.py（采购到期未到货/部门逾期任务/尾款到期/人事到期），
   日期字段为 ISO 字符串可直接字典序比较；业务时区中国 UTC+8（复用 overdue._CN_TZ）
@@ -20,12 +22,13 @@
 import json
 import logging
 import re
+import time
 from datetime import date, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import menus, models
@@ -884,12 +887,52 @@ class ChatIn(BaseModel):
     model: str | None = None   # 🆕 可选：指定 LLM 模型（须在白名单内）；规则降级路径忽略
 
 
+# ==================== 🆕 审计日志（问答全量落 agent_chat_logs，失败不影响聊天） ====================
+
+_LOG_TEXT_MAX = 5000   # question/answer 入库前截断上限，防超大文本撑爆行
+
+
+def _fallback_reason(e: Exception) -> str:
+    """LLM 失败原因简述（记进 model 字段，如 "rule-fallback:timeout"），不含敏感信息。"""
+    msg = str(e)
+    if "timeout" in msg.lower() or "超时" in msg:
+        return "timeout"
+    m = re.search(r"HTTP (\d+)", msg)          # LLM 接口返回 HTTP 500
+    if m:
+        return f"http-{m.group(1)}"
+    m = re.search(r"（(.+?)）", msg)            # LLM 调用失败（ConnectError）
+    if m:
+        return m.group(1)
+    return type(e).__name__
+
+
+async def _log_chat(db: AsyncSession, user: models.User, question: str, answer: str,
+                    tool_names: list[str], via: str, model: str, duration_ms: int | None):
+    """写一条对话审计日志。独立小函数 + try/except 全包裹：日志失败只记 log，绝不影响聊天主流程。"""
+    try:
+        db.add(models.AgentChatLog(
+            user_id=user.id, username=user.username,
+            question=(question or "")[:_LOG_TEXT_MAX],
+            answer=(answer or "")[:_LOG_TEXT_MAX],
+            tools_used=list(tool_names or []),
+            via=via, model=(model or "")[:64], duration_ms=duration_ms,
+        ))
+        await db.commit()
+    except Exception as e:  # noqa: BLE001 —— 审计是旁路，任何失败都不能炸掉聊天
+        log.warning("[agent] 审计日志写入失败: %s", e)
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @router.post("/chat")
 async def chat(
     body: ChatIn,
     current: models.User = Depends(get_current_user),   # 🆕 全员可聊；数据域在 _run_tool 按菜单门控
     db: AsyncSession = Depends(get_db),
 ):
+    t0 = time.perf_counter()
     text = (body.message or "").strip()
     if not text:
         raise HTTPException(400, "请输入问题")
@@ -903,15 +946,51 @@ async def chat(
                for h in body.history[-20:] if h.role in ("user", "assistant")]
     allowed = _allowed_tools(current)
     if cfg["api_key"]:
+        llm_model = model or cfg["model"]
         try:
-            reply, tool_names = await _chat_with_llm(text, history, db,
-                                                     model or cfg["model"], cfg, current)
+            reply, tool_names = await _chat_with_llm(text, history, db, llm_model, cfg, current)
+            await _log_chat(db, current, text, reply, tool_names, via="llm",
+                            model=llm_model, duration_ms=int((time.perf_counter() - t0) * 1000))
             return {"reply": reply, "fallback": False,
                     "sources": [TOOL_LABELS[n] for n in tool_names],
                     "suggestions": _suggestions_for(tool_names, allowed)}
         except Exception as e:  # noqa: BLE001 —— LLM 任何异常都降级，保证可用
             log.warning("[agent] LLM 调用失败，转规则降级: %s", e)
+            fb_model = f"rule-fallback:{_fallback_reason(e)}"
+    else:
+        fb_model = "rule-fallback"
     reply, tool_names = await _rule_chat(text, db, current)
+    await _log_chat(db, current, text, reply, tool_names, via="rule",
+                    model=fb_model, duration_ms=int((time.perf_counter() - t0) * 1000))
     return {"reply": reply, "fallback": True,
             "sources": [TOOL_LABELS[n] for n in tool_names],
             "suggestions": _suggestions_for(tool_names, allowed)}
+
+
+@router.get("/chat-logs")
+async def list_chat_logs(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    username: str | None = Query(None, description="按用户名模糊过滤"),
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 对话审计日志分页查询（admin/manager）：按时间倒序，可按 username 模糊过滤。"""
+    L = models.AgentChatLog
+    conds = []
+    if username and username.strip():
+        conds.append(L.username.like(f"%{username.strip()}%"))
+    total = (await db.execute(select(func.count(L.id)).where(*conds))).scalar() or 0
+    rows = list((await db.execute(
+        select(L).where(*conds)
+        .order_by(L.created_at.desc(), L.id.desc())
+        .limit(size).offset((page - 1) * size))).scalars().all())
+    return {
+        "total": total,
+        "items": [{
+            "id": r.id, "username": r.username, "question": r.question, "answer": r.answer,
+            "tools_used": r.tools_used or [], "via": r.via, "model": r.model,
+            "duration_ms": r.duration_ms,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        } for r in rows],
+    }
