@@ -159,7 +159,8 @@ async def reply_feedback(
     current: models.User = Depends(require_admin_or_manager),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 管理层回复处理意见（系统回信）。回复即视为已处理；提出人下次登录右下角弹窗提醒查看。"""
+    """🆕 管理层回复处理意见（系统回信）。回复即视为已处理；提出人下次登录右下角弹窗提醒查看。
+    🆕 2026-07-29：回复同时 push_message 给提出人（站内消息 + 企微双通道，绑了企微即微信可达）。"""
     text = (body.reply or "").strip()
     if not text:
         raise HTTPException(400, "请填写处理意见回复")
@@ -173,6 +174,12 @@ async def reply_feedback(
     fb.reply_read = False          # 新回复 → 提出人未读，触发登录弹窗
     fb.status = "done"
     await db.commit()
+    # 🆕 双通道通知提出人（弹窗提醒之外的企微兜底；本人回复自己的反馈不推）
+    if fb.user_id and fb.user_id != current.id:
+        from ..notify import push_message
+        await push_message(db, to_user_id=fb.user_id, kind="info",
+                           text=f"【反馈回复】你反馈的问题（#{fid}）已有回复：{text[:60]}{'…' if len(text) > 60 else ''}",
+                           biz_type="user_feedback", biz_id=fb.id)
     r2 = await db.execute(select(models.UserFeedback).where(models.UserFeedback.id == fid))
     fb2 = r2.scalar_one()
     await write_audit(db, user=current, action="user_feedback_reply",
