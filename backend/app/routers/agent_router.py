@@ -1,9 +1,13 @@
-"""🆕 Agent 助手（只读问数 POC，仅 admin/manager 可用）。
+"""🆕 AI 助手（只读问数，全员可用；数据查询权限按用户菜单门控）。
 
 - POST /api/agent/chat  {message, history?, model?} → {reply, fallback, sources, suggestions}
   - history 可选，最多保留最近 10 轮（20 条）
   - sources 列出本轮实际调用的数据工具（前端小字展示「数据来源」）
-  - suggestions 为追问建议（按实际调用的工具映射，前端渲染为可点击 chips）
+  - suggestions 为追问建议（按实际调用的工具映射，且过滤掉无权工具，前端渲染为可点击 chips）
+  - 🆕 权限：登录即可聊；数据域按 user_menu_keys 门控（见 _run_tool，LLM 与规则降级共用）：
+    采购域→purchase_mgmt；尾款→finance/sales；部门逾期→design/electric/produce（按菜单交集过滤）；
+    项目进度→list + 行级可见性（deps.user_can_view_project），ledger 仅 finance/sales 返回；
+    晨报按可用域聚合；无权域返回 {"error": ...} 不返回数据
 - 大脑：OpenAI 兼容接口 function calling（30s 超时）。LLM 配置生效优先级 =
   数据库 app_settings（admin 在页面配置，GET/PUT /api/agent/config）> settings(.env) 默认值；
   api_key 任何接口/日志都不输出明文
@@ -24,10 +28,10 @@ from pydantic import BaseModel
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import models
+from .. import menus, models
 from ..config import settings
 from ..database import get_db
-from ..deps import require_admin_or_manager, get_current_user
+from ..deps import require_admin_or_manager, get_current_user, user_can_view_project
 from ..dept_config import DEPTS
 from ..overdue import _CN_TZ
 
@@ -158,8 +162,10 @@ async def tool_balance_due(db: AsyncSession) -> dict:
     return {"count": len(rows), "items": rows[:20]}
 
 
-async def tool_overdue_orders(db: AsyncSession, dept: str | None = None) -> dict:
-    """部门逾期任务：进行中且预计完成日已过（口径同 overdue.scan_overdue）。dept 可限定 design/electric/produce。"""
+async def tool_overdue_orders(db: AsyncSession, dept: str | None = None,
+                              allowed_depts: list[str] | None = None) -> dict:
+    """部门逾期任务：进行中且预计完成日已过（口径同 overdue.scan_overdue）。
+    dept 可限定 design/electric/produce；未指定 dept 时可传 allowed_depts 按调用者菜单收窄。"""
     today = _today()
     q = select(models.DeptOrder).where(
         models.DeptOrder.status == "in_progress",
@@ -168,6 +174,8 @@ async def tool_overdue_orders(db: AsyncSession, dept: str | None = None) -> dict
     )
     if dept in DEPTS:
         q = q.where(models.DeptOrder.dept == dept)
+    elif allowed_depts is not None:
+        q = q.where(models.DeptOrder.dept.in_(allowed_depts))
     r = await db.execute(q)
     rows = []
     for o in r.scalars().all():
@@ -205,25 +213,33 @@ async def _hr_due_rows(db: AsyncSession) -> list[dict]:
     return rows
 
 
-async def tool_morning_report(db: AsyncSession) -> dict:
-    """晨报聚合：采购到期未到货 / 部门逾期任务 / 尾款到期 / 人事到期，各取 Top5 + 总数。"""
-    po, orders, balance, hr = (
-        await tool_po_arrival_overdue(db),
-        await tool_overdue_orders(db),
-        await tool_balance_due(db),
-        await _hr_due_rows(db),
-    )
-    return {
-        "today": _today().isoformat(),
-        "po_arrival_overdue": {"count": po["count"], "top": po["items"][:5]},
-        "overdue_orders": {"count": orders["count"], "top": orders["items"][:5]},
-        "balance_due": {"count": balance["count"], "top": balance["items"][:5]},
-        "hr_due": {"count": len(hr), "top": hr[:5]},
-    }
+async def tool_morning_report(db: AsyncSession, domains: set[str] | None = None,
+                              order_depts: list[str] | None = None) -> dict:
+    """晨报聚合：采购到期未到货 / 部门逾期任务 / 尾款到期 / 人事到期，各取 Top5 + 总数。
+    🆕 domains ⊆ {"po","orders","balance","hr"} 指定只统计调用者有菜单的小节（缺省=全部）；
+    order_depts 把「部门逾期」小节收窄到调用者有菜单的部门。"""
+    dom = domains if domains is not None else {"po", "orders", "balance", "hr"}
+    out: dict = {"today": _today().isoformat()}
+    if "po" in dom:
+        po = await tool_po_arrival_overdue(db)
+        out["po_arrival_overdue"] = {"count": po["count"], "top": po["items"][:5]}
+    if "orders" in dom:
+        orders = await tool_overdue_orders(db, allowed_depts=order_depts)
+        out["overdue_orders"] = {"count": orders["count"], "top": orders["items"][:5]}
+    if "balance" in dom:
+        balance = await tool_balance_due(db)
+        out["balance_due"] = {"count": balance["count"], "top": balance["items"][:5]}
+    if "hr" in dom:
+        hr = await _hr_due_rows(db)
+        out["hr_due"] = {"count": len(hr), "top": hr[:5]}
+    return out
 
 
-async def tool_project_status(db: AsyncSession, code: str) -> dict:
-    """按项目编号查进度：基本信息 + 各部门任务 + 未到货采购项 + 尾款情况。"""
+async def tool_project_status(db: AsyncSession, code: str, current: models.User | None = None,
+                              menu_keys: set[str] | None = None) -> dict:
+    """按项目编号查进度：基本信息 + 各部门任务 + 未到货采购项 + 尾款情况。
+    🆕 传 current 时做行级可见性门禁（deps.user_can_view_project，与项目详情同一判定）；
+    ledger（尾款金额）仅当 menu_keys 含 finance/sales 时返回，否则剔除该字段。"""
     code = (code or "").strip()
     r = await db.execute(select(models.Project).where(models.Project.code == code))
     p = r.scalar_one_or_none()
@@ -232,6 +248,9 @@ async def tool_project_status(db: AsyncSession, code: str) -> dict:
         p = r.scalar_one_or_none()
     if p is None:
         return {"found": False, "code": code}
+    # 🆕 行级可见性：受限岗位/非项目成员查不到的项目一律「无权查看」（不泄露项目是否存在）
+    if current is not None and not await user_can_view_project(db, current, p):
+        return {"error": "无权查看该项目", "code": p.code}
 
     r = await db.execute(select(models.DeptOrder).where(models.DeptOrder.project_id == p.id))
     orders = [{
@@ -272,12 +291,16 @@ async def tool_project_status(db: AsyncSession, code: str) -> dict:
             "sales": _uname(led.sales_user),
         }
 
-    return {
+    out = {
         "found": True, "code": p.code, "name": p.name, "status": p.status,
         "is_deleted": bool(p.is_deleted), "manager": _uname(p.manager),
         "dept_orders": orders, "po_pending_count": len(po_pending),
-        "po_pending": po_pending[:10], "ledger": ledger,
+        "po_pending": po_pending[:10],
     }
+    # 🆕 尾款金额仅财务/销售菜单可见，其余剔除该字段
+    if menu_keys is None or (menu_keys & {"finance", "sales"}):
+        out["ledger"] = ledger
+    return out
 
 
 # ==================== 工具注册表（LLM function calling + 降级模板共用） ====================
@@ -304,14 +327,33 @@ _TOOL_SUGGESTIONS = {
 }
 _DEFAULT_SUGGESTIONS = ["今日晨报", "采购未到货", "尾款到期"]
 
+# 🆕 建议文案 → 对应数据工具（按调用者可用工具过滤建议用）
+_SUGGESTION_TOOL = {
+    "今日晨报": "morning_report",
+    "采购未到货明细": "po_arrival_overdue",
+    "采购未到货": "po_arrival_overdue",
+    "按供应商汇总未到货": "po_overdue_by_supplier",
+    "未来 7 天到货": "po_arriving",
+    "尾款到期清单": "balance_due",
+    "尾款到期": "balance_due",
+    "部门逾期任务": "overdue_orders",
+    "该项目未到货采购": "project_status",
+}
 
-def _suggestions_for(tool_names) -> list[str]:
+
+def _suggestions_for(tool_names, allowed: set[str] | None = None) -> list[str]:
     out: list[str] = []
+
+    def _ok(s: str) -> bool:
+        return allowed is None or _SUGGESTION_TOOL.get(s) in allowed
+
     for n in tool_names:
         for s in _TOOL_SUGGESTIONS.get(n, []):
-            if s not in out:
+            if s not in out and _ok(s):
                 out.append(s)
-    return (out or _DEFAULT_SUGGESTIONS)[:3]
+    if not out:
+        out = [s for s in _DEFAULT_SUGGESTIONS if _ok(s)]
+    return out[:3]
 
 TOOL_SCHEMAS = [
     {"type": "function", "function": {
@@ -350,21 +392,80 @@ TOOL_SCHEMAS = [
 ]
 
 
-async def _run_tool(name: str, args: dict, db: AsyncSession):
+# ==================== 🆕 数据域-菜单门控（LLM 与规则降级共用） ====================
+
+_MENU_LABELS = {m["key"]: m["label"] for m in menus.MENU_DEFS}
+_DEPT_MENU_KEYS = ("design", "electric", "produce")
+
+
+def _deny(*need: str) -> dict:
+    """无权查询的统一错误结果（作为工具返回值，不进异常链）。"""
+    return {"error": f"你无权查询该域数据（需要 {' 或 '.join(_MENU_LABELS.get(k, k) for k in need)} 菜单权限）"}
+
+
+def _allowed_tools(user: models.User) -> set[str]:
+    """用户菜单可用的数据工具集合（morning_report 只要晨报任一数据域可用即可，工具内再按域聚合；
+    project_status 不算晨报域）。"""
+    keys = set(menus.user_menu_keys(user))
+    out: set[str] = set()
+    if "purchase_mgmt" in keys:
+        out |= {"po_arrival_overdue", "po_arriving", "po_overdue_by_supplier"}
+    if keys & {"finance", "sales"}:
+        out.add("balance_due")
+    if keys & set(_DEPT_MENU_KEYS):
+        out.add("overdue_orders")
+    if "list" in keys:
+        out.add("project_status")
+    if "purchase_mgmt" in keys or "hr" in keys or keys & {"finance", "sales", *_DEPT_MENU_KEYS}:
+        out.add("morning_report")
+    return out
+
+
+async def _run_tool(name: str, args: dict, db: AsyncSession, current: models.User):
+    """执行数据工具（只读）。按调用者菜单门控数据域，无权域返回 {"error": ...} 而非数据。"""
+    keys = set(menus.user_menu_keys(current))
     if name == "morning_report":
-        return await tool_morning_report(db)
-    if name == "po_arrival_overdue":
-        return await tool_po_arrival_overdue(db, int(args.get("min_overdue_days") or 0))
-    if name == "po_arriving":
-        return await tool_po_arriving(db, int(args.get("days") or 3))
-    if name == "po_overdue_by_supplier":
+        # 不硬拒：按可用域聚合；全无任何可用域才提示
+        domains: set[str] = set()
+        if "purchase_mgmt" in keys:
+            domains.add("po")
+        if keys & {"finance", "sales"}:
+            domains.add("balance")
+        dept_keys = sorted(keys & set(_DEPT_MENU_KEYS))
+        if dept_keys:
+            domains.add("orders")
+        if "hr" in keys:
+            domains.add("hr")
+        if not domains:
+            return {"error": "你没有可查询的数据域，请联系管理员开通菜单"}
+        return await tool_morning_report(db, domains, dept_keys or None)
+    if name in ("po_arrival_overdue", "po_arriving", "po_overdue_by_supplier"):
+        if "purchase_mgmt" not in keys:
+            return _deny("purchase_mgmt")
+        if name == "po_arrival_overdue":
+            return await tool_po_arrival_overdue(db, int(args.get("min_overdue_days") or 0))
+        if name == "po_arriving":
+            return await tool_po_arriving(db, int(args.get("days") or 3))
         return await tool_po_overdue_by_supplier(db)
     if name == "balance_due":
+        if not keys & {"finance", "sales"}:
+            return _deny("finance", "sales")
         return await tool_balance_due(db)
     if name == "overdue_orders":
-        return await tool_overdue_orders(db, args.get("dept") or None)
+        dept_keys = sorted(keys & set(_DEPT_MENU_KEYS))
+        if not dept_keys:
+            return _deny(*_DEPT_MENU_KEYS)
+        dept = args.get("dept") or None
+        if dept:
+            if dept not in _DEPT_MENU_KEYS:
+                return {"error": f"未知部门 {dept}"}
+            if dept not in dept_keys:
+                return _deny(dept)
+        return await tool_overdue_orders(db, dept, allowed_depts=None if dept else dept_keys)
     if name == "project_status":
-        return await tool_project_status(db, str(args.get("code") or ""))
+        if "list" not in keys:
+            return _deny("list")
+        return await tool_project_status(db, str(args.get("code") or ""), current, keys)
     return {"error": f"未知工具 {name}"}
 
 
@@ -380,15 +481,16 @@ _SYSTEM_PROMPT = """你是制造业 ERP 项目管理系统内置的数据分析�
 今天日期：{today}（中国时区）。"""
 
 
-async def _llm_request(messages: list[dict], model: str, cfg: dict) -> dict:
+async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[dict]) -> dict:
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
-    payload = {
+    payload: dict = {
         "model": model,
         "messages": messages,
-        "tools": TOOL_SCHEMAS,
-        "tool_choice": "auto",
         "temperature": 0.2,
     }
+    if tools:  # 🆕 只下放调用者有权的数据工具；无可用工具则纯对话（不下发 tools 字段，防空数组被拒）
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
     headers = {"Authorization": f"Bearer {cfg['api_key']}"}
     try:
         async with httpx.AsyncClient(timeout=30.0) as cli:
@@ -409,10 +511,13 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
     roles = "、".join(sorted(user.role_codes)) if getattr(user, "role_codes", None) else "—"
     sys_prompt = _SYSTEM_PROMPT.format(today=_today().isoformat(),
                                        user_name=_uname(user), roles=roles)
+    # 🆕 只下放该用户菜单可用的数据工具（_run_tool 内仍二次门控，双保险）
+    allowed = _allowed_tools(user)
+    schemas = [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
     messages = ([{"role": "system", "content": sys_prompt}]
                 + history + [{"role": "user", "content": message}])
     for _ in range(4):  # 工具轮次上限，防死循环
-        data = await _llm_request(messages, model, cfg)
+        data = await _llm_request(messages, model, cfg, schemas)
         msg = data["choices"][0]["message"]
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
@@ -428,7 +533,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            result = await _run_tool(name, args, db)
+            result = await _run_tool(name, args, db, user)
             if name in TOOL_LABELS and name not in tool_names:
                 tool_names.append(name)
             messages.append({
@@ -527,23 +632,27 @@ def _morning_text(d: dict) -> str:
         return f"**{title}：{count} 条**" + (" ✅" if count == 0 else "")
 
     lines = [f"## 📋 今日晨报（{d['today']}）", ""]
-    s = d["po_arrival_overdue"]
-    lines.append(_sec("一、采购到期未到货", s["count"]))
-    for it in s["top"]:
-        over = "今天到期" if it["over_days"] == 0 else f"**⚠ 已超期 {it['over_days']} 天**"
-        lines.append(f"- {it['item_name']}（{it['supplier']}）预计 {it['expected_arrival']}，{over}")
-    s = d["overdue_orders"]
-    lines += ["", _sec("二、部门逾期任务", s["count"])]
-    for it in s["top"]:
-        lines.append(f"- {it['dept_name']} {it['project_code']}，**⚠ 逾期 {it['over_days']} 天**（{it['worker']}）")
-    s = d["balance_due"]
-    lines += ["", _sec("三、尾款到期/逾期", s["count"])]
-    for it in s["top"]:
-        lines.append(f"- {it['project_code']} 尾款 {_fmt_money(it['balance'])}，{_fmt_days(it['days'])}")
-    s = d["hr_due"]
-    lines += ["", _sec("四、人事到期", s["count"])]
-    for it in s["top"]:
-        lines.append(f"- {it['name']}（{it['dept']}）{it['kind']} {it['date']}（{_fmt_days(it['days'])}）")
+    s = d.get("po_arrival_overdue")
+    if s is not None:
+        lines.append(_sec("一、采购到期未到货", s["count"]))
+        for it in s["top"]:
+            over = "今天到期" if it["over_days"] == 0 else f"**⚠ 已超期 {it['over_days']} 天**"
+            lines.append(f"- {it['item_name']}（{it['supplier']}）预计 {it['expected_arrival']}，{over}")
+    s = d.get("overdue_orders")
+    if s is not None:
+        lines += ["", _sec("二、部门逾期任务", s["count"])]
+        for it in s["top"]:
+            lines.append(f"- {it['dept_name']} {it['project_code']}，**⚠ 逾期 {it['over_days']} 天**（{it['worker']}）")
+    s = d.get("balance_due")
+    if s is not None:
+        lines += ["", _sec("三、尾款到期/逾期", s["count"])]
+        for it in s["top"]:
+            lines.append(f"- {it['project_code']} 尾款 {_fmt_money(it['balance'])}，{_fmt_days(it['days'])}")
+    s = d.get("hr_due")
+    if s is not None:
+        lines += ["", _sec("四、人事到期", s["count"])]
+        for it in s["top"]:
+            lines.append(f"- {it['name']}（{it['dept']}）{it['kind']} {it['date']}（{_fmt_days(it['days'])}）")
     return "\n".join(lines)
 
 
@@ -567,18 +676,20 @@ def _project_text(d: dict) -> str:
             over = f"，**⚠ 已超期 {it['over_days']} 天**"
         exp = f"预计 {it['expected_arrival']}" if it.get("expected_arrival") else "未填预计到货"
         lines.append(f"- {it['item_name']}（{it['supplier']}，{exp}{over}）")
-    led = d.get("ledger")
-    lines.append("\n**回款/尾款**")
-    if led:
-        bal = led["balance"] or 0
-        if bal > 0:
-            when = _fmt_days(led["balance_days"]) if led.get("balance_days") is not None else "未约定日期"
-            lines.append(f"- 尾款 **{_fmt_money(bal)}** 未收（约定 {led.get('balance_date') or '—'}，{when}）；"
-                         f"合同额 {_fmt_money(led['amount'])}，客户：{led.get('customer') or '—'}")
+    # 🆕 ledger 字段仅 finance/sales 菜单用户才下发；无该字段时整个小节不渲染
+    if "ledger" in d:
+        led = d.get("ledger")
+        lines.append("\n**回款/尾款**")
+        if led:
+            bal = led["balance"] or 0
+            if bal > 0:
+                when = _fmt_days(led["balance_days"]) if led.get("balance_days") is not None else "未约定日期"
+                lines.append(f"- 尾款 **{_fmt_money(bal)}** 未收（约定 {led.get('balance_date') or '—'}，{when}）；"
+                             f"合同额 {_fmt_money(led['amount'])}，客户：{led.get('customer') or '—'}")
+            else:
+                lines.append(f"- 尾款已结清；合同额 {_fmt_money(led['amount'])}，客户：{led.get('customer') or '—'}")
         else:
-            lines.append(f"- 尾款已结清；合同额 {_fmt_money(led['amount'])}，客户：{led.get('customer') or '—'}")
-    else:
-        lines.append("- 无销售台账记录")
+            lines.append("- 无销售台账记录")
     return "\n".join(lines)
 
 
@@ -591,27 +702,38 @@ _CAPABILITY_TEXT = """我是 ERP 数据助手（只读），所有数字都来�
 - **单项目进度**：消息里带上项目编号，如「TH-2501 进度」"""
 
 
-async def _rule_chat(message: str, db: AsyncSession):
-    """规则降级：关键词意图匹配 → 调对应数据工具 → Markdown 模板格式化。
+async def _rule_chat(message: str, db: AsyncSession, current: models.User):
+    """规则降级：关键词意图匹配 → 调数据工具（经 _run_tool，与 LLM 共用菜单门控）→ Markdown 模板格式化。
     返回 (reply, 工具名列表)（工具名供 endpoints 映射 sources 标签 + 追问建议）。"""
     m = message.strip()
+
+    async def _call(name: str, args: dict | None = None):
+        return await _run_tool(name, args or {}, db, current)
+
     if any(k in m for k in ("晨报", "早报", "早会", "要盯", "风险", "汇报")):
-        return _morning_text(await tool_morning_report(db)), ["morning_report"]
+        d = await _call("morning_report")
+        return (d["error"], []) if "error" in d else (_morning_text(d), ["morning_report"])
     if "供应商" in m:
-        return _po_by_supplier_text(await tool_po_overdue_by_supplier(db)), ["po_overdue_by_supplier"]
+        d = await _call("po_overdue_by_supplier")
+        return (d["error"], []) if "error" in d else (_po_by_supplier_text(d), ["po_overdue_by_supplier"])
     if any(k in m for k in ("未到货", "采购", "到货")):
         if any(k in m for k in ("未来", "预计", "即将", "将要", "下周", "一周")) \
                 and "未到货" not in m and "超期" not in m:
             days = 7 if any(k in m for k in ("下周", "一周", "7 天", "7天")) else 3
-            return _po_arriving_text(await tool_po_arriving(db, days)), ["po_arriving"]
-        return _po_overdue_text(await tool_po_arrival_overdue(db)), ["po_arrival_overdue"]
+            d = await _call("po_arriving", {"days": days})
+            return (d["error"], []) if "error" in d else (_po_arriving_text(d), ["po_arriving"])
+        d = await _call("po_arrival_overdue")
+        return (d["error"], []) if "error" in d else (_po_overdue_text(d), ["po_arrival_overdue"])
     if any(k in m for k in ("尾款", "回款", "欠款")):
-        return _balance_text(await tool_balance_due(db)), ["balance_due"]
+        d = await _call("balance_due")
+        return (d["error"], []) if "error" in d else (_balance_text(d), ["balance_due"])
     if "逾期" in m:
-        return _overdue_orders_text(await tool_overdue_orders(db)), ["overdue_orders"]
+        d = await _call("overdue_orders")
+        return (d["error"], []) if "error" in d else (_overdue_orders_text(d), ["overdue_orders"])
     hit = _PROJECT_CODE_RE.search(m)
     if hit:
-        return _project_text(await tool_project_status(db, hit.group(0))), ["project_status"]
+        d = await _call("project_status", {"code": hit.group(0)})
+        return (d["error"], []) if "error" in d else (_project_text(d), ["project_status"])
     return _CAPABILITY_TEXT, []
 
 
@@ -765,7 +887,7 @@ class ChatIn(BaseModel):
 @router.post("/chat")
 async def chat(
     body: ChatIn,
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(get_current_user),   # 🆕 全员可聊；数据域在 _run_tool 按菜单门控
     db: AsyncSession = Depends(get_db),
 ):
     text = (body.message or "").strip()
@@ -779,16 +901,17 @@ async def chat(
     # 最多保留最近 10 轮（20 条），仅 user/assistant 两种角色
     history = [{"role": h.role, "content": h.content[:2000]}
                for h in body.history[-20:] if h.role in ("user", "assistant")]
+    allowed = _allowed_tools(current)
     if cfg["api_key"]:
         try:
             reply, tool_names = await _chat_with_llm(text, history, db,
                                                      model or cfg["model"], cfg, current)
             return {"reply": reply, "fallback": False,
                     "sources": [TOOL_LABELS[n] for n in tool_names],
-                    "suggestions": _suggestions_for(tool_names)}
+                    "suggestions": _suggestions_for(tool_names, allowed)}
         except Exception as e:  # noqa: BLE001 —— LLM 任何异常都降级，保证可用
             log.warning("[agent] LLM 调用失败，转规则降级: %s", e)
-    reply, tool_names = await _rule_chat(text, db)
+    reply, tool_names = await _rule_chat(text, db, current)
     return {"reply": reply, "fallback": True,
             "sources": [TOOL_LABELS[n] for n in tool_names],
-            "suggestions": _suggestions_for(tool_names)}
+            "suggestions": _suggestions_for(tool_names, allowed)}

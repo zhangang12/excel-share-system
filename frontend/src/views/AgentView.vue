@@ -134,8 +134,8 @@ async function send(text?: string) {
   <div class="agent-page">
     <div class="page-header">
       <div>
-        <h1>Agent 助手（测试）</h1>
-        <div class="desc">只读问数：答案中的数字均来自系统实时查询，不会修改任何数据</div>
+        <h1>AI 助手</h1>
+        <div class="desc">只读问数：答案中的数字均来自系统实时查询，不会修改任何数据；可查询的数据域与你的菜单权限一致</div>
       </div>
       <div class="spacer"></div>
       <!-- 🆕 模型选择：未配置 LLM Key 时禁用并提示规则模式 -->

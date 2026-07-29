@@ -34,6 +34,7 @@ MENU_DEFS: list[dict] = [
     {"key": "hr",         "label": "人事部"},   # 🆕 一期:员工花名册+部门月度工资总额(hr+管理层)
     {"key": "report",     "label": "月度工作报表"},
     {"key": "oa",         "label": "OA审批"},     # 🆕 全员可见（业务/报销/采购申请+审批）
+    {"key": "agent",      "label": "AI 助手"},    # 🆕 全员可见（user_menu_keys 无条件追加）；数据查询权限按菜单门控
     {"key": "messages",   "label": "消息中心"},
 ]
 
@@ -46,7 +47,6 @@ ADMIN_MENU_DEFS: list[dict] = [
     {"key": "approve",        "label": "导出审批"},
     {"key": "wxbind",         "label": "企微绑定"},
     {"key": "user-feedback",  "label": "用户反馈"},  # 🆕 收集所有用户提交的问题/建议
-    {"key": "agent",          "label": "Agent 助手"},  # 🆕 只读问数 POC（admin/manager 专属，归入「管理」分组）
     {"key": "desktop",        "label": "桌面端"},      # 🆕 桌面客户端在线版本分布（admin/manager 专属，只读统计）
     {"key": "gate-config",    "label": "外网访问"},    # 🆕 外网登录验证码闸门配置（admin/manager 专属）
 ]
@@ -145,12 +145,13 @@ def user_menu_keys(user: models.User) -> list[str]:
     口径（2026-07-21 起）：一级菜单按账号配置（User.menus），角色菜单矩阵已废除：
     - admin/manager：全量可见（不读 User.menus）
     - 其余账号：User.menus 即完整清单；NULL=未配置 → DEFAULT_ACCOUNT_MENUS 兜底
+    - 「agent」(AI 助手) 全员可见：所有登录用户无条件追加（查询权限在 agent_router 按菜单门控）
     """
     codes = user.role_codes
     if codes & {"admin", "manager"}:
         return _ALL_KEYS + _ADMIN_KEYS
     configured = user.menus if user.menus is not None else DEFAULT_ACCOUNT_MENUS
-    return canonical_menu_order(configured)
+    return canonical_menu_order(set(configured) | {"agent"})
 
 
 def user_can_view_detail(user: models.User) -> bool:

@@ -1,5 +1,8 @@
-"""🆕 Agent 助手（只读问数 POC）回归测试：
-1. 权限：非 admin/manager（buyer）调 POST /api/agent/chat → 403；admin 正常 200。
+"""🆕 AI 助手（只读问数，全员可用）回归测试：
+1. 权限：chat 全员可用（2026-07-30 起守卫由 require_admin_or_manager 降为 get_current_user，
+   数据域按菜单门控）：buyer（有 purchase_mgmt）调 POST /api/agent/chat → 200，
+   晨报只含其有菜单的采购小节（无尾款/人事节）；未登录 401；配置接口仍仅管理层。
+   细粒度域门控（逐工具拒绝/行级可见性/ledger 剔除）见 test_agent_perms.py。
 2. 降级路径（无 LLM key，强制规则模式）：「采购未到货吗」「今日晨报」「AGT-2501 项目进度」
    都能回答，且回复里带真实数据关键词（明细名/项目名/部门名），fallback=true 且 sources 正确。
 3. 工具口径：tool_po_arrival_overdue 查得出「预计昨天到货且未收货」的明细，
@@ -85,9 +88,14 @@ async def main():
             db.add_all([it_b, it_fut])
             await db.commit()
 
-        # ===== 1. 权限：非管理层 403 =====
+        # ===== 1. 权限：chat 全员可用，数据域按菜单门控 =====
+        # buyer 有 purchase_mgmt → 晨报只含采购小节；无 finance/sales/hr → 无尾款/人事节
         r = await c.post("/api/agent/chat", headers=Hb, json={"message": "晨报"})
-        chk(r.status_code == 403, f"buyer 调 /api/agent/chat 应 403: {r.status_code} {r.text[:120]}")
+        chk(r.status_code == 200, f"buyer 调 /api/agent/chat 200(全员可用): {r.status_code} {r.text[:120]}")
+        j = r.json()
+        chk("采购到期未到货" in j.get("reply", "")
+            and "尾款到期/逾期" not in j.get("reply", "") and "人事到期" not in j.get("reply", ""),
+            f"buyer 晨报只含采购节: {j.get('reply','')[:150]}")
         r = await c.post("/api/agent/chat", json={"message": "晨报"})
         chk(r.status_code == 401, f"未登录应 401: {r.status_code}")
 

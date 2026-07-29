@@ -72,18 +72,18 @@ async def main():
         chk(r.json().get("grant_menus") == ["dict-admin"],
             f"grant_menus 派生=menus∩管理组: {r.json().get('grant_menus')}")
         keys = await menu_keys(Hw1)
-        chk(keys == ["catalog", "list", "design", "oa", "messages", "dict-admin"],
-            f"PUT 后 /api/auth/menus=新值: {keys}")
+        chk(keys == ["catalog", "list", "design", "oa", "agent", "messages", "dict-admin"],
+            f"PUT 后 /api/auth/menus=新值+agent(全员追加): {keys}")
         # 用户列表也带 menus
         users = (await c.get("/api/admin/users", headers=H)).json()
         u1 = [u for u in users if u["id"] == uid][0]
         chk(u1.get("menus") == ["catalog", "list", "design", "oa", "messages", "dict-admin"],
             f"用户列表带 menus: {u1.get('menus')}")
-        # 清空 → 什么菜单都没有（含 messages/oa，不再无条件追加）
+        # 清空 → 业务菜单全没（含 messages/oa，不再无条件追加）；仅全员可见的 agent 仍在
         r = await c.put(f"/api/admin/users/{uid}/menus", headers=H, json={"menus": []})
         chk(r.status_code == 200 and r.json().get("menus") == [], f"PUT 空 menus: {r.text[:200]}")
         keys = await menu_keys(Hw1)
-        chk(keys == [], f"menus 清空后 /api/auth/menus 为空: {keys}")
+        chk(keys == ["agent"], f"menus 清空后 /api/auth/menus 仅剩 agent: {keys}")
         # 恢复一份业务配置供后续用例
         r = await c.put(f"/api/admin/users/{uid}/menus", headers=H,
                         json={"menus": ["catalog", "design", "messages", "oa"]})

@@ -107,11 +107,11 @@ async def main():
             set(ROLE_DEFAULT_MENUS["warehouse"])
             | set(ROLE_DEFAULT_MENUS["finance"])
             | set(ROLE_DEFAULT_MENUS["logistics"])
-            | {"messages", "oa"}
+            | {"messages", "oa", "agent"}
         )
         # 显式拼出期望:三部门模板合集 + messages/oa（finance 模板含 purchase_mgmt）
         chk(expect_wfl == {"catalog", "list", "warehouse", "finance", "logistics",
-                           "purchase_mgmt", "messages", "oa"},
+                           "purchase_mgmt", "messages", "oa", "agent"},
             f"期望集自检: {sorted(expect_wfl)}")
         chk(wfl_keys == expect_wfl,
             f"[warehouse,finance,logistics] 菜单=建号预填(三角色模板并集+messages/oa): "
@@ -131,7 +131,7 @@ async def main():
         s_id = await mk("s_role", [rid["sales"]])
         H_s = await login("s_role")
         s_before, _ = await menu_keys(H_s)
-        expect_sales = set(ROLE_DEFAULT_MENUS["sales"]) | {"messages", "oa"}
+        expect_sales = set(ROLE_DEFAULT_MENUS["sales"]) | {"messages", "oa", "agent"}
         chk(s_before == expect_sales,
             f"sales 建号预填=模板+messages/oa: 实际={sorted(s_before)} 期望={sorted(expect_sales)}")
         r = await c.put(f"/api/admin/users/{s_id}", headers=H, json={"role_ids": [rid["design_lead"]]})
@@ -149,8 +149,8 @@ async def main():
         chk(r.json().get("menus") == ["catalog", "list", "design", "oa", "messages", "dict-admin"],
             f"PUT 响应带规范序 menus: {r.json().get('menus')}")
         wfl_keys2, wfl_raw2 = await menu_keys(H_wfl)
-        chk(wfl_keys2 == {"catalog", "list", "design", "oa", "messages", "dict-admin"},
-            f"PUT menus 后菜单=新值: 实际={sorted(wfl_keys2)}")
+        chk(wfl_keys2 == {"catalog", "list", "design", "oa", "messages", "dict-admin", "agent"},
+            f"PUT menus 后菜单=新值（agent 运行时全员追加）: 实际={sorted(wfl_keys2)}")
         chk(wfl_raw2.get("can_view_detail") is True,
             f"PUT menus 含 list 后 can_view_detail=True: {wfl_raw2.get('can_view_detail')}")
 

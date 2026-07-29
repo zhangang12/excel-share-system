@@ -45,7 +45,7 @@ bash desktop/release.sh      # 同步发桌面客户端：版本号 bump 应随�
 - **「不用改」加倍举证**：结论是"已修好/不用动"时，必须给出可验证证据（时间线/数据）且完整解释用户为何仍遇到问题；只能给出"可能/也许"时按需要改处理——"不用改"的证据标准高于"要改"（同一 #283 教训：我拿#242旧修复+未证实的"旧消息"假设就放行了自己）
 - **先质疑需求再实现**：对「让计算列可编辑」这类设计上就危险的诉求，先反问是否合理、是否有更简单的满足方式，再写代码
 - 只改与任务相关的文件；不主动新建文档（用户要求除外）；改接口时同步更新调用方与注释
-- Agent 助手（`backend/app/routers/agent_router.py`）的所有数据工具**永远只读 SELECT**，不提供收货/付款等强职责命令
+- AI 助手（`backend/app/routers/agent_router.py`）的所有数据工具**永远只读 SELECT**，不提供收货/付款等强职责命令；菜单全员可见（user_menu_keys 无条件追加 agent），查询按用户菜单门控（po→purchase_mgmt、尾款→finance/sales、部门逾期→对应部门菜单、project_status→list+行级可见性+ledger 仅 finance/sales、晨报按可用域聚合）
 
 ## 关键约定
 
@@ -73,5 +73,5 @@ bash desktop/release.sh      # 同步发桌面客户端：版本号 bump 应随�
   1. **采购预计到货全链路**（`6de4548`/`d47afa1`）：`PurchaseItem.expected_arrival` 行级字段，清单下单逐行维护并回写五张项目详单，到期未到货每日提醒（`scan_po_arrival_overdue`）
   2. **Agent 助手 POC**（`86a1fa1`）：`POST /api/agent/chat` 只读问数，OpenAI 兼容 function calling，未配 Key 自动规则降级；页面化配置（admin 专属，存 `app_settings`，优先级 DB > env），模型白名单选择
   3. **Agent 优化**（`ae2c95d`）：回复 Markdown 渲染、追问建议 chips、按供应商聚合工具、菜单归入「管理」组
-- **Agent 助手运维**：页面「管理→Agent 助手→配置」填 Base URL/API Key/模型即全局生效；env 为 `AGENT_LLM_BASE_URL/API_KEY/MODEL/MODELS`；Key 只回打码值、日志不记值
+- **AI 助手运维**：页面「AI 助手→配置」（admin 专属）填 Base URL/API Key/模型即全局生效；env 为 `AGENT_LLM_BASE_URL/API_KEY/MODEL/MODELS`；Key 只回打码值、日志不记值
 - 待办线索：16 个存量失败测试可另开一轮修；Agent 二期方向（写操作闭环/每日晨报主动推送/手机 App）方案在仓库外 `../Agent设计方案_ERP_CLI.html`
