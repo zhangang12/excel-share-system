@@ -330,16 +330,28 @@ const recvExpandKey = ref(0)
 function toggleRecvExpandAll() { recvExpandAll.value = !recvExpandAll.value; recvExpandKey.value++ }
 const recvName = ref('')               // 🆕 #286 物料名称关键字（前端模糊过滤）
 const recvOrderMonth = ref('')         // 🆕 #290 下单时间筛选（月份，前端过滤）
-const recvSupplierOptions = computed(() => {
+// 🆕 #330 供应商下拉、徽标条数改用后端 /receiving/meta：此前两者都是从「已加载的那 300 条」里
+//   算出来的，长周期供应商压根不在选项里、徽标永远显示 300，仓库连"按供应商查"这条自救路都被堵死。
+interface RecvSupOpt { id: number; name: string }
+const recvMeta = ref<{
+  pending_count: number; received_count: number
+  pending_suppliers: RecvSupOpt[]; received_suppliers: RecvSupOpt[]; limit: number
+}>({ pending_count: 0, received_count: 0, pending_suppliers: [], received_suppliers: [], limit: 2000 })
+const recvSupplierOptions = computed<RecvSupOpt[]>(() => {
+  const fromMeta = recvReceived.value ? recvMeta.value.received_suppliers : recvMeta.value.pending_suppliers
+  if (fromMeta.length) return fromMeta
+  // 兜底：meta 拿不到时退回旧口径（从当前列表去重），保证下拉不至于空掉
   const m = new Map<number, string>()
   for (const i of recvItems.value) m.set(i.supplier_id, i.supplier_name)
   return Array.from(m, ([id, name]) => ({ id, name }))
 })
+// 🆕 #330 命中上限提示：列表被截断时明说，别让人以为"数据没了"
+const recvTruncated = computed(() => recvItems.value.length >= recvMeta.value.limit)
 
-// 🆕 #286 物料名称模糊过滤 + #290 下单时间(月份)过滤：收货接口只支持 supplier_id/po_no
-//   参数（在采购域，不动它），名称/下单时间在已拉取的列表上前端过滤，即时生效。
-// 🆕 #315 单号框同口径前端过滤：一个框同时模糊匹配 采购单号(po_no)/订单编号(project_code)，
-//   不再走后端 po_no 参数（后端只按采购单号过滤，输项目编号会搜不到）
+// 🆕 #330 三个搜索框全部下沉后端（见 loadReceiving），这里的本地过滤只保留「边打字边缩小」的即时反馈，
+//   与后端同口径，回车/点查询后拿到的就是全库匹配结果。
+// 🆕 #286 物料名称模糊过滤 + #290 下单时间(月份)过滤
+// 🆕 #315 单号框一个框同时模糊匹配 采购单号(po_no)/订单编号(project_code)
 const filteredRecv = computed(() => {
   const p = recvPo.value.trim().toLowerCase()
   const k = recvName.value.trim().toLowerCase()
@@ -405,11 +417,23 @@ async function loadReceiving() {
       params: {
         received: recvReceived.value,
         supplier_id: recvSupplier.value || undefined,
-        // 🆕 #315 单号过滤挪到前端（filteredRecv），后端 po_no 参数只按采购单号过滤会漏项目编号
+        // 🆕 #330 关键字/物料名/下单月份下沉后端：只在已加载的那批里过滤，超出上限的老单永远搜不到
+        keyword: recvPo.value.trim() || undefined,
+        item_name: recvName.value.trim() || undefined,
+        order_month: recvOrderMonth.value || undefined,
       },
     })
     recvItems.value = r.data
   } finally { recvLoading.value = false }
+}
+// 🆕 #330 供应商下拉/徽标条数的真实来源（与列表 limit 无关），切页签、收完货都刷
+async function loadRecvMeta() {
+  try {
+    const r = await http.get('/purchase-mgmt/receiving/meta')
+    recvMeta.value = r.data
+    recvPendingCount.value = r.data.pending_count
+    recvDoneCount.value = r.data.received_count
+  } catch { /* 非关键，失败保留兜底口径 */ }
 }
 
 // 🆕 #141 tab 待办数徽标：待收货 / 待备货（红色角标，进页面就能看到有几条待处理）
@@ -418,13 +442,12 @@ const recvDoneCount = ref(0)   // 已收货条数
 const shipPendingCount = ref(0)
 async function loadBadgeCounts() {
   try {
-    const [recv, done, ship] = await Promise.all([
-      http.get<RecvItem[]>('/purchase-mgmt/receiving', { params: { received: false } }),
-      http.get<RecvItem[]>('/purchase-mgmt/receiving', { params: { received: true } }),
+    // 🆕 #330 待收货/已收货条数改走 /receiving/meta 的 count(*)：原来拉两次全量列表取 length，
+    //   既被 limit 截断（永远 ≤300，「待收货(300)」不是真实条数），又白拉两大坨数据。
+    const [, ship] = await Promise.all([
+      loadRecvMeta(),
       whApi.shipListPending('requested'),
     ])
-    recvPendingCount.value = recv.data.length
-    recvDoneCount.value = done.data.length
     shipPendingCount.value = ship.length
   } catch { /* 徽标非关键，失败忽略 */ }
 }
@@ -738,7 +761,7 @@ async function printShipList(item: ShipListFile) {
 function onTab(name: string) {
   if (name === 'txn' && !txns.value.length) loadTxns()
   if (name === 'sum') loadSummary()
-  if (name === 'recv') loadReceiving()
+  if (name === 'recv') { loadReceiving(); loadRecvMeta() }   // 🆕 #330 meta 供全量供应商下拉/真实条数
   if (name === 'demand') {
     if (!projects.value.length) loadProjects()
     if (!demandProj.value) loadDemandOverview()   // #157：进 tab 直接看项目总览
@@ -1112,11 +1135,14 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-select v-model="recvSupplier" placeholder="全部供应商" filterable clearable style="width:180px" @change="loadReceiving">
                 <el-option v-for="s in recvSupplierOptions" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
-              <!-- 🆕 #315 一个框同时模糊匹配采购单号/订单编号(项目编号)，前端即时过滤 -->
-              <el-input v-model="recvPo" placeholder="采购单号/项目编号" clearable style="width:170px" />
-              <!-- 🆕 #286 物料名称关键字 + #290 下单时间(月份)：前端即时过滤，不走接口 -->
-              <el-input v-model="recvName" placeholder="物料名称" clearable style="width:140px" />
-              <el-date-picker v-model="recvOrderMonth" type="month" value-format="YYYY-MM" placeholder="下单时间" clearable style="width:130px" />
+              <!-- 🆕 #315 一个框同时模糊匹配采购单号/订单编号(项目编号)；🆕 #330 改为回车/查询走后端全库搜 -->
+              <el-input v-model="recvPo" placeholder="采购单号/项目编号" clearable style="width:170px"
+                        @keyup.enter="loadReceiving" @clear="loadReceiving" />
+              <!-- 🆕 #286 物料名称关键字 + #290 下单月份；🆕 #330 同样下沉后端，搜得到上限之外的老单 -->
+              <el-input v-model="recvName" placeholder="物料名称" clearable style="width:140px"
+                        @keyup.enter="loadReceiving" @clear="loadReceiving" />
+              <el-date-picker v-model="recvOrderMonth" type="month" value-format="YYYY-MM" placeholder="下单月份" clearable
+                              style="width:130px" @change="loadReceiving" />
               <el-button :icon="Search" @click="loadReceiving">查询</el-button>
               <!-- 🆕 #321 自动合并、手动展开：合并组默认收起，一键全展/全收 -->
               <el-button link type="primary" size="small" @click="toggleRecvExpandAll">
@@ -1124,6 +1150,9 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               </el-button>
               <el-button v-if="recvSelected.length" type="primary" @click="openBatchReceive">合并收货 ({{ recvSelected.length }})</el-button>
               <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。合并零件可勾选多条「合并收货」只填总价。</span>
+              <!-- 🆕 #330 命中上限时明说是被截断了，并指路用搜索框（关键字/物料名走后端，能搜到上限之外的老单） -->
+              <el-alert v-if="recvTruncated" type="warning" show-icon :closable="false" style="width:100%"
+                        :title="`当前${recvReceived ? '已收货' : '待收货'}共 ${recvReceived ? recvMeta.received_count : recvMeta.pending_count} 条，本页最多显示 ${recvMeta.limit} 条。用上面的供应商/单号/物料名筛选可搜全部（含更早的长周期订单）。`" />
             </div>
             <el-table show-overflow-tooltip :data="groupedRecv" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
                       :key="recvExpandKey" :row-key="recvRowKey" :tree-props="{ children: 'children' }" :default-expand-all="recvExpandAll"

@@ -1663,19 +1663,68 @@ const groupSumVisible = ref(false)
 const groupSumSaving = ref(false)
 const groupSumRow = ref<any>(null)
 const groupSumForm = reactive({ invoice_amount: null as number | null, paid_amount: null as number | null, paid_date: '', invoice_status: '' })
+// 🆕 #329 合并单父行原来只有「整单维护」，能改的只有开票金额/已付款/付款日期/对账状态——
+//   仓库收货价填错时，采购在父行上找不到任何改价入口（得先展开、再一条条点「编辑」）。
+//   这里把逐条改价并进同一个弹窗，并给一个「按数量分摊总价」的助手（合并收货本来就是按数量权重
+//   分摊总价的，价填错时按同样口径重填一次总价最自然）。
+const groupSumLines = ref<{ id: number; item_name: string; spec?: string | null; qty: number | null
+                            unit_price: number | null; received_amount: number | null
+                            _price0: number | null; _amt0: number | null }[]>([])
+const groupSumTotalInput = ref<number | null>(null)
+const groupSumLinesTotal = computed(() =>
+  groupSumLines.value.reduce((s, l) => s + (l.received_amount || 0), 0))
+const groupSumPriceDirty = computed(() =>
+  groupSumLines.value.filter(l => l.unit_price !== l._price0 || l.received_amount !== l._amt0))
 function openGroupSummary(row: any) {
   groupSumRow.value = row
   groupSumForm.invoice_amount = row.invoice_amount || null
   groupSumForm.paid_amount = row.paid_amount || null
   groupSumForm.paid_date = ''
   groupSumForm.invoice_status = ''
+  groupSumLines.value = (row.children || []).map((c: any) => ({
+    id: c.id, item_name: c.item_name, spec: c.spec, qty: c.qty,
+    unit_price: c.unit_price ?? null, received_amount: c.received_amount ?? null,
+    _price0: c.unit_price ?? null, _amt0: c.received_amount ?? null,
+  }))
+  groupSumTotalInput.value = null
   groupSumVisible.value = true
+}
+// 单价改了就顺带把该行收货金额算出来（与编辑弹窗 onItemCalc 同口径）
+function onGroupLinePrice(l: any) {
+  if (l.qty && l.unit_price != null) l.received_amount = Number((l.qty * l.unit_price).toFixed(2))
+}
+// 收货金额改了就反算单价，保证两列自洽
+function onGroupLineAmount(l: any) {
+  if (l.qty && l.received_amount != null) l.unit_price = Number((l.received_amount / l.qty).toFixed(4))
+}
+// 按数量权重把整单总价分摊到各行，末行兜余数（与后端合并收货 receive_batch 完全同口径）
+function spreadGroupTotal() {
+  const total = groupSumTotalInput.value
+  if (total == null) return
+  const lines = groupSumLines.value
+  const wsum = lines.reduce((s, l) => s + (l.qty || 0), 0)
+  let allocated = 0
+  lines.forEach((l, idx) => {
+    const share = idx === lines.length - 1
+      ? Number((total - allocated).toFixed(2))
+      : Number((wsum > 0 ? total * ((l.qty || 0) / wsum) : total / lines.length).toFixed(2))
+    if (idx !== lines.length - 1) allocated += share
+    l.received_amount = share
+    l.unit_price = l.qty ? Number((share / l.qty).toFixed(4)) : null
+  })
 }
 async function submitGroupSummary() {
   const row = groupSumRow.value
   if (!row?.children?.length) return
   groupSumSaving.value = true
   try {
+    // 先落改价（逐条 PUT，只发动过的字段；后端会同步回写入库流水金额）
+    const dirty = groupSumPriceDirty.value
+    for (const l of dirty) {
+      await http.put(`/purchase-mgmt/items/${l.id}`, {
+        unit_price: l.unit_price, received_amount: l.received_amount,
+      })
+    }
     const r = await http.post<{ updated: number }>('/purchase-mgmt/items/set-group-summary', {
       item_ids: row.children.map((c: any) => c.id),
       invoice_amount: groupSumForm.invoice_amount,
@@ -1683,7 +1732,9 @@ async function submitGroupSummary() {
       paid_date: groupSumForm.paid_date || null,
       invoice_status: groupSumForm.invoice_status || null,
     })
-    ElMessage.success(`整单维护完成（${r.data.updated} 条零件）`)
+    ElMessage.success(dirty.length
+      ? `整单维护完成（改价 ${dirty.length} 条 / 共 ${r.data.updated} 条零件）`
+      : `整单维护完成（${r.data.updated} 条零件）`)
     groupSumVisible.value = false
     await loadItems()
   } catch { /* handled */ } finally { groupSumSaving.value = false }
@@ -3056,7 +3107,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12" :md="8">
-            <el-form-item label="合计金额">
+            <!-- 🆕 #329 原标签叫「合计金额」，而列表列叫「收货金额」，同一字段两个名字，
+                 仓库价格填错时采购找不到该改哪个；统一成列表口径。 -->
+            <el-form-item label="收货金额">
               <el-input-number v-model="itemForm.received_amount" :precision="2" :min="0" style="width:100%" />
             </el-form-item>
           </el-col>
@@ -3222,9 +3275,43 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 🆕 #4 合并父行「整单维护」==================== -->
-    <el-dialog v-model="groupSumVisible" title="整单维护（合并单）" width="480px">
+    <el-dialog v-model="groupSumVisible" title="整单维护（合并单）" width="760px">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
         :title="`对采购单「${groupSumRow?.po_no || ''}」整单维护：开票金额/已付款按整单总额维护(不拆分到各零件，记在汇总)，对账状态套用到全部 ${groupSumRow?._count || 0} 项零件。留空的字段不改。`" />
+
+      <!-- 🆕 #329 逐条改价：仓库收货填错价时，采购在这里直接改，不用再展开逐条点「编辑」 -->
+      <div class="form-section-title">按零件改价（仓库收货价填错时改这里）</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <span class="small muted">整单重填总价：</span>
+        <el-input-number v-model="groupSumTotalInput" :min="0" :precision="2" :controls="false"
+                         size="small" style="width:140px" placeholder="按数量分摊" />
+        <el-button size="small" :disabled="groupSumTotalInput == null" @click="spreadGroupTotal">按数量分摊</el-button>
+        <span class="small muted">改后合计 <b class="amt">{{ fmtMoney(groupSumLinesTotal) }}</b></span>
+        <span v-if="groupSumPriceDirty.length" class="small" style="color:#e6a23c">已改 {{ groupSumPriceDirty.length }} 条</span>
+      </div>
+      <el-table show-overflow-tooltip :data="groupSumLines" size="small" border max-height="240" style="margin-bottom:16px">
+        <el-table-column prop="item_name" label="名称" min-width="110" />
+        <el-table-column prop="spec" label="规格" min-width="100">
+          <template #default="{ row }">{{ dedupSpec(row.spec) || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="qty" label="数量" width="60" align="right">
+          <template #default="{ row }">{{ row.qty ?? '—' }}</template>
+        </el-table-column>
+        <el-table-column label="单价" width="120">
+          <template #default="{ row }">
+            <el-input-number v-model="row.unit_price" :min="0" :precision="4" :controls="false"
+                             size="small" style="width:100%" @change="onGroupLinePrice(row)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="收货金额" width="120">
+          <template #default="{ row }">
+            <el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false"
+                             size="small" style="width:100%" @change="onGroupLineAmount(row)" />
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="form-section-title">开票与付款</div>
       <el-form label-position="top">
         <el-form-item :label="`开票金额（整单总额，当前 ${fmtMoney(groupSumRow?.invoice_amount || 0)}）`">
           <el-input-number v-model="groupSumForm.invoice_amount" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="留空不改" />

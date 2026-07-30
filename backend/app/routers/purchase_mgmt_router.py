@@ -1382,6 +1382,25 @@ async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: m
     #   收货一律只入库到所选库位;出库统一走仓库领料(出入库登记/物料需求一键领用),挂项目计成本。
 
 
+async def _sync_txn_amount(db: AsyncSession, item: models.PurchaseItem) -> None:
+    """🆕 #329 改价后把已生成的入库流水金额同步回写。
+    `_auto_stock_in` 幂等（同一明细只过账一次），所以第二次收货/改价不会重新生成流水——
+    不在这里回写的话，采购明细金额改对了，库存金额与项目材料成本还停在错的旧价上。
+    口径：整条明细一次性入库时直接跟「收货金额」走（合并收货按数量权重分摊总价、单价是反算出来的，
+    qty×unit_price 会有分位差）；部分入库等其他情况退回 qty×单价。"""
+    if item.unit_price is None and item.received_amount is None:
+        return
+    tr = await db.execute(select(models.WhTxn).where(
+        models.WhTxn.purchase_item_id == item.id,
+        models.WhTxn.is_reversal == False))  # noqa: E712
+    for t in tr.scalars().all():
+        t.unit_price = item.unit_price
+        if item.received_amount is not None and item.qty and t.qty == item.qty:
+            t.amount = round(item.received_amount, 4)
+        elif item.unit_price is not None:
+            t.amount = round((t.qty or 0) * item.unit_price, 4)
+
+
 # ==================== 采购历史数据 一键导入 ====================
 # 模板列（顺序即模板列顺序；* 为必填）。解析时按表头名匹配，允许调整列序。
 _IMPORT_COLS = [
@@ -1742,13 +1761,8 @@ async def update_item(
             item.received_amount = round(item.qty * item.unit_price, 4)
     # 🆕 盈利改善1b·修真bug：先收货后补价 → 回写已生成的出入库流水。此前补价只更新
     #   PurchaseItem，收货时生成的 amount=NULL 的 wh_txn 永久无价，库存金额与项目材料成本双双偏低。
-    if ("qty" in data or "unit_price" in data or "received_amount" in data) and item.unit_price is not None:
-        tr = await db.execute(select(models.WhTxn).where(
-            models.WhTxn.purchase_item_id == item.id,
-            models.WhTxn.is_reversal == False))  # noqa: E712
-        for t in tr.scalars().all():
-            t.unit_price = item.unit_price
-            t.amount = round((t.qty or 0) * item.unit_price, 4)
+    if "qty" in data or "unit_price" in data or "received_amount" in data:
+        await _sync_txn_amount(db, item)
     if ea_touched and new_ea != old_ea and item.source_sheet_id and item.source_record_id:
         # 回写来源清单「预计到货」列，保持项目详单与采购单一致（清空日期则清空单元格）
         wb = {c: (new_ea or "") for c in _ALL_EXPECTED_ARRIVAL_COLS}
@@ -1800,11 +1814,21 @@ async def delete_item(
 
 
 # ==================== 采购收货（仓库）====================
+# 🆕 #330 待收货曾被硬编码 limit(300) 截断：长周期订单排在最后先被丢掉，而三个搜索框又只在
+#   「已加载的这 300 条」上做前端过滤，导致仓库搜供应商/物料/单号一律搜不到。放开上限 + 关键字下沉 SQL。
+_RECV_LIMIT_DEFAULT = 2000
+_RECV_LIMIT_MAX = 5000
+
+
 @router.get("/receiving", response_model=List[schemas.PurchaseItemOut])
 async def list_receiving(
     supplier_id: Optional[int] = Query(None),
     po_no: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None, description="🆕 #330 采购单号/项目编号 模糊匹配（后端过滤，穿透 limit）"),
+    item_name: Optional[str] = Query(None, description="🆕 #330 物料名称 模糊匹配（后端过滤，穿透 limit）"),
+    order_month: Optional[str] = Query(None, description="🆕 #330 下单月份 YYYY-MM"),
     received: bool = Query(False, description="False=待收货(默认) / True=已收货"),
+    limit: int = Query(_RECV_LIMIT_DEFAULT, ge=1, le=_RECV_LIMIT_MAX),
     current: models.User = Depends(require_roles(*_RECEIVE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1821,7 +1845,22 @@ async def list_receiving(
         stmt = stmt.where(models.PurchaseItem.supplier_id == supplier_id)
     if po_no:
         stmt = stmt.where(models.PurchaseItem.po_no.ilike(f"%{po_no}%"))
-    r = await db.execute(stmt.limit(300))
+    # 🆕 #330 一个框同时匹配采购单号/项目编号（与前端 #315 同口径，只是挪到后端才能穿透 limit）。
+    #   第三个分支不能省：#253 那批明细自己的 project_code 是空的，页面上的项目编号是下面
+    #   从来源清单回溯出来的——只比对存量字段的话，这些行会在 SQL 阶段就被筛掉（前端过滤时代能搜到）。
+    if keyword and keyword.strip():
+        kw = f"%{keyword.strip()}%"
+        from_sheet = (select(models.Datasheet.id)
+                      .join(models.Project, models.Project.id == models.Datasheet.project_id)
+                      .where(models.Project.code.ilike(kw)))
+        stmt = stmt.where(or_(models.PurchaseItem.po_no.ilike(kw),
+                              models.PurchaseItem.project_code.ilike(kw),
+                              models.PurchaseItem.source_sheet_id.in_(from_sheet)))
+    if item_name and item_name.strip():
+        stmt = stmt.where(models.PurchaseItem.item_name.ilike(f"%{item_name.strip()}%"))
+    if order_month and order_month.strip():
+        stmt = stmt.where(models.PurchaseItem.delivery_date.startswith(order_month.strip()))
+    r = await db.execute(stmt.limit(limit))
     items = list(r.scalars().all())
     outs = [_item_out(i) for i in items]
     # 🆕 #253：订单编号(project_code)为空、但来自项目清单的明细，回溯来源表所属项目编号补显示
@@ -1860,6 +1899,38 @@ async def list_receiving(
     return outs
 
 
+@router.get("/receiving/meta")
+async def receiving_meta(
+    current: models.User = Depends(require_roles(*_RECEIVE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 #330 收货页元数据：待收货/已收货的**真实**条数 + 两个视图各自的**全量**供应商下拉。
+    此前徽标数直接取被截断列表的 length（永远 ≤300，看着像"只有 300 条"），
+    供应商下拉也只从那 300 条去重，长周期供应商根本不出现在选项里——
+    等于唯一能穿透截断的筛选维度自己也被截断了。这里两项都独立查，不受列表 limit 影响。"""
+    async def _count(pending: bool) -> int:
+        q = select(func.count(models.PurchaseItem.id)).where(
+            models.PurchaseItem.arrival_date.is_(None) if pending
+            else models.PurchaseItem.arrival_date.isnot(None))
+        return (await db.execute(q)).scalar() or 0
+
+    async def _suppliers(pending: bool):
+        q = (select(models.Supplier.id, models.Supplier.name)
+             .join(models.PurchaseItem, models.PurchaseItem.supplier_id == models.Supplier.id)
+             .where(models.PurchaseItem.arrival_date.is_(None) if pending
+                    else models.PurchaseItem.arrival_date.isnot(None))
+             .distinct().order_by(models.Supplier.name))
+        return [{"id": sid, "name": name} for sid, name in (await db.execute(q)).all()]
+
+    return {
+        "pending_count": await _count(True),
+        "received_count": await _count(False),
+        "pending_suppliers": await _suppliers(True),
+        "received_suppliers": await _suppliers(False),
+        "limit": _RECV_LIMIT_DEFAULT,
+    }
+
+
 async def _finish_receive(db: AsyncSession, item: models.PurchaseItem,
                           arrival_date: str, current: models.User) -> None:
     """收货共同尾部：回写清单(到货日期/进度/仓库签字) → 自动入库 → 自动对账。"""
@@ -1875,6 +1946,9 @@ async def _finish_receive(db: AsyncSession, item: models.PurchaseItem,
                 wb[c] = item.stock_location
         await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
     await _auto_stock_in(db, item, current)
+    # 🆕 #329 仓库在「已收货」页签点「修改」改价时，_auto_stock_in 幂等直接 return，流水金额会停在旧价；
+    #   这里统一回写，保证「采购明细收货金额」与「库存/项目材料成本」始终同一个数。
+    await _sync_txn_amount(db, item)
     _maybe_auto_reconcile(item)
 
 
