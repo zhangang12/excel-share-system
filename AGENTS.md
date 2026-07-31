@@ -26,8 +26,14 @@ cd frontend && npm run build                                      # = vue-tsc + 
 bash ops/release.sh --push   # 本地 push main → SSH 服务器 upgrade.sh：备份→拉码→docker 重建→健康检查→失败自动回滚
                              # 部署配置在 .deploy.local（gitignored）；构建在服务器做，本地不构建
                              # GitHub 直连不通时先手动 git -c http.proxy=http://127.0.0.1:7890 push，再跑本脚本（不带 --push）
-bash desktop/release.sh      # 同步发桌面客户端：版本号 bump 应随代码提交一起入库（先 npm version patch --no-git-tag-version），
-                             # 再 --set-version 同号执行（幂等跳过 bump）打包上传；客户端重启即自动更新
+# 桌面客户端（2026-08-01 起改 Windows 原生打包）：版本号 bump 仍随代码提交一起入库
+#   （npm version patch --no-git-tag-version），然后：
+#   ① GitHub → Actions →「桌面客户端打包（Windows 原生）」→ Run workflow（默认用仓库里的版本号）
+#   ② 下载 artifact 解压 → bash desktop/release.sh --upload-only <解压目录>
+#   为什么不本机打：macOS 交叉编译出来的卸载程序会在自动更新时崩，用户每次更新都弹
+#   「old-uninstaller.exe 遇到问题已经停止工作」（electron-builder#4875 那类长期未解 issue）。
+#   产物不自动上传服务器——**本仓库是公开仓库**，生产 SSH 私钥不进 Actions Secrets。
+bash desktop/release.sh      # 旧的本机一体打包+上传路径，仍可用（应急），但会带回那个弹框
 # 反馈修复后必须逐条自动回复（2026-07-23 用户定的规矩）：发版完成后，对本批每条反馈调
 #   POST /api/user-feedback/{id}/reply 写处理结论（回复即自动标已处理，提出人下次登录右下角弹提醒）；
 #   2026-07-29 起回复**必须同时 push_message 给提出人**（站内+企微双通道，脚本里 import app.notify 同发）

@@ -15,6 +15,15 @@
 #   bash desktop/release.sh --set-version 1.2.0    指定版本号
 #   bash desktop/release.sh --min-version 1.1.0    改 version.json 最低版本（强制旧客户端更新）后再传
 #   bash desktop/release.sh --dry-run              只打印将执行的命令，不打包不上传
+#   bash desktop/release.sh --upload-only <目录>   🆕 只上传，不打包（配合 Windows 原生打包）
+#
+# 🆕 推荐路径（2026-08-01 起）：安装包改在 GitHub Actions 的 windows-latest 上打——
+#   本机（macOS）交叉编译出来的卸载程序会在自动更新时崩，用户每次更新都看到
+#   「old-uninstaller.exe 遇到问题已经停止工作」。流程：
+#     1) GitHub → Actions → 「桌面客户端打包（Windows 原生）」→ Run workflow
+#     2) 下载 artifact 并解压
+#     3) bash desktop/release.sh --upload-only ~/Downloads/desktop-1.0.22
+#   本脚本不带 --upload-only 时仍是原来的本机打包路径（可用，但会带回那个弹框）。
 #
 # 首次使用：同 ops/release.sh，读仓库根 .deploy.local（gitignored）。
 #
@@ -28,11 +37,12 @@ DESKTOP_DIR="$SCRIPT_DIR"
 cd "$PROJECT_DIR"
 
 # ---- 参数 ----
-SET_VERSION=""; MIN_VERSION=""; DRY=0
+SET_VERSION=""; MIN_VERSION=""; DRY=0; UPLOAD_ONLY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --set-version) SET_VERSION="$2"; shift 2 ;;
     --min-version) MIN_VERSION="$2"; shift 2 ;;
+    --upload-only) UPLOAD_ONLY="$2"; shift 2 ;;
     --dry-run)     DRY=1; shift ;;
     -h|--help)     grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
     *) echo "未知参数: $1（用 --help 看用法）"; exit 1 ;;
@@ -69,6 +79,30 @@ else
 fi
 
 REMOTE_DIR="$DEPLOY_PATH/desktop-releases"
+
+# ---- 🆕 --upload-only：只上传，不打包 ----
+# 配合 .github/workflows/desktop-build.yml：安装包改在 windows-latest 上原生打（macOS 交叉
+# 编译出来的卸载程序会在自动更新时崩，弹「old-uninstaller.exe 已停止工作」）。
+# 从 Actions 下载 artifact 解压后：bash desktop/release.sh --upload-only <解压目录>
+# 上传仍走本机 .deploy.local 的密钥——本仓库是公开仓库，生产私钥不进 Actions Secrets。
+if [[ -n "$UPLOAD_ONLY" ]]; then
+  [[ -d "$UPLOAD_ONLY" ]] || { echo "✗ 目录不存在：$UPLOAD_ONLY"; exit 1; }
+  EXE_PATH="$(ls "$UPLOAD_ONLY"/*.exe 2>/dev/null | head -1)"
+  [[ -n "$EXE_PATH" ]] || { echo "✗ $UPLOAD_ONLY 下没找到 .exe"; exit 1; }
+  # 版本号从安装包文件名反解（「同辉项目管理 Setup 1.0.22.exe」），不依赖本地 package.json——
+  # 本地版本可能已经被后续改动 bump 过，跟这个包对不上
+  VERSION="$(basename "$EXE_PATH" .exe | sed 's/.* //')"
+  for f in "$EXE_PATH" "$EXE_PATH.blockmap" "$UPLOAD_ONLY/latest.yml" "$UPLOAD_ONLY/version.json"; do
+    [[ -f "$f" ]] || { echo "✗ 缺文件：$f（artifact 解压是否完整？）"; exit 1; }
+  done
+  echo "── 上传 ${VERSION}（Windows 原生打包产物）→ ${TARGET}:${REMOTE_DIR}/ ──"
+  "${SSH[@]}" "mkdir -p '$REMOTE_DIR'"
+  "${SCP[@]}" "$EXE_PATH" "$EXE_PATH.blockmap" "$UPLOAD_ONLY/latest.yml" "$UPLOAD_ONLY/version.json" \
+              "$TARGET:$REMOTE_DIR/"
+  echo ""
+  echo "✓ 已发布 ${VERSION}，客户端下一轮检查将收到更新。"
+  exit 0
+fi
 
 # ---- dry-run：只打印将执行的命令 ----
 if [[ "$DRY" == "1" ]]; then
