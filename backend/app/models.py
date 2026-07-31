@@ -309,6 +309,9 @@ class SalesLedger(Base):
     balance: Mapped[float] = mapped_column(default=0)                 # 尾款
     balance_date: Mapped[Optional[str]] = mapped_column(String(10))   # 尾款日期
     balance_note: Mapped[Optional[str]] = mapped_column(Text)         # 🆕 反馈#233 尾款到账批注(支持插入时间戳;有批注则尾款日期显示"/")
+    # 🆕 #332 插入到款时间会把 balance 清零，清零前把合同尾款额存这里；删批注即回填 balance 并清空本列。
+    #   平时恒为 NULL，只有"已到账"的行才有值——用来兜住"清零不可逆"，不参与任何统计。
+    balance_contract: Mapped[Optional[float]] = mapped_column(nullable=True)
     ship_date: Mapped[Optional[str]] = mapped_column(String(10))      # 发货日期（物流回传只读）
     order_type: Mapped[Optional[str]] = mapped_column(String(16))    # 🆕 调货订单 / 工厂制作订单
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -748,11 +751,19 @@ class PaymentRequest(Base):
     payment_method: Mapped[Optional[str]] = mapped_column(String(32))
     pay_voucher_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))  # 🆕 付款凭证
     reject_reason: Mapped[Optional[str]] = mapped_column(Text)
+    # 🆕 驳回三兄弟：驳回**发生在哪一步**要分清，否则「谁把单子退回来的」查无对证。
+    #   approve=审批人待审时拒绝 / withdraw=审批人批完又撤回 / pay=出纳付款时发现账户信息不对退回。
+    #   驳回人单独存 rejected_by，**不能复用 finance_approver_id**——出纳驳回时若覆盖它，
+    #   既抹掉了真正的审批人，也会让「审批人不能给自己审过的单付款」这条职责分离判错人。
+    reject_stage: Mapped[Optional[str]] = mapped_column(String(16))
+    rejected_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    rejected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     supplier: Mapped["Supplier"] = relationship(lazy="joined")
     requester: Mapped[Optional["User"]] = relationship(foreign_keys=[requester_id], lazy="joined")
     finance_approver: Mapped[Optional["User"]] = relationship(foreign_keys=[finance_approver_id], lazy="joined")
+    rejecter: Mapped[Optional["User"]] = relationship(foreign_keys=[rejected_by], lazy="joined")
 
 
 class PaymentRequestItem(Base):

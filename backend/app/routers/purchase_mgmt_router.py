@@ -2442,6 +2442,9 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         pay_voucher_file_id=pr.pay_voucher_file_id,
         pay_voucher_name=voucher_name,
         reject_reason=pr.reject_reason,
+        reject_stage=pr.reject_stage,            # 🆕 approve/withdraw/pay
+        rejecter_name=_uname(pr.rejecter),
+        rejected_at=pr.rejected_at,
         # 🆕 需求十六：付款时可见收款账户信息 + 关联采购单
         supplier_bank_name=(sup.bank_name if sup else None),
         supplier_bank_account=(sup.bank_account if sup else None),
@@ -2563,6 +2566,33 @@ async def approve_payment_request(
     return {"ok": True}
 
 
+_REJECT_STAGE_LABEL = {"approve": "审批驳回", "withdraw": "撤回审批", "pay": "付款驳回"}
+
+
+async def _do_reject(db: AsyncSession, pr: models.PaymentRequest, current: models.User,
+                     stage: str, reason: Optional[str]) -> None:
+    """驳回共同尾部：落驳回三兄弟 → 提交 → 通知请款发起人（站内+企微）。
+    发起人拿到原因后自行改（如收款账户错了就去供应商档案改），再走 /resubmit 重新提交。"""
+    pr.status = "rejected"
+    pr.reject_stage = stage
+    pr.rejected_by = current.id
+    pr.rejected_at = datetime.now(timezone.utc)
+    pr.reject_reason = (reason or "").strip() or None
+    if stage == "withdraw":
+        # 撤回审批 = 那次审批作废，审批人/审批时间一并清掉，重提后必须重新审
+        pr.finance_approver_id = None
+        pr.approved_at = None
+    await db.commit()
+    if pr.requester_id and pr.requester_id != current.id:
+        sup = pr.supplier
+        await push_message(
+            db, to_user_id=pr.requester_id, kind="warn",
+            text=(f"【请款{_REJECT_STAGE_LABEL.get(stage, '驳回')}】供应商 {sup.name if sup else ''} "
+                  f"¥{pr.requested_amount:,.2f} 被{(current.full_name or current.username)}退回："
+                  f"{pr.reject_reason or '未填原因'}。请修改后在「采购管理→请款记录」重新提交。"),
+            biz_type="payment_request", biz_id=pr.id)
+
+
 @router.put("/payment-requests/{prid}/reject")
 async def reject_payment_request(
     prid: int,
@@ -2570,16 +2600,92 @@ async def reject_payment_request(
     current: models.User = Depends(require_roles("finance")),
     db: AsyncSession = Depends(get_db),
 ):
+    """审批人待审时驳回。"""
     r = await db.execute(select(models.PaymentRequest).where(models.PaymentRequest.id == prid))
     pr = r.scalar_one_or_none()
     if not pr:
         raise HTTPException(404, "请款单不存在")
     if pr.status != "pending":
         raise HTTPException(400, "只有待审状态可驳回")
-    pr.status = "rejected"
-    pr.finance_approver_id = current.id
-    pr.reject_reason = body.reason
+    await _do_reject(db, pr, current, "approve", body.reason)
+    return {"ok": True}
+
+
+@router.put("/payment-requests/{prid}/withdraw-approval")
+async def withdraw_payment_approval(
+    prid: int,
+    body: schemas.PaymentRejectIn,
+    current: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 审批人批完又发现不对：撤回审批，单子退回发起人（重提后需重新审批）。"""
+    r = await db.execute(select(models.PaymentRequest).where(models.PaymentRequest.id == prid))
+    pr = r.scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "请款单不存在")
+    if pr.status != "approved":
+        raise HTTPException(400, "只有已审批未付款的请款单可撤回审批")
+    if not (body.reason or "").strip():
+        raise HTTPException(400, "请填写撤回原因")
+    await _do_reject(db, pr, current, "withdraw", body.reason)
+    return {"ok": True}
+
+
+@router.put("/payment-requests/{prid}/pay-reject")
+async def pay_reject_payment_request(
+    prid: int,
+    body: schemas.PaymentRejectIn,
+    current: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 出纳付款环节驳回：付款时发现收款账户名称/账号等不对，填原因退回发起人。
+    不走这里硬付下去，钱就打错账户了。"""
+    r = await db.execute(select(models.PaymentRequest).where(models.PaymentRequest.id == prid))
+    pr = r.scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "请款单不存在")
+    if pr.status != "approved":
+        raise HTTPException(400, "只有已审批待付款的请款单可在付款环节驳回")
+    if not (body.reason or "").strip():
+        raise HTTPException(400, "请填写驳回原因（如：收款账号与开户名不符）")
+    await _do_reject(db, pr, current, "pay", body.reason)
+    return {"ok": True}
+
+
+@router.put("/payment-requests/{prid}/resubmit")
+async def resubmit_payment_request(
+    prid: int,
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 被驳回的请款单，发起人改完后重新提交 → 回到「待审批」重走审批（用户 2026-08-01 定：
+    收款账户变更属实质变更，审批人必须知情复核，不能改完直接付）。"""
+    r = await db.execute(select(models.PaymentRequest).where(models.PaymentRequest.id == prid))
+    pr = r.scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "请款单不存在")
+    if pr.status != "rejected":
+        raise HTTPException(400, "只有被驳回的请款单可重新提交")
+    # 行级：发起人本人；采购主管/管理层可代提
+    if pr.requester_id and pr.requester_id != current.id and not current.has_role(
+            "buyer_lead", "admin", "manager", "finance_lead"):
+        raise HTTPException(403, "只能重新提交自己发起的请款单")
+    pr.status = "pending"
+    pr.reject_stage = None
+    pr.rejected_by = None
+    pr.rejected_at = None
+    pr.reject_reason = None
+    pr.finance_approver_id = None      # 重走审批，旧审批痕迹作废
+    pr.approved_at = None
     await db.commit()
+    sup = pr.supplier
+    await push_message(
+        db, to_role="finance_lead", kind="info",
+        text=(f"【请款重新提交】供应商 {sup.name if sup else ''} ¥{pr.requested_amount:,.2f}"
+              f"（{current.full_name or current.username} 修改后重提），请审批。"),
+        biz_type="payment_request", biz_id=pr.id)
+    await write_audit(db, user=current, action="payment_request_resubmit",
+                      target_type="payment_request", target_id=prid)
     return {"ok": True}
 
 

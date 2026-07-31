@@ -217,6 +217,7 @@ class SalesLedgerRow(BaseModel):
     balance: float = 0
     balance_date: Optional[str] = None
     balance_note: Optional[str] = None       # 🆕 反馈#233 尾款到账批注
+    balance_contract: Optional[float] = None # 🆕 #332 已到账行的合同尾款额（清零前留存，供页面提示"合同尾款 ¥X 已到账"）
     ship_date: Optional[str] = None
     order_type: Optional[str] = None       # 🆕 调货订单 / 工厂制作订单
     revision_open: bool = False            # 🆕 #1 是否有未处理的技术资料修订意见
@@ -1552,6 +1553,10 @@ class PaymentRequestOut(BaseModel):
     pay_voucher_file_id: Optional[int] = None
     pay_voucher_name: Optional[str] = None
     reject_reason: Optional[str] = None
+    # 🆕 驳回环节/驳回人/驳回时间：让发起人一眼看出是"审批没过"还是"出纳说账户不对"
+    reject_stage: Optional[str] = None        # approve / withdraw / pay
+    rejecter_name: Optional[str] = None
+    rejected_at: Optional[datetime] = None
     # 🆕 需求十六：付款时可见的收款账户信息（供应商）+ 关联采购单号
     supplier_bank_name: Optional[str] = None
     supplier_bank_account: Optional[str] = None

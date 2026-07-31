@@ -443,6 +443,14 @@ async function saveNote() {
       noteRow.value.prepay_note = v
     } else if (noteField.value === 'balance') {
       noteRow.value.balance_note = v   // 🆕 反馈#233：有到账批注→尾款日期显示"/"
+      // 🆕 #332 与后端一致：插到款时间=尾款已收→尾款清零（合同额存 balance_contract）；删批注→还原
+      if (v) {
+        if (noteRow.value.balance) noteRow.value.balance_contract = noteRow.value.balance
+        noteRow.value.balance = 0
+      } else if (noteRow.value.balance_contract != null) {
+        noteRow.value.balance = noteRow.value.balance_contract
+        noteRow.value.balance_contract = null
+      }
     } else {
       noteRow.value.before_ship_note = v
       // 与后端一致：发货前付有批注=货款收讫→发货款应收清零；删批注=未收→应收恢复为发货前付金额
@@ -514,12 +522,15 @@ async function submitInvoiceApply() {
   if (!invoiceApplyFile.value) { ElMessage.warning('请先上传开票申请表'); return }
   invoiceApplying.value = true
   try {
-    await salesApi.invoiceApply(invoiceApplyRow.value!.id, invoiceApplyFile.value)
-    ElMessage.success('开票申请已提交，等待销售主管审批后同步至财务部')
+    // 🆕 #333 直接用后端返回的 message：主管提交是「已同步至财务部待开票」、销售员才是
+    //   「等待销售主管审批」，写死一句会对主管报错误的流向
+    const r = await salesApi.invoiceApply(invoiceApplyRow.value!.id, invoiceApplyFile.value)
+    ElMessage.success(r?.message || '开票申请已提交')
     invoiceApplyVisible.value = false
     await load()
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '提交失败')
+  } catch {
+    // 🆕 #333 不再重复弹：http 拦截器（api/index.ts）已经把后端 detail 弹过一次了，
+    //   这里再 ElMessage.error 会出现两条一模一样的红条（截图里就是这个现象）
   } finally {
     invoiceApplying.value = false
   }
@@ -920,7 +931,12 @@ async function openReport() {
         <el-table-column label="尾款" :width="cw(106, 82)" align="right">
           <template #default="{ row }">
             <div class="pay-cell">
-              <span>{{ fmtPay(row.balance) }}</span>
+              <!-- 🆕 #332 到账后尾款清零；合同尾款额留在 balance_contract，鼠标悬停可查，不至于查无对证 -->
+              <el-tooltip v-if="row.balance_contract" placement="top" :show-after="150"
+                          :content="`已到账，合同尾款 ${fmtPay(row.balance_contract)}（删除尾款批注可还原）`">
+                <span class="muted">{{ fmtPay(row.balance) }}</span>
+              </el-tooltip>
+              <span v-else>{{ fmtPay(row.balance) }}</span>
               <!-- 🆕 反馈#233：尾款到账批注(可插入时间);有批注→尾款日期显示"/" -->
               <el-tooltip placement="top" :show-after="150">
                 <template #content>

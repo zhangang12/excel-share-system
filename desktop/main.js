@@ -27,6 +27,39 @@ let forceNotes = '';     // version.json 里的更新说明，透传给强制更
 let splashWindow = null; // 启动页小窗口（品牌页，主窗口就绪后关闭）
 let mainRevealed = false;
 
+// ---- 🆕 崩溃日志：黑屏/闪退这类问题不落地就永远只能靠猜 ----
+// 写到 userData/crash.log（Windows: %APPDATA%/同辉项目管理/crash.log），超过 200KB 自动截断。
+// 排查时让用户把这个文件发过来，就能看到是渲染进程 OOM、GPU 掉了还是主线程卡死。
+const CRASH_LOG = () => path.join(app.getPath('userData'), 'crash.log');
+const GPU_FLAG = () => path.join(app.getPath('userData'), '.gpu-crashed');
+function logCrash(tag, detail) {
+  try {
+    const f = CRASH_LOG();
+    if (fs.existsSync(f) && fs.statSync(f).size > 200 * 1024) {
+      fs.writeFileSync(f, fs.readFileSync(f, 'utf8').slice(-100 * 1024));
+    }
+    fs.appendFileSync(f, `[${new Date().toISOString()}] ${tag} ${detail || ''}\n`);
+  } catch { /* 日志失败不能反过来把程序搞挂 */ }
+}
+
+// GPU 进程崩过一次 → 下次启动直接关掉硬件加速。
+// "闲置一会儿就黑屏"在 Windows 上最常见的成因就是集显驱动把 GPU 进程搞崩，
+// 关掉硬件加速渲染会略慢，但换来不再黑屏；只对真崩过的机器生效，不拖累正常机器。
+try {
+  if (fs.existsSync(GPU_FLAG())) {
+    app.disableHardwareAcceleration();
+    logCrash('startup', '检测到上次 GPU 崩溃标记，本次启动已禁用硬件加速');
+  }
+} catch { /* ignore */ }
+
+// GPU / 工具进程崩溃：记录并打标记（下次启动降级），当前这次由页面自恢复兜着
+app.on('child-process-gone', (_e, details) => {
+  logCrash('child-process-gone', `${details.type} ${details.reason} exitCode=${details.exitCode}`);
+  if (details.type === 'GPU') {
+    try { fs.writeFileSync(GPU_FLAG(), new Date().toISOString()); } catch { /* ignore */ }
+  }
+});
+
 // ---- 启动页：无框小窗，先声夺人；主窗口 Vue 挂载完成（app-ready）后切换 ----
 function createSplash() {
   splashWindow = new BrowserWindow({
@@ -181,6 +214,8 @@ function createWindow() {
       // 必须：页面从 file:// 加载、API 在 http://8.141.123.141，放开绕开 CORS。
       // 本壳为内部专用，窗口只加载打进包的 frontend/dist，不加载线上 URL。
       webSecurity: false,
+      // 🆕 窗口切后台时别把定时器降频——心跳/自动刷新被掐，回来会看到一屏死数据
+      backgroundThrottling: false,
     },
   });
 
@@ -188,6 +223,42 @@ function createWindow() {
   // 兜底：前端因故没发 app-ready（如老版本内置页），10s 后也要亮窗
   setTimeout(() => revealMainWindow(), 10000);
   mainWindow.webContents.on('did-fail-load', () => revealMainWindow());
+
+  // ---- 🆕 崩溃自恢复：闲置一段时间后"黑屏"的真身 ----
+  // 渲染进程被系统回收/崩溃后，窗口还在，但已经没有任何内容在画，只剩上面那句
+  // backgroundColor('#0f1d30') 的底色——用户看到的就是一整片深蓝，且怎么点都没反应，
+  // 只能去任务管理器结束进程重开。此前主进程对此毫无感知（只监听了 did-fail-load，
+  // 那个管的是"页面没加载成功"，管不了"加载成功之后进程死掉"）。
+  // 这里把死亡事件接住并自动重载页面；登录 token 存在 localStorage，重载后不用重新登录。
+  let reloadingAfterCrash = false;
+  const recover = (tag, detail) => {
+    logCrash(tag, detail);
+    if (reloadingAfterCrash) return;          // 防止崩溃风暴里反复重载
+    reloadingAfterCrash = true;
+    setTimeout(() => { reloadingAfterCrash = false; }, 5000);
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      mainWindow.webContents.reload();
+    } catch {
+      // webContents 已经不可用（进程彻底没了）→ 重建窗口
+      try { mainWindow.destroy(); } catch { /* ignore */ }
+      mainWindow = null;
+      createWindow();
+    }
+    revealMainWindow();
+  };
+  // render-process-gone：渲染进程崩溃/被杀/OOM（Electron 22+ 取代已废弃的 'crashed'）
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    recover('render-process-gone', `${details.reason} exitCode=${details.exitCode}`);
+  });
+  // unresponsive：主线程卡死（长任务/死循环），先记一笔，卡满 15s 仍不恢复就重载
+  let unresponsiveTimer = null;
+  mainWindow.on('unresponsive', () => {
+    logCrash('unresponsive', '主线程无响应');
+    clearTimeout(unresponsiveTimer);
+    unresponsiveTimer = setTimeout(() => recover('unresponsive-timeout', '卡死超过15s，自动重载'), 15000);
+  });
+  mainWindow.on('responsive', () => { clearTimeout(unresponsiveTimer); unresponsiveTimer = null; });
 
   // 补偿防护：外部链接一律交给系统浏览器，窗口内不允许跳外站
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

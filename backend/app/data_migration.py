@@ -53,6 +53,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("prepay_note", "TEXT"),
         ("before_ship_note", "TEXT"),
         ("balance_note", "TEXT"),                  # 🆕 反馈#233 尾款到账批注
+        ("balance_contract", "FLOAT"),             # 🆕 #332 清零前的合同尾款额（删批注可回填）
 
         ("invoice_batch_id", "INTEGER"),           # 🆕 合并开票批次号(同客户多项目合并)
         ("void_state", "VARCHAR(20)"),             # 🆕 订单作废流: applying/voided
@@ -96,6 +97,9 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "payment_requests": [
         ("pay_voucher_file_id", "INTEGER"),        # 🆕 付款凭证附件
+        ("reject_stage", "VARCHAR(16)"),           # 🆕 驳回环节 approve/withdraw/pay
+        ("rejected_by", "INTEGER"),                # 🆕 驳回人（不复用审批人字段）
+        ("rejected_at", "TIMESTAMP"),
     ],
     "purchase_requests": [
         ("buyer_id", "INTEGER"),                   # 🆕 #2 采购申请指定采购员（存量表补列）

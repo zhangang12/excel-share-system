@@ -185,6 +185,7 @@ interface PaymentRequestOut {
   finance_approver_id?: number | null; approver_name?: string | null
   approved_at?: string; paid_amount?: number; paid_date?: string
   payment_method?: string; reject_reason?: string; created_at: string
+  reject_stage?: string | null; rejecter_name?: string | null; rejected_at?: string | null   // 🆕 驳回环节/退回人
   pay_voucher_file_id?: number | null; pay_voucher_name?: string | null   // 🆕 #276 付款凭证（申请人可看/下载）
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
   po_nos?: string[]
@@ -1885,6 +1886,28 @@ async function loadPayReqs() {
     payReqs.value = (await http.get<PaymentRequestOut[]>('/purchase-mgmt/payment-requests')).data
   } finally { prLoading.value = false }
 }
+// 🆕 驳回环节标签：让发起人一眼知道该改什么（付款驳回 ≈ 收款账户信息不对，去供应商档案改）
+const PR_REJECT_STAGE: Record<string, string> = {
+  approve: '审批驳回', withdraw: '撤回审批', pay: '付款驳回',
+}
+const resubmittingId = ref<number | null>(null)
+async function resubmitPayReq(row: PaymentRequestOut) {
+  try {
+    await ElMessageBox.confirm(
+      `确认重新提交这笔请款？\n供应商：${row.supplier_name}　金额：${fmtMoney(row.requested_amount)}\n` +
+      `退回原因：${row.reject_reason || '未填'}\n\n` +
+      '请先确认对应问题已改好（如收款账号错了，先到「供应商」页签改供应商银行账号）。' +
+      '重新提交后会回到「待审批」，需要财务主管重新审批。',
+      '重新提交请款', { type: 'warning', confirmButtonText: '确认重新提交' },
+    )
+  } catch { return }
+  resubmittingId.value = row.id
+  try {
+    await http.put(`/purchase-mgmt/payment-requests/${row.id}/resubmit`)
+    ElMessage.success('已重新提交，等待财务主管审批')
+    await loadPayReqs()
+  } finally { resubmittingId.value = null }
+}
 
 // 🆕 #167 采购申请处理（仓库提 → 采购部处理/驳回）
 interface IncomingReq { id: number; status: string; notes?: string | null; created_at: string
@@ -2554,8 +2577,26 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 <el-tag :type="prStatusTag(row.status)" size="small">{{ PR_STATUS_LABEL[row.status] || row.status }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="驳回原因" min-width="130">
-              <template #default="{ row }"><span :class="{ danger: !!row.reject_reason }">{{ row.reject_reason || '—' }}</span></template>
+            <el-table-column label="驳回原因" min-width="170">
+              <!-- 🆕 驳回环节要说清：审批没过 / 批完撤回 / 出纳说账户不对，改法完全不一样 -->
+              <template #default="{ row }">
+                <template v-if="row.status === 'rejected'">
+                  <el-tag v-if="row.reject_stage" size="small" type="danger" effect="plain" style="margin-right:4px">
+                    {{ PR_REJECT_STAGE[row.reject_stage] || '驳回' }}
+                  </el-tag>
+                  <span class="danger">{{ row.reject_reason || '未填原因' }}</span>
+                  <div v-if="row.rejecter_name" class="muted small">退回人：{{ row.rejecter_name }}</div>
+                </template>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <!-- 🆕 被驳回的单，发起人改完（如去供应商档案改收款账号）在这里重新提交 → 回到待审批 -->
+            <el-table-column label="操作" width="106" align="center" :show-overflow-tooltip="false">
+              <template #default="{ row }">
+                <el-button v-if="row.status === 'rejected'" size="small" type="primary" plain
+                           :loading="resubmittingId === row.id" @click="resubmitPayReq(row)">重新提交</el-button>
+                <span v-else class="muted small">—</span>
+              </template>
             </el-table-column>
             <el-table-column label="实付金额" width="118" align="right">
               <template #default="{ row }">{{ row.paid_amount ? fmtMoney(row.paid_amount) : '—' }}</template>

@@ -39,6 +39,7 @@ export interface SalesLedgerRow {
   balance: number
   balance_date?: string | null
   balance_note?: string | null   // 🆕 反馈#233 尾款到账批注
+  balance_contract?: number | null   // 🆕 #332 到账清零前的合同尾款额（删批注可还原）
   ship_date?: string | null
   order_type?: string | null  // 调货订单 / 工厂制作订单
   revision_open?: boolean      // 🆕 #1 有未处理的技术资料修订意见

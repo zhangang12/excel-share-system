@@ -21,6 +21,7 @@ interface PaymentRequestOut {
   paid_amount?: number | null; paid_date?: string | null; payment_method?: string | null
   pay_voucher_file_id?: number | null; pay_voucher_name?: string | null
   reject_reason?: string | null; created_at: string
+  reject_stage?: string | null; rejecter_name?: string | null; rejected_at?: string | null   // 🆕 驳回环节/退回人
   // 🆕 需求十六：付款时可见收款账户信息 + 关联采购单
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
   po_nos?: string[]
@@ -317,16 +318,42 @@ async function approvePayReq(id: number) {
   await loadPayReqs()
 }
 
-function openReject(id: number) {
+// 🆕 驳回三个环节共用一个弹窗：审批拒绝(reject) / 撤回审批(withdraw-approval) / 付款驳回(pay-reject)
+type RejectMode = 'reject' | 'withdraw' | 'pay'
+const rejectMode = ref<RejectMode>('reject')
+const REJECT_META: Record<RejectMode, { title: string; ep: string; ok: string; ph: string; must: boolean }> = {
+  reject: {
+    title: '拒绝请款申请', ep: 'reject', ok: '已拒绝请款申请',
+    ph: '请填写拒绝原因（可选）', must: false,
+  },
+  withdraw: {
+    title: '撤回审批（退回发起人）', ep: 'withdraw-approval', ok: '已撤回审批，单子已退回发起人',
+    ph: '请说明撤回原因，发起人会收到通知', must: true,
+  },
+  pay: {
+    title: '付款驳回（退回发起人）', ep: 'pay-reject', ok: '已驳回，单子已退回发起人',
+    ph: '如：收款账号与开户名不符 / 账户信息有误，请核实后重新提交', must: true,
+  },
+}
+const rejectMeta = computed(() => REJECT_META[rejectMode.value])
+
+function openReject(id: number, mode: RejectMode = 'reject') {
   rejectTargetId.value = id
+  rejectMode.value = mode
   rejectReason.value = ''
   rejectDialogVisible.value = true
 }
 
 async function submitReject() {
   if (!rejectTargetId.value) return
-  await http.put(`/purchase-mgmt/payment-requests/${rejectTargetId.value}/reject`, { reason: rejectReason.value })
-  ElMessage.success('已拒绝请款申请')
+  const m = rejectMeta.value
+  if (m.must && !rejectReason.value.trim()) {
+    ElMessage.warning('请填写原因，发起人要靠它知道该改什么')
+    return
+  }
+  await http.put(`/purchase-mgmt/payment-requests/${rejectTargetId.value}/${m.ep}`,
+                 { reason: rejectReason.value })
+  ElMessage.success(m.ok)
   rejectDialogVisible.value = false
   await loadPayReqs()
 }
@@ -672,7 +699,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column prop="created_at" label="申请时间" width="110">
               <template #default="{ row }">{{ row.created_at?.slice(0, 10) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="200" fixed="right" :show-overflow-tooltip="false">
+            <el-table-column label="操作" width="248" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <template v-if="row.status === 'pending'">
                   <!-- 🆕 #237 内控：自己提的单自己不能审(后端同样硬校验),按钮直接禁掉并说明原因 -->
@@ -680,8 +707,12 @@ async function revokeInvoice(row: ViewRow) {
                     <span><el-button size="small" type="primary" disabled>审批通过</el-button></span>
                   </el-tooltip>
                   <el-button v-else size="small" type="primary" @click="approvePayReq(row.id)">审批通过</el-button>
-                  <el-button size="small" type="danger" link @click="openReject(row.id)">拒绝</el-button>
+                  <!-- 🆕 原来是 link 细字，容易被当成说明文字；与「审批通过」同等分量 -->
+                  <el-button size="small" type="danger" plain @click="openReject(row.id, 'reject')">驳回</el-button>
                 </template>
+                <!-- 🆕 批完才发现不对：撤回审批，退回发起人（重提后需重新审批） -->
+                <el-button v-else-if="row.status === 'approved'" size="small" type="warning" plain
+                           @click="openReject(row.id, 'withdraw')">撤回审批</el-button>
                 <el-button size="small" type="danger" link @click="deletePayReq(row)">删除</el-button>
               </template>
             </el-table-column>
@@ -747,9 +778,12 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column prop="created_at" label="申请时间" width="110">
               <template #default="{ row }">{{ row.created_at?.slice(0, 10) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="200" fixed="right" :show-overflow-tooltip="false">
+            <el-table-column label="操作" width="248" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
                 <el-button v-if="row.status === 'approved'" size="small" type="success" @click="openPay(row)">记录付款</el-button>
+                <!-- 🆕 出纳付款时发现收款账户名称/账号不对：驳回退回发起人，别硬付出去打错账户 -->
+                <el-button v-if="row.status === 'approved'" size="small" type="danger" plain
+                           @click="openReject(row.id, 'pay')">驳回</el-button>
                 <el-button size="small" type="danger" link @click="deletePayReq(row)">删除</el-button>
               </template>
             </el-table-column>
@@ -1143,16 +1177,18 @@ async function revokeInvoice(row: ViewRow) {
       </el-tabs>
     </el-card>
 
-    <!-- 拒绝原因弹窗 -->
-    <el-dialog v-model="rejectDialogVisible" title="拒绝请款申请" width="420px">
+    <!-- 驳回原因弹窗（审批拒绝 / 撤回审批 / 付款驳回 共用） -->
+    <el-dialog v-model="rejectDialogVisible" :title="rejectMeta.title" width="460px">
+      <el-alert v-if="rejectMode !== 'reject'" type="warning" :closable="false" style="margin-bottom:12px"
+        title="退回后发起人会收到站内+企微通知，修改（如去供应商档案改收款账号）后可重新提交，届时需重新审批。" />
       <el-form label-width="80px">
-        <el-form-item label="拒绝原因">
-          <el-input v-model="rejectReason" type="textarea" :rows="3" placeholder="请填写拒绝原因（可选）" />
+        <el-form-item :label="rejectMode === 'reject' ? '拒绝原因' : '退回原因'">
+          <el-input v-model="rejectReason" type="textarea" :rows="3" :placeholder="rejectMeta.ph" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="rejectDialogVisible = false">取消</el-button>
-        <el-button type="danger" @click="submitReject">确认拒绝</el-button>
+        <el-button type="danger" @click="submitReject">确认退回</el-button>
       </template>
     </el-dialog>
 

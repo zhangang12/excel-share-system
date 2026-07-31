@@ -206,6 +206,7 @@ async def _ledger_rows(db: AsyncSession, ledgers: list[models.SalesLedger]) -> l
             prepay=l.prepay or 0, before_ship=l.before_ship or 0,
             prepay_note=l.prepay_note, before_ship_note=l.before_ship_note,
             balance_note=l.balance_note,   # 🆕 反馈#233 尾款到账批注
+            balance_contract=l.balance_contract,   # 🆕 #332 清零前的合同尾款额（供页面显示"合同尾款 ¥X 已到账"）
             ship_receivable=l.ship_receivable or 0, balance=l.balance or 0,
             balance_date=l.balance_date, ship_date=l.ship_date,
             order_type=l.order_type,
@@ -607,6 +608,20 @@ async def update_payment_note(
     # 🆕 发货前付批注=货款已在发货前收讫 → 发货款应收清零；删除批注=未收 → 应收恢复为发货前付金额
     if data.field == "before_ship":
         led.ship_receivable = 0 if note_val else (led.before_ship or 0)
+    # 🆕 #332 尾款到账批注(=插入到款时间) → 尾款金额自动清零（用户 2026-08-01 明确选定此口径）。
+    #   注意 balance 是双语义共用列：催办/账龄/13周现金流/AI 只认 balance>0 判"未收"（清零后
+    #   立即停催，这正是诉求），但台账合计与销售报表「收款计划汇总·尾款」把它当合同条款额统计，
+    #   清零后那两处会随回款变小——已当面说明，用户仍选直接清零。
+    #   为把"不可逆"这一条兜住：清零前把合同尾款额存进 balance_contract，删批注即原样恢复
+    #   （与上面 before_ship 分支的可逆性对齐）。
+    if data.field == "balance":
+        if note_val:
+            if led.balance:
+                led.balance_contract = led.balance
+            led.balance = 0
+        elif led.balance_contract is not None:
+            led.balance = led.balance_contract
+            led.balance_contract = None
     await db.commit()
     await write_audit(db, user=current, action="update", target_type="sales_ledger",
                       target_id=lid, detail=f"{data.field}_note")
@@ -805,7 +820,9 @@ async def upload_contract(
 ):
     """上传合同：附件 + 合同签订日期(=下单日期)/交货日期回写台账与项目一览。"""
     led = await _ledger_or_404(db, lid)
-    if _is_sales(current) and led.sales_uid != current.id:
+    # 🆕 #333 主管/管理层不受行级隔离（与本文件其余 9 处同口径）。原来漏了 _all_view：
+    #   兼着 sales 角色的销售主管 _is_sales 恒为 True，代不了销售员操作。
+    if _is_sales(current) and not _all_view(current) and led.sales_uid != current.id:
         raise HTTPException(403, "只能操作自己的订单")
     sd, dd = normalize_date_str(sign_date), normalize_date_str(deliver_date)
     if not sd or not dd:
@@ -833,7 +850,11 @@ async def invoice_apply(
     db: AsyncSession = Depends(get_db),
 ):
     led = await _ledger_or_404(db, lid)
-    if _is_sales(current) and led.sales_uid != current.id:
+    # 🆕 #333 销售主管可代所有销售员申请开票。原来 `_is_sales(current)` 不排除主管，而杨坛
+    #   同时持有 sales + sales_lead → 恒为 True 被拦；下面第 850 行「管理层/销售主管提交时
+    #   直接进入待开票」那段对他等于死代码，可见 836 行是遗漏不是策略。合并开票(_merge)一直
+    #   是对的口径，所以他勾两个项目能过、单个反被拦。
+    if _is_sales(current) and not _all_view(current) and led.sales_uid != current.id:
         raise HTTPException(403, "只能操作自己的订单")
     # 🆕 #1/#104 不开票项目(税票=0/历史"/")不应进入开票流（只拦显式不开票，不误伤遗留空税率）
     if _is_no_invoice(led.tax_rate):
