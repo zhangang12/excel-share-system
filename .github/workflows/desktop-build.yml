@@ -1,0 +1,103 @@
+name: 桌面客户端打包（Windows 原生）
+
+# 为什么要有这个 workflow：
+#   原来在 macOS 上交叉编译 Windows NSIS 安装包，每次自动更新用户都会看到
+#   「old-uninstaller.exe 遇到问题已经停止工作」——崩的是上一版留下的卸载程序，
+#   而 electron-builder 有一批长期未解的「在 macOS 上打的 Windows 包卸载会出问题」issue
+#   （electron-userland/electron-builder#4875 等）。改成 windows-latest 原生打包，
+#   直指这个最可能的病根，应用代码一行不用动。
+#
+# 产物**不自动上传服务器**：本仓库是公开仓库，不把生产 SSH 私钥放进 Actions Secrets。
+#   打完包下载 artifact，再在本机跑：bash desktop/release.sh --upload-only <解压目录>
+#   （上传仍用本机 .deploy.local 里的密钥，与原来完全一致）
+#
+# 注意：本 workflow **不改仓库里的版本号**。按项目既有规矩，desktop/package.json 的
+#   版本 bump 要跟代码改动同一个 commit 入库；这里默认就用仓库里当前的版本号打包。
+#   只有临时试包时才用 version 入参覆盖。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（留空 = 用 desktop/package.json 里的当前版本）'
+        required: false
+        default: ''
+      min_version:
+        description: '强制最低版本，低于它的客户端被强制更新（留空 = 不改）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: 安装依赖
+        shell: bash
+        run: |
+          npm ci --prefix frontend
+          npm ci --prefix desktop
+
+      - name: 版本号（仅当显式传入时覆盖）
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            (cd desktop && npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version)
+          fi
+          if [ -n "${{ inputs.min_version }}" ]; then
+            node -e "
+              const fs=require('fs'), p='desktop/version.json';
+              const j=JSON.parse(fs.readFileSync(p,'utf8'));
+              j.min_version='${{ inputs.min_version }}';
+              fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n');
+            "
+          fi
+          echo "VERSION=$(node -p "require('./desktop/package.json').version")" >> "$GITHUB_ENV"
+
+      - name: 打包前端（桌面端走绝对地址 API）
+        shell: bash
+        env:
+          VITE_API_BASE: http://8.141.123.141
+        run: npm run build --prefix frontend
+
+      - name: 前端产物 → desktop/app（打进安装包的内置页面）
+        shell: bash
+        run: |
+          rm -rf desktop/app
+          cp -R frontend/dist desktop/app
+
+      - name: electron-builder 打 NSIS 安装包（x64）
+        shell: bash
+        working-directory: desktop
+        # 不设 npmmirror 镜像：那是给国内网络防超时用的，GitHub runner 直连原站更快。
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: 收集待上传文件
+        shell: bash
+        run: |
+          mkdir -p out
+          cp desktop/dist/*.exe out/
+          cp desktop/dist/*.exe.blockmap out/
+          cp desktop/dist/latest.yml out/
+          cp desktop/version.json out/
+          ls -la out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ env.VERSION }}
+          path: out/
+          retention-days: 14
+          # 安装包本来就从 http://8.141.123.141/desktop/ 公开可下载，
+          # 放 artifact 不新增暴露面。
