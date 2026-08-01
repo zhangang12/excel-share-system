@@ -136,7 +136,10 @@ async function load() {
       // 生产部：主管/管理层走「派发/跟踪」+ 两组概览；钣金组/装配组仅取本组项目
       const tasks: Promise<any>[] = []
       if (isLead.value || isMgr.value) {
-        tasks.push(ordersApi.list('produce', undefined, yearFilter.value, projStatusFilter.value, ym).then((os) => { orders.value = os }))
+        // 🆕 #334/#335 不再把状态传后端（见下方 statusFiltered 注释）：后端按任务单状态收窄会
+        //   把「我的订单（已完成）」的数据在服务端就删光，客户端 tab 再筛只能是空
+        tasks.push(ordersApi.list('produce', undefined, yearFilter.value, undefined, ym, undefined, 500)
+          .then((os) => { orders.value = os }))
         tasks.push(ordersApi.options('produce').then((o) => { options.value = o }))
         tasks.push(produceApi.sheetmetalProjects(yearFilter.value, projStatusFilter.value).then((r) => { sheetmetalRows.value = r }))
         tasks.push(produceApi.assemblyProjects(yearFilter.value, projStatusFilter.value).then((r) => { assemblyRows.value = r }))
@@ -154,7 +157,7 @@ async function load() {
       return
     }
     const [os, opt] = await Promise.all([
-      ordersApi.list(dept.value, undefined, yearFilter.value, projStatusFilter.value, ym, workerFilter.value),
+      ordersApi.list(dept.value, undefined, yearFilter.value, undefined, ym, workerFilter.value, 500),
       ordersApi.options(dept.value),
     ])
     orders.value = os
@@ -563,12 +566,26 @@ const myDone     = computed(() => orders.value.filter(o => o.status === 'done'  
 // ---- 负责人视角数据 ----
 const pendingAssign = computed(() => orders.value.filter(o => o.status === 'pending_assign' && matchSearch(o)))
 
+// 🆕 #334/#335 顶部「状态」下拉改为**客户端过滤，且只作用于不按状态分 tab 的列表**（任务跟踪/外协）。
+//   起因：2026-07-30 把后端 proj_status 从「项目状态」改成「任务单状态」（cfcc21a，本身是对的，
+//   修的是"筛选与状态列对不上"），但工作台一次取数要供多个 tab 用——下拉默认「进行中」时后端
+//   直接 `DeptOrder.status != done`，把已完成的单在服务端就删光了，客户端的 myDone 只能恒为空。
+//   陈立新名下 29 条、赵仁辉 5 条已完成设计单因此全部看不见。
+//   现在：取数不带状态，「我的订单(待接单/进行中/已完成)」与「待分派」各自按 status 分 tab、
+//   不受下拉影响（同一维度两个控件本就是设计错误）；下拉只收窄下面这个全量列表。
+const statusFiltered = computed(() => {
+  const s = projStatusFilter.value
+  if (!s) return orders.value
+  return orders.value.filter(o => s === '已完成' ? o.status === 'done' : o.status !== 'done')
+})
+const trackingList = computed(() => statusFiltered.value.filter(matchSearch))
+
 // ---- 🆕 外协订单：外协人员(后端 dept_config.OUTSOURCE_WORKERS 按账号配置)的任务单单列一个 tab，
 //      供负责人/管理层集中监控其订单状态；外协人员本人看不到该 tab（只看自己的「我的订单」）。
 const outsourceUids = computed(() => new Set((options.value?.outsource_workers || []).map(u => u.id)))
 const isOutsourceSelf = computed(() => !!myUid.value && outsourceUids.value.has(myUid.value))
 const outsourceOrders = computed(() =>
-  orders.value.filter(o => o.worker_id != null && outsourceUids.value.has(o.worker_id) && matchSearch(o)))
+  statusFiltered.value.filter(o => o.worker_id != null && outsourceUids.value.has(o.worker_id) && matchSearch(o)))
 // 有配置外协人员 + 是负责人/管理层 + 自己不是外协人员
 const showOutsourceTab = computed(() => (isLead.value || isMgr.value) && !isOutsourceSelf.value && outsourceUids.value.size > 0)
 
@@ -878,11 +895,16 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
       <el-select v-model="monthFilter" size="large" style="width:110px" clearable placeholder="全部月份" @change="load">
         <el-option v-for="m in monthOptions" :key="m.v" :label="m.l" :value="m.v" />
       </el-select>
-      <el-select v-model="projStatusFilter" size="large" style="width:100px" @change="load">
-        <el-option label="进行中" value="进行中" />
-        <el-option label="已完成" value="已完成" />
-        <el-option label="全部" value="" />
-      </el-select>
+      <!-- 🆕 #334/#335 只作用于「任务跟踪 / 外协」；「我的订单」三个 tab 本身就是状态维度，不受它影响 -->
+      <el-tooltip content="按任务单状态筛选「任务跟踪 / 外协」列表；「我的订单」三个页签本身已按状态分，不受此筛选影响"
+                  placement="bottom">
+        <!-- @change 必须留：生产部三个组(钣金/装配/封板)仍按 group_done 走服务端筛选，需要重新取数 -->
+        <el-select v-model="projStatusFilter" size="large" style="width:100px" @change="load">
+          <el-option label="进行中" value="进行中" />
+          <el-option label="已完成" value="已完成" />
+          <el-option label="全部" value="" />
+        </el-select>
+      </el-tooltip>
       <el-select v-if="(isLead || isMgr) && !isProduce" v-model="workerFilter" size="large"
                  style="width:140px" clearable filterable placeholder="全部负责人" @change="load">
         <el-option v-for="w in options?.workers || []" :key="w.id" :label="w.name" :value="w.id" />
@@ -1221,7 +1243,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         </el-tab-pane>
 
         <el-tab-pane v-if="isLead || isMgr" label="📋 任务跟踪" name="track">
-          <el-table show-overflow-tooltip :data="orders.filter(matchSearch)" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="trackingList" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="112">
               <template #default="{ row }"><b>{{ row.project_code }}</b></template>
             </el-table-column>
