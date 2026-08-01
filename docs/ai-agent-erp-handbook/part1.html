@@ -1,0 +1,261 @@
+<section id="p1">
+<h2>第一章　立项：什么样的 ERP 值得上 Agent，需求从哪里来</h2>
+
+<p class="muted">本章回答三个立项问题：这套系统该不该上 Agent、需求从哪里长出来、以及我们把目标定在哪一级。全部论据取自本仓库真实代码与真实反馈记录，行号可核。</p>
+
+<h3>1.1　FDE 交付的不是模型，是「这件事以后不用再问了」</h3>
+
+<p>Forward Deployed Engineer（客户现场交付工程师）这个角色最容易被误解成「会写 prompt 的售前」。它真正的交付物只有一个：<b>某个具体的业务动作，从此不再需要人肉搬运</b>。模型是原料，工具是工序，交付的是结果。如果上线三个月后，采购员依然每天早上打开采购管理页面手工扫一遍未到货清单，那么无论后台跑的是哪个模型、function calling 写得多漂亮，这次交付都失败了。</p>
+
+<p>为什么这类项目特别依赖 FDE 而不是「远程给个 API」？因为它在四个维度上同时失灵，而这四件事只能在现场解决：</p>
+
+<h4>（1）需求方说不清——而且说错的方式有规律</h4>
+<p>本项目最贵的一课是反馈 <code>#283</code>。采购员王芹（兼 buyer / finance / logistics 三角色）写的是「不用推送采购信息」，附了一张截图，红框圈在<b>「指定采购员」那一列</b>。按字面这是「关掉通知」，按红框这是「数据可见性应该跟着指定采购员走」的权限需求。第一次按字面改了推送逻辑，返工，还得发一封更正回复。最终实现见 commit <code>3f45728</code>：列表只看「指定给我的 + 未指定的」，handle / reject / pdf 三处补同一守卫（<code>backend/app/routers/purchase_mgmt_router.py</code>）。</p>
+<p>这条教训后来写成铁律 <code>AGENTS.md:52</code>「红框强制入境，文图冲突图赢」。背后的道理很朴素——<b>用户打字是随手的，画圈是深思的</b>。远程接需求的工程师永远拿不到这层信息，因为他看到的是工单标题，不是那个红框。</p>
+
+<h4>（2）数据脏，而且脏在没人提醒你的地方</h4>
+<p>本项目的项目编号有两套关联方式：<code>projects.id</code> 是硬外键（十余张表引用），而 <code>projects.code ↔ purchase_items.project_code</code> 是<b>字符串软关联、无外键约束</b>。后果是项目成本汇总静默漏数——不报错，只是数字偏小。这类事实不写在任何文档里。</p>
+
+<h4>（3）权限复杂到无法口头描述</h4>
+<p>本系统有七类互不相同的行级可见性规则：采购按 <code>buyer_id</code>（<code>backend/app/routers/purchase_mgmt_router.py:46</code> 的 <code>_buyer_restricted</code>）、销售按 <code>sales_uid</code>（<code>backend/app/routers/sales_router.py:53</code> 的 <code>_all_view</code>）、线索按 <code>owner_uid</code>（<code>backend/app/routers/leads_router.py:87</code>）、项目目录按派单（<code>backend/app/deps.py:95</code> 的 <code>restricted_dir_pids</code>）、项目详情按成员（<code>backend/app/deps.py:125</code> 的 <code>user_can_view_project</code>）、任务按 <code>worker_id</code>、OA 按四路并集。其中 <code>_buyer_restricted</code> 还有一条反直觉规则：兼任 finance / logistics <b>不</b>解除采购的行级隔离，注释明写「这是反复出问题的坑」。这种事问业务负责人，回答是「就是各管各的呀」——听着像一句话，落到代码是七套判定。</p>
+
+<h4>（4）成功标准模糊</h4>
+<p>「让 AI 帮我们提效」不是验收标准。FDE 的第一件事是把它翻译成可数的东西：<b>某个岗位每天少打开几个页面 / 某类逾期的平均发现时间从几天缩到几小时 / 某个人不再需要每周导一次 Excel</b>。数不出来的，就先别做。</p>
+
+<div class="box blue"><b class="t">FDE 的真实交付物清单（本项目版）</b>
+<ul>
+<li>一份「谁能看见什么」的权限事实表——不是文档里的，是从代码里扒出来的（本项目 = 七类行级规则 + 菜单权威 <code>backend/app/menus.py:142</code>）</li>
+<li>一份「口径在哪」的语义层地图（本项目 = <code>backend/app/routers/reports_router.py</code>，毛利/资金/13 周现金流口径已定死）</li>
+<li>一个能被业务验收的窄场景，而不是一个「什么都能问」的对话框</li>
+<li>一条需求进来、结论出去的闭环通道（本项目 = 用户反馈系统，见 1.3）</li>
+</ul>
+</div>
+
+<p class="muted">迁移提示：换到别的客户，前三项的具体形态会变（权限可能在中间件、口径可能在 BI 工具、闭环可能是企微群或 Jira），但<b>「这三样必须在你写第一行 Agent 代码之前拿到」这条不变</b>。拿不到就说明你还没进现场。</p>
+
+<h3>1.2　可行性判据：五问自查表</h3>
+
+<p>并不是所有企业系统都值得上 Agent。下面五条是我在本项目上真实用过的判据，每条都给「不合格会怎么死」。</p>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>判据</th><th>不合格会怎么死</th><th>本项目</th><th>证据</th></tr>
+<tr><td>1</td><td>数据是否结构化、有业务语义</td><td>只能做 RAG 式模糊检索，答案不可验证，业务不敢用</td><td><span class="tag ok">合格（有保留）</span></td><td>55 个 ORM 模型（<code>backend/app/models.py</code>）语义清晰；但 <code>records.values</code> 是 EAV 自由 JSON（<code>backend/app/models.py:171</code>「所有 cell 值都用一个 JSONB 列 values 装着」），这块<b>不能</b>进 Agent</td></tr>
+<tr><td>2</td><td>权限模型是否清晰、可被程序复用</td><td>Agent 变成越权通道，一次事故就下线</td><td><span class="tag ok">合格</span></td><td>25 个角色（<code>backend/app/seed.py:14</code>）+ 菜单唯一权威 <code>user_menu_keys()</code>（<code>backend/app/menus.py:142</code>）+ 七类行级过滤，且都在服务端函数里</td></tr>
+<tr><td>3</td><td>是否有既存查询接口可复用</td><td>要为 Agent 新写一套读路径 = 两套口径分叉，迟早对不上账</td><td><span class="tag ok">合格</span></td><td><code>reports_router.py</code> 已沉淀口径：项目毛利防双算注释在 <code>backend/app/routers/reports_router.py:411</code>，13 周现金排程剔重在 <code>:718</code>，资金面板 <code>:732</code></td></tr>
+<tr><td>4</td><td>用户是否有明确的高频痛点</td><td>做出来没人用，三个月后菜单被隐藏</td><td><span class="tag ok">合格</span></td><td>已有 6 个逾期扫描器每天推消息（<code>backend/app/overdue.py:35 / 80 / 138 / 197 / 238 / 311</code>）——有人天天在追这些数，说明痛点真实存在</td></tr>
+<tr><td>5</td><td>错了的代价能不能兜住</td><td>Agent 说错一句就是钱错、货错、人错</td><td><span class="tag now">有条件合格</span></td><td>只读 SELECT 铁律（<code>AGENTS.md:56</code>）+ 不代做写操作 → 最坏是「看错一眼」；但泄密代价高（见下）</td></tr>
+</table></div>
+
+<h4>第 5 条要单独说：只读不等于安全</h4>
+<p>本系统里最贵的不是「改错数据」，而是「看到不该看的数据」：<code>employees.id_card</code> 在 <code>backend/app/routers/hr_router.py:122</code> 的 <code>_emp_out()</code> 里原样返回；<code>suppliers.bank_account</code>（<code>backend/app/models.py:597</code>）是付款诈骗的现成素材；<code>app_settings</code>（<code>backend/app/models.py:1067</code>）存着 AI 助手自己的 API Key；<code>agent_chat_logs</code>（<code>backend/app/models.py:1108</code>）存着所有人的问答，能自查即横向越权。</p>
+<p>更要命的是系统本就有一道<b>独立的导出审批闸门</b>：<code>ExportRequest</code>（<code>backend/app/models.py:481</code>），开关 <code>export_approval_enabled</code> 打开后，普通用户导数据要先申请、等审批（<code>backend/app/routers/export_router.py:38</code>；开关默认关，但设计上必须按"它会被打开"来做）。Agent 一次吐 200 行明细，这道闸门就形同虚设。所以所有工具统一 <code>[:20]</code> 截断（<code>backend/app/routers/agent_router.py:93</code>、<code>:118</code>、<code>:165</code>、<code>:196</code>）——<b>Top-20 是红线，不是偷懒</b>。</p>
+
+<div class="box red"><b class="t">一票否决项：现状就是反面教材</b>
+<p>可行性合格 ≠ 现在的实现合格。本项目 7 个数据工具里，<b>只有 <code>tool_project_status</code> 接收 <code>current</code> 参数</b>（<code>backend/app/routers/agent_router.py:241</code>），其余 6 个函数签名里根本没有用户对象，因此不可能做行级过滤：</p>
+<ul>
+<li><code>backend/app/routers/agent_router.py:66</code> <code>tool_po_arrival_overdue</code> 无 buyer 过滤，而页面侧 <code>backend/app/routers/purchase_mgmt_router.py:349</code> 明确 <code>stmt.where(PurchaseItem.buyer_id == current.id)</code></li>
+<li><code>backend/app/routers/agent_router.py:138</code> <code>tool_balance_due</code> 无 sales 过滤，而页面侧 <code>backend/app/routers/sales_router.py:239</code> 明确 <code>q.where(SalesLedger.sales_uid == current.id)</code></li>
+<li><code>backend/app/routers/agent_router.py:168</code> <code>tool_overdue_orders</code> 只做到部门级（<code>allowed_depts</code>），页面侧还有 <code>worker_id == me</code></li>
+</ul>
+<p>菜单侧又是全员开放：<code>backend/app/menus.py:37</code> 注明 agent 菜单「全员可见」，<code>backend/app/menus.py:154</code> 无条件 <code>set(configured) | {"agent"}</code>。结果是：<b>一个普通销售员问一句「尾款」，就能拿到全公司的客户名、尾款金额和归属销售</b>。这是线上 P0，也是本手册后续所有架构决策的起点。</p>
+</div>
+
+<p class="muted">迁移提示：换个客户，数据可能在数仓、权限在 API 网关、口径在 BI 语义层——判据不变，但「证据在哪儿」要重找一遍。特别注意第 3 条：很多客户表面有报表系统，实际口径散在几十张互相矛盾的 SQL 视图里，那等于没有。</p>
+
+<h3>1.3　需求从哪来：一条真实的反馈闭环</h3>
+
+<p>本项目最宝贵的资产不是代码，是一条已经跑了二十多批、编号已到 <code>#333</code> 的用户反馈闭环。它长这样：</p>
+
+<pre class="arch">用户在任意页面右下角点「反馈」浮标
+   frontend/src/components/HelperFloating.vue:112（悬浮按钮，任意登录用户可见）
+   :69 支持 Ctrl/Cmd+V 直接粘贴截图 —— 最常用的 bug 反馈方式
+        │  POST /api/user-feedback  {kind, content, page_url, file}
+        ▼
+后端落库 UserFeedback（backend/app/models.py:510）
+        │
+        ▼
+管理层导出自包含 HTML（截图 base64 内嵌）
+   backend/app/routers/user_feedback_router.py:237 export_html
+   :267 每条一张 &lt;article class="card"&gt; 卡片
+   :306 页首声明「共 N 条」
+        │
+        ▼
+逐条归位 → 排期 → 修 → 发版（ops/release.sh）
+        │
+        ▼
+POST /api/user-feedback/{id}/reply
+   backend/app/routers/user_feedback_router.py:155
+   :175 status = "done"   自动标已处理
+   :174 reply_read = False 触发提出人下次登录弹窗
+   :179 push_message(...)  站内消息 + 企微双通道
+        │
+        ▼
+用户下次登录右下角弹「反馈处理回复」
+   frontend/src/layouts/MainLayout.vue:53 checkFeedbackReplies()</pre>
+
+<p>为什么这条闭环比任何需求调研都值钱？三个原因：</p>
+<ol>
+<li><b>带上下文</b>：每条反馈自带 <code>page_url</code> 和截图，你知道用户当时站在哪个页面、看着哪一列数字。</li>
+<li><b>带身份</b>：导出里带 <code>user_name · role_codes</code>（<code>backend/app/routers/user_feedback_router.py:256-257</code>），能直接判断这是采购员还是财务主管的诉求——在权限敏感的系统里，这决定了实现方式。</li>
+<li><b>有回执</b>：回复即推送，用户知道自己被听见了才愿意继续提。<b>一条没有回执的反馈通道，三个月内必然枯竭。</b></li>
+</ol>
+
+<h4>从教训里长出来的四条纪律</h4>
+<p>下面这四条写在 <code>AGENTS.md</code> 的「铁律」小节里，每一条背后都有一次返工。它们看起来琐碎，但这恰恰是 FDE 的核心功力——<b>把「读需求」这件事从悟性变成流程</b>。</p>
+
+<div class="scroll"><table>
+<tr><th>纪律</th><th>出处</th><th>教训来源</th></tr>
+<tr><td><b>图文一起读，先给附件归位</b>：截图不是配图，是内容本身；先确认每张图挂在哪条反馈下、图上标注指向什么，再下结论</td><td><code>AGENTS.md:50</code></td><td>#265「这个不用处理了」的截图，实际是她自己红框圈出的 #263；只读文字会觉得指代不明</td></tr>
+<tr><td><b>按 <code>&lt;article&gt;</code> 卡片边界切，条数对不上就停</b>：导出声明「共 N 条」与解析出的 ID 数不符时立即停下重查，不许编解释填坑</td><td><code>AGENTS.md:51</code></td><td>07-21 批次按零散 page div 切，全部文字与截图错位一条、#271 丢失，两条实现做错返工</td></tr>
+<tr><td><b>红框强制入境，文图冲突图赢</b>：结论句必须把红框元素当主语；红框塞不进结论 = 理解错了，停下重来</td><td><code>AGENTS.md:52</code></td><td>#283（详见 1.1）</td></tr>
+<tr><td><b>「不用改」加倍举证</b>：结论是「已修好/不用动」时必须给可验证证据，且解释用户为何仍遇到问题；只能给「可能/也许」就按要改处理</td><td><code>AGENTS.md:53</code></td><td>同 #283——拿 #242 的旧修复 + 未证实的「旧消息」假设就放行了自己</td></tr>
+</table></div>
+
+<div class="box amber"><b class="t">为什么这些纪律对 Agent 项目尤其致命</b>
+<p>传统功能做错了，用户会说「不对，我要的是那个」，返工一次就结束。Agent 做错了，用户看到的是一段<b>语气笃定、格式漂亮的中文</b>——他不会怀疑，他会照着做。需求理解偏差在 Agent 项目里的放大倍数远高于普通 CRUD。「红框强制入境」这种看似强迫症的规矩，本质是给理解环节加了一道断言。</p>
+</div>
+
+<h3>1.4　需求筛选框架：不是所有痛点都该给 Agent</h3>
+
+<p>反馈通道打开之后，真正的难题变成了「拒绝」。下面这棵决策树是本项目实际在用的：</p>
+
+<pre class="arch">用户抱怨「我找不到 / 我看不到 / 我要天天手工弄」
+  │
+  ├─ 问题是「不知道入口在哪」？
+  │     → 改导航 / 加搜索框 / 挪 tab。成本 1 天，Agent 成本 1 个月。
+  │       Agent 在这里只能当「问路的」，而问路该由信息架构解决。
+  │
+  ├─ 问题是「这个页面本身就有 bug / 被截断 / 搜不到」？
+  │     → 修页面。别拿 Agent 遮盖。
+  │       典型：#330 待收货被硬编码 limit(300) 截断
+  │       backend/app/routers/purchase_mgmt_router.py:1819 _RECV_LIMIT_DEFAULT = 2000
+  │       :1824 list_receiving 三个搜索框下沉 SQL
+  │       :1902 新增 GET /receiving/meta 出真实 count(*)
+  │       —— 上 Agent 只会让它在错的数据上回答得更自信。
+  │
+  ├─ 问题是「数据在两个页面，我得自己拼」？
+  │     → 先问：拼法固定吗？
+  │         固定 → 做一个报表页（本项目 reports_router 的 fund-panel / project-pnl 就是这么来的）
+  │         不固定、每次问法都不一样 → Agent 有价值
+  │
+  ├─ 问题是「需要跨域判断，且问法发散」？
+  │     → ★ Agent 的主场。
+  │       例：「哪些供应商总是延期」= 采购 × 项目 × 时间窗 × 排序，
+  │       固化成页面会变成一个没人会用的多维筛选器。
+  │
+  └─ 问题是「要有人负责签字」？
+        → Agent 只能做提案，不能代做。生成卡片，人点确认。
+          例：#331 财务职责分离——付款端点校验
+          PaymentRequest.finance_approver_id == current.id（需求.docx 第十六项内控要求），
+          交接文档.md:126 记口径，:258 明写「admin/manager 也不留后门」。
+          这类事永远不能由模型代按。</pre>
+
+<p>用本项目最近几批真实反馈跑一遍这棵树：</p>
+
+<div class="scroll"><table>
+<tr><th>反馈</th><th>用户原话（大意）</th><th>落点</th><th>结论</th></tr>
+<tr><td>#330</td><td>待收货里超过 300 条的长周期单搜不到</td><td>页面 bug</td><td><span class="tag no">不上 Agent</span>：改分页上限 + 关键字下沉 SQL + 新增 meta 端点出真实计数（commit <code>4d9559a</code>）</td></tr>
+<tr><td>#329</td><td>仓库收货价填错了，采购要能改</td><td>页面缺口</td><td><span class="tag no">不上 Agent</span>：合并单父行只有「整单维护」改不了价；顺手修出真 bug——<code>_auto_stock_in</code> 幂等导致改价不回写 <code>WhTxn</code> 金额</td></tr>
+<tr><td>#333</td><td>销售主管不能替销售员申请开票</td><td>权限口径</td><td><span class="tag no">不上 Agent</span>：<code>sales_router</code> 的 <code>_is_sales()</code> 不排除主管，两处漏 <code>_all_view</code> 豁免</td></tr>
+<tr><td>#331</td><td>出纳说「需要同一个账号操作」（审批+付款）</td><td>要有人负责</td><td><span class="tag now">业务侧待定</span>：内控规则冲突，不是功能问题。已回退给管理层定规则，一行代码没动（<code>交接文档.md:256-263</code>）</td></tr>
+<tr><td>口述</td><td>「哪些供应商总是延期？」</td><td>跨域判断</td><td><span class="tag ok">Agent 有价值</span>：现有 <code>tool_po_overdue_by_supplier</code>（<code>backend/app/routers/agent_router.py:121</code>）已是雏形——但注意它现在有口径 bug：在<b>已截断的 Top20 明细</b>上聚合（<code>:125</code> 遍历 <code>d["items"]</code>），<code>item_total</code> 却取全量 <code>d["count"]</code>（<code>:135</code>），两个数不同源</td></tr>
+<tr><td>口述</td><td>「今天有什么要盯的」</td><td>跨域汇聚</td><td><span class="tag ok">Agent 有价值</span>：<code>tool_morning_report</code>（<code>backend/app/routers/agent_router.py:219</code>）跨采购/任务/尾款/人事四域，做成页面就是四个卡片没人看</td></tr>
+</table></div>
+
+<p class="muted">注意最后一行那个口径 bug 的启示：<b>Agent 工具最危险的不是查不到，是查到一半自信地聚合</b>。这也是后文「语义层必须复用 <code>reports_router</code>、工具不自己造口径」这条原则的来源。</p>
+
+<div class="box blue"><b class="t">这棵树只回答"该不该做"，不回答"什么时候该停"</b>
+<p>上面每一个 <span class="tag ok">Agent 有价值</span> 都是<b>立项时</b>的判断，它建立在一堆当时无法验证的假设上（问法真的够发散吗？用户真的会来问吗？口径真的稳定吗？）。这些假设有一半会在上线三个月后被数据证伪。<b>与之配套的另一半判据在第十二章 12.6：终止信号清单与「该停 vs 该改方向」决策树</b>——本章的筛选框架把不该做的挡在门外，第十二章的终止判据把做错了的诚实地停掉，两者是同一套纪律的两端。特别注意 12.7 那条：<b>即使项目终止，权限测绘表、语义层地图、评估集这三样也是纯赚的</b>，所以按本章框架立项的成本从来不会全打水漂。</p></div>
+
+<h3>1.5　能力分级 L1–L4，以及我们为什么停在 L3</h3>
+
+<div class="scroll"><table>
+<tr><th>级别</th><th>能力</th><th>形态</th><th>风险来源</th><th>本项目</th></tr>
+<tr><td>L1</td><td>单域问数</td><td>问一句、查一张表、返回一张表格</td><td>行级越权、口径分叉</td><td><span class="tag now">现状</span>（7 个工具，只覆盖 5 张表：PurchaseItem / SalesLedger / DeptOrder / Employee / Project）</td></tr>
+<tr><td>L2</td><td>跨域串联 + 主动推送</td><td>把采购×项目×财务串起来；每天早上主动发晨报</td><td>推送打扰、幂等、成本</td><td><span class="tag new">下一步</span>（已有 <code>tool_morning_report</code> 雏形，但缺主动侧）。<b>完整设计见第十一章</b>：与 <code>overdue.py</code> 六个扫描器怎么合流（11.1）、三种错误接法（11.2）、晨报五条规则（11.3）、以及"每条无价值推送都在花信任预算"（11.4）</td></tr>
+<tr><td>L3</td><td>判断 · 提案 · 卡片确认</td><td>Agent 生成审批卡片，人在卡片上点确认，请求用<b>人自己的 token</b> 打现有业务端点</td><td>提案质量、卡片可信度</td><td><span class="tag ok">目标</span></td></tr>
+<tr><td>L4</td><td>自主执行</td><td>Agent 直接写库、直接付款、直接派单</td><td>责任无法归属</td><td><span class="tag no">明确不做</span></td></tr>
+</table></div>
+
+<h4>L3 的关键设计：写操作走人的手，不走 Agent 的手</h4>
+<p>L3 的形态是：Agent 只负责「把哪件事推到你面前」，卡片上的事实由服务端渲染时重新取一遍，卡片类型是白名单，端点由类型在可信前端代码里决定、<b>不出现在模型输出里</b>。人点确认时发出的是一个带他自己 token 的普通业务请求。</p>
+<p>好处是：<code>AGENTS.md:56</code> 那条「所有数据工具永远只读 SELECT，不提供收货/付款等强职责命令」的铁律<b>一个字都不用改</b>；不需要服务账号、不需要新写路径；既有的职责分离校验（如 <code>finance_approver_id == current.id</code>）自动继续生效。</p>
+
+<h4>为什么不做 L4</h4>
+<ul>
+<li><b>责任无法归属</b>。「谁批的、谁付的」是本系统内控核心。<code>交接文档.md:210</code> 记录过一个真实决策：出纳驳回<b>不能</b>复用 <code>finance_approver_id</code> 字段，否则既抹掉真审批人，又让「审批人不能给自己审过的单付款」判错人。连字段复用都要这么小心的系统，容不下一个没有工号的执行者。</li>
+<li><b>回滚成本不对称</b>。查错了刷新一下就好；付错了要走冲销流程，还要跟供应商解释。</li>
+<li><b>信任是一次性的</b>。<code>#333</code> 里销售主管杨坛被 <code>_is_sales()</code> 拦、<code>#331</code> 里出纳杨倩被职责分离拦——这两次都是<b>系统做对了</b>，但用户体验是「它不让我干活」。同样的误判若发生在自动执行上，这个功能一天之内会被要求下线。</li>
+</ul>
+
+<p class="muted">迁移提示：L1→L4 这条梯子几乎适用于所有企业系统，但<b>停在哪一级由「错误的可逆性」决定，不由技术能力决定</b>。日程安排、内部知识库可以直接做到 L4；只要涉及钱、货、人事任免，L3 就是天花板。谈需求时把这条画在白板上，比讲模型能力有用十倍。</p>
+
+<h3>1.6　诚实的账：Agent 不是免费的</h3>
+
+<p>立项时最容易被跳过的一页。四类成本，按被低估的程度排序：</p>
+
+<div class="scroll"><table>
+<tr><th>成本</th><th>本项目现状</th><th>证据</th></tr>
+<tr><td><b>Token 成本</b></td><td>结构性失控风险：手写 <code>for _ in range(4)</code> 循环、每轮最多 4 个 tool_call；历史按 20 条 × 每条 2000 字符截断；30s 超时是<b>每次请求</b>级别，4 轮之上没有全局 deadline。最坏情况单轮 30–50k token 且无上限保护。<b>注意</b>：现状规模（约 40 人）下月账单只有百元量级（测算见 6.5），所以这一项排第一不是因为绝对金额高，而是因为它<b>没有任何上限保护、且随人数与 prompt 长度线性涨</b>，同时今天算不出来</td><td><code>backend/app/routers/agent_router.py:522</code>、<code>:532</code>、<code>:945</code>、<code>:499</code></td></tr>
+<tr><td><b>缓存效率</b></td><td>system prompt 第一句就插 <code>user_name</code> / <code>roles</code> → 跨用户 prompt 前缀零共享，prefix caching 完全失效</td><td><code>backend/app/routers/agent_router.py:477</code>、<code>:515</code></td></tr>
+<tr><td><b>维护成本</b></td><td>一个工具定义要<b>七处手工同步</b>：后端 <code>TOOL_SCHEMAS</code> / <code>TOOL_LABELS</code> / <code>_TOOL_SUGGESTIONS</code> / <code>_SUGGESTION_TOOL</code> / <code>_allowed_tools</code> / <code>_run_tool</code> + 前端 <code>AUDIT_TOOL_LABELS</code>。加一个工具约等于改七个地方，漏一个就静默降级（漏 <code>_allowed_tools</code> 最隐蔽：schema 永远不下发，模型压根不知道有这个工具，逐处清单见 6.3）</td><td><code>backend/app/routers/agent_router.py:311 / 322 / 334 / 361 / 409 / 427</code> + <code>frontend/src/views/AgentView.vue:111</code></td></tr>
+<tr><td><b>可观测性欠账</b></td><td>审计表只记问/答/工具名/模型/耗时，<b>缺 token 用量、成本、工具入参、轮次</b>——也就是说前两项成本目前<b>算不出来</b></td><td><code>backend/app/models.py:1108</code> <code>AgentChatLog</code> 字段清单</td></tr>
+<tr><td><b>信任成本</b></td><td>前端非流式（三点动画等待）；<code>markdown-it</code> 的 <code>{html:false}</code> 配 <code>v-html</code> 是唯一 XSS 防线；追问 chips 是后端静态映射而非模型生成</td><td><code>frontend/src/views/AgentView.vue:21</code>、<code>:224</code>；<code>backend/app/routers/agent_router.py:322</code></td></tr>
+</table></div>
+<p class="muted">还有一项没进表：<b>误答的业务代价</b>。只读兜住了「改错」，没兜住「看错」和「看多」——见 1.2 第 5 条。</p>
+
+<div class="box green"><b class="t">一个够用的 ROI 思考框架</b>
+<p>不要算「提效百分之多少」，算这四个数，能填满就立项、填不满就先别做：</p>
+<ol>
+<li><b>频次</b>：每周发生几次、谁做？（本项目：6 个逾期扫描器天天在推 = 这些数每天有人追）</li>
+<li><b>单次人力</b>：手工做一次几分钟、开几个页面？（跨域的通常 10–30 分钟 + 3 个页面）</li>
+<li><b>单次机器成本</b>：一次问答的 token 花费 × 频次 × 人数。<b>算不出来就先补埋点，别拍脑袋</b>——本项目因 <code>AgentChatLog</code> 缺 token 字段，这一格现在是空的</li>
+<li><b>误答代价</b>：错一次是「重问一遍」还是「打错一笔款」？后者直接把方案压回 L3 或否掉</li>
+</ol>
+<p>经验判据：当 <b>①×② 的年化人力 &lt; ③ 的年化机器成本 × 3</b>（三倍是维护与信任的隐性系数）时，这个场景不值得上 Agent，做个报表页更划算。</p>
+</div>
+
+<h3>1.7　可迁移方法论：到一个陌生客户现场，头两周干什么</h3>
+
+<p>下面这份清单是把本项目的立项过程反推出来的。核心原则只有一条：<b>前十天不写业务代码，第十一天必须有东西能给人看</b>。</p>
+
+<h4>第 1–3 天：读代码，产出「权限事实表」</h4>
+<ul>
+<li>找到菜单/路由的唯一权威（本项目 = <code>backend/app/menus.py:142</code>），确认它是不是真的唯一。</li>
+<li>把每个业务列表的行级过滤条件抄下来，一行一条，标明字段和角色。本项目抄出七类。</li>
+<li><b>特别找「反直觉的例外」</b>——它们通常代表一次事故：<code>_buyer_restricted</code> 兼任 finance 不解除隔离（<code>backend/app/routers/purchase_mgmt_router.py:46</code>）；<code>finance_lead</code> 自动注入 <code>finance</code>（<code>backend/app/models.py:83</code>，全系统唯一的角色包含关系）。</li>
+<li>问一句：<b>有没有只在前端做的权限？</b> 本项目有——二级 tab 权限 <code>hidden_tabs</code> 只在前端隐藏、后端零处强制，<b>绝不能当可信边界</b>。这类东西每个客户都有。</li>
+</ul>
+
+<h4>第 4–6 天：读口径，产出「语义层地图」</h4>
+<ul>
+<li>找到已经定死口径的地方（本项目 = <code>reports_router.py</code> 的毛利/资金/13 周现金流），把注释里的「防双算」「剔除」「不含」逐条摘出来。</li>
+<li>找到<b>没有</b>业务语义的地方并划为禁区（本项目 = <code>records.values</code>、<code>projects.extra</code>、<code>oa_requests.detail</code> 这些自由 JSON 列，完全没有字段级保护）。</li>
+<li>找到跨域枢纽和它的裂缝（本项目 = <code>projects.id</code> 硬外键 vs <code>projects.code ↔ purchase_items.project_code</code> 字符串软关联）。</li>
+</ul>
+
+<h4>第 7–9 天：找真实用户，看真实冲突</h4>
+<ul>
+<li>不要找部门负责人，找<b>兼多个角色的人</b>——他们身上集中了系统所有的权限矛盾。本项目的样本：采购王芹（buyer + finance + logistics）、杨坛（销售主管 + 财务主管 + 管理层）、出纳杨倩、仓库王利利。</li>
+<li>看最近三个月的反馈/工单原文，尤其看<b>被拒绝和被搁置的</b>——那里藏着业务规则的真实边界（本项目 <code>#331</code> 就是典型：技术上五分钟能改，但球在管理层）。</li>
+<li>看已有的通知在推什么、推给谁、有没有人嫌吵（本项目 <code>backend/app/overdue.py</code> 6 个扫描器去重语义各不相同，其中 <code>scan_po_arrival_overdue</code> 有「业务时间 &lt; 15:00 跳过」特判，见 <code>backend/app/overdue.py:319</code>——这条特判就是一次用户抱怨的化石）。</li>
+</ul>
+
+<h4>第 10–14 天：挑一个能在两周内见效的窄场景，做出来</h4>
+<ul>
+<li>标准：<b>单一角色、单一数据域、每天都会发生、错了不心疼、有一句话能说清的验收标准</b>。</li>
+<li>本项目符合这个标准的第一个场景就是「采购员的到期未到货清单」——角色单一（buyer）、口径已定（照抄 <code>scan_po_arrival_overdue</code>）、天天发生、只读。</li>
+<li><b>先把行级过滤做对再做对话体验</b>。宁可第一版只能回答三个问题，也不要能回答三十个问题但会越权。</li>
+</ul>
+
+<div class="box blue"><b class="t">头两周的三个反模式</b>
+<ul>
+<li><b>先接模型再想场景</b>。表现为第一周就在调 base_url / 选模型 / 比价。模型是最后一步，换起来只是改个配置（<code>backend/app/routers/agent_router.py:745</code> 起的配置层，DB 覆盖 env，页面可改）。</li>
+<li><b>用「什么都能问」当 demo</b>。业务方当场会提一个你没覆盖的问题，模型一本正经编一个答案，信任在第三分钟死掉。<b>Demo 要主动划边界</b>：「今天只演采购一个域，其他域明确回答『无权/未覆盖』」。</li>
+<li><b>把权限留到最后做</b>。这就是本项目 P0 的成因——POC 阶段 7 个工具里 6 个没接 <code>current</code>，上线后一直如此。<b>权限不是加固项，是第一个功能。</b></li>
+</ul>
+</div>
+
+<p class="muted">本章小结：值不值得上 Agent 看五条判据（数据语义、权限可复用、接口可复用、痛点高频、错误可兜）；需求从哪来看有没有一条带上下文、带身份、带回执的真实闭环；做到哪一级由错误的可逆性决定。本项目的答案：五条判据全过（第 5 条有条件），闭环已跑二十多批到 <code>#333</code>，目标定 L3。而现状 L1 的实现里埋着一个必须先拆的 P0——下一章从「怎么把行级权限真正接进 Agent 工具」开始。</p>
+
+</section>

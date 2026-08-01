@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>AI 助手 L3 · 架构与实施方案</title>
+<style>
+  :root{--ink:#111827;--dim:#6b7280;--line:#e5e7eb;--bg:#f4f6fa;--card:#fff}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,"Microsoft YaHei",sans-serif;max-width:1040px;margin:0 auto;
+       padding:28px 20px 70px;color:var(--ink);background:var(--bg);line-height:1.7;font-size:14.5px}
+  h1{font-size:24px;margin:0 0 2px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:22px}
+  h2{font-size:19px;margin:34px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--ink)}
+  h3{font-size:15.5px;margin:20px 0 6px}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#f8fafc;font-weight:600}
+  code{background:#eef2f7;padding:1px 5px;border-radius:4px;font-size:12.5px;
+       font-family:ui-monospace,Menlo,Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;padding:13px 15px;border-radius:8px;overflow-x:auto;
+      font-size:12.5px;line-height:1.55;margin:10px 0}
+  pre code{background:none;color:inherit;padding:0}
+  .box{border-left:4px solid;border-radius:0 7px 7px 0;padding:10px 14px;margin:12px 0;font-size:13.5px}
+  .red{border-color:#dc2626;background:#fef2f2}
+  .amber{border-color:#f59e0b;background:#fffbeb}
+  .green{border-color:#10b981;background:#ecfdf5}
+  .blue{border-color:#3b82f6;background:#eff6ff}
+  .box b.t{display:block;margin-bottom:3px}
+  .tag{display:inline-block;padding:0 7px;border-radius:9px;font-size:11.5px;font-weight:600;white-space:nowrap}
+  .ok{background:#d1fae5;color:#065f46}.no{background:#fee2e2;color:#991b1b}
+  .now{background:#fef3c7;color:#92400e}.new{background:#dbeafe;color:#1e40af}
+  ul,ol{padding-left:20px;margin:6px 0}li{margin:3px 0}
+  .muted{color:var(--dim)}.scroll{overflow-x:auto}
+  .arch{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;
+        font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.85;white-space:pre;overflow-x:auto}
+</style></head>
+<body>
+
+<h1>AI 助手 L3 · 架构与实施方案</h1>
+<div class="sub">2026-08-01 · 待评审 · 目标：从「查数机器」升级为「会判断、能提案、由人确认执行」的助手</div>
+
+<h2>一、能力分级与目标</h2>
+<div class="scroll"><table>
+<tr><th style="width:7%">级别</th><th style="width:20%">能力</th><th>说明</th><th style="width:10%">状态</th></tr>
+<tr><td>L1</td><td>单域问数</td><td>问什么答什么，7 个只读工具</td><td><span class="tag now">现状</span></td></tr>
+<tr><td>L2</td><td>跨域串联 + 主动推送</td><td>一个问题串多域；每日晨报定时送达，不用人问</td><td><span class="tag new">规划</span></td></tr>
+<tr><td><b>L3</b></td><td><b>判断 · 提案 · 卡片确认</b></td><td>识别异常 → 给出结论与依据 → <b>生成审批卡片</b>，人点确认后由<b>人的身份</b>执行</td><td><span class="tag new">本方案目标</span></td></tr>
+<tr><td>L4</td><td>自主执行</td><td>助手直接改数据</td><td><span class="tag no">不做</span></td></tr>
+</table></div>
+
+<div class="box green">
+<b class="t">L3 的关键设计：卡片只是「呈现权」，不是「执行权」</b>
+卡片渲染在用户自己的会话里，按钮点下去是<b>用户自己的 token 打现有业务端点</b>。所以审计记的是本人、职责分离照常生效、<b>AGENTS.md 的「工具永远只读 SELECT」铁律保持不变</b>——助手产出的是卡片描述，不是数据库写入。<br>
+省掉的东西：<code>agent-bot</code> 服务账号、新的写路径、助手侧的幂等键与回滚设计。
+</div>
+
+<h2>二、技术架构</h2>
+
+<div class="arch">┌─ 前端 AgentView ────────────────────────────────────────────┐
+│  对话流(SSE)   │   卡片渲染器 CardRenderer                   │
+│                │   ├ PaymentApprovalCard   ← 类型→组件 白名单 │
+│                │   ├ InvoiceApprovalCard      映射写死在前端  │
+│                │   └ TodoExtendCard           模型无法指定端点 │
+└────────┬───────────────────────┬────────────────────────────┘
+         │ /api/agent/chat        │ ① 拉权威事实  ② 点按钮
+         ▼                        ▼           ▼
+┌─ 编排层 agent_router ──┐  ┌─ GET /agent/cards/{token} ─┐  ┌─ 原业务端点 ─┐
+│ 循环 / 预算 / 审计     │  │ 按 ref 重查权威值           │  │ PUT …/approve │
+└────────┬───────────────┘  │ + 复用端点谓词算 enabled    │  │ 用户token+SoD │
+         ▼                  └────────────┬───────────────┘  └───────┬───────┘
+┌─ 工具层 app/agent/tools/ ──────────────┴──────────────────────────┘
+│  只做两件事：调 router 函数、裁剪字段。【禁止出现 has_role / where(uid==me)】
+└────────┬────────────────────────────────────────────────────────┐
+         ▼                                                         │
+┌─ 现有路由函数 routers/*.py ─── 权限 · 行级过滤 · 业务口径 唯一真源 ─┘
+└────────┬────────────────────────────────────────────────────────┐
+         ▼                                                         │
+      models / PostgreSQL ────────────────────────────────────────┘</div>
+
+<h3>2.1 核心原则（三条，其余都是推论）</h3>
+<div class="scroll"><table>
+<tr><th style="width:22%">原则</th><th>含义</th><th>违反后的失效模式</th></tr>
+<tr><td><b>① 单一访问路径</b></td><td>工具不写 SQL，只调现有 router 函数并传真实 <code>current</code>；权限与行级过滤自动继承</td><td>权限双写 → 页面改了规则工具不跟 → <b>静默越权（已发生）</b></td></tr>
+<tr><td><b>② 事实源在服务端</b></td><td>模型只能决定「把哪件事推到你面前」，不能是「你正在批的是什么」的来源。卡片只携带对象 ID，要素由后端重查回填</td><td>模型看错或被注入 → 卡上写 ¥4,800、按钮批 ¥48,000</td></tr>
+<tr><td><b>③ 能力可枚举</b></td><td>卡片类型是白名单，端点由类型在<b>可信前端代码</b>里决定，不出现在模型输出里</td><td>模型输出 HTML → XSS；模型指定端点 → 越权调用面无边界</td></tr>
+</table></div>
+
+<h3>2.2 工具层写法（对比）</h3>
+<pre><code># ❌ 现状：自己写 SQL + 自己判权限（第 66 行，无 buyer 过滤 → 越权）
+async def tool_po_arrival_overdue(db, min_overdue_days=0):
+    r = await db.execute(select(models.PurchaseItem).where(...))   # 全公司
+    return {"count": len(rows), "items": rows[:20]}
+
+# ✅ 目标：调 router 函数，权限自动继承
+@tool(name="po_arrival_overdue", menus={"purchase_mgmt"},
+      desc="采购到期未到货明细")
+async def po_arrival_overdue(ctx: ToolCtx, min_overdue_days: int = 0):
+    rows = await purchase_mgmt_router.list_items(           # ← 页面同一个函数
+        current=ctx.user, db=ctx.db, arrived=False,
+    )                                                       # _buyer_restricted 在内部生效
+    return ctx.slim(rows, fields=["item_name","po_no","supplier",
+                                  "project_code","expected_arrival"])
+</code></pre>
+<p class="muted">Code review 硬规则：<b><code>app/agent/tools/</code> 下出现 <code>has_role</code> / <code>select(</code> / <code>current.id</code> 即不通过。</b></p>
+
+<h3>2.3 卡片契约</h3>
+<pre><code>{
+  "type": "payment_approval",              // 白名单类型，决定用哪个组件、打哪个端点
+  "ref":  {"kind": "payment_request", "id": 1287},
+  "token": "&lt;HMAC 签名, 5 分钟, 绑定 user+ref&gt;",   // 防重放/防串对象
+
+  "facts": [                               // 【服务端回填，模型不可写】
+    {"k": "供应商",   "v": "上海屹上脚轮有限公司"},
+    {"k": "请款金额", "v": "¥48,000.00"},
+    {"k": "收款账号", "v": "农业银行…8127", "warn": "本周内变更过"}
+  ],
+  "flags": ["收款账号 3 天前变更", "金额为该供应商历史均值 4.2 倍"],
+  "note":  "建议先与采购电话核实账号变更。",      // 【模型观点，视觉与 facts 分离】
+
+  "actions": [
+    {"key":"approve", "label":"审批通过", "enabled": true},
+    {"key":"reject",  "label":"驳回",     "enabled": true, "need_reason": true}
+  ]
+}</code></pre>
+<div class="box amber">
+<b class="t">按钮置灰复用端点谓词，不再判一遍</b>
+杨坛批自己提交的请款单，<code>approve</code> 端点会 400（职责分离）。卡片渲染时就用<b>同一个谓词</b>把按钮灰掉并写明原因（前端 <code>FinanceView.vue:679</code> 已有同款逻辑），而不是让人点了才被拒。
+</div>
+
+<h3>2.4 新建模块</h3>
+<div class="scroll"><table>
+<tr><th style="width:30%">路径</th><th>职责</th></tr>
+<tr><td><code>backend/app/agent/registry.py</code></td><td><code>@tool</code> 装饰器单点注册：schema / 标签 / 菜单门控 / 追问建议一处定义，<b>消除现在的六处手工同步</b></td></tr>
+<tr><td><code>backend/app/agent/tools/*.py</code></td><td>按域拆分（purchase / sales / warehouse / finance / oa…），每个工具只调 router + 裁字段</td></tr>
+<tr><td><code>backend/app/agent/cards.py</code></td><td>卡片类型枚举 + Pydantic schema + 签名/校验；<code>GET /agent/cards/{token}</code> 事实源</td></tr>
+<tr><td><code>backend/app/agent/guard.py</code></td><td>红线守卫：表/字段黑名单、行数上限、JSON 自由列剥离——<b>出口统一过一遍</b></td></tr>
+<tr><td><code>backend/app/agent/llm.py</code></td><td>厂商适配层（保留中立）+ 稳定前缀/volatile 后缀分离</td></tr>
+<tr><td><code>backend/app/agent/session.py</code></td><td>会话持久化（现在刷新即丢）</td></tr>
+<tr><td><code>frontend/src/components/agent/cards/*.vue</code></td><td>每种卡片一个可信组件，<b>端点映射写死在这里</b></td></tr>
+</table></div>
+
+<h2>三、安全红线（代码保证，不写进提示词）</h2>
+<div class="box red">
+提示词可以被绕过，白名单不行。以下每条都在 <code>guard.py</code> 出口统一强制。
+</div>
+<div class="scroll"><table>
+<tr><th style="width:26%">红线</th><th>理由</th></tr>
+<tr><td>表黑名单：<code>app_settings</code>、<code>agent_chat_logs</code></td><td>前者存着助手<b>自己的 API Key 明文</b>，读到即随回答外泄；后者存着所有人问过的问答，能读自己的日志 = 一次性绕过全部行级隔离</td></tr>
+<tr><td>字段黑名单：<code>password_hash</code>、<code>employees.id_card</code>、<code>suppliers.bank_account</code>、<code>employee_salary_monthly.*</code></td><td>身份证号现在 <code>_emp_out()</code> 原样返回；供应商银行账号是付款诈骗的直接素材</td></tr>
+<tr><td>JSON 自由列不返回原始内容：<code>records.values</code>、<code>projects.extra</code>、<code>custom_values</code>、<code>oa_requests.detail</code></td><td>字段级权限只对 <code>fields</code>/<code>overview_fields</code> 生效，对这些列<b>完全无保护</b>，里面可能藏报价、成本、私人备注</td></tr>
+<tr><td>返回行数上限 20</td><td>系统有独立的<b>导出审批闸门</b>（<code>export_requests</code>），AI 一次吐 200 行等于绕过</td></tr>
+<tr><td>门控只做菜单级</td><td><code>hidden_tabs</code>（二级 tab）<b>只在前端隐藏、后端零处强制</b>，不可当作可信边界</td></tr>
+<tr><td>成本类回答带口径声明</td><td>采购用 <code>project_code</code> <b>字符串软关联</b>挂项目（无外键），成本汇总会静默漏数</td></tr>
+<tr><td>卡片第一期<b>不开批量</b></td><td>卡片让「一次批 20 条」变容易，效率是真的，风险倍数也是真的</td></tr>
+</table></div>
+
+<h2>四、规划路径</h2>
+<div class="scroll"><table>
+<tr><th style="width:6%">期</th><th style="width:6%">级别</th><th style="width:26%">内容</th><th style="width:10%">工期</th><th>验收</th></tr>
+<tr><td><b>P0</b></td><td>—</td><td><b>修行级越权</b>（采购/销售/任务三工具）+ 修 <code>po_overdue_by_supplier</code> 口径 bug + prompt 前缀重排</td><td>0.5 天</td><td>普通采购员/销售员账号实测：AI 返回行数与页面<b>一字不差</b></td></tr>
+<tr><td><b>P1</b></td><td>L1→L2</td><td><b>访问路径改造</b>：7 工具改为调 router 函数；<code>registry.py</code> 单点注册；<code>guard.py</code> 红线落地</td><td>3–4 天</td><td>页面隔离规则改一处，AI 侧自动跟随；review 规则生效</td></tr>
+<tr><td><b>P2</b></td><td>L2</td><td><b>晨报定时推送</b>——素材全现成（6 扫描器 + 推送渠道 + 聚合工具），只缺定时器</td><td>1 天</td><td>连跑一周，与现有扫描器推送<b>零重复</b>（须尊重各自去重窗口）</td></tr>
+<tr><td><b>P3</b></td><td><b>L3</b></td><td><b>卡片框架 + 第一张卡：请款审批</b>。含卡片 schema、事实源接口、前端渲染器、确认令牌、异常标记规则</td><td>5–6 天</td><td>杨坛全程在对话里完成一次真实审批；审计日志记的是他本人；自审自批的单按钮为灰</td></tr>
+<tr><td><b>P4</b></td><td>L3</td><td>卡片扩类型（开票申请 / 待办顺延 / 采购改期）+ 会话持久化 + 可观测补全（token/成本/入参/轮次）</td><td>4–5 天</td><td>能答出「助手这个月花了多少钱、谁在用、问得最多的是什么」</td></tr>
+<tr><td><b>P5</b></td><td>L3</td><td>工具扩面：按 gap-analysis Quick Wins 6 个（低库存 / 待开票待付款 / 待发货 / 已开票未付款 / 在职人数 / 我的待办审批）</td><td>3–4 天</td><td>覆盖域从 5 张表扩到 15+，每个新工具走 P1 模板</td></tr>
+</table></div>
+<p class="muted">P0 与 P1 之间没有依赖，但 <b>P0 必须先做</b>——它跟架构选哪条路无关，是正在发生的暴露。</p>
+
+<h3>为什么第一张卡片是「请款审批」</h3>
+<ul>
+<li>驳回流程刚上线（2026-08-01），链路最新、最熟</li>
+<li><code>approve</code> 端点已带职责分离校验，正好验证「复用端点谓词」这条设计</li>
+<li>「收款账号本周刚改过」这个标记，直接对着付款诈骗最典型的手法</li>
+<li>杨坛既是真实审批人，也是提反馈的人，反馈闭环最短</li>
+</ul>
+
+<h2>五、实施技术框架</h2>
+<div class="scroll"><table>
+<tr><th style="width:18%">层</th><th style="width:26%">选型</th><th>说明 / 理由</th></tr>
+<tr><td>Agent 形态</td><td><b>单 Agent + 工具循环</b></td><td>不做多 Agent——只会放大权限与成本问题。保留现有 4 轮上限，补<b>全局 deadline</b>（现在 30s 是每请求的，4 轮无总超时）</td></tr>
+<tr><td>LLM 接入</td><td><b>保留厂商中立层</b><span class="tag now" style="margin-left:6px">待你确认</span></td><td>判据只有一条：未来一年是否可能换供应商 / 接内网私有模型。会 → 留；基本锁定一家 → 这层是白付的税，换官方 SDK 可拿到缓存精细控制与结构化输出保证</td></tr>
+<tr><td>工具定义</td><td>装饰器注册 + 自动生成 schema</td><td>替代现在「后端 schema/labels/suggestions/run_tool + 前端 labels」六处手工同步</td></tr>
+<tr><td>数据访问</td><td><b>复用 router 函数</b></td><td>不做 Text-to-SQL：7 类行级规则 + 字段级权限 + JSON 自由列，这套权限模型<b>套不进生成式 SQL</b>；且 <code>records.values</code> 是 EAV 无业务语义</td></tr>
+<tr><td>语义层</td><td>复用 <code>reports_router</code></td><td>资金面板 / 13 周现金流 / 项目毛利榜的口径<b>已在代码里定死且含防双算逻辑</b>（毛利两腿互斥、现金排程剔重），重写 SQL 极易错</td></tr>
+<tr><td>检索</td><td>不引入 RAG / 向量库</td><td>这是结构化数据问答，真需求是「查数准确」不是「找相关段落」</td></tr>
+<tr><td>输出通道</td><td>SSE 流式 + 卡片块</td><td>现在是非流式三点动画；L3 单轮会更长，流式是体验刚需</td></tr>
+<tr><td>卡片渲染</td><td>受控 schema + 可信组件</td><td><b>绝不让模型产出 HTML</b>——现前端 XSS 防线是 <code>markdown-it {html:false}</code>，模型一旦输出标签这道防线就没了</td></tr>
+<tr><td>成本控制</td><td>prompt 前缀重排 + token 记账</td><td>现 system prompt <b>第一句就插用户名和角色</b> → 跨用户前缀零共享。规则段是最长部分，挪到最前即可进共享前缀</td></tr>
+<tr><td>会话</td><td>后端持久化</td><td>现历史存前端内存、刷新即丢；且截断纯按条数(20)×字符(2000)，最坏单轮 30–50k token 无上限保护</td></tr>
+<tr><td>审计</td><td>扩 <code>agent_chat_logs</code></td><td>补 token 用量 / 成本 / 工具入参 / 轮次 / <b>卡片动作</b>（哪张卡、谁点的、结果）</td></tr>
+</table></div>
+
+<h2>六、待拍板</h2>
+<div class="scroll"><table>
+<tr><th style="width:5%">#</th><th style="width:32%">决定</th><th>建议</th></tr>
+<tr><td>1</td><td>P0 越权是否立刻单独修</td><td><b>是</b>。与架构选型无关，改动小、边界清楚</td></tr>
+<tr><td>2</td><td>厂商中立层留不留</td><td>看是否可能换供应商 / 接内网模型。<b>这条我不替你决定</b></td></tr>
+<tr><td>3</td><td>第一张卡片选「请款审批」</td><td><b>是</b>，理由见四节</td></tr>
+<tr><td>4</td><td>卡片第一期是否开批量</td><td><b>不开</b>。单条跑顺再说</td></tr>
+<tr><td>5</td><td>历史稿处置</td><td><code>agent-ui-mockup.html</code> 作废；<code>agent-analysis.md</code> 加过时标注；<code>gap-analysis</code> 转需求清单保留；<code>CLI设计方案</code> 保留架构主张、CLI 实现手段由本方案取代</td></tr>
+</table></div>
+
+<p class="muted" style="font-size:12.5px;margin-top:26px">本稿仅为设计与选型建议，<b>未修改任何代码</b>。现状结论均对照 HEAD 逐行核实。</p>
+</body></html>

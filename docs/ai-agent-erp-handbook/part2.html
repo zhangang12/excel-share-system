@@ -1,0 +1,329 @@
+<section id="p2">
+<h2>第二章　测绘：把 ERP 的业务域、数据枢纽和权限模型摸清楚</h2>
+
+<p>这一章讲的是写第一行 Agent 代码之前必须做完的事。FDE 进客户现场最容易犯的错，是拿着 demo 里的
+「连上库就能问数」直接开工——结果要么工具查不到数，要么查到了不该查的。这两种失败都不是模型能力问题，
+是<b>测绘没做</b>。</p>
+
+<h3>2.1　为什么必须先测绘：Agent 的能力边界 = 数据边界 ∩ 权限边界</h3>
+
+<p>一句话原则：<b>Agent 能回答的问题集合，等于「系统里真的存了这个事实」和「问的人本来就有权看这个事实」的交集</b>。
+这两个集合都不在你脑子里，只在客户的代码和数据里。测绘就是把这两个集合画出来。</p>
+
+<p>交集的两边各自失守，症状完全不同，代价也完全不同：</p>
+
+<div class="box amber"><b class="t">数据边界失守 = 没用（可修复）</b>
+用户问「这批货到仓库了吗」，而系统里根本没有单一的「到仓」状态位，只有采购明细上的 <code>arrival_date</code>
+和仓库流水两处半重叠的记录。这类失败尴尬但不致命，改工具就行。</div>
+
+<div class="box red"><b class="t">权限边界失守 = 事故（不可撤回）</b>
+本项目就发生了：<code>backend/app/routers/agent_router.py</code> 的 7 个数据工具里，6 个的<b>函数签名里根本没有用户对象</b>，
+因而不可能做行级过滤——这是签名层面的必然，不是「忘了写 if」。
+一个普通销售员问一句「尾款」，拿到的是全公司客户名 + 尾款金额 + 归属销售；
+而他打开销售部页面时，<code>sales_router.py:239-240</code> 会把查询收窄成 <code>sales_uid == 本人</code>。
+逐工具对照与根因分析见 3.1，这里只需要它证明一件事：<b>数据泄露没有回滚按钮，所以边界必须在动手前就摸清楚。</b></div>
+
+<p class="muted">这条教训可以直接迁移：<b>任何「绕过现有页面直接读库」的 AI 通道，默认就是一条越权通道</b>，
+除非你能逐条证明它复现了页面的过滤。而要证明，你得先知道页面到底过滤了什么——这就是测绘。</p>
+
+<h3>2.2　业务域地图：55 张表怎么分</h3>
+
+<p><code>backend/app/models.py</code> 共 55 个 ORM 模型（<code>grep -c __tablename__</code> = 55），
+按业务归属可以切成 13 个域。分域不是为了好看，是为了后面每个域单独回答三个问题：
+<b>谁能看 / 敏感到什么程度 / Agent 该不该碰</b>。</p>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>业务域</th><th>核心表（models.py）</th><th>性质</th><th>用途要点</th></tr>
+<tr><td>1</td><td>组织与权限</td><td>roles / user_roles / users / departments / field_permissions / overview_field_permissions</td><td>配置表</td><td>权限的全部真相源；users 是所有行级规则的锚点</td></tr>
+<tr><td>2</td><td>项目主数据</td><td>projects / project_members / overview_fields</td><td>主数据</td><td>projects 是一级枢纽；project_members 决定详情可见性</td></tr>
+<tr><td>3</td><td>项目数据表（EAV）</td><td>datasheets / fields / records</td><td><b>明细表</b></td><td>Excel 导入的五张固定模板表，行数随项目线性膨胀</td></tr>
+<tr><td>4</td><td>销售</td><td>sales_ledger / sales_leads</td><td>业务表</td><td>一项目一行台账（合同额/尾款/开票）+ 线索池</td></tr>
+<tr><td>5</td><td>设计·电工·生产</td><td>dept_orders / produce_group_tasks / revision_requests / feedbacks</td><td>业务表</td><td>派单→接单→完成状态机；行级按 worker_id</td></tr>
+<tr><td>6</td><td>采购</td><td>purchase_items / suppliers / purchase_requests / purchase_request_lines / purchase_custom_fields / supplier_opening_balances</td><td><b>明细表</b></td><td>purchase_items 是全系统唯一采购录入口，量级最大的一档</td></tr>
+<tr><td>7</td><td>仓库</td><td>wh_txns / wh_materials / wh_locations / material_categories / material_dict / wh_material_custom_fields</td><td><b>明细表</b></td><td>wh_txns 是收发存流水，含冲红对（is_reversal/reversed）</td></tr>
+<tr><td>8</td><td>物流</td><td>shipments</td><td>业务表</td><td>发货看板；含 freight_cost / freight_payer（成本第四腿）</td></tr>
+<tr><td>9</td><td>财务</td><td>payment_requests / payment_request_items</td><td>业务表</td><td>请款→审批→付款；含职责分离字段 rejected_by / reject_stage</td></tr>
+<tr><td>10</td><td>售后</td><td>aftersales</td><td>业务表</td><td>已审批费用直接进项目成本第三腿</td></tr>
+<tr><td>11</td><td>人事</td><td>employees / payroll_monthly / attendance_monthly / employee_salary_monthly</td><td>业务表</td><td>全系统敏感度最高的一档（身份证/工资）</td></tr>
+<tr><td>12</td><td>OA 审批</td><td>oa_requests / oa_request_steps / oa_request_cc / oa_approval_steps / oa_flow_cc / oa_doc_types</td><td>业务+配置</td><td>可见性规则最复杂（四路并集）</td></tr>
+<tr><td>13</td><td>管理层与平台</td><td>management_todos / management_todo_targets / messages / audit_logs / export_requests / user_feedback / attachments / app_settings / desktop_clients / login_gate_codes / agent_chat_logs</td><td><b>明细+配置</b></td><td>messages / audit_logs 是万级明细；app_settings 存 AI 自己的 Key</td></tr>
+</table></div>
+
+<p><b>明细表 vs 配置表这条线要画清楚。</b>明细表（<code>purchase_items</code> / <code>wh_txns</code> /
+<code>messages</code> / <code>audit_logs</code> / <code>records</code>）随业务时间线性增长，是万级往上的量级，
+Agent 碰它们必须先想清楚「聚合口径 + 返回上限」；配置表（roles / departments / material_dict / oa_approval_steps）
+是几十到几百行的静态盘子，可以整表读进上下文当常识用。<b>进客户现场第一天就该跑一次
+<code>count(*)</code> 全表体检</b>，把这条线标在图上——本文只标增长性质、不臆造行数，
+真实行数要在客户生产环境实测补齐。</p>
+
+<div class="box blue"><b class="t">records.values 是 Agent 的天然边界</b>
+<code>models.py:171-183</code>：<code>Record.values</code> 是一个 JSON 列，形状为 <code>{ str(field_id): value }</code>，
+字段定义在 <code>fields</code> 表里、按 <code>datasheet_id</code> 归属（<code>models.py:160</code>），
+而 <code>datasheets</code> 又按 <code>project_id</code> 归属（<code>models.py:140</code>）。
+这意味着：<b>同一个业务语义的列（比如「数量」），在 100 个项目里是 100 个不同的 field_id</b>。
+虽然 <code>sheet_templates.py:18</code> 的 <code>SHEET_TEMPLATES</code> 固定了五张模板表
+（钣金装配 / 标准件清单 / 外协加工 / 不锈钢原料下料单 / 激光件清单）让列名可预期，但列名到 id 的映射是逐项目的，
+且存量项目还留着旧版形态（<code>sheet_templates.py:109</code> <code>LEGACY_SHEET_TEMPLATES</code>）。
+结论：<b>EAV 层不适合做跨项目聚合问数</b>。Agent 可以回答「TH-2501 的标准件清单有多少行」，
+不该去回答「今年所有项目一共采购了多少个 M8 螺栓」——后者的正确来源是 <code>purchase_items</code>，不是 records。
+这条边界是测绘出来的，不是拍脑袋定的。</div>
+
+<h3>2.3　跨域枢纽：三级枢纽和一根最脆的绳</h3>
+
+<div class="arch">
+                        ┌────────────────────────────────┐
+                        │ projects (id PK, code UNIQUE)  │   ← 一级枢纽
+                        └──┬──────────────────────────┬──┘
+      projects.id 硬 FK ×11│                          │ projects.code 字符串软关联
+   ┌────────┬─────────┬────┴────┬──────────┬────────┐ │  （无 FK / 无大小写规范化 / 可为空）
+   ▼        ▼         ▼         ▼          ▼        ▼ │
+project_  datasheets dept_    sales_    shipments  wh_txns
+ members     │       orders    ledger   (物流/运费)  (仓库腿)
+ [规则E]     ▼      [规则F]   [规则B]                 ▲
+           fields                                     │ purchase_item_id 硬 FK
+             ▼                                        │  （采购↔仓库唯一硬连接）
+          records.values  ◀── EAV/JSON，Agent 边界     │
+                                                      │
+   purchase_items ─── project_code (字符串) ───────────┘  [规则A: buyer_id]
+        │
+        └── po_no：同一采购单多行的分组键（无外键、无唯一约束、可为空）
+
+   users.id ──▶ 规则 A/B/C/D/E/F/G 全部挂在它上面（buyer_id / sales_uid /
+                owner_uid / worker_id / user_id / requester_id / approver）
+</div>
+
+<p><b>一级枢纽 <code>projects.id</code></b>：全库有 11 处硬外键指向它
+（<code>models.py</code> 第 127、140、232、265、284、329、364、410、426、447、570 行），
+分别是 project_members、datasheets、dept_orders、produce_group_tasks、sales_ledger、shipments、
+attachments、wh_txns、aftersales、feedbacks、revision_requests。<b>只要 join 走 project_id，就是可靠的。</b></p>
+
+<div class="box red"><b class="t">二级枢纽是全系统最脆的一根绳：projects.code ↔ purchase_items.project_code</b>
+<code>models.py:618</code>：<code>project_code: Mapped[Optional[str]] = mapped_column(String(64), index=True)</code>
+——<b>只是一个带索引的字符串列，没有外键约束、没有大小写规范化、允许为 NULL</b>。
+它的写入口至少三处：手工新建采购单（<code>purchase_mgmt_router.py:1317</code>）、
+按项目清单生成（<code>purchase_mgmt_router.py:1151</code>）、
+Excel 批量导入（<code>purchase_mgmt_router.py:1548</code>，值直接来自表格里的「订单编号」单元格）。
+三个入口都不校验这个值是不是真实存在的 <code>projects.code</code>。
+<br>后果一：<b>项目成本汇总会静默漏数</b>。<code>reports_router.py:449-461</code> 的成本第二腿是按
+<code>project_code</code> 分组求和的，配到项目时只做了 <code>.strip()</code>（<code>reports_router.py:489</code>），
+没有大小写归一。而 <code>agent_router.py:249-251</code> 查项目时反倒做了 <code>code.upper()</code> 兜底重试——
+<b>同一个仓库里两处对大小写的假设不一致</b>，这本身就是测绘该抓出来的信号。
+<br>后果二：确实有一批明细 <code>project_code</code> 是空的。<code>purchase_mgmt_router.py:1866-1888</code>
+写得很直白：这些行来自项目清单（有 <code>source_sheet_id</code>）但下单时没带项目号，
+页面上显示的项目编号是<b>临时回溯出来的、只改了返回对象、没有落库</b>。
+于是它们在页面上看着有项目，在成本汇总的 <code>GROUP BY project_code</code> 里却不存在。
+<br>系统自己知道这件事：<code>reports_router.py:588-598</code> 的「孤儿采购」清单专门捞
+<code>project_code</code> 为空、或既不是项目编号也不是字典里非项目订单号的明细；
+<code>reports_router.py:611-643</code> 还做了采购口径 vs 仓库口径的双口径对账。
+<b>Agent 回答任何涉及项目成本的问题，必须带口径声明</b>：说清楚「未归集的孤儿采购 N 笔、金额 X」，
+否则给出的毛利数就是一个系统性偏高、且无人知道偏多少的数。</div>
+
+<p><b>三级枢纽</b>三个：<code>purchase_items.po_no</code>（<code>models.py:611</code>，同一供应商多零件行共享的分组键，
+同样无唯一约束）；<code>wh_txns.purchase_item_id</code>（<code>models.py:406</code>，采购↔仓库之间<b>唯一的硬连接</b>，
+后面的防双算逻辑全靠它）；以及 <code>users.id</code>——七类行级规则毫无例外全挂在它上面，
+所以<b>「当前用户是谁」是整个测绘工作里唯一不能出错的输入</b>。</p>
+
+<h3>2.4　成本归集主干：为什么口径必须复用，不能让 Agent 自己拼</h3>
+
+<p><code>reports_router.py:409-412</code> 把口径写在注释里，一字不差：<b>毛利 = 合同额 − 材料领料成本(加权均价)
+− 直发/外协采购 − 安装/售后费用 − 物料运输费(我方)</b>，不含人工，是「材料边际贡献」口径。四条腿的取数分别是：</p>
+
+<div class="scroll"><table>
+<tr><th>腿</th><th>来源</th><th>取数条件（reports_router.py）</th><th>归集键</th></tr>
+<tr><td>收入</td><td>sales_ledger.amount</td><td>一项目一行（:481-487）</td><td>project_id</td></tr>
+<tr><td>1 材料</td><td>wh_txns 出库 × 加权均价</td><td>direction=out 且 is_reversal=False 且 reversed=False（:434-447）</td><td>project_id（硬）</td></tr>
+<tr><td>2 直发/外协</td><td>purchase_items.received_amount</td><td>received_amount&gt;0 且 <b>id NOT IN (有 wh_txn 的)</b>（:450-456）</td><td>project_code（软）</td></tr>
+<tr><td>3 售后</td><td>aftersales.cost</td><td>status='approved'（:464-467）</td><td>project_id（硬）</td></tr>
+<tr><td>4 运费</td><td>shipments.freight_cost</td><td>freight_payer='我方' 或 NULL（:471-475）</td><td>project_id（硬）</td></tr>
+</table></div>
+
+<p><b>防双算的机制是「两腿互斥」</b>：收货时生成了 <code>wh_txn</code> 的采购明细，成本走仓库腿（领料 × 加权均价）；
+没经仓库过账的（直发到工地、外协加工费）才按 <code>project_code</code> 走采购腿。互斥靠的就是那句
+<code>PurchaseItem.id.not_in(linked)</code>（<code>reports_router.py:450、455</code>）。
+同样的防双算思路在资金面板里再出现一次：<code>reports_router.py:829</code>「已进『已批未付』请款单的明细，
+13 周排程从应付里剔除」，否则同一笔钱会在 W0 流出和到期排程里各算一遍。</p>
+
+<div class="box amber"><b class="t">这就是「语义层必须复用」的全部理由</b>
+上面这些不是数学，是<b>业务裁决</b>：为什么排除冲红对？因为冲红是撤销不是负成本。为什么售后只算已审批？
+因为登记态还可能被驳。为什么运费只算「我方」？因为客户承担的运费不进我们成本。
+这些裁决是业务方一条条拍板过的，写在代码里，<b>不写在任何模型能读到的地方</b>。
+让 Agent 自己拼 SQL 算毛利，它会拼出一个语法正确、数字漂亮、业务上错的答案——而且错得很难发现，
+因为它和财务手算的差额永远只有几个点。所以本项目 L3 设计里，凡涉及资金面板 / 13 周现金流 / 项目毛利榜，
+Agent 工具一律转调 <code>reports_router</code> 现成函数，一行 SQL 都不新写。
+<b>迁移提示</b>：换个客户，这个「语义层」可能长成 dbt 模型、BI 里的度量值、或者一堆 Excel 公式。
+形态不重要，找到它、复用它，而不是重新实现它。
+<b>还要记住第二件事：口径不是常量，它会漂。</b>本项目 #332（<code>balance</code> 一列两义）就是活证据——
+测绘只是拿到了「今天的口径」，它变了之后 AI 侧感知不到，
+漂移源清点、「口径变更 → 评估用例」对照表、以及怎么让变更自动通知到 Agent 维护者，见 <b>11.5</b>。</div>
+
+<h3>2.5　权限模型测绘（本章重点）</h3>
+
+<p>本项目的权限不是一层，是<b>五层</b>，层与层之间不是包含关系而是<b>交叉</b>关系。
+测绘时必须逐层记录，混成一句「按角色控制」就等于没测。</p>
+
+<h4>第一层：菜单（一级菜单，按账号配置）</h4>
+
+<p>权威函数是 <code>menus.py:142 user_menu_keys()</code>。口径是 2026-07-21 起改的：
+<b>不按角色推，按账号配置</b>——<code>admin</code>/<code>manager</code> 全量可见，其余账号读
+<code>User.menus</code> 这个 JSON 列（<code>models.py:61</code>），NULL 时兜底
+<code>DEFAULT_ACCOUNT_MENUS</code>（<code>menus.py:58</code>）。
+原来的角色菜单矩阵已废除，<code>ROLE_DEFAULT_MENUS</code>（<code>menus.py:64</code>）只在建号和存量迁移时取一次默认值。
+业务菜单 18 个 key（<code>menus.py:19</code> <code>MENU_DEFS</code>），管理组菜单 9 个 key
+（<code>menus.py:42</code> <code>ADMIN_MENU_DEFS</code>）。注意 <code>agent</code> 这个 key 是
+<code>user_menu_keys</code> 里<b>无条件追加</b>的（<code>menus.py:154</code>）——AI 助手菜单对所有登录用户开放。</p>
+
+<div class="box red"><b class="t">陷阱一：hidden_tabs（二级 tab 权限）只在前端隐藏，后端零处强制</b>
+<code>menus.py:99</code> 的 <code>TAB_REGISTRY</code> 注册了 4 个菜单下的二级 tab（采购管理 6 个、财务部 11 个、
+人事部 2 个、仓库 9 个），管理端可以按账号勾选隐藏，值存进 <code>User.hidden_tabs</code>（<code>models.py:54</code>）。
+但全仓库 grep 下来，这个字段的<b>唯一消费点是前端</b>：<code>frontend/src/stores/auth.ts:39-43</code> 的
+<code>tabHidden()</code>；后端只在 <code>auth_router.py:39</code> 原样吐给前端、在
+<code>admin_router.py:213</code> 存回去，<b>没有任何一个 API 端点校验它</b>。
+换句话说：把出纳的「付款」tab 藏起来，只是让按钮不渲染；他手里那张 token 直接 curl 付款端点，照样过。
+<br><b>对 Agent 的直接含义</b>：<code>hidden_tabs</code> 不能作为工具授权的依据。
+如果按它来门控，等于把一个前端渲染开关当成了安全边界——本身不安全，还会给人「已经管住了」的错觉。</div>
+
+<div class="box red"><b class="t">陷阱二（测绘才发现的）：菜单和 API 授权是两套坐标系，而 Agent 挂错了那一套</b>
+<code>user_menu_keys</code> 在后端只有三个调用点：<code>auth_router.py:128</code>（吐菜单给前端）、
+<code>admin_router.py:278</code>（管理端配置）、以及 <code>agent_router.py:412 / 429</code>。
+<b>没有任何一个业务端点用菜单做授权</b>——业务端点一律用 <code>require_roles(...)</code>，
+比如 <code>purchase_mgmt_router.py:23</code> 的 <code>_PURCHASE_ROLES</code>、
+<code>hr_router.py:29</code> 的 <code>_HR</code>。
+于是 Agent 的 <code>_allowed_tools</code>（<code>agent_router.py:409-424</code>）建立在一根<b>与真实 API 授权不同源</b>的轴上，
+两个方向都会跑偏：给某账号配了 <code>purchase_mgmt</code> 菜单但他的角色不在 <code>_PURCHASE_ROLES</code> 里，
+Agent 放行、页面 403；反过来，一个 <code>finance</code> 角色的账号如果没配 <code>purchase_mgmt</code> 菜单，
+页面能进采购对账、Agent 却拒答。
+<br>这正是第三章原则一「<b>Agent 工具只调现有 router 函数并传真实 current</b>」的实证依据：
+只要工具复用业务端点，授权轴自动同源，这类偏差在结构上就不会出现。</div>
+
+<h4>第二层：角色</h4>
+
+<p><code>seed.py:14</code> 定义 25 个角色。测绘要点四条：
+① <b>多角色取并集</b>——<code>models.py:76 role_codes</code> 把锚点 <code>role</code> 和 <code>roles</code> 关联表合并成一个 set，
+<code>has_role</code>（<code>models.py:95</code>）是「任一命中即真」；
+② <b><code>finance_lead</code> ⊇ <code>finance</code> 是全系统唯一的角色包含关系</b>，
+实现就一行：<code>models.py:83</code> 发现 <code>finance_lead</code> 就自动把 <code>finance</code> 塞进集合，
+一处生效、菜单/端点/前端 <code>hasRole</code> 全跟着变；
+③ <code>require_roles</code>（<code>deps.py:52</code>）<b>隐式把 admin/manager 加进白名单</b>——
+所以看到 <code>Depends(require_roles("finance"))</code> 要读成「finance ∪ admin ∪ manager」，
+甚至 <code>require_roles()</code> 不带参数（<code>oa_router.py:304、535</code>）意思是「仅 admin/manager」；
+④ 有一个 <code>viewer</code> 角色被 <code>deps.py:45 require_not_viewer</code> 引用，但<b>不在 seed 的 25 个里</b>——
+这种「代码里有、种子里没有」的悬空引用，是测绘时该记下来问客户的典型条目。</p>
+
+<h4>第三层：行级可见性（7 类规则 A–G）</h4>
+
+<div class="scroll"><table>
+<tr><th>规则</th><th>域</th><th>判定位置</th><th>隔离键</th><th>语义与豁免</th></tr>
+<tr><td><b>A</b></td><td>采购明细</td><td><code>purchase_mgmt_router.py:46</code> <code>_buyer_restricted</code>，24 处调用（如 :303、:350、:1709、:2272）</td><td><code>purchase_items.buyer_id</code></td><td>下单采购员只看自己的单；豁免仅 <code>buyer_lead</code>/<code>admin</code>/<code>manager</code></td></tr>
+<tr><td><b>B</b></td><td>销售台账</td><td><code>sales_router.py:53</code> <code>_all_view</code>，:239-240 起共 18 处</td><td><code>sales_ledger.sales_uid</code></td><td>销售员只看本人订单；<code>sales_lead</code>/管理层全量</td></tr>
+<tr><td><b>C</b></td><td>销售线索</td><td><code>leads_router.py:29</code> + <code>:86-87</code></td><td><code>sales_leads.owner_uid</code></td><td>只看分配给自己的线索；主管可按负责人筛选</td></tr>
+<tr><td><b>D</b></td><td>项目目录/一览</td><td><code>deps.py:95</code> <code>restricted_dir_pids</code></td><td>被派单 ∪ 下单</td><td>仅当账号<b>全部</b>角色 ⊆ <code>deps.py:92</code> 的受限集合、且开关 <code>project_dir_own_only</code> 开才生效；兼任任一更宽角色即看全部</td></tr>
+<tr><td><b>E</b></td><td>项目详情/字段/导出</td><td><code>deps.py:125</code> <code>user_can_view_project</code></td><td><code>project_members</code></td><td>成员才可见；<code>admin</code>/<code>manager</code>/<b>任意以 <code>_lead</code> 结尾的角色</b>全通（:137）</td></tr>
+<tr><td><b>F</b></td><td>部门任务单</td><td><code>orders_router.py:317</code>、<code>:329</code> 收窄列表 + 12 处逐条点判</td><td><code>dept_orders.worker_id</code></td><td>工人只看派给自己的；传入的 worker_id 参数对工人无效（:310-311 注释「防越权看他人」）</td></tr>
+<tr><td><b>G</b></td><td>OA 单据</td><td><code>oa_router.py:354</code> <code>_can_view</code>；列表侧 <code>:560-605</code> 按 scope 分支</td><td>四路并集</td><td>申请人 ∪ 任一步审批角色 ∪ 部门负责人角色（<code>departments.lead_role</code>）∪ 抄送人（<code>oa_request_cc</code>）；另外 <code>finance</code> 在 <code>:357</code> 被整体放行</td></tr>
+</table></div>
+
+<div class="box red"><b class="t">重点：<code>_buyer_restricted</code> 的反直觉语义</b>
+判定只看「是不是采购下单角色」，<b>与是否兼任 finance / logistics / sales 无关</b>。
+代码注释把踩坑经过原样留在了 <code>purchase_mgmt_router.py:47-50</code>：
+采购员王芹同时挂 buyer + finance + logistics，早期实现里因为她带着 <code>finance</code> 就被判成「能看全部」，
+于是采购的行级隔离对她整个失效。
+<br>要记住的不是「王芹」这个人，是它的<b>形状</b>：<b>一个角色的加入解除了另一个角色的限制</b>。
+只要有人在第二个地方「自己再写一遍角色判断」，几乎必然重现它——因为「财务当然能看全部账」在直觉上太顺了。
+本项目的防线是把判定收敛成一个函数全域复用；Agent 层的防线是<b>根本不写第二遍</b>，直接调业务函数。
+<br><b>迁移提示</b>：进任何客户系统都要专门找一遍这种「角色叠加改变可见范围」的规则，并当面向业务确认方向
+（放宽还是维持收紧）。这类规则永远不在权限文档里，只在事故复盘里。</div>
+
+<h4>第四层：字段级</h4>
+
+<p><code>field_permissions</code> 表按 <code>(field_id, role_id)</code> 记 <code>can_view</code>/<code>can_edit</code>
+（<code>models.py:206-214</code>）。两条语义必须记准：
+<b>多角色取并集</b>（<code>field_perm_router.py:124-127</code>，任一角色允许即允许）、
+<b>缺配置 = 默认放行</b>（<code>field_perm_router.py:120-122</code>：只要有一个角色没配这个字段，
+该角色默认全放行，并集自然就是全放行；写侧同理，<code>datasheets_router.py:363-364</code>
+「仅当所有角色都配了且都不允许编辑才拦」）。
+更要命的是<b>只有 <code>can_edit</code> 在服务端强制</b>——读侧的
+<code>list_fields</code>（<code>datasheets_router.py:170-184</code>）原样返回全部字段，
+<code>can_view</code> 只通过 <code>GET /me/datasheet/{did}</code>（<code>field_perm_router.py:132</code>）
+下发给前端做渲染遮蔽。<b>字段级「可见性」和 hidden_tabs 一样，是 UI 约定不是安全边界。</b></p>
+
+<h4>第五层（容易漏测）：记录级/关系级约束</h4>
+
+<p>还有一类规则既不是角色也不是行级，而是<b>「当前用户相对于这条记录的历史角色」</b>——内控职责分离。
+<code>purchase_mgmt_router.py:2561</code>「不能审批自己提交的请款单」、
+<code>:2711-2712</code>「审批人不能给自己审过的单付款」，
+而且注释明写<b>对管理层同样生效、不留后门</b>（<code>:2559</code>）。
+数据模型为此专门拆了 <code>rejected_by</code> / <code>reject_stage</code> 两个字段
+（<code>models.py:754-760</code>），就是为了不让出纳驳回覆盖掉真正的审批人、把职责分离判错人。
+<b>对 L3 卡片的直接含义</b>：Agent 生成「去付这笔款」的卡片时，收件人可能恰好是那笔单的审批人——
+卡片必须由服务端判定后再决定发不发，不能只看「他是 finance 角色」。</p>
+
+<h3>2.6　测绘产出物：域 × 可见性 × 敏感度矩阵</h3>
+
+<p>FDE 交付给客户签字确认的，不该是一份架构图，而是下面这张表。它的作用是把「Agent 能碰什么」
+变成一个业务方看得懂、能逐行说 yes/no 的清单。本项目的填法（节选）：</p>
+
+<div class="scroll"><table>
+<tr><th>业务域</th><th>可见性层级</th><th>隔离键</th><th>敏感字段</th><th>敏感级</th><th>Agent 可暴露</th><th>返回上限</th></tr>
+<tr><td>采购</td><td>菜单+角色+行级 A</td><td>buyer_id</td><td>suppliers.bank_account（<code>models.py:597</code>，付款诈骗素材）</td><td>高</td><td><span class="tag ok">聚合可</span> <span class="tag no">银行账号否</span></td><td>Top-20</td></tr>
+<tr><td>销售</td><td>菜单+角色+行级 B</td><td>sales_uid</td><td>customer / amount / balance</td><td>高</td><td><span class="tag ok">本人范围</span></td><td>Top-20</td></tr>
+<tr><td>人事</td><td>菜单+角色（hr）</td><td>—</td><td>employees.id_card（<code>hr_router.py:122</code> <code>_emp_out</code> 原样返回）、employee_salary_monthly.*</td><td><b>最高</b></td><td><span class="tag no">禁</span></td><td>—</td></tr>
+<tr><td>OA</td><td>四路并集 G</td><td>四键</td><td>oa_requests.detail（JSON 自由列，无字段级保护）</td><td>中高</td><td><span class="tag no">按域禁</span></td><td>—</td></tr>
+<tr><td>项目 EAV</td><td>菜单 list + 行级 E</td><td>project_members</td><td>records.values（JSON 自由列）</td><td>中</td><td><span class="tag now">单项目可</span></td><td>不跨项目聚合</td></tr>
+<tr><td>平台</td><td>admin/manager</td><td>—</td><td>app_settings 存 <b>AI 助手自己的 API Key 明文</b>；agent_chat_logs 存全员问答（自查即横向越权）</td><td><b>最高</b></td><td><span class="tag no">禁</span></td><td>—</td></tr>
+</table></div>
+
+<p>四条填表规则，是从本项目踩出来的：</p>
+<ol>
+<li><b>敏感级按「泄露后果」定，不按字段名定。</b>供应商银行账号看着像配置数据，实际是付款诈骗的直接素材。</li>
+<li><b>JSON 自由列一律降级处理。</b><code>records.values</code> / <code>projects.extra</code> /
+<code>purchase_items.custom_values</code> / <code>oa_requests.detail</code> 都是自由列，
+<b>字段级权限对它们完全无效</b>（权限挂在 <code>field_id</code> 上，自由列里的键不是 field）。</li>
+<li><b>返回上限必须写进矩阵，而且要说清它是红线不是偷懒。</b>系统有独立的导出审批闸门
+（<code>deps.py:75 ensure_can_export</code> + <code>export_requests</code> 表），
+开启后非管理层导出要走审批。Agent 一次吐 200 行明细，等于给所有人开了一条绕过导出审批的后门。
+所以工具里那些 <code>rows[:20]</code>（<code>agent_router.py:93、118、165、196</code>）是<b>合规边界</b>。</li>
+<li><b>把「已知口径缺陷」也写进矩阵。</b>比如
+<code>tool_po_overdue_by_supplier</code>（<code>agent_router.py:121-135</code>）在<b>已截断成 Top-20 的明细</b>上做供应商聚合，
+返回的 <code>item_total</code> 却取的是全量 <code>count</code>——用户会看到「共 137 条」下面挂着一份只覆盖 20 条的供应商榜。
+客户签字前就该知道这件事，而不是上线三个月后自己发现。</li>
+</ol>
+
+<h3>2.7　可迁移方法论：在陌生系统里怎么快速测绘权限</h3>
+
+<p>换个客户，表名、框架、语言全变，但测绘的动作是固定的四步。核心信条只有一句：
+<b>文档说的不算，代码说的算，实测说的最算。</b></p>
+
+<ol>
+<li><b>先找列表接口，只读它的 where 子句。</b>行级规则的真相 100% 在列表查询里。
+本项目找 <code>_all_view</code> / <code>_buyer_restricted</code> / <code>restricted_dir_pids</code> 这类判定函数，
+再顺着调用点走一遍——一个函数被调 30 次，说明它是硬规则；只被调 1 次，说明<b>其余 29 个端点大概率漏了</b>。
+换成 Django 就是找 <code>get_queryset()</code> 覆写，Rails 找 scope / Pundit policy，
+Spring 找 <code>@PreAuthorize</code> 和 MyBatis XML 里的动态 where，多租户 SaaS 找 <code>tenant_id</code> 注入点，
+Postgres 重度用户还要查 <code>pg_policies</code> 有没有 RLS。</li>
+<li><b>找依赖注入/装饰器，做一张「端点 × 守卫」清单。</b>本项目是
+<code>Depends(require_roles(...))</code>、<code>require_admin_or_manager</code>、<code>require_can_view_detail</code>。
+重点抓<b>没有守卫的端点</b>：<code>logistics_router.py:95</code> 的发货看板用的是裸
+<code>get_current_user</code>，docstring 写着「其它角色只读不限制——数据无敏感金额」（<code>:98</code>）。
+这是有意为之，但你必须<b>把它作为一条已知决策记下来</b>，因为它意味着 Agent 拿物流数据时没有域门控可继承。</li>
+<li><b>反向索引所有 <code>has_role</code> 调用点。</b>用一个角色名 grep 全仓库，得到的定义比角色表里的中文名准得多。
+本项目 grep <code>finance</code> 会同时命中 <code>models.py:83</code> 的自动注入、
+<code>oa_router.py:357</code> 的 OA 全通、<code>purchase_mgmt_router.py:23</code> 的采购对账放行——
+三处含义各不相同，汇总起来才是它的真实权力半径。</li>
+<li><b>实测对拍。</b>拿两个真实账号（一个受限岗位、一个主管），同一个端点、同样的参数、不同的 token，
+diff 返回的 id 集合。这一步能抓出前三步全部漏掉的东西：前端隐藏但后端敞开（<code>hidden_tabs</code>）、
+读侧不过滤但写侧过滤（字段级 <code>can_view</code>）、以及最常见的——<b>文档写了但代码没实现</b>。
+本项目根目录有一份《权限矩阵.md》，<code>menus.py</code> 的注释直接标注它记录的是<b>历史口径</b>，
+运行时早已换成按账号配置。<span class="tag new">这就是「文档不算数」的现场证据</span></li>
+</ol>
+
+<div class="box green"><b class="t">交付形态：测绘文档该长什么样</b>
+给客户的测绘产出物建议只有三件：① 2.2 的<b>业务域表</b>（含每表真实 <code>count(*)</code>）；
+② 2.3 的<b>枢纽图</b>，并把所有软关联用红色标出、附上「这条 join 会漏多少数」的实测数字；
+③ 2.6 的<b>域 × 可见性 × 敏感度矩阵</b>，逐行留签字位。
+前两张是你的工作底稿，第三张是<b>责任边界</b>，唯一需要业务方逐行签字。
+签完之后 Agent 的工具清单就能从它机械推导：<b>标「禁」的域不出现工具；标了上限的，工具里硬编码上限；
+带口径缺陷的，返回值里必须携带口径声明字段</b>。
+<br>做完测绘你会发现，真正难的从来不是让模型学会调工具，而是<b>在动手之前就说清楚它到底被允许知道什么</b>。
+这件事没有捷径，也正是 FDE 的价值所在。</div>
+
+</section>

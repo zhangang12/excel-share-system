@@ -37,6 +37,12 @@ from ..database import get_db
 from ..deps import require_admin_or_manager, get_current_user, user_can_view_project
 from ..dept_config import DEPTS
 from ..overdue import _CN_TZ
+# 🆕 行级可见性：**复用页面本体的谓词，不在这里重写一遍角色判断**。
+#   重写是上一版越权的根因——页面改了规则，工具这边不会跟。这几个函数是唯一真源：
+#   _buyer_restricted 有反直觉语义（兼任 finance/logistics 不解除采购隔离），自己写必然踩坑。
+from .purchase_mgmt_router import _buyer_restricted
+from .sales_router import _all_view as _sales_all_view
+from .orders_router import _is_mgr as _orders_is_mgr, _is_lead as _orders_is_lead
 
 log = logging.getLogger("agent")
 
@@ -63,18 +69,26 @@ def _uname(u) -> str:
 
 # ==================== 数据工具层（全部只读 SELECT） ====================
 
-async def tool_po_arrival_overdue(db: AsyncSession, min_overdue_days: int = 0) -> dict:
-    """采购到期未到货明细：预计到货日期已到(含当天)且仍未收货（口径同 overdue.scan_po_arrival_overdue）。"""
+def _scope_po(q, current: models.User):
+    """采购行级隔离：与 /api/purchase-mgmt/items 列表同口径（purchase_mgmt_router.py:349）。"""
+    if _buyer_restricted(current):
+        q = q.where(models.PurchaseItem.buyer_id == current.id)
+    return q
+
+
+async def _po_arrival_overdue_rows(db: AsyncSession, current: models.User,
+                                   min_overdue_days: int = 0) -> list[dict]:
+    """到期未到货的**全量**行（未截断）——聚合类工具必须基于它，不能基于 Top-N 的结果再聚合。"""
     today = _today()
-    r = await db.execute(
+    q = _scope_po(
         select(models.PurchaseItem).where(
             models.PurchaseItem.expected_arrival.isnot(None),
             models.PurchaseItem.expected_arrival != "",
             models.PurchaseItem.expected_arrival <= today.isoformat(),
             or_(models.PurchaseItem.arrival_date.is_(None),
                 models.PurchaseItem.arrival_date == ""),
-        )
-    )
+        ), current)
+    r = await db.execute(q)
     rows = []
     for it in r.scalars().all():
         exp = _parse_d(it.expected_arrival)
@@ -90,14 +104,21 @@ async def tool_po_arrival_overdue(db: AsyncSession, min_overdue_days: int = 0) -
             "expected_arrival": it.expected_arrival, "over_days": over_days,
         })
     rows.sort(key=lambda x: -x["over_days"])
+    return rows
+
+
+async def tool_po_arrival_overdue(db: AsyncSession, current: models.User,
+                                  min_overdue_days: int = 0) -> dict:
+    """采购到期未到货明细：预计到货日期已到(含当天)且仍未收货（口径同 overdue.scan_po_arrival_overdue）。"""
+    rows = await _po_arrival_overdue_rows(db, current, min_overdue_days)
     return {"count": len(rows), "items": rows[:20]}
 
 
-async def tool_po_arriving(db: AsyncSession, days: int = 3) -> dict:
+async def tool_po_arriving(db: AsyncSession, current: models.User, days: int = 3) -> dict:
     """未来 N 天（含今天）预计到货、目前仍未收货的采购明细。"""
     today = _today()
     end = (today + timedelta(days=max(days, 0))).isoformat()
-    r = await db.execute(
+    r = await db.execute(_scope_po(
         select(models.PurchaseItem).where(
             models.PurchaseItem.expected_arrival.isnot(None),
             models.PurchaseItem.expected_arrival != "",
@@ -105,7 +126,7 @@ async def tool_po_arriving(db: AsyncSession, days: int = 3) -> dict:
             models.PurchaseItem.expected_arrival <= end,
             or_(models.PurchaseItem.arrival_date.is_(None),
                 models.PurchaseItem.arrival_date == ""),
-        )
+        ), current)
     )
     rows = [{
         "item_name": it.item_name, "po_no": it.po_no,
@@ -118,11 +139,13 @@ async def tool_po_arriving(db: AsyncSession, days: int = 3) -> dict:
     return {"count": len(rows), "days": days, "items": rows[:20]}
 
 
-async def tool_po_overdue_by_supplier(db: AsyncSession) -> dict:
-    """到期未到货按供应商聚合：每个供应商的未收货条数、最大超期天数、涉及项目（口径同 tool_po_arrival_overdue）。"""
-    d = await tool_po_arrival_overdue(db, min_overdue_days=0)
+async def tool_po_overdue_by_supplier(db: AsyncSession, current: models.User) -> dict:
+    """到期未到货按供应商聚合：每个供应商的未收货条数、最大超期天数、涉及项目（口径同 tool_po_arrival_overdue）。
+    🆕 修口径 bug：此前在**已截断的 Top-20 明细**上聚合，count 却用全量总数，两个数字对不上；
+    现基于全量行聚合，只在最后截断供应商条数。"""
+    all_rows = await _po_arrival_overdue_rows(db, current, 0)
     agg: dict[str, dict] = {}
-    for it in d["items"]:
+    for it in all_rows:
         a = agg.setdefault(it["supplier"], {"supplier": it["supplier"], "count": 0,
                                             "max_over_days": 0, "projects": set()})
         a["count"] += 1
@@ -132,21 +155,23 @@ async def tool_po_overdue_by_supplier(db: AsyncSession) -> dict:
     rows = sorted(agg.values(), key=lambda x: (-x["max_over_days"], -x["count"]))
     for a in rows:
         a["projects"] = sorted(a["projects"])
-    return {"count": len(rows), "item_total": d["count"], "suppliers": rows[:20]}
+    return {"count": len(rows), "item_total": len(all_rows), "suppliers": rows[:20]}
 
 
-async def tool_balance_due(db: AsyncSession) -> dict:
+async def tool_balance_due(db: AsyncSession, current: models.User) -> dict:
     """尾款到期/逾期清单：balance>0 且 balance_date 非空且 <= 今天+14 天（口径同 overdue.scan_balance_due）。"""
     today = _today()
     threshold = (today + timedelta(days=14)).isoformat()
-    r = await db.execute(
-        select(models.SalesLedger).where(
-            models.SalesLedger.balance > 0,
-            models.SalesLedger.balance_date.isnot(None),
-            models.SalesLedger.balance_date != "",
-            models.SalesLedger.balance_date <= threshold,
-        )
+    q = select(models.SalesLedger).where(
+        models.SalesLedger.balance > 0,
+        models.SalesLedger.balance_date.isnot(None),
+        models.SalesLedger.balance_date != "",
+        models.SalesLedger.balance_date <= threshold,
     )
+    # 销售行级隔离：与 /api/sales/ledger 同口径（sales_router.py:239）——非管理层/非销售主管只看本人
+    if not _sales_all_view(current):
+        q = q.where(models.SalesLedger.sales_uid == current.id)
+    r = await db.execute(q)
     rows = []
     for led in r.scalars().all():
         due = _parse_d(led.balance_date)
@@ -165,7 +190,7 @@ async def tool_balance_due(db: AsyncSession) -> dict:
     return {"count": len(rows), "items": rows[:20]}
 
 
-async def tool_overdue_orders(db: AsyncSession, dept: str | None = None,
+async def tool_overdue_orders(db: AsyncSession, current: models.User, dept: str | None = None,
                               allowed_depts: list[str] | None = None) -> dict:
     """部门逾期任务：进行中且预计完成日已过（口径同 overdue.scan_overdue）。
     dept 可限定 design/electric/produce；未指定 dept 时可传 allowed_depts 按调用者菜单收窄。"""
@@ -179,6 +204,14 @@ async def tool_overdue_orders(db: AsyncSession, dept: str | None = None,
         q = q.where(models.DeptOrder.dept == dept)
     elif allowed_depts is not None:
         q = q.where(models.DeptOrder.dept.in_(allowed_depts))
+    # 任务行级隔离：与 orders_router 同口径——管理层看全部；部门主管看本部门全部；
+    # 其余（工人）只看派给自己的单。主管可能只主管其中一个部门，故按部门逐个放行再并上本人。
+    if not _orders_is_mgr(current):
+        lead_depts = [d for d in DEPTS if _orders_is_lead(current, d)]
+        cond = models.DeptOrder.worker_id == current.id
+        if lead_depts:
+            cond = or_(cond, models.DeptOrder.dept.in_(lead_depts))
+        q = q.where(cond)
     r = await db.execute(q)
     rows = []
     for o in r.scalars().all():
@@ -216,7 +249,8 @@ async def _hr_due_rows(db: AsyncSession) -> list[dict]:
     return rows
 
 
-async def tool_morning_report(db: AsyncSession, domains: set[str] | None = None,
+async def tool_morning_report(db: AsyncSession, current: models.User,
+                              domains: set[str] | None = None,
                               order_depts: list[str] | None = None) -> dict:
     """晨报聚合：采购到期未到货 / 部门逾期任务 / 尾款到期 / 人事到期，各取 Top5 + 总数。
     🆕 domains ⊆ {"po","orders","balance","hr"} 指定只统计调用者有菜单的小节（缺省=全部）；
@@ -224,13 +258,13 @@ async def tool_morning_report(db: AsyncSession, domains: set[str] | None = None,
     dom = domains if domains is not None else {"po", "orders", "balance", "hr"}
     out: dict = {"today": _today().isoformat()}
     if "po" in dom:
-        po = await tool_po_arrival_overdue(db)
+        po = await tool_po_arrival_overdue(db, current)
         out["po_arrival_overdue"] = {"count": po["count"], "top": po["items"][:5]}
     if "orders" in dom:
-        orders = await tool_overdue_orders(db, allowed_depts=order_depts)
+        orders = await tool_overdue_orders(db, current, allowed_depts=order_depts)
         out["overdue_orders"] = {"count": orders["count"], "top": orders["items"][:5]}
     if "balance" in dom:
-        balance = await tool_balance_due(db)
+        balance = await tool_balance_due(db, current)
         out["balance_due"] = {"count": balance["count"], "top": balance["items"][:5]}
     if "hr" in dom:
         hr = await _hr_due_rows(db)
@@ -441,19 +475,19 @@ async def _run_tool(name: str, args: dict, db: AsyncSession, current: models.Use
             domains.add("hr")
         if not domains:
             return {"error": "你没有可查询的数据域，请联系管理员开通菜单"}
-        return await tool_morning_report(db, domains, dept_keys or None)
+        return await tool_morning_report(db, current, domains, dept_keys or None)
     if name in ("po_arrival_overdue", "po_arriving", "po_overdue_by_supplier"):
         if "purchase_mgmt" not in keys:
             return _deny("purchase_mgmt")
         if name == "po_arrival_overdue":
-            return await tool_po_arrival_overdue(db, int(args.get("min_overdue_days") or 0))
+            return await tool_po_arrival_overdue(db, current, int(args.get("min_overdue_days") or 0))
         if name == "po_arriving":
-            return await tool_po_arriving(db, int(args.get("days") or 3))
-        return await tool_po_overdue_by_supplier(db)
+            return await tool_po_arriving(db, current, int(args.get("days") or 3))
+        return await tool_po_overdue_by_supplier(db, current)
     if name == "balance_due":
         if not keys & {"finance", "sales"}:
             return _deny("finance", "sales")
-        return await tool_balance_due(db)
+        return await tool_balance_due(db, current)
     if name == "overdue_orders":
         dept_keys = sorted(keys & set(_DEPT_MENU_KEYS))
         if not dept_keys:
@@ -464,7 +498,8 @@ async def _run_tool(name: str, args: dict, db: AsyncSession, current: models.Use
                 return {"error": f"未知部门 {dept}"}
             if dept not in dept_keys:
                 return _deny(dept)
-        return await tool_overdue_orders(db, dept, allowed_depts=None if dept else dept_keys)
+        return await tool_overdue_orders(db, current, dept,
+                                         allowed_depts=None if dept else dept_keys)
     if name == "project_status":
         if "list" not in keys:
             return _deny("list")

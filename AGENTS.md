@@ -53,6 +53,14 @@ bash desktop/release.sh      # 旧的本机一体打包+上传路径，仍可用
 - **「不用改」加倍举证**：结论是"已修好/不用动"时，必须给出可验证证据（时间线/数据）且完整解释用户为何仍遇到问题；只能给出"可能/也许"时按需要改处理——"不用改"的证据标准高于"要改"（同一 #283 教训：我拿#242旧修复+未证实的"旧消息"假设就放行了自己）
 - **先质疑需求再实现**：对「让计算列可编辑」这类设计上就危险的诉求，先反问是否合理、是否有更简单的满足方式，再写代码
 - 只改与任务相关的文件；不主动新建文档（用户要求除外）；改接口时同步更新调用方与注释
+- **行级可见性必须复用页面本体的谓词，禁止在别处重写角色判断**（2026-08-01 血的教训）：
+  AI 助手曾因工具层自己写了一套门控而绕过页面的行级隔离——普通销售员问一句「尾款」拿到全公司客户名和金额。
+  根因不是漏写一行 `where`，是**权限双写**：页面改了规则，另一处不会跟，而且**这种洞不报错、只安静地多返回几行**。
+  唯一真源：`_buyer_restricted`(purchase_mgmt_router) / `_all_view`(sales_router) / `_is_mgr`+`_is_lead`(orders_router) /
+  `user_can_view_project`+`restricted_dir_pids`(deps)。要用就 import 本体。
+  `_buyer_restricted` 尤其不能自己写——它有反直觉语义（兼任 finance/logistics **不**解除采购隔离）。
+  **新增任何跨域读数据的代码，必须配一个「与页面接口对照」的可见性测试**（范本 `tests/test_agent_row_level_scope.py`），
+  断言 AI/新接口返回的行数与页面一致，而不是等于某个常量（常量会随种子数据漂移）。
 - AI 助手（`backend/app/routers/agent_router.py`）的所有数据工具**永远只读 SELECT**，不提供收货/付款等强职责命令；菜单全员可见（user_menu_keys 无条件追加 agent），查询按用户菜单门控（po→purchase_mgmt、尾款→finance/sales、部门逾期→对应部门菜单、project_status→list+行级可见性+ledger 仅 finance/sales、晨报按可用域聚合）
 
 ## 关键约定
@@ -72,6 +80,9 @@ bash desktop/release.sh      # 旧的本机一体打包+上传路径，仍可用
 - `docs/` 下的 HTML 设计稿是历史需求稿，不代表当前实现；`README.md` 内容偏旧（v2 时代），以本文件和 `docs/项目交接文档.md` 为准
 
 ## 当前状态（2026-08-01）
+
+- **AI 助手行级越权已修（本次）**：6 个工具签名加 `current`，复用页面谓词而非重写（见上方铁律）；顺带修 `po_overdue_by_supplier` 在截断明细上聚合的口径 bug。新增 `tests/test_agent_row_level_scope.py`（AI==页面 对照断言）。**#331 职责分离收口**：规则保留，出口是「撤回审批」——审批人退回、发起人重提即可解开，不改内控。
+- **AI 助手 L3 规划已成文**：`docs/AI助手架构设计稿.html`（三原则 / 卡片式人审门 / AgentScope 编排 / 六期路径 P0-P5，本次做的是 P0）；`docs/ai-agent-erp-handbook/index.html`（《AI Agent 落地企业 ERP 完整手册》十二章）。**下一步是 P1 访问路径改造**：工具改为调 router 函数，权限彻底单点。
 
 - **第 20 批 #332/#333 + 口述需求两项（本次）**：#333 `sales_router` 的 `_is_sales()` 不排除主管，`invoice_apply`/`upload_contract` 两处漏 `_all_view` 豁免（同文件另外 9 处都有；`invoice_apply` 里「主管直连财务」那段对兼任 sales 的主管是死代码 = 铁证）。#332 尾款到款即清零——**已告知 `balance` 是合同额/未收额双语义共用列、清零会打坏销售报表，用户仍明确选直接清零**，加 `balance_contract` 存清零前的值使其可逆。**请款驳回闭环**：`pay-reject`/`withdraw-approval`/`resubmit` 三端点 + `_do_reject()`，`rejected_by` **不可复用 `finance_approver_id`**（否则抹掉真审批人且让职责分离判错人）；重提必须重走审批。**桌面黑屏真因**：渲染进程死了、窗口只剩 `backgroundColor:'#0f1d30'` 在画，主进程原来只监听 `did-fail-load` 接不住——已加 `render-process-gone`/`unresponsive` 自恢复、GPU 崩溃标记下次启动降级、`userData/crash.log`。测试 `test_fb332_fb333_sales` / `test_payment_reject_flow` PASSED
 - **第 19 批反馈 #329-#331（已上线 `4d9559a`）**：#329 采购改收货价——后端本就允许（实证），缺口在合并单父行只有「整单维护」改不了价，已并入逐条改价表格+按数量分摊总价助手；顺手修真 bug：`_auto_stock_in` 幂等导致**仓库改价不回写 `WhTxn` 金额**，抽 `_sync_txn_amount()` 给 `update_item`/`_finish_receive` 共用（整条入库时金额跟**收货金额**走，合并收货反算单价乘回去有分位差）。#330 待收货 `.limit(300)` 放到 2000 + 三个搜索框下沉 SQL（`keyword` 必须带 `source_sheet_id IN (...)` 分支，否则 #253 那批回溯项目编号的行搜不到=回归）+ 新增 `GET /receiving/meta` 出真实 `count(*)` 与全量供应商下拉。**#331 职责分离用户明确指示搁置，等业务回复规则，一行没动**。测试 `test_fb329_received_price_edit.py` PASSED，vue-tsc + vite build exit=0

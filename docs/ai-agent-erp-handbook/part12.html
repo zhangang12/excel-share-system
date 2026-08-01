@@ -1,0 +1,268 @@
+<section id="p12">
+<h2>第十二章　演进与终止：灰度共存、数据迁移，以及什么时候该承认它不值得做</h2>
+
+<p class="muted">前十一章都在回答「怎么把它做出来、做对、做稳」。这一章回答两个几乎没人写进手册的问题：<b>怎么把新一代和上一代同时挂在生产上而不出事</b>，以及<b>什么时候该主动停</b>。第二个问题是本手册的收口，也是 FDE 这个职业里最能分出资深与不资深的一条线。</p>
+
+<div class="box red"><b class="t">本章的核心结论（先说结果）</b>
+<p>第一，L1 → L3 <b>没有「切换日」</b>。生产上会有一段时间两条代码路径同时活着，而这段时间里最贵的事故不是崩溃，是<b>分批越权</b>——两批用户走不同的循环，新路径的行级过滤和老路径差一行，你就同时拥有「一部分人看得见不该看的」和「日志里看不出来」这两件事。</p>
+<p>第二，Agent 项目正确的结局有两个：<b>扩大</b>，或者<b>体面地停</b>。「不温不火地留着」是最差的第三种——它持续消耗维护预算、持续占着一个菜单位、持续给业务方一个「公司在搞 AI」的错觉，却没有任何一个岗位真的因为它少干活。本章给出把第三种结局挤掉的判据。</p></div>
+
+<h3>12.1　为什么必须共存，而不是「上线新版、下线旧版」</h3>
+
+<p>本项目有三个结构性事实，决定了灰度共存不是可选项：</p>
+
+<ol>
+<li><b>老桌面客户端会一直在。</b><code>AGENTS.md:66</code> 写死了一条铁律：「<b>API 只增不改</b>（老客户端长期并存），破坏性变更只能走 <code>--min-version</code> 强制升级流程」。强制升级的开关在 <code>desktop/version.json:2</code> 的 <code>min_version</code>，客户端启动时拉取比对（<code>desktop/main.js:141-142</code>）。也就是说，只要你不想让几十号人在同一个上午被强制更新客户端，<code>POST /api/agent/chat</code> 的<b>请求体和响应体形状就不能变</b>——现有响应是 <code>{reply, fallback, sources, suggestions}</code>（<code>agent_router.py:954-956</code>），L3 的卡片只能<b>新增字段</b>挂上去，老客户端读不到就当没有。</li>
+<li><b>4 个 worker 各跑各的。</b>生产是 <code>uvicorn --workers 4</code>，进程之间不共享内存。任何「灰度开关」如果做成进程内变量或环境变量，你就得重启才能改；而 Agent 的故障是「答错」不是「崩溃」，你需要的是<b>秒级拉闸</b>，不是十分钟的发版窗口。</li>
+<li><b>Agent 的对错没有健康检查。</b><code>ops/upgrade.sh</code> 的自动回滚（<code>ops/upgrade.sh:64-65</code> 与 <code>:76-77</code>）依赖 <code>ops/health-check.sh</code>，而健康检查只知道进程活没活、接口 200 没 200。一个把采购逾期数字算多了 3 条的 Agent，在这套体系里<b>永远是健康的</b>。所以回滚必须有一条不依赖健康检查的人工通道。</li>
+</ol>
+
+<p class="muted">迁移提示：这三条在别的客户身上会换形态——老客户端可能是 App Store 审核周期、可能是嵌在钉钉里的 H5 缓存、可能是集团统一门户的 iframe；多进程可能变成多 Pod；健康检查可能是 Prometheus。<b>但「有一批用不上新版的旧客户端」「开关必须跨进程即时生效」「正确性没有自动探针」这三件事，在企业内网系统里几乎必然同时成立</b>。</p>
+
+<h3>12.2　存量审计表怎么办：保留 <code>agent_chat_logs</code>，新增 <code>agent_sessions</code></h3>
+
+<h4>12.2.1 现有表的能力边界</h4>
+
+<p><code>agent_chat_logs</code>（<code>backend/app/models.py:1108-1122</code>）一次问答一行，字段是 <code>user_id / username / question / answer</code>（各截断 5000，<code>agent_router.py:892</code> 的 <code>_LOG_TEXT_MAX</code>）<code> / tools_used / via / model / duration_ms / created_at</code>。写入在 <code>_log_chat</code>（<code>agent_router.py:909-927</code>），整段包在 try/except 里——审计是旁路，写失败只记 log 不炸聊天。这个设计本身是对的，不要动它。</p>
+
+<p>但它有四个说不出口的东西，而这四个恰好是第 12.5 节要用来做扩大判据的原料：</p>
+
+<div class="scroll"><table>
+<tr><th>问不出来的问题</th><th>缺什么</th><th>为什么这次必须补</th></tr>
+<tr><td>这次问答花了多少钱</td><td>prompt/completion token、单价</td><td>没有成本就无法算 ROI，无法回答「扩大投入值不值」</td></tr>
+<tr><td>模型调工具时传了什么参数</td><td>工具入参（现在只有工具<b>名</b>，<code>models.py:1118</code>）</td><td>越权复盘时「他问了什么」不够，要知道「工具被喂了哪个 project_code」</td></tr>
+<tr><td>绕了几轮才收敛</td><td>轮次（循环上限 4，<code>agent_router.py:522</code>）</td><td>轮次分布是「工具划分是否合理」的最灵敏指标</td></tr>
+<tr><td>这是一次对话的第几句</td><td>会话 ID</td><td>没有会话就算不出「重复提问率」和「追问深度」——第 12.5 节两个核心信号全废</td></tr>
+</table></div>
+
+<h4>12.2.2 两张表的关系：新表承载会话，老表一行不改</h4>
+
+<p>正确做法不是把老表加宽到十几列，而是<b>加一张会话表，老表只加一列外键</b>。理由很实在：<code>GET /api/agent/chat-logs</code>（<code>agent_router.py:970-995</code>）的响应字段是逐个手写出来的，老桌面客户端的审计页按这个形状渲染；加列不动老字段 = 老客户端零感知，符合 <code>AGENTS.md:66</code>。</p>
+
+<pre><code>agent_sessions（新表，一次会话一行）
+  id / user_id / username（快照，同老表口径）
+  loop_path      "legacy" | "agentscope"   ← 灰度期唯一的真相来源
+  model / rounds / prompt_tokens / completion_tokens / cost_cents
+  tool_calls     JSON: [{name, args, ms, rows}]  ← 带入参，越权复盘用
+  card_type / card_state  （L3：proposed/confirmed/expired/rejected）
+  started_at / ended_at
+
+agent_chat_logs（老表，只加一列）
+  session_id  INTEGER NULL   ← 存量行永远是 NULL，不回填、不需要回填</code></pre>
+
+<p><b>「不回填」是有意的。</b>存量行没有会话概念，硬造一个会返回假数据；而所有以会话为单位的统计天然应该只在「有 <code>session_id</code> 的那部分」上算——这等于自动给你划出了「新旧两个时代」的分界线，比任何版本标记都可靠。</p>
+
+<h4>12.2.3 建表方式：本项目的具体路径</h4>
+
+<p>本项目没有 Alembic。schema 由两段代码负责，分工写在 <code>data_migration.py:17</code> 的注释里：「<b><code>create_all</code> 只建新表、不给已有表加列</b>」。</p>
+
+<div class="scroll"><table>
+<tr><th>要做的事</th><th>走哪条路</th><th>证据</th></tr>
+<tr><td>新增 <code>agent_sessions</code> 表</td><td>在 <code>models.py</code> 里写一个 <code>class</code> 就完了，启动自动建</td><td><code>backend/app/main.py:82</code> <code>Base.metadata.create_all</code>；<code>models.py:1111</code> 对 <code>AgentChatLog</code> 原话「表由 <code>Base.metadata.create_all</code> 自动创建，无需迁移脚本」</td></tr>
+<tr><td>给 <code>agent_chat_logs</code> 加 <code>session_id</code></td><td>必须进 <code>_NEW_COLUMNS</code> 字典，走 <code>ALTER TABLE ADD COLUMN</code></td><td><code>backend/app/data_migration.py:19</code> 起的 <code>_NEW_COLUMNS</code>；执行体 <code>ensure_schema_columns</code>（<code>data_migration.py:137-157</code>），已存在则跳过，幂等</td></tr>
+<tr><td>存量数据口径修正（如给老行打标）</td><td><code>run_data_migrations</code>，函数必须幂等</td><td><code>data_migration.py:1-5</code> 文件头「所有函数必须幂等」「不做 schema 改动」</td></tr>
+</table></div>
+
+<p>还有一个容易踩的坑，本项目已经踩过并修好了：<b>4 个 worker 同时启动会一起判定「列不存在」然后一起 ALTER</b>，后启动的撞 DuplicateColumn 直接退出，外部表现是 nginx 间歇性 502（<code>main.py:68-75</code> 的注释把这个现象描述得很完整）。修法是 Postgres 会话级 advisory lock <code>pg_advisory_lock(872193641)</code>（<code>main.py:76-90</code>）把整段启动串行化。<b>你加新表新列的时候什么都不用做——这把锁已经替你挡住了</b>，但你要知道它在，否则哪天有人「优化启动速度」把它删了，你会在下一次加列时看到 502。</p>
+
+<p class="muted">迁移提示：换个客户大概率有 Alembic 或 Flyway，那么上面这套「create_all + 补列字典」直接换成一个 migration 文件。<b>不变的是三条判断</b>：新表 vs 加列走的是不同风险等级；存量行宁可留 NULL 也不要假回填；多实例启动时的 DDL 竞态必须有锁或有单独的迁移 Job。</p>
+
+<h3>12.3　两套循环并行：怎么切，以及那个真正危险的点</h3>
+
+<h4>12.3.1 开关放哪：本仓库已有现成范式</h4>
+
+<p>不需要发明。本项目已经有两处「配置存库、每次请求实时读、保存即全局生效」的实现，抄第二个就行：</p>
+
+<ul>
+<li>外网登录闸门：<code>backend/app/gate.py:55-56</code> 的 <code>get_gate_config</code>，读 <code>app_settings</code> 的 <code>gate_enabled</code> / <code>intranet_cidrs</code>，默认开。</li>
+<li>Agent 的 LLM 配置：<code>agent_router.py:762-773</code> 的 <code>_effective_llm_config</code>，优先级 <b>DB &gt; .env</b>，注释原话「每次请求实时读库（量极小），admin 页面保存后全局立即生效」。</li>
+</ul>
+
+<p>灰度开关就是 <code>app_settings</code> 里再加几个 key，写入口沿用 <code>PUT /api/agent/config</code> 的守卫 <code>_require_admin_only</code>（<code>agent_router.py:788-792</code>，比 <code>require_admin</code> 更严，manager 也 403）。<b>请求级读库让 4 个 worker 天然一致，改完不用重启</b>——这正是 12.1 第 2 条要的秒级拉闸。</p>
+
+<pre><code>agent_loop.mode      = "legacy" | "canary" | "agentscope"   全局挡板
+agent_loop.users     = "12,27,31"        白名单 user_id（canary 时生效）
+agent_loop.domains   = "purchase_mgmt"   只有这些域的工具走新循环
+agent_loop.shadow    = "1"               影子比对开关（见 12.3.3）</code></pre>
+
+<h4>12.3.2 三种切流维度，本项目只有一种可用</h4>
+
+<div class="scroll"><table>
+<tr><th>维度</th><th>怎么切</th><th>适用</th><th>本项目</th></tr>
+<tr><td><b>按用户白名单</b></td><td><code>user_id in agent_loop.users</code></td><td>L3 卡片确认——卡片错了要有人负责，必须是知情的人</td><td class="tag ok">首选。先放 3 个人：一个采购、一个财务、一个管理层，覆盖三类不同的行级规则</td></tr>
+<tr><td><b>按比例哈希</b></td><td><code>hash(user_id) % 100 &lt; N</code></td><td>互联网千万级流量</td><td class="tag no">不用。几十人规模里 10% = 3 个人，统计上毫无意义；且必须按 <code>user_id</code> 而非按请求哈希，否则<b>同一个人今天走新路明天走老路，同一句话得到两种答案，信任当场崩塌</b></td></tr>
+<tr><td><b>按数据域</b></td><td>工具名所属域在 <code>agent_loop.domains</code> 内</td><td>工具本来就按域分组的系统</td><td class="tag now">次选、可与白名单叠加。本项目的工具门控本来就是按菜单域写的（<code>agent_router.py:414-423</code>），域是天然的切分边界；采购域问题密度最高（对应扫描器 <code>overdue.py:311</code>）</td></tr>
+</table></div>
+
+<h4>12.3.3 最危险的点：灰度期的分批越权</h4>
+
+<div class="box red"><b class="t">一句话风险</b>
+<p>灰度期两批用户走两条代码路径。如果新路径的<b>行级过滤</b>与老路径有任何一行差异，你得到的不是「A/B 实验」，是<b>「一部分人被越权、另一部分人没有」</b>——而且因为对照组表现正常，你会更慢地发现它。</p></div>
+
+<p>这个风险在本项目不是理论。第五章那个 P0 的形状就是：7 个注册工具里只有 <code>tool_project_status</code>（<code>agent_router.py:241</code>）接收 <code>current</code>，其余 6 个签名里根本没有用户对象——<code>agent_router.py:66</code> 的采购工具没有 buyer 过滤（而页面侧 <code>purchase_mgmt_router.py:349</code> 有 <code>_buyer_restricted</code>），<code>agent_router.py:138</code> 的尾款工具没有 sales 过滤（页面侧 <code>sales_router.py:239</code> 有 <code>_all_view</code>），<code>agent_router.py:168</code> 的部门逾期只做到部门级（<code>orders_router</code> 还有 <code>worker_id == me</code>）。<b>你在做 L3 改造时会顺手修这个洞——于是新路径有行级过滤、老路径没有，两条路径对同一个用户返回不同的结果集</b>。这在灰度期是「预期内的差异」，也正因为「预期内」，真正的意外差异会藏在里面看不见。</p>
+
+<p>三条必须同时做的防线：</p>
+
+<p><b>防线一：门控只有一份，新循环不许自带。</b>现在的门控写在两个地方，且注释明说是双保险：<code>_allowed_tools</code> 决定下发哪些 schema 给模型（<code>agent_router.py:409-424</code>），<code>_run_tool</code> 在执行前再门控一次（<code>agent_router.py:427-472</code>，<code>:517</code> 注释「<code>_run_tool</code> 内仍二次门控，双保险」）。换 AgentScope 时的正确姿势是把这两段<b>原封不动抽成 <code>app/agent/guard.py</code></b>，新循环只负责「怎么循环」，不负责「能不能看」。守卫必须放在工具包装器的<b>最内层</b>——第六章那五个坑之一——这样无论哪条循环调它，过的都是同一段代码。<b>只要门控出现第二份实现，灰度就已经失败了，剩下的只是什么时候被发现。</b></p>
+
+<p><b>防线二：同一份权限断言，跑两遍。</b>本项目已经有这份断言：<code>backend/tests/test_agent_perms.py</code>（160 行）。它构造 warehouse / finance / admin 三个身份，断言 warehouse 用户问「采购未到货」被拒、问「尾款到期」被拒、问非成员项目返回「无权查看该项目」、且 <code>suggestions</code> 被过滤为空。注意它开头设了 <code>AGENT_LLM_API_KEY=""</code> 强制走规则降级路径——<b>也就是说它今天测的是工具层门控，不是 LLM 循环</b>。这反而是好消息：把它参数化成 <code>loop_path in ("legacy", "agentscope")</code> 跑两遍，成本极低，而它断言的东西恰好是灰度期唯一不能有差异的东西。<b>把「两遍全绿」设成灰度开关能不能打开的硬前置</b>。</p>
+
+<p><b>防线三：影子比对，而且它在本项目是安全的。</b><code>AGENTS.md:56</code> 的铁律「AI 助手的所有数据工具<b>永远只读 SELECT</b>」有一个很少被提到的红利：<b>同一个请求可以把工具层跑两遍而没有任何副作用</b>。所以灰度期可以开 <code>agent_loop.shadow</code>：用户请求走老路返回，同时用同一个 <code>current</code> 走一遍新路径的工具层（不调 LLM，只调工具），逐行比对结果集，不等就写告警。这一步不需要模型、不花 token、不影响响应（异步旁路），却能在<b>零用户暴露</b>的前提下把「新旧路径行级过滤是否一致」验证到生产真实数据上——而这件事是任何测试库都造不出来的，因为测试库里没有王芹那 200 条真实采购单。</p>
+
+<h4>12.3.4 回滚路径：三层，越靠上越该常用</h4>
+
+<div class="scroll"><table>
+<tr><th>层</th><th>动作</th><th>生效时间</th><th>影响面</th><th>什么时候用</th></tr>
+<tr><td>① 配置级</td><td><code>app_settings</code> 里 <code>agent_loop.mode = "legacy"</code></td><td>秒级，无需重启，4 worker 同时生效</td><td>只回退循环实现，功能仍在</td><td><b>默认拉闸方式。</b>发现新路径答错、越权、慢，先拉这个再排查</td></tr>
+<tr><td>② 菜单级</td><td><code>menus.py:154</code> 去掉无条件追加的 <code>| {"agent"}</code></td><td>发一次版；用户下次拉 <code>/api/auth/menus</code> 即消失</td><td>入口消失，后端 <code>/api/agent/chat</code> 仍在线（老客户端不会 404）</td><td>决定整体停用、或事故期间彻底断人流</td></tr>
+<tr><td>③ 版本级</td><td><code>ops/release.sh</code> → <code>ops/upgrade.sh</code>：备份 → 拉码 → 重建 → 健康检查 → 失败自动回滚</td><td>十分钟量级</td><td>整站</td><td>只有当 Agent 改动同时破坏了别的模块时才用。<b>不要用整站回滚来解决 Agent 答错</b></td></tr>
+</table></div>
+
+<p>注意 <code>ops/upgrade.sh:9</code> 的退出码约定：<code>0=升级成功 / 1=失败但已回滚 / 2=失败且回滚也失败</code>。<b>只有 2 需要你半夜起床</b>，1 意味着线上还是旧版、是安全的。这条约定值得在任何客户现场复制——它把「发版失败」从一个恐慌事件降级成一条日志。</p>
+
+<h3>12.4　兼容约束：API 只增不改，令牌短寿命</h3>
+
+<h4>12.4.1 契约怎么演进</h4>
+<p>L3 卡片挂进现有响应的方式只能是加字段：</p>
+<pre><code>// 现在（agent_router.py:954-956 / :965-967）
+{ reply, fallback, sources, suggestions }
+
+// L3（老客户端读不到 cards，行为完全不变）
+{ reply, fallback, sources, suggestions, cards: [...], session_id }</code></pre>
+<p>三条不能破的线：<b>不改字段名、不改字段类型、不把可选变必填</b>。<code>ChatIn</code>（<code>agent_router.py:884-887</code>）同理——新增的 <code>loop</code> 之类参数必须可选且有默认。真要做破坏性变更，只有 <code>--min-version</code> 一条路（<code>AGENTS.md:66</code>），代价是全员被迫更新客户端，这是一个需要跟业务负责人商量的动作，不是一次技术决定。</p>
+
+<h4>12.4.2 卡片令牌的生命周期：抄 <code>login_gate_codes</code></h4>
+<p>L3 的形态是「Agent 出卡片 → 人点确认 → 用<b>人自己的 token</b> 打现有业务端点」，所以卡片令牌不承担鉴权，它承担的是<b>「你确认的还是当初给你看的那张卡吗」</b>。本仓库已经有一个同类物件可以照抄：<code>LoginGateCode</code>（<code>models.py:1093-1104</code>）——<code>code_hash</code>（只存 sha256 不存明文）、<code>pre_token</code> 关联会话、<code>expires_at</code> 10 分钟、<code>used</code> 一次性、重发即作废旧码。卡片令牌把它的字段换个语义即可：</p>
+<div class="scroll"><table>
+<tr><th>字段</th><th>作用</th><th>为什么必须有</th></tr>
+<tr><td><code>facts_hash</code></td><td>生成卡片时那批权威事实的哈希</td><td>确认时后端重新读一遍权威值再算哈希，不等就拒绝——这是第三章「事实源在服务端」在时间维度上的落地</td></tr>
+<tr><td><code>expires_at</code></td><td>短寿命（建议 ≤ 15 分钟）</td><td>卡片描述的是「此刻的」业务状态。放一天再点，卡上金额早就不是账上金额</td></tr>
+<tr><td><code>used</code></td><td>一次性</td><td>防重复提交。业务端点自身的幂等不能替代它，因为两次提交可能是两个不同的合法动作</td></tr>
+<tr><td><code>user_id</code> + <code>card_type</code></td><td>绑定人与类型白名单</td><td>类型白名单在可信前端代码里决定端点（第三章原则③），令牌里再存一份用于服务端交叉校验</td></tr>
+</table></div>
+<p class="muted">迁移提示：如果客户系统里已经有「一次性凭证」的实现（支付确认码、审批链接、二次验证码），<b>一定要复用它而不是新写</b>——不是为了省代码，是为了让安全评审只需要评审一次。本项目 <code>gate.py</code> 那套已经过了一轮真实的安全打磨（限频、只存哈希、重发作废），凭空再写一套只会把水搅浑。</p>
+
+<h3>12.5　什么时候该扩大投入：五个信号，三个今天算不出来</h3>
+
+<p>扩大投入的判据必须是「从库里能查出来的数」，不是「大家反映挺好用」。下表左边是信号，右边是本项目今天能不能算——<b>算不出来的那三个，正是 12.2 那张新表存在的理由</b>。</p>
+
+<div class="scroll"><table>
+<tr><th>信号</th><th>阈值建议</th><th>数据来源</th><th>今天能算吗</th></tr>
+<tr><td><b>周活占比</b>　独立提问人 / 全体在职账号</td><td>&gt; 40% 且连续 4 周不降</td><td><code>agent_chat_logs.user_id</code> 去重（<code>models.py:1114</code>）；分母是全体，因为 <code>menus.py:148</code> 让 agent 菜单全员可见</td><td class="tag ok">能</td></tr>
+<tr><td><b>工具命中率</b>　<code>tools_used</code> 非空占比</td><td>&gt; 70%</td><td><code>models.py:1118</code></td><td class="tag ok">能。偏低说明用户在瞎试，场景没对准</td></tr>
+<tr><td><b>降级率</b>　<code>via='rule'</code> 占比</td><td>&lt; 5%</td><td><code>models.py:1119</code>；原因还在 <code>model</code> 字段里（<code>rule-fallback:timeout</code> 等，构造见 <code>agent_router.py:895-906</code>）</td><td class="tag ok">能。这是可用性指标，不是质量指标，别混</td></tr>
+<tr><td><b>重复提问率下降</b>　同一人 24h 内问同一件事的比例</td><td>季度环比下降</td><td>需要会话粒度</td><td class="tag no">不能，缺 <code>session_id</code></td></tr>
+<tr><td><b>用户主动纠错次数下降</b></td><td>先要有非零基线</td><td>—</td><td class="tag no">不能。<code>frontend/src/views/AgentView.vue</code>（509 行）里<b>没有任何「这条答错了」的入口</b>，grep 反馈/纠错/报错 零匹配。用户只能走全局反馈通道（<code>models.py:510</code> 的 <code>user_feedback</code>），而那里没人会为一条答错专门开工单</td></tr>
+<tr><td><b>卡片确认率</b>（L3）</td><td>&gt; 60%；&lt; 30% 说明卡片在猜</td><td>需要 <code>card_state</code></td><td class="tag no">不能，L3 未上</td></tr>
+<tr><td><b>业务侧主动提新场景</b></td><td>季度 ≥ 2 条，且来自不同岗位</td><td><code>user_feedback</code>（<code>models.py:510-531</code>）里提到助手/AI/「能不能问」的条数</td><td class="tag ok">能，人工扫一遍即可</td></tr>
+</table></div>
+
+<div class="box amber"><b class="t">最强的那个信号不在表里</b>
+<p><b>业务方开始拿它当证据吵架。</b>「助手说这批有 7 条超期了」出现在部门微信群、出现在周会材料里——这说明它已经进入了业务的决策链，而不只是一个查询窗口。这个信号无法量化，但它出现的那天你会知道。反过来，如果上线半年没有任何一句话是从助手复制粘贴出去的，那么无论周活多高，它都只是个玩具。</p></div>
+
+<h3>12.6　什么时候该承认它不值得继续做</h3>
+
+<h4>12.6.1 终止信号清单</h4>
+
+<div class="scroll"><table>
+<tr><th>信号</th><th>怎么观测</th><th>为什么它是终止信号而不是优化信号</th></tr>
+<tr><td><b>用户绕过它</b>　宁可自己翻页面</td><td>周活长期低位；或高频用户只剩 1-2 个（而且其中一个是你自己）</td><td>企业内网系统没有增长黑客可做。用户已经知道有这个东西、已经试过、然后选择了不用——这是最终判决，不是冷启动问题</td></tr>
+<tr><td><b>纠错成本高于收益</b></td><td>每周花在「为什么它答错了」的排查工时 &gt; 它替所有用户省下的工时</td><td>Agent 的排查是最贵的一类排查：非确定性、跨模型版本、复现要凑数据。这个比值一旦倒挂，很难靠调优翻回来</td></tr>
+<tr><td><b>每次业务变更都要改一堆工具</b></td><td>一个季度内因业务口径变更被迫同步改 Agent 工具 ≥ 3 次</td><td>说明 Agent 层变成了业务口径的<b>第二副本</b>。参见 #332：<code>balance</code> 一列同时是「合同尾款条款额」和「未收余额」，改口径时不得不加 <code>balance_contract</code> 保可逆（<code>data_migration.py:56</code>）。这类变更在制造业 ERP 里是常态，不是意外</td></tr>
+<tr><td><b>评估集通过率长期上不去</b></td><td>L-事实层 &lt; 95%，且连续三轮迭代无改善</td><td>三轮无改善意味着你已经把 prompt、工具划分、模型都试过了。继续投入是在赌下一代模型，而<b>赌下一代模型不是交付</b></td></tr>
+<tr><td><b>真正的痛点是数据质量或流程</b></td><td>评估集失败案例根因归类，「数据缺失/数据错」占 &gt; 50%</td><td>本项目现成的例子：<code>projects.code ↔ purchase_items.project_code</code> 是字符串软关联无外键，成本汇总会静默漏数（第一章）。这种情况下 Agent 越准，错得越有说服力</td></tr>
+</table></div>
+
+<h4>12.6.2 决策树：区分「该停」和「该改方向」</h4>
+
+<p>把上面的信号丢进这棵树。<b>大多数看起来像「该停」的情况，其实是「该改方向」</b>——但也确实有几条通向真正的停。</p>
+
+<pre class="arch">Q1 用户不用它，是因为「答得不对」还是「不需要问」？
+   ├─ 答得不对 ────────────────► 改方向：收窄场景 / 接语义层 / 换模型
+   └─ 不需要问 ──► Q2
+
+Q2 他不需要问，是因为「页面已经够好」还是「他要的是推送不是问答」？
+   ├─ 页面够好 ────────────────► 【停】这块痛点本来就不该给 Agent（第一章）
+   └─ 要的是推送 ──────────────► 改方向：做 L2 主动推送
+                                  （扫描器与双通道推送已在：overdue.py:35/80/138/197/238/311，
+                                   overdue_scheduler 每 12 小时，notify.push_message 站内+企微）
+
+Q3 场景对、路径对，但准确率上不去，根因在哪？
+   ├─ prompt / 工具划分 ───────► 改方向
+   ├─ 数据质量 ────────────────► 【停 Agent】预算转做数据治理（更贵，但更值）
+   └─ 权限口径太碎 ────────────► 改方向：先做权限继承改造，改完再评估
+
+Q4 只有一个岗位在用，且他只反复问一类问题？
+   └────────────────────────────► 【停 Agent】把那个工具做成报表页（见 12.6.3）</pre>
+
+<p>Q4 那条是最容易被忽略、也最能省钱的一条：<b>很多 Agent 工具其实就是一个还没做的报表</b>。<code>tool_po_arrival_overdue</code>（<code>agent_router.py:66-92</code>）本质上就是「到期未到货清单」这张表；本仓库 <code>reports_router.py</code> 里已经有四个同形态的报表端点（月度 <code>:189</code>、项目毛利 <code>:425</code>、成本审计 <code>:530</code>、资金面板 <code>:732</code>）。如果一个用户每天问同一句话，他要的不是对话，是一个书签。</p>
+
+<h4>12.6.3 怎么体面地停</h4>
+
+<p>「停」不等于 <code>git revert</code>。四步，每一步都保留了复活的可能：</p>
+
+<ol>
+<li><b>先关菜单，不删代码。</b>改 <code>menus.py:154</code> 一行，去掉 <code>canonical_menu_order(set(configured) | {"agent"})</code> 里那个无条件并入的 <code>{"agent"}</code>。前端路由守卫（<code>frontend/src/router/index.ts:191-193</code>）会把访问 <code>/agent</code> 的人跳到第一个可见菜单，后端 <code>/api/agent/chat</code> 继续在线，老桌面客户端不会 404。<br><b>本仓库已经这么干过一次</b>：钣金组菜单 2026-06-19 并入生产部、不再单列 <code>key=sheet</code>（<code>menus.py:27</code>），但 <code>frontend/src/router/index.ts:98-103</code> 的 <code>/sheet</code> 路由至今原样躺着，只是没人能进。<b>零风险的下线方式，本项目验证过。</b></li>
+<li><b>审计一行不删。</b><code>agent_chat_logs</code> 全部保留。它是「我们试过、试到什么程度、为什么停」的唯一物证。半年后有人问「AI 这事儿咱们搞过吗」，你能调出真实问答记录和降级率曲线，而不是一段回忆。<b>这比任何复盘文档都可信，因为它不是写出来的，是长出来的。</b></li>
+<li><b>把有价值的工具沉淀成报表页。</b>工具函数是纯只读 SELECT（<code>AGENTS.md:56</code>），搬进 <code>reports_router.py</code> 只需要换掉签名、套上现有的权限依赖、前端加一个 tab。<b>注意这一步同时是在还债</b>——搬过去时你必须把行级过滤补齐（那 6 个没有 <code>current</code> 的工具），而这是本来就该做的事。</li>
+<li><b>写一段两百字的结论，发给业务负责人。</b>内容只有三句：我们试了什么、数据说明了什么、我们把什么留下来了。<b>不要含糊其辞地让它自然消失</b>——静默下线会让业务方觉得「IT 又搞了个半截工程」，而一次明确的结论会让他们下次更愿意配合你做新东西。</li>
+</ol>
+
+<h4>12.6.4 这一条对 FDE 的意义</h4>
+
+<div class="box blue"><b class="t">敢于建议客户停止一个项目，是资深与不资深的分水岭</b>
+<p>不资深的 FDE 会一直加工具、一直调 prompt、一直换模型，因为停下来意味着承认前面的判断有误，也意味着这个项目不再需要他。资深的 FDE 知道：<b>客户买的不是 Agent，是那个业务动作被解决</b>。用一张报表页解决 = 交付成功；用 Agent 解决不了还硬撑 = 交付失败，还额外留下一个要长期维护的、非确定性的、会在模型升级时无声改变行为的东西。</p>
+<p>这一节和第一章形成闭环：<b>第一章问「哪些痛点不该给 Agent」，第十二章处理「上线后才发现它确实不该给 Agent」</b>。两者是同一个判断在不同时间点的两次执行，第二次比第一次更难，因为第一次只需要克制，第二次需要认错。</p></div>
+
+<h3>12.7　沉没成本的诚实处理：哪些是纯赚的</h3>
+
+<p>如果停了，前面的投入并不都打水漂。把资产分成三档，诚实标注——<b>标高了是自欺，标低了是浪费</b>。</p>
+
+<div class="scroll"><table>
+<tr><th>投入</th><th>停了还留下什么</th><th>估值</th></tr>
+<tr><td><b>权限继承改造</b>　给工具传 <code>current</code>、抽出统一守卫</td><td>它修的是一个<b>与 Agent 无关的洞</b>：<code>agent_router.py:66/138/168</code> 那三处过滤缺失，本质是「有一段代码绕过了页面侧的行级规则」。改造过程还会反向暴露业务端点之间的口径不一致</td><td class="tag ok">纯赚</td></tr>
+<tr><td><b>权限测绘文档</b>　七类行级规则、语义层地图</td><td>它是交接文档的一部分，下一个开发者、下一次安全审计、下一次业务口径争论都要用</td><td class="tag ok">纯赚</td></tr>
+<tr><td><b>评估集</b>　<code>tests/test_agent_perms.py</code> 等</td><td>它断言的是「warehouse 用户不该看到尾款」——<b>这句话不管有没有 Agent 都成立</b>。直接留在 <code>backend/tests/</code> 那 71 个测试文件里当权限回归</td><td class="tag ok">纯赚</td></tr>
+<tr><td><b>工具函数的 SELECT 逻辑</b></td><td>搬进 <code>reports_router.py</code> 变报表端点</td><td class="tag now">半赚</td></tr>
+<tr><td><b>LLM 配置范式</b>　白名单 <code>:749</code>、打码回显 <code>:776</code>、DB&gt;env <code>:762</code>、admin 独占 <code>:788</code></td><td>以后接任何 LLM 功能（自动写周报、附件摘要）都能整段复用这套 kv 配置</td><td class="tag now">半赚</td></tr>
+<tr><td><b>TOOL_SCHEMAS / SYSTEM_PROMPT / 追问建议</b>　<code>:361 / :477 / :322</code></td><td>纯 Agent 资产，停了就废</td><td class="tag no">废</td></tr>
+<tr><td><b>L3 卡片令牌与确认链路</b></td><td>没做到 L3 就停 = 全废；做到了才有复用价值</td><td class="tag no">高风险</td></tr>
+</table></div>
+
+<p>最后一行值得单独说：<b>L3 是本项目投入最大、可回收率最低的一段，所以它应该最后做、最晚承诺</b>。先把 L1 的越权补完、把审计补厚、把评估集立起来——这三件事无论结局如何都是赚的；等这三件事的数据说话之后，再决定要不要押 L3。<b>把「纯赚的」排在前面做，是对沉没成本最好的防御</b>。</p>
+
+<h3>12.8　本项目的退出条件</h3>
+
+<p>下面五条是可观测的，写在这里的目的是<b>提前把判断固定下来</b>——事到临头再定标准，标准一定会向「再试试」倾斜。</p>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>条件</th><th>触发动作</th></tr>
+<tr><td>1</td><td><b>权限硬门槛</b>：扩写后的 <code>tests/test_agent_perms.py</code>（含行级断言）连续两次发版不能全绿</td><td class="tag no"><b>立即关菜单</b>（<code>menus.py:154</code>），不是「下个迭代修」。越权是不可撤回的损失</td></tr>
+<tr><td>2</td><td><b>使用门槛</b>：上线 8 周后，<code>agent_chat_logs</code> 周独立提问人 &lt; 全体账号 20%，且趋势不上升</td><td>进 12.6.2 决策树，重新评估场景</td></tr>
+<tr><td>3</td><td><b>可用门槛</b>：<code>via='rule'</code> 降级率连续两周 &gt; 20%，或 <code>rule-fallback:timeout</code> 占降级过半</td><td>说明 30 秒每请求超时（<code>agent_router.py:499</code>）+ 无 stream + 4 轮无全局 deadline（<code>:522</code>）这套架构撑不住当前问题复杂度。要么改架构，要么停</td></tr>
+<tr><td>4</td><td><b>口径漂移门槛</b>：一个季度内因业务口径变更被迫同步改 Agent 工具 ≥ 3 次</td><td>转向「工具只调 <code>reports_router.py</code> 语义层、不自己写口径」；改不动则停</td></tr>
+<tr><td>5</td><td><b>根因门槛</b>：评估集失败案例中根因为「数据缺失/数据错」的 &gt; 50%</td><td>停 Agent，预算转数据治理（软关联补外键、EAV 收敛）</td></tr>
+</table></div>
+
+<p class="muted">这五条里，只有第 1 条是「立即执行」，其余四条触发的都是「重新评估」而不是「自动停」。<b>把「立即执行」的条件控制在一条以内很重要</b>——条件太多，你会开始跟自己讨价还价；只有一条，且是安全条款，就没得讨价还价。</p>
+
+<h3>12.9　收口：项目生命周期决策表</h3>
+
+<p>把第一章的启动判据、第 12.5 的扩大判据、第 12.6 的终止判据合成一张表。<b>这是本手册方法论的全部</b>——中间十章都是实现细节，这张表是判断本身。</p>
+
+<div class="scroll"><table>
+<tr><th>阶段</th><th>核心问题</th><th>判据（合格才往下走）</th><th>证据从哪来</th><th>不合格时的动作</th></tr>
+<tr><td><b>启动</b><br>第一章</td><td>这套系统值不值得上 Agent</td><td>① 数据结构化有语义　② 权限模型可被程序复用　③ 有可数的成功标准　④ 有需求闭环通道　⑤ 存在「反复人肉搬运」的具体动作</td><td>代码测绘（ORM 模型、行级规则、菜单权威）+ 真实反馈记录，<b>不是访谈纪要</b></td><td class="tag no">不做。或先做数据/权限治理，半年后再评</td></tr>
+<tr><td><b>选型</b><br>第三、六章</td><td>做到哪一级、用什么架构</td><td>① 能力分级明确（本项目 L1→L3，L4 不做）　② 三条原则不可协商（单一访问路径 / 事实源在服务端 / 能力可枚举）　③ 明确列出「四不做」</td><td>架构决策记录；每条决策必须有一句「不这么做会怎么死」</td><td class="tag now">降级目标，而不是降低原则</td></tr>
+<tr><td><b>上线</b><br>第七章</td><td>怎么证明它是对的</td><td>① 五层评估集（事实/权限/工具/拒答/卡片）　② 问答级审计　③ 纠错回路</td><td>评估集通过率 + <code>agent_chat_logs</code></td><td class="tag no">不给用户。「我试了几个问题感觉还行」不是验收</td></tr>
+<tr><td><b>共存</b><br>本章 12.1-12.4</td><td>新旧两条路怎么同时活着</td><td>① 门控只有一份实现　② 同一份权限断言两条路径全绿　③ 秒级配置回滚可用　④ API 只增不改</td><td>参数化的权限测试 + 影子比对告警 + <code>app_settings</code> 开关</td><td class="tag no">不开灰度。宁可晚两周，不要分批越权</td></tr>
+<tr><td><b>扩大</b><br>本章 12.5</td><td>要不要加投入</td><td>周活 &gt; 40% / 工具命中 &gt; 70% / 降级 &lt; 5% / 重复提问下降 / 业务主动提新场景 ≥ 2</td><td>会话表 + 审计表，<b>全部是查询得出的数</b></td><td class="tag now">维持现状观察一个季度，不追加</td></tr>
+<tr><td><b>终止</b><br>本章 12.6</td><td>还该不该继续</td><td>触发任一终止信号 → 走决策树 → 区分「该停」与「该改方向」</td><td>评估集失败根因归类 + 使用数据 + 维护工时</td><td class="tag ok">体面地停：关菜单不删代码 / 留审计 / 工具沉淀成报表 / 给业务一个明确结论</td></tr>
+</table></div>
+
+<div class="box green"><b class="t">整本手册的一句话</b>
+<p><b>Agent 不是目的，「这件事以后不用再问了」才是。</b>能用一个报表页做到，就别上 Agent；上了 Agent 做不到，就换回报表页。中间这十章讲的所有技术——工具边界、权限继承、语义层复用、评估集、灰度、卡片确认——存在的唯一理由，是让你在做这个判断时<b>有真数据可依据，而不是靠感觉和面子</b>。</p></div>
+
+<p class="muted">迁移提示：这张表换到任何客户都成立，会变的只有阈值和证据来源。周活 40% 在几十人的制造业内网是合理线，在几千人的集团系统里 15% 可能就够；证据来源在有数仓的客户那里是 BI 看板，在本项目是三张表加一次 grep。<b>但「每个阶段都必须有一条不合格时的退出动作」这一条不能变</b>——一个只有进入条件、没有退出条件的项目，最后一定会靠惯性活着，而靠惯性活着的项目，是 FDE 履历上最不值钱的那一行。</p>
+
+</section>

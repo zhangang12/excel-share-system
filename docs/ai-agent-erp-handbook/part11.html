@@ -1,0 +1,399 @@
+<section id="p11">
+<h2>第十一章　L2 主动推送：与既有扫描器合流，以及业务口径会变这件事</h2>
+
+<p class="muted">本章是全书证据最扎实的一章——因为本项目<b>早在 AI 助手之前就有一整套主动推送系统在生产跑着</b>，六个扫描器、四种去重语义、两条推送通道，每一条都是从真实事故和真实抱怨里长出来的。L2 不是"给 Agent 加个定时任务"，是"把 Agent 塞进一套已经在运转、且已经被调教过的提醒体系里，且不把它搞砸"。本章后半段处理一个更麻烦的问题：这套体系依赖的业务口径<b>会自己漂移</b>，而 AI 侧对此毫无感知。</p>
+
+<div class="box red"><b class="t">本章的核心结论（先说结果）</b>
+<p><b>你的 Agent 不是客户收到的第一条提醒，是第 N 条。</b>本项目的用户每天已经在收「逾期任务」「尾款到期」「尾款催办」「合同到期」「待办逾期」「未到货」六类推送，走站内消息 + 企业微信双通道。Agent 若再独立推一遍，用户收到的不是"更智能了"，是"这破系统怎么天天弹"。<br>
+L2 的正确形态只有一个：<b>Agent 做汇总视角（一张报），扫描器做单件提醒（一条事）</b>，两者共用同一套去重事实，且晨报<b>不得为已经被单独推过的条目再触发一次通知</b>。<br>
+而这一切成立的前提是口径稳定——但口径不稳定。<code>#332</code> 改了 <code>balance</code> 列的写入语义，五个读它的地方语义各不相同，AI 助手是其中之一，<b>而它没有任何机制知道这件事发生了</b>。</p></div>
+
+<h3>11.1　先把已有的推送系统摊开：六个扫描器，四种去重语义</h3>
+
+<p>所有代码在 <code>backend/app/overdue.py</code>（430 行），由 <code>overdue_scheduler(interval_hours=12)</code>（<code>overdue.py:391-430</code>）驱动，在应用启动时挂成 asyncio 任务（<code>main.py:95</code>）。推送统一走 <code>notify.push_message</code>（<code>notify.py:29-84</code>）：先写 <code>messages</code> 表（站内），再尽力而为地发企业微信（<code>notify.py:79-84</code>，失败只记日志，绝不阻塞）。</p>
+
+<h4>11.1.1 六个扫描器全表</h4>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>扫描器</th><th>触发判据</th><th>去重语义</th><th>幂等键</th><th>推送对象</th></tr>
+
+<tr><td>1</td><td><code>scan_overdue</code><br><code>overdue.py:35-77</code></td><td>部门任务 <code>status=in_progress</code> 且 <code>due_date &lt; 今天</code></td><td><b>按天</b>（每天重推一次）</td><td><code>(order_overdue, order.id, 业务自然日)</code></td><td>该部门 <code>lead_role</code> + <code>manager</code></td></tr>
+
+<tr><td>2</td><td><code>scan_balance_due</code><br><code>overdue.py:80-135</code></td><td>台账 <code>balance &gt; 0</code> 且 <code>balance_date ≤ 今天+14 天</code>（含已逾期）</td><td class="tag no"><b>终身一次</b></td><td><code>(balance_due, ledger.id)</code>，不带日期</td><td>销售本人（<code>kind=wx</code>）+ <code>sales_lead</code> + <code>manager</code></td></tr>
+
+<tr><td>3</td><td><code>scan_balance_overdue</code><br><code>overdue.py:138-194</code></td><td>台账 <code>balance &gt; 0</code> 且 <code>balance_date &lt; 今天</code>，项目未软删</td><td class="tag now"><b>7 天窗口 + 逐级升级</b></td><td><code>(balance_overdue, ledger.id)</code> 取最近一条，距今 &lt; 7 天则跳过</td><td>第 1 周销售本人；<b>第 2 周 +销售主管</b>；<b>第 3 周起 +管理层</b></td></tr>
+
+<tr><td>4</td><td><code>scan_hr_reminders</code><br><code>overdue.py:197-235</code></td><td>在职员工：合同到期前 30 天（含已过期）／试用期转正前 7 天</td><td><b>7 天窗口</b>（按员工×事项）</td><td><code>(hr_contract 或 hr_regular, employee.id)</code></td><td><code>hr</code> + <code>manager</code></td></tr>
+
+<tr><td>5</td><td><code>scan_management_todos</code><br><code>overdue.py:238-308</code></td><td>待办未 <code>done</code>，且（承诺日/要求日已过）或（下发满 1 天仍 <code>pending</code>）</td><td><b>按天</b></td><td><code>(mgmt_todo_remind, target.id, 业务自然日)</code></td><td>收件人本人；<b>仅逾期时</b>抄送下达人（<code>:299-303</code>）</td></tr>
+
+<tr><td>6</td><td><code>scan_po_arrival_overdue</code><br><code>overdue.py:311-368</code></td><td>采购明细 <code>expected_arrival ≤ 今天</code> 且 <code>arrival_date</code> 为空</td><td class="tag no"><b>按天 + 业务时间 &lt;15:00 直接跳过</b></td><td><code>(po_arrival_overdue, item.id, 业务自然日)</code></td><td class="tag new"><b>只推 <code>buyer_id</code> 本人</b>（2026-07-26 收窄，见 <code>:359-361</code>）</td></tr>
+</table></div>
+
+<p>注意这张表里<b>没有一张独立的"推送记录表"</b>。所有幂等都靠反查 <code>messages</code> 表的 <code>(biz_type, biz_id, created_at)</code> 实现——推送记录即业务消息本身。这个设计省了一张表，代价是：<b>用户删不了消息，你也不能补发</b>（一旦写进 messages，那条提醒就永久占住了幂等键）。<code>models.py:465-477</code> 的 <code>Message</code> 表因此在 <code>read</code> 和 <code>created_at</code> 上都建了索引，这在 11.4 节会变成"信任预算"唯一可用的度量口子。</p>
+
+<p>还有一个跨扫描器的共用细节：<code>_cn_date()</code>（<code>overdue.py:23-27</code>）把 UTC 存储的 <code>created_at</code> 归一到中国自然日。这行代码来自 <code>#78</code>——UTC/本地日界错位导致同一条提醒在跨零点时被推两次。<b>"按天去重"里的"天"是业务概念，不是 UTC 概念</b>，这是所有做定时推送的人都会踩一次的坑。</p>
+
+<h4>11.1.2 三个反直觉设计，以及它们各自封住的抱怨</h4>
+
+<div class="box amber"><b class="t">反直觉之一：尾款到期提醒<b>终身只推一次</b>（<code>overdue.py:80-135</code>）</b>
+<p>幂等键 <code>(balance_due, ledger.id)</code> 里<b>没有日期</b>（<code>:103-110</code>），只要历史上推过就永久跳过。docstring 里写着来源：<b>「用户 2026-06-17 确认」</b>——这是业务方明确点头的口径，不是开发者偷懒。<br>
+理由很实在：尾款到期前 14 天进入提醒窗，如果按天推，一笔尾款从提醒到收回可能要推 30 条，销售会直接把企微应用免打扰。<b>提醒的目的是"让你知道有这件事"，不是"让你天天记得"。</b><br>
+但这条口径留了一个盲区：推完一次之后，这笔尾款拖到天荒地老都不会再有任何声音。所以才有了第 3 个扫描器——它的 docstring 第一句就写着「补上 <code>scan_balance_due</code>『终身只提醒一次』之后的盲区」（<code>overdue.py:139</code>）。<b>两个扫描器扫的是同一张表的同一个条件，只因去重语义不同就必须拆成两个函数</b>，这件事本身就是本章要讲的东西。</p></div>
+
+<div class="box amber"><b class="t">反直觉之二：逾期尾款<b>7 天一催、逐级升级</b>（<code>overdue.py:138-194</code>）</b>
+<p><code>week = (over_days - 1) // 7 + 1</code>（<code>:178</code>）算出逾期第几周，然后：<code>week ≥ 2</code> 才抄送销售主管（<code>:184-186</code>），<code>week ≥ 3</code> 才抄送管理层（<code>:187-189</code>）。<br>
+这是<b>把"催办强度"和"逾期严重度"绑定</b>，而不是让所有人从第一天就开始收。对管理层来说，收到这条消息本身就携带信息量：<b>"这笔已经拖了三周了"</b>。如果第一天就抄送管理层，这条信息就退化成噪音，管理层会像所有人一样学会无视它。<br>
+配套的去重是"距最近一次催办不足 7 天则跳过"（<code>:167-177</code>），注意它查的是<b>该台账最近一条 <code>balance_overdue</code> 消息</b>，而不是"该用户最近一条"——所以升级抄送出去的那几条也共用同一个键，下一轮整体推迟 7 天。这是个很容易写错的地方：如果按用户去重，主管会在第 2 周和第 3 周各收一次而销售被顺延，节奏就乱了。</p></div>
+
+<div class="box red"><b class="t">反直觉之三：未到货提醒<b>业务时间 &lt;15:00 直接跳过</b>（<code>overdue.py:319-323</code>）</b>
+<p><pre><code>now = datetime.now(_CN_TZ)
+if now.hour &lt; 15:
+    log.info("[scan_po_arrival_overdue] 业务时间 %02d 时 &lt;15 时，跳过当日未到货提醒(#292)", now.hour)
+    return {"scanned": 0, "notified": 0}</code></pre>
+来源是反馈 <code>#292</code>：<b>货车中午才发车</b>，早上扫出来的"今天该到还没到"绝大部分在下午自然就到了。早报全是误报，采购员看两天就不看了。<br>
+这五行代码是本书里我最喜欢的证据。它说明了一件普通工程师很难自己想到的事：<b>提醒的正确时机不由数据决定，由物流决定。</b>没有任何一张表里写着"货车中午发车"，这条知识只存在于采购员的脑子里，而它直接决定了一个后台任务的判据。这就是 11.6 节要展开的"口径长在人的脑子里"。</p></div>
+
+<h4>11.1.3 一个必须先修的调度缺陷</h4>
+
+<div class="box red"><b class="t">现存问题：<code>interval_hours=12</code> 与 <code>&lt;15:00 跳过</code> 组合起来，可能让第 6 个扫描器永远不推</b>
+<p><code>overdue_scheduler</code>（<code>overdue.py:391-430</code>）是"跑一轮 → <code>sleep(12h)</code> → 再跑一轮"，<b>起点是进程启动时刻</b>，不是墙上时钟的固定点。<code>main.py:95</code> 在 lifespan 里 <code>create_task(overdue_scheduler())</code>，而进程启动时刻 = <code>ops/release.sh</code> 发版重建容器的时刻。<br>
+于是：若某次发版落在<b>凌晨 2 点</b>，此后每一轮扫描都发生在 <b>02:00 和 14:00</b>——两个时刻的 <code>now.hour</code> 都 &lt; 15，<code>scan_po_arrival_overdue</code> <b>每一轮都在 <code>:322</code> 处 return，一条未到货提醒都发不出去</b>，且日志里只有一行 info，没有任何告警。若发版落在早上 9 点，扫描在 09:00 和 21:00，则每天 21:00 推一次——晚上九点推"今天该到的货没到"，业务价值接近零。<br>
+<b>只有发版时刻恰好落在 03:00-11:00 之间，这个扫描器才会在 15:00-23:00 的合理时段工作。</b>换句话说，一个被业务方专门提需求（<code>#292</code>）加上的时间窗，它到底生不生效，取决于上一次部署是几点钟。<br>
+这不是本章顺手挑的刺——它是 11.3 节"晨报为什么必须按墙上时钟触发、而不能挂在 <code>interval_hours</code> 上"的直接依据。<b>做 L2 定时推送之前，先把调度器从"固定间隔"改成"对齐固定时刻"。</b></p></div>
+
+<p>调度器的另外两件事做得是对的，L2 应当原样复用而不是另起炉灶：</p>
+<ul>
+<li><b>flock 单实例</b>（<code>overdue.py:371-388</code>）。生产是 <code>uvicorn --workers 4</code>，四个进程各跑一遍启动流程；如果四个都跑扫描，它们会同时通过"messages 表当日去重"的检查（典型 check-then-act 竞态），同一条提醒被推四份。<code>fcntl.flock</code> 抢文件锁，抢不到的 worker 直接不跑 scheduler，HTTP 服务不受影响。<b>任何新增的定时推送必须挂进这同一个被锁保护的循环里</b>，自己再起一个 asyncio 任务就等于把这道锁绕过去了。</li>
+<li><b>每个扫描器独立会话、独立 try</b>（<code>overdue.py:399-429</code>）。一个扫描器抛异常不影响其余五个。晨报作为第七项加进去时，这个结构要照抄——晨报聚合的查询面比任何单个扫描器都宽，它挂掉的概率也最高。</li>
+</ul>
+
+<p>还有一组手动触发端点（<code>main.py:183-215</code>，<code>POST /api/internal/overdue-scan</code> 等，管理层权限）。它们的真实用途是<b>排障和补推</b>：业务方说"我没收到"，你先手动跑一次看返回的 <code>{scanned, notified}</code>——<code>scanned&gt;0 且 notified=0</code> 说明被去重挡了，<code>scanned=0</code> 说明判据没命中。晨报上线时应当同步加一个 <code>POST /api/internal/morning-report-scan</code>，理由完全相同。</p>
+
+<h3>11.2　Agent 进来以后，三种错误接法</h3>
+
+<div class="scroll"><table>
+<tr><th>接法</th><th>做法</th><th>为什么错</th></tr>
+<tr><td class="tag no">替代</td><td>关掉六个扫描器，全部改由 Agent 生成推送</td><td>把三年积累的口径（终身一次／逐级升级／15:00 特判／只推下单人）一次性清零，换成一个不确定性的模型。第一周就会有人问"为什么我合同到期没人告诉我"</td></tr>
+<tr><td class="tag no">并行</td><td>扫描器照跑，Agent 再独立推一路自己算的</td><td>同一件事推两遍，且两遍的口径必然不一致（11.5 节会证明为什么必然）。用户信任的是先到的那条，之后两条都不信</td></tr>
+<tr><td class="tag no">套壳</td><td>让 LLM 把扫描器的文案"润色"一遍再发</td><td>纯增加成本与失败面。<code>overdue.py</code> 的文案是模板拼的、稳定、可 diff；换成模型生成之后，同一件事每天措辞不同，用户反而更难扫读，而且多一次可能超时的外部调用</td></tr>
+<tr><td class="tag ok">汇总</td><td><b>扫描器=单件提醒（一条事），Agent 晨报=汇总视角（一张报）</b>；晨报不重复触发已被单独推过的条目的通知</td><td>这是唯一一种"新增信息量 &gt; 新增打扰量"的接法。见 11.3</td></tr>
+</table></div>
+
+<p>为什么"汇总"确实增加了信息量而不只是重排？因为六个扫描器每一个都只看自己那张表，<b>没有任何一条推送能回答"我今天整体要盯什么"</b>。采购员早上想知道的是"该到的三件、拖最久的那件、外加我那两个项目的尾款要到期了"——这需要跨四个域聚合，而这正是 <code>tool_morning_report</code> 已经在做的事（<code>agent_router.py:219-238</code>）。</p>
+
+<h3>11.3　晨报：把已有的聚合工具变成定时推送</h3>
+
+<h4>11.3.1 现状：工具已经写好了，只是没人定时叫它</h4>
+
+<p><code>tool_morning_report(db, domains, order_depts)</code>（<code>agent_router.py:219-238</code>）聚合四个小节：采购到期未到货 / 部门逾期任务 / 尾款到期 / 人事到期，每节 Top5 + 总数。它已经支持按域裁剪：<code>domains ⊆ {"po","orders","balance","hr"}</code>，<code>order_depts</code> 把"部门逾期"收窄到调用者有菜单的部门。</p>
+
+<p>域从哪来？<code>_run_tool</code> 的 <code>morning_report</code> 分支（<code>agent_router.py:430-444</code>）从 <code>menus.user_menu_keys(current)</code>（<code>menus.py:142-154</code>）现算：<code>purchase_mgmt → po</code>、<code>finance/sales → balance</code>、三个部门菜单 → <code>orders</code>、<code>hr → hr</code>；一个域都没有则返回提示而不是数据。<b>这套域门控就是分层推送要复用的东西，一行都不用新写。</b></p>
+
+<p>缺的只有触发器：今天它只在用户主动打字问"今日晨报"时才跑一次。</p>
+
+<h4>11.3.2 设计：五条规则</h4>
+
+<div class="box blue"><b class="t">规则 1：晨报是视图，不是新事实源</b>
+<p>晨报的每一节都必须<b>调用与扫描器同一份口径</b>，而不是自己再写一遍 where 条件。这一点今天已经部分做到了、但做法是错的——<code>_hr_due_rows</code> 的 docstring 明写「口径同 <code>overdue.scan_hr_reminders</code>」（<code>agent_router.py:200</code>），<code>tool_balance_due</code> 的 docstring 明写「口径同 <code>overdue.scan_balance_due</code>」（<code>agent_router.py:139</code>）。<b>"同"是靠注释保证的，不是靠代码。</b>30 天/7 天窗口在 <code>overdue.py:206-207</code> 和 <code>agent_router.py:206-207</code> 各写了一遍；14 天窗口在 <code>overdue.py:80</code>（默认参数 <code>advance_days=14</code>）和 <code>agent_router.py:141</code>（硬编码 <code>timedelta(days=14)</code>）各写了一遍。<br>
+做 L2 之前先把这些判据抽成共享的谓词函数（放 <code>app/calibers.py</code> 之类），扫描器和 Agent 工具都从那里取。<b>否则你就是在用一个新功能把口径漂移的概率翻倍。</b></p></div>
+
+<div class="box blue"><b class="t">规则 2：出现 ≠ 通知——晨报必须尊重各扫描器的去重窗口</b>
+<p>这是本节最关键的一条。一条尾款今天已经被 <code>scan_balance_overdue</code> 单独催过了，晨报里<b>可以</b>再出现（它是当天全景的一部分，少了它这张报就不完整），但<b>不应该</b>让用户的手机再响一次。<br>
+实现上不需要新表：<code>push_message</code> 已经支持 <code>exclude_user_ids</code>（<code>notify.py:38</code>），且幂等事实全在 <code>messages</code> 表里。晨报生成后，先反查该用户今天已收到的 <code>biz_type ∈ {order_overdue, balance_due, balance_overdue, hr_contract, hr_regular, mgmt_todo_remind, po_arrival_overdue}</code> 的消息集合，然后：</p>
+<div class="scroll"><table>
+<tr><th>情况</th><th>晨报里</th><th>是否触发通知</th></tr>
+<tr><td>该用户今天<b>一条单件提醒都没收到</b></td><td>正常渲染</td><td class="tag ok">推（站内 + 企微）</td></tr>
+<tr><td>今天收到过单件提醒，但晨报里<b>还有它没覆盖的条目</b></td><td>正常渲染全部，已推过的条目标灰/带"已提醒"标记</td><td class="tag now">推，但文案只强调新增的部分</td></tr>
+<tr><td>晨报内容<b>被今天已推的单件提醒完全覆盖</b></td><td>正常渲染（用户主动打开能看到）</td><td class="tag no"><b>只写站内、不发企微</b></td></tr>
+<tr><td>晨报<b>四个小节 count 全为 0</b></td><td>不生成</td><td class="tag no"><b>完全不推</b>（见规则 5）</td></tr>
+</table></div>
+<p>注意第三行"只写站内不发企微"这个中间档：<code>push_message</code> 现在是站内和企微捆绑的（<code>notify.py:75-84</code>），要支持这一档需要给它加一个 <code>silent: bool = False</code> 参数，在 <code>:79</code> 的企微分支前判一下。<b>这是本章唯一要求改动既有推送服务的地方，改动量约 3 行，但它是整个"信任预算"能不能守住的开关。</b></p></div>
+
+<div class="box blue"><b class="t">规则 3：分层——三层视角，一套域门控</b>
+<p>不要给所有人发同一张报。复用 <code>user_menu_keys</code> 的既有语义即可自然分出三层：</p>
+<div class="scroll"><table>
+<tr><th>层</th><th>判定</th><th>看到什么</th><th>依据</th></tr>
+<tr><td><b>管理层</b></td><td><code>role_codes ∩ {admin, manager}</code>（<code>menus.py:151-152</code> 直接返回全量菜单）</td><td>四个域全量 + 总数；<b>不给明细</b>，明细点进页面看</td><td>管理层要的是"哪块在恶化"，不是 20 行表格</td></tr>
+<tr><td><b>主管</b></td><td>有该域菜单 + 角色是 <code>*_lead</code></td><td>本域全量，部门逾期按 <code>order_depts</code> 收窄到有菜单的部门</td><td><code>agent_router.py:437-439</code> 已实现该收窄</td></tr>
+<tr><td><b>个人</b></td><td>普通账号</td><td>本域中<b>与自己有关的行</b>：采购按 <code>buyer_id</code>、尾款按 <code>sales_uid</code>、任务按 <code>worker_id</code></td><td class="tag no"><b>今天做不到</b>——见下方警告</td></tr>
+</table></div>
+<p class="muted">"个人层"是这套设计里唯一需要新代码的部分，而且它<b>卡在第五章那个 P0 上</b>：<code>tool_morning_report</code> 内部调用的 <code>tool_po_arrival_overdue</code> / <code>tool_balance_due</code> / <code>tool_overdue_orders</code> 三个工具的签名里<b>都没有用户对象</b>，只有 <code>tool_project_status</code> 接收 <code>current</code>（<code>agent_router.py:241</code>）。今天的晨报是"域级"的：只要你有 <code>purchase_mgmt</code> 菜单，你就看到<b>全公司</b>的未到货 Top5，包括别人负责的。而 <code>scan_po_arrival_overdue</code> 在 2026-07-26 已经收窄到<b>只推下单人本人</b>（<code>overdue.py:359-363</code>）。<br>
+<b>也就是说：定时晨报如果今天就上，它会以推送的形式，把扫描器刚刚收窄掉的东西重新广播出去。</b>行级越权从"用户主动问才泄露"升级成"每天早上自动送到所有人手机上"。<span class="tag no">L2 的准入条件</span>：行级过滤修复（第五章）必须先于定时晨报上线，没有例外。</p></div>
+
+<div class="box blue"><b class="t">规则 4：时间——按业务节律选，按墙上时钟触发</b>
+<p>"晨报当然是早上 8 点"是个未经检验的直觉。本项目的证据指向别处：</p>
+<ul>
+<li><b>采购域的有效时间是 15:00 之后</b>（<code>#292</code>，<code>overdue.py:319-323</code>）。8:00 的晨报里那一节的准确率约等于早报误报率——业务方为此专门提过反馈。</li>
+<li><b>尾款/人事/待办没有时间敏感性</b>，早上推最好（当天还有时间处理）。</li>
+<li><b>部门逾期任务</b>要在派工之前送到主管手里，本项目的班前会在早上。</li>
+</ul>
+<p>所以正确答案不是一张报一个时间，是<b>两班</b>：<br>
+<b>08:30 早班报</b>＝尾款到期 + 人事到期 + 部门逾期 + 管理层待办（<b>不含采购未到货</b>，或只含"已超期 ≥2 天"的硬逾期——那部分与货车发车无关）；<br>
+<b>15:30 午后报</b>＝采购未到货（紧跟 <code>&lt;15:00 跳过</code> 的窗口之后），只推采购域。<br>
+触发方式必须是<b>墙上时钟对齐</b>：计算"距下一个 08:30/15:30 还有多少秒"然后 sleep，而不是 <code>sleep(12h)</code>。理由见 11.1.3——固定间隔的相位由部署时刻决定，而部署时刻是随机的。落地上最省事的做法是把 <code>overdue_scheduler</code> 的循环周期改小（如 <code>interval_hours=1</code> 或直接 30 分钟），在循环体内按"当前业务小时 + 当日是否已推"决定各任务是否执行——<b>这同时顺手修好了 <code>scan_po_arrival_overdue</code> 那个静默失效</b>，因为一小时一轮必然会有若干轮落在 15:00 之后。</p></div>
+
+<div class="box blue"><b class="t">规则 5：空报不推</b>
+<p>四个小节 count 全为 0 时不生成、不推送。这条看着理所当然，但很多晨报系统会推一句"今天没有异常，一切正常 ✅"——<b>那是在用用户的注意力换你自己的存在感</b>。用户对"系统还活着"的确认需求远低于你以为的；真想确认，去看后台的 <code>log.info</code> 行数。</p></div>
+
+<h4>11.3.3 落地清单</h4>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>改动</th><th>位置</th><th>说明</th></tr>
+<tr><td>1</td><td>抽共享判据模块</td><td>新增 <code>app/calibers.py</code></td><td>14 天 / 30 天 / 7 天窗口、"未到货"、"逾期"四组谓词只留一份，<code>overdue.py</code> 与 <code>agent_router.py</code> 同时改为引用</td></tr>
+<tr><td>2</td><td><code>push_message</code> 加 <code>silent</code> 参数</td><td><code>notify.py:29-84</code></td><td><code>silent=True</code> 时只写 <code>messages</code>、跳过 <code>:79</code> 的企微分支</td></tr>
+<tr><td>3</td><td>调度器改墙上时钟</td><td><code>overdue.py:391-430</code></td><td>周期缩到 1 小时；每个任务自带"该不该在这一轮跑"的判定；顺带修好 <code>#292</code> 的静默失效</td></tr>
+<tr><td>4</td><td>新增 <code>scan_morning_report</code></td><td><code>overdue.py</code>（第七项）</td><td>挂进同一个 flock 保护的循环、同样的独立会话 + 独立 try（照抄 <code>:399-429</code> 结构）</td></tr>
+<tr><td>5</td><td>晨报去重查询</td><td>新函数</td><td>按 <code>to_user_id</code> + 当日 + 七个 <code>biz_type</code> 反查 <code>messages</code>，得出"今天已单独提醒过的 biz_id 集合"</td></tr>
+<tr><td>6</td><td>手动触发端点</td><td><code>main.py:183-215</code> 同组</td><td><code>POST /api/internal/morning-report-scan</code>，管理层权限，返回 <code>{scanned, notified, silent}</code></td></tr>
+<tr><td>7</td><td class="tag no"><b>行级过滤（前置）</b></td><td><code>agent_router.py:66/138/168</code></td><td>三个工具补 <code>current</code> 参数与行级过滤。<b>不做这条就不能上定时晨报</b></td></tr>
+<tr><td>8</td><td>推送退订</td><td><code>users</code> 加字段或复用配置表</td><td>至少支持"关掉晨报企微、保留站内"。见 11.4</td></tr>
+</table></div>
+
+<h3>11.4　信任预算：每一条无价值推送都在花钱</h3>
+
+<p>把用户对通知的注意力当成一个<b>会被消耗、且回补极慢的预算</b>。花光之后的表现不是投诉，是沉默——企微里把这个应用设为免打扰，站内消息角标常年三位数，然后某天真正紧急的那条尾款催办也没人看见。<b>这是主动推送唯一的、也是不可逆的失败模式。</b></p>
+
+<p>本项目已经因此收窄过一次口径，证据在代码注释里：</p>
+<pre><code># 🆕 2026-07-26 口径收窄：只推采购下单人本人提醒及时跟进，不再推主管/管理层（反馈信息太多）。
+# 无归属采购员的明细不再推任何人（原兜底推主管/管理层，一并去掉）。</code></pre>
+<p class="muted">—— <code>overdue.py:359-361</code>。注意括号里那四个字：<b>反馈信息太多</b>。这就是预算超支的账单形式：不是"提醒错了"，是"提醒对了但太多"，于是整类提醒被砍掉一半收件人。</p>
+
+<h4>11.4.1 三个可算的指标，和它们各自的陷阱</h4>
+
+<div class="scroll"><table>
+<tr><th>指标</th><th>算法</th><th>数据来源</th><th>陷阱</th></tr>
+<tr><td><b>忽略率</b></td><td>该 <code>biz_type</code> 推送 7 天后仍 <code>read=false</code> 的比例</td><td><code>messages.read</code> + <code>created_at</code>（<code>models.py:472/475-477</code>，两列都有索引）</td><td class="tag no"><b>被 <code>read-all</code> 污染</b>：<code>messages_router.py:46-58</code> 一键把该用户所有未读置 <code>read=true</code>。用户点一次"全部已读"，你的忽略率就归零，而他其实一条都没看</td></tr>
+<tr><td><b>关闭率</b></td><td>关掉企微通道 / 免打扰该应用的人数占比</td><td class="tag no"><b>今天完全无法观测</b></td><td>企微侧的免打扰不会回调你的系统。唯一可做的是<b>把退订做进自家系统</b>（落地清单第 8 条），退订才可度量——这是"给用户一个正当出口"和"给自己一个仪表盘"的同一件事</td></tr>
+<tr><td><b>点击进入率</b></td><td>收到推送后 N 分钟内打开对应页面的比例</td><td class="tag now">需要新增埋点</td><td>本项目的 <code>Message</code> 表<b>没有跳转链接字段</b>，站内消息是纯文本。要度量这个必须先给消息加 <code>route</code>（跳哪个页面/哪一行），这本身也是体验改进——今天用户收到"XX 尾款逾期"之后还要自己去翻台账</td></tr>
+</table></div>
+
+<div class="box amber"><b class="t">先修度量口子，再谈优化</b>
+<p><code>read-all</code> 这个陷阱值得单独说：它让<b>唯一现成可用的指标失效</b>。修法很轻——给 <code>Message</code> 加一列 <code>read_via</code>（<code>item</code> / <code>bulk</code>），<code>read-all</code> 写 <code>bulk</code>，逐条已读写 <code>item</code>，忽略率只统计 <code>read_via != 'bulk'</code> 的样本。一列字段换回一个能看的指标。<br>
+在没有这一列之前，你对"用户到底看不看"这件事的所有判断都只是感觉——而在推送这个领域，<b>开发者的感觉系统性地偏乐观</b>，因为开发者收到的是自己写的提醒。</p></div>
+
+<h4>11.4.2 「宁可少推」的四条硬规则</h4>
+
+<ol>
+<li><b>默认静默，显式放行。</b>新增一类推送时，默认只写站内消息；只有当业务方明确说"这个必须弹到手机"，才开企微通道。反过来的顺序（默认全推，收到抱怨再关）已经在本项目发生过一次，代价是 <code>overdue.py:359-361</code> 那次收窄。</li>
+<li><b>升级，不重复。</b>同一件事第二次说话必须<b>带新信息</b>——要么升级收件人（<code>scan_balance_overdue</code> 的三级模式），要么变更严重度。同样的话再说一遍，除了消耗预算什么也不产生。</li>
+<li><b>推送对象越窄越好，宁可漏抄送不要广播。</b><code>scan_po_arrival_overdue</code> 从"下单人+主管+管理层"收窄到"只有下单人"之后，这类提醒的实际处理率是上升的——因为收件人从"三个人互相以为对方会处理"变成了"一个明确责任人"。</li>
+<li><b>给一个体面的关闭方式。</b>没有退订入口时，用户的退订方式是企微免打扰——那是<b>一刀切关掉你所有推送</b>，包括真正紧急的。给出"关晨报、留催办"的粒度，等于把用户的一次性核选项换成可协商的。</li>
+</ol>
+
+<div class="box green"><b class="t">一句话记法</b>
+<p><b>推送的价值 = 信息量 − 打扰量，而打扰量是复利的。</b>第一条没价值的推送成本很低，第二十条的成本是"这个应用以后说什么我都不看了"。所以判断标准不是"这条有没有用"，是<b>"这条的用处，配不配得上它带走的那点信任"</b>。</p></div>
+
+<h3>11.5　业务口径会漂移，而 AI 侧感知不到</h3>
+
+<h4>11.5.1 活证据 #332：一列两义，五个读者</h4>
+
+<p>2026-08-01，业务方提了一个看起来非常小的需求：<b>销售台账里填了"尾款到款时间"（一条批注），尾款金额应该自动归零</b>。实现在 <code>sales_router.py:611-624</code>：</p>
+
+<pre><code>if data.field == "balance":
+    if note_val:
+        if led.balance:
+            led.balance_contract = led.balance
+        led.balance = 0
+    elif led.balance_contract is not None:
+        led.balance = led.balance_contract
+        led.balance_contract = None</code></pre>
+
+<p>代码上方的注释（<code>sales_router.py:611-616</code>）把问题讲得很清楚：<b><code>balance</code> 是双语义共用列</b>——催办/账龄/现金流/AI 只认 <code>balance &gt; 0</code> 判"未收"；而台账合计与销售报表把它当"合同尾款条款额"统计。清零之后，前一组行为正确（立即停催，这正是诉求），后一组数据会随回款变小。当面说明过，用户仍选直接清零；为把"不可逆"兜住，加了 <code>balance_contract</code> 存清零前的值（<code>models.py:314</code>），删批注即原样恢复。</p>
+
+<p>现在把这一列的读者全部列出来——<b>这张表是本章的核心证据</b>：</p>
+
+<div class="scroll"><table>
+<tr><th>读者</th><th>位置</th><th>它以为 <code>balance</code> 是什么</th><th>#332 之后</th></tr>
+<tr><td>销售报表·收款计划汇总</td><td><code>reports_router.py:402</code></td><td class="tag now"><b>合同尾款条款额</b></td><td class="tag no">口径被改坏：已收款的项目从合计里消失，报表随回款变小</td></tr>
+<tr><td>逾期应收账龄</td><td><code>reports_router.py:754-768</code></td><td>未收余额</td><td class="tag ok">正确：收到就不再计入账龄</td></tr>
+<tr><td>未来 13 周现金排程</td><td><code>reports_router.py:999-1010</code></td><td>未收余额</td><td class="tag ok">正确：不再预测已到的钱</td></tr>
+<tr><td>尾款到期提醒（扫描器）</td><td><code>overdue.py:91-98</code></td><td>未收余额</td><td class="tag ok">正确：立即停催（业务诉求本身）</td></tr>
+<tr><td>逾期尾款周催办（扫描器）</td><td><code>overdue.py:146-153</code></td><td>未收余额</td><td class="tag ok">正确：立即停催</td></tr>
+<tr><td class="tag no"><b>AI 助手 <code>tool_balance_due</code></b></td><td><code>agent_router.py:138-165</code></td><td>未收余额</td><td class="tag now"><b>行为跟着变了，而没有任何人通知过 AI 这一侧</b></td></tr>
+</table></div>
+
+<div class="box red"><b class="t">这件事的要害不是"改错了"，是"没有信道"</b>
+<p><code>#332</code> 的改动本身是深思熟虑的：双语义已识别、代价已当面说明、可逆性已用 <code>balance_contract</code> 兜住。<b>但整个变更过程中，没有任何一个环节会提示"AI 助手对『未收尾款』的判定也随之改变了"。</b><br>
+后果的形态是这样的：某天销售问助手"我还有哪些尾款没收"，助手漏掉了一笔——因为财务同事上周在那行插了到款时间（钱其实还在路上，只是排了付款计划）。助手没错，扫描器没错，写入侧也没错，<b>错的是没人告诉助手口径变了</b>。而这类错误在第七章的评估集里表现为"某条一直绿的用例突然变红"——如果你有那条用例的话。<br>
+更普遍地说：<b>Agent 是所有业务口径的下游消费者，但它在任何一次口径评审里都没有座位。</b>这是 FDE 交付之后系统性失效的头号原因，超过模型能力、超过 prompt 质量、超过工具设计。</p></div>
+
+<h4>11.5.2 其他四类漂移源</h4>
+
+<div class="scroll"><table>
+<tr><th>类型</th><th>本项目实例</th><th>漂移方式</th><th>Agent 侧的表现</th></tr>
+<tr><td><b>脏数据随时间累积</b></td><td>孤儿采购：<code>project_code</code> 为空、或既不是项目编号也不是字典里的"订单编号"（<code>reports_router.py:588-600</code>）</td><td>数量单调增长，且增长速度取决于录入习惯，没人为它设阈值</td><td>任何"按项目汇总"的回答分母都在悄悄变小，且<b>误差随时间增大</b>。今天准的答案半年后不准</td></tr>
+<tr><td><b>可逆开关被翻</b></td><td><code>export_approval_enabled</code>（<code>config.py:51</code> 默认 <code>False</code>，<code>deps.py:79</code> 判定）</td><td>一个布尔量，改配置即全局生效，无需发版</td><td>开关一翻，"能不能导出"的答案整体反转，而 Agent 的回答里可能还写着旧规则</td></tr>
+<tr><td><b>业务状态/字典新增</b></td><td>OA 单据类型字典（<code>models.py:914-924</code>，种子见 <code>data_migration.py:1851-1860</code>），管理层可随时增删改；<code>key</code> 稳定但 <code>label</code> 可改</td><td>新增一种单据 → 与它相关的问法全部落到"查不到"</td><td>工具枚举值过期。任何把状态/类型硬编码进 <code>TOOL_SCHEMAS</code>（如 <code>agent_router.py:388</code> 的 <code>dept</code> enum）的地方都会静默失配</td></tr>
+<tr><td><b>组织与流程重组</b></td><td>部门工作台配置 <code>dept_config.py</code> 的 <code>DEPTS</code>（含 <code>#269</code> 冷作、<code>#304</code> 钳工并入装配组等历史调整）；OA 审批链 <code>oa_approval_steps</code> 可由管理层在页面改（<code>oa_router.py:198-246</code>）</td><td>角色的含义变了，但角色 <code>code</code> 没变</td><td>推送对象错位（推给了不再负责这事的角色池）；<code>notify.py:60-62</code> 在角色池为空时<b>只记一行 log 就把消息丢弃</b>，静默失败</td></tr>
+</table></div>
+
+<h4>11.5.3 「口径变更 → 评估用例」对照表</h4>
+
+<p>这张表的用法是：<b>凡是命中左列的改动，右列的用例必须在合并前重跑</b>。它是第七章评估集的索引，也是 code review 的检查项。</p>
+
+<div class="scroll"><table>
+<tr><th>口径</th><th>权威位置</th><th>下游读者</th><th>变更时必须重跑</th></tr>
+<tr><td>"未收尾款"的判定</td><td><code>sales_router.py:611-624</code>（写入侧）</td><td><code>overdue.py:91-98</code>、<code>overdue.py:146-153</code>、<code>agent_router.py:138-165</code>、<code>reports_router.py:402/754-768/999-1010</code></td><td>L-事实：尾款条数与金额对账；L-推送：清零后 24h 内不得再收到该台账催办</td></tr>
+<tr><td>"未到货"的判定</td><td><code>overdue.py:326-334</code></td><td><code>agent_router.py:66-95</code>、<code>tool_morning_report</code> 的 po 小节</td><td>L-事实：<code>count</code> 与扫描器 <code>scanned</code> 一致；L-推送：15:00 前不得推</td></tr>
+<tr><td>提醒窗口（14/30/7 天）</td><td><code>overdue.py:80/206-207</code></td><td><code>agent_router.py:141/206-207</code>（<b>各写了一遍</b>）</td><td>L-事实：边界日（今天+14、今天+30）的条目在两侧同时出现或同时消失</td></tr>
+<tr><td>推送对象范围</td><td><code>overdue.py:361-363</code> 等各扫描器尾部</td><td>晨报的分层规则</td><td>L-权限：收窄后，非责任人不得在任何通道收到该条</td></tr>
+<tr><td>菜单 → 数据域映射</td><td><code>menus.py:142-154</code></td><td><code>agent_router.py:409-424</code>（<code>_allowed_tools</code>）、<code>:429-472</code>（<code>_run_tool</code>）</td><td>L-权限：每个岗位一组"该看到/不该看到"探测题</td></tr>
+<tr><td>导出审批开关</td><td><code>config.py:51</code> + <code>deps.py:79</code></td><td>凡涉及"能不能导出"的回答</td><td>L-拒答：开关两态各跑一次</td></tr>
+<tr><td>部门/角色配置</td><td><code>dept_config.py</code>、<code>oa_approval_steps</code></td><td>推送角色池、<code>overdue_orders</code> 的 dept enum</td><td>L-工具：新部门是否被 <code>TOOL_SCHEMAS</code> 的 enum 拒绝；L-推送：角色池非空</td></tr>
+</table></div>
+
+<h4>11.5.4 怎么让口径变更自动通知到 Agent 维护者</h4>
+
+<p>先说清楚现实约束：<b>本仓库没有测试 CI</b>——<code>.github/workflows</code> 下只有 <code>desktop-build.yml</code>（桌面端打包），测试是"<code>backend/.venv/bin/python tests/xxx.py</code> 独立脚本 + 临时 SQLite"的人工约定。所以任何"挂个 CI job 卡住"的方案在这里落不了地。可落地的是下面这套，按投入从小到大：</p>
+
+<div class="scroll"><table>
+<tr><th>层</th><th>做法</th><th>成本</th><th>能挡住什么</th></tr>
+
+<tr><td><b>① 口径标记</b></td><td>在每个权威口径函数上方加一行结构化注释：<br><code># @caliber: balance_unpaid  readers: overdue.scan_balance_due, agent.tool_balance_due, reports.receivables</code><br>标记本身就是文档，且可被 grep</td><td>一次性写 8-10 处</td><td>改动者在改这一行时<b>眼睛能看到下游是谁</b>。这是最便宜、也是收益最高的一层</td></tr>
+
+<tr><td><b>② grep 守卫脚本</b></td><td><code>ops/check_calibers.sh</code>：对 <code>git diff --name-only</code> 命中的文件，grep 出改动块附近的 <code>@caliber</code> 标记，打印"你动了 X 口径，下游有 Y、Z，请重跑评估用例 Ennn"。挂 <code>pre-push</code> hook（不阻断，只打印）</td><td>半天</td><td>忘记看注释的情况。<b>不阻断很关键</b>——阻断式检查在没有 CI 的仓库里会被 <code>--no-verify</code> 绕过，然后彻底失效</td></tr>
+
+<tr><td><b>③ 写进检查清单</b></td><td><code>AGENTS.md</code> 现有铁律「AI 助手的所有数据工具永远只读 SELECT」（<code>AGENTS.md:56</code>）旁边，补一条「改动带 <code>@caliber</code> 标记的函数，必须同步检查 <code>agent_router.py</code> 的对应工具，并在交接文档记录」</td><td>十分钟</td><td>这是给<b>下一个人</b>（包括 AI 编码助手）看的。本仓库的开发约定就是靠 <code>AGENTS.md</code> + <code>交接文档.md</code> 传递的，走这条路才符合既有习惯</td></tr>
+
+<tr><td><b>④ 口径快照测试</b></td><td>一个脚本，对固定的小数据集跑一遍所有权威口径函数，把结果哈希存进 <code>tests/caliber_snapshot.json</code>。口径变了 → 哈希变了 → 必须显式更新快照文件，这个文件的 diff 就出现在 review 里</td><td>1-2 天</td><td><b>无声的行为变化</b>。这是唯一能捕捉"代码没动但依赖的数据语义变了"的手段（比如 <code>balance</code> 清零逻辑改在别的文件里）</td></tr>
+</table></div>
+
+<div class="box amber"><b class="t">为什么不是"加个 CI 就行"</b>
+<p>因为口径漂移<b>大多数不以代码变更的形式发生</b>。<code>export_approval_enabled</code> 翻一下、管理层在 OA 页面加一种单据类型、某个部门重组、录入习惯变化导致孤儿采购涨了三倍——这些全都是零行代码 diff。CI 对它们完全失明。<br>
+真正兜住这类漂移的是<b>③ 的人的约定 + ④ 的快照</b>，再加上第七章那条：<b>评估集要定期重跑，不只是在改代码时跑。</b>建议节奏是"每次发版 + 每月一次全量"，全量那次的目的就是抓这种无 diff 漂移。</p></div>
+
+<h3>11.6　FDE 特别注意：口径不写在文档里，长在代码和人的脑子里</h3>
+
+<p>本项目有 <code>交接文档.md</code>、<code>AGENTS.md</code>、<code>docs/handbook/</code> 一整套文档，算是文档相当齐全的中小企业系统了。即便如此，本章引用的这些口径——<b>货车中午发车所以 15:00 前不推、尾款提醒终身一次是 2026-06-17 用户确认的、催办第 2 周才抄主管、<code>balance</code> 是双语义列</b>——没有一条能在需求文档里找到。它们全部只存在于两个地方：<b>代码注释</b>和<b>某个人的记忆</b>。这是常态，不是本项目的疏忽。</p>
+
+<h4>11.6.1 三条挖掘路径</h4>
+
+<div class="box blue"><b class="t">路径一：读代码，专门找"不该存在的东西"</b>
+<p>正常业务逻辑不需要挖，它写在那儿。要挖的是<b>异常物</b>，每一个异常物背后都有一条没写进文档的口径：</p>
+<ul>
+<li><b>魔法常量与特判</b>：<code>if now.hour &lt; 15</code>（<code>overdue.py:321</code>）、<code>advance_days=14</code>、<code>window=30/7</code>。<b>凡是硬编码的数字，背后必有一次讨论。</b></li>
+<li><b>带工单号的注释</b>：本仓库大量 <code>#292</code> <code>#332</code> <code>#303</code> <code>#78</code> 这样的标记。这是最高效的入口——<b>顺着编号去翻反馈原文，你能读到用户的原话</b>，那才是口径的一手来源。</li>
+<li><b>同一件事写了两遍的地方</b>：<code>scan_balance_due</code> 与 <code>scan_balance_overdue</code> 扫同一张表同一条件却拆成两个函数；<code>_hr_due_rows</code> 的窗口与 <code>scan_hr_reminders</code> 各写一遍。<b>重复不是懒，是两个语义被迫共用一份数据。</b></li>
+<li><b>可逆兜底</b>：<code>balance_contract</code>（<code>models.py:314</code>）、<code>ship_receivable</code> 的批注联动（<code>sales_router.py:608-610</code>）。<b>凡是"为了能撤回而多存一列"的地方，都是曾经有人被不可逆操作坑过。</b></li>
+<li><b>被收窄过的范围</b>：<code>overdue.py:359-361</code> 的 "2026-07-26 口径收窄"。收窄记录 = 上一轮做过头的证据。</li>
+</ul></div>
+
+<div class="box blue"><b class="t">路径二：找到那个"什么都知道的人"</b>
+<p>每家公司都有一个。他通常<b>不是</b>项目对接人，也不是 IT 负责人——他是那个所有人在群里 at 的人：车间的老班长、做了八年的销售内勤、财务里管台账的那位。识别方法有三个：<b>①</b> 问三个不同部门"这个数字不对的时候你问谁"，答案会收敛到同一个名字；<b>②</b> 看系统里谁的操作审计最多、谁提的反馈最多；<b>③</b> 开会时看谁一开口别人就停下来听。<br>
+问他的方式很重要，<b>不要问"你们的规则是什么"</b>（他会背一遍制度，那是理想态）。要问具体的、带反例的问题：</p>
+<ul>
+<li>"上次这个提醒推错，是什么情况？"——直接指向特判的由来。</li>
+<li>"这个字段有没有那种<b>看着是 A 其实是 B</b> 的时候？"——直接指向双语义列。<code>balance</code> 就是这么被问出来的。</li>
+<li>"如果我按这个规则算，会不会有人跳出来说不对？谁？"——找出口径的<b>利益相关方</b>，报表口径的争议永远来自"这个数影响谁的考核"。</li>
+<li>"这条规则从什么时候开始的？之前是怎么样？"——口径的历史比口径本身更有信息量，它告诉你下次会往哪儿变。</li>
+</ul>
+<p>另外一条实践经验：<b>他说的和他做的不一致时，以他做的为准。</b>去看他的实际操作记录，而不是他的描述。</p></div>
+
+<div class="box blue"><b class="t">路径三：用真实数据反向验证——差值就是口径</b>
+<p>这是最可靠的一条，因为它不依赖任何人的记忆。做法：<b>同一个问题用两种方式各算一遍，然后死磕差值。</b></p>
+<ol>
+<li>让业务方给一个他信任的数字（他自己维护的 Excel、他每周汇报的那个数）。</li>
+<li>你用系统数据按你理解的口径算一遍。</li>
+<li><b>两个数几乎不会相等。</b>差值不是 bug，差值是你还不知道的口径。</li>
+<li>逐条对差异行，每对上一行就问一句"这行为什么你算/不算"，把答案写下来。</li>
+</ol>
+<p>本项目最典型的样本就是 <code>reports_router.py:407-409</code> 那段警告注释——毛利口径明写「不含人工/运费，是<b>材料边际贡献</b>口径」，而业务方嘴里的"毛利"大概率含人工。这种差异如果不在上线前对出来，就会在上线后以"你这个数是错的"的形式对出来，而那时你已经赔掉了一轮信任。<br>
+对完之后要做一件事：<b>把每条口径连同它的来源写成台账</b>——口径名 / 权威位置（文件:行号） / 下游读者 / 来源（谁在哪天确认的） / 上次验证日期。这份台账就是 11.5.3 那张对照表的原料，也是你交接时唯一真正有价值的文档。</p></div>
+
+<h3>11.7　知识型问答的兜底：不做 RAG，但要优雅</h3>
+
+<p>架构四不做里有一条是"不做 RAG"（第三章）。这个决定是对的：本项目没有值得检索的语料库——制度文件散在微信群和几个 Word 里，总量不到几十页，且更新频繁。为几十页会变的文档上一套向量库、切分、召回、重排，运维成本远超收益，而且<b>召回不准的知识问答比不回答更危险</b>——它会自信地编一个流程出来。</p>
+
+<p>但用户一定会问。"报销流程怎么走""这个字段什么意思""为什么我看不到这个页面"是任何企业 Agent 上线第一周的高频问题。</p>
+
+<h4>11.7.1 一个关键发现：本项目的"流程"不是文档，是数据</h4>
+
+<div class="box green"><b class="t">"报销流程怎么走"的答案在数据库里，不在文档里</b>
+<p><code>oa_approval_steps</code> 表（<code>models.py:927-941</code>）存的就是<b>某部门 + 某单据类型 → 第几步由哪个角色审批</b>，管理层在页面上维护（<code>oa_router.py:198-246</code>），读取端点 <code>GET /api/oa/chains?department_id=&amp;doc_type=</code>（<code>oa_router.py:180-190</code>）。单据类型字典在 <code>oa_doc_types</code>（<code>models.py:914-924</code>），种子里就有 <code>expense</code>「费用报销」和 <code>travel_expense</code>「差旅费用报销」（<code>data_migration.py:1851-1860</code>）。<br>
+<b>所以"报销流程怎么走"是一个结构化查询，不是一个文本检索问题。</b>它甚至比 RAG 好得多：答案永远是最新的（管理层改了配置，回答立刻跟着变）、永远是这个人所在部门的（<code>department_id</code> 就是他的部门）、且可验证。<br>
+这就是"不做 RAG"这个决定背后真正的道理：<b>不是因为 RAG 难，是因为在 ERP 里绝大多数"知识问题"其实是伪装成知识问题的数据问题。</b>它们的权威答案已经以配置、字典、状态机的形式存在系统里了。做 RAG 等于放着结构化事实不用，去检索一份描述这些事实的、可能已经过期的文档。</p></div>
+
+<h4>11.7.2 三类分诊</h4>
+
+<div class="scroll"><table>
+<tr><th>类型</th><th>例子</th><th>正确处理</th><th>为什么</th></tr>
+<tr><td class="tag ok"><b>A. 伪装成知识的数据问题</b></td><td>"报销要几级审批""我这个申请卡在谁那""采购申请归哪个部门审"</td><td><b>做成确定性工具</b>：读 <code>oa_approval_steps</code> / <code>oa_requests</code>，按调用者部门与权限返回</td><td>权威答案在库里，且永远最新。这类问题<b>值得投入</b></td></tr>
+<tr><td class="tag now"><b>B. 真知识但极小且稳定</b></td><td>"这个字段什么意思""尾款和发货前付有什么区别""毛利是怎么算的"</td><td><b>静态 FAQ 工具</b>：一个 Python dict 或 JSON 文件，几十条，人工维护，命中即原文返回并<b>标注最后更新日期</b></td><td>条目少、变化慢、答案短。见下方四个准入条件</td></tr>
+<tr><td class="tag no"><b>C. 真知识且在系统之外</b></td><td>"年假怎么算""出差住宿标准多少""劳动合同到期不续签怎么补偿"</td><td><b>优雅拒答 + 指路</b>，并<b>记录这个问题</b></td><td>答案不在你的系统里。编造的代价是真实的——员工会拿 AI 的回答去跟 HR 争</td></tr>
+</table></div>
+
+<h4>11.7.3 优雅拒答长什么样</h4>
+
+<p>拒答有好坏之分。坏的拒答是"抱歉，我无法回答这个问题"——用户得到零信息，且会认为这系统很笨。好的拒答有三个成分：<b>承认边界 + 给出去处 + 收集需求</b>。</p>
+
+<pre><code>这个我查不到——报销标准属于制度文件，不在项目管理系统的数据里。
+你可以在 OA 审批 → 费用报销 里看到你们部门的审批流程（这个我能查），
+但具体的标准金额要问人事或看公司制度文件。
+（已记录这个问题，如果问的人多，我们会考虑把它做进来）</code></pre>
+
+<p>第三句不是客套。<code>agent_chat_logs</code>（<code>models.py:1108-1122</code>）已经在记 <code>question</code> / <code>answer</code> / <code>tools_used</code> / <code>via</code>；<b><code>tools_used</code> 为空 + 回答含拒答语义</b>的记录，就是天然的"答不了的问题"池。第七章把它列为可观测清单第 19 条：<b>这是需求池，不是垃圾桶。</b>每月扫一遍这个池子，重复出现 5 次以上的问题就是下一个工具或下一条 FAQ 的候选。</p>
+
+<h4>11.7.4 什么时候值得做静态 FAQ（四个条件，缺一不做）</h4>
+
+<ol>
+<li><b>同一个问题在"答不了的池子"里出现过 ≥5 次</b>，且来自 ≥2 个人。一个人问五次是他的个人习惯，不是需求。</li>
+<li><b>答案能在 3 句话内说完</b>，且不需要看具体数据。需要看数据的（"我的年假还剩几天"）不是 FAQ，是工具——去接 HR 模块，别写死。</li>
+<li><b>答案有明确的责任人愿意签字</b>。FAQ 条目必须有 owner，因为它一旦写进系统就变成"公司口径"。没人愿意签字的条目说明它本身有争议，那更不该由 AI 来说。</li>
+<li><b>条目总数预期 &lt; 50</b>。超过 50 条就该开始考虑它是不是应该长在 OA 文档中心里，由 OA 负责维护，Agent 只负责指路。</li>
+</ol>
+
+<div class="box amber"><b class="t">什么条件下仍然不该上向量库</b>
+<p>就算 FAQ 涨到几百条，也先试<b>关键词/别名映射 + 精确命中</b>再考虑向量检索。原因：企业内部的术语是<b>封闭且高度特化</b>的（"尾款""发货前付""封板组""冷作图纸"），这些词的语义模型不一定见过，向量召回未必比一张同义词表准；而 FAQ 答错一条的代价，是用户拿着错答案去执行。<br>
+真正需要上向量库的门槛是：<b>语料上千页、有专人维护、且问题确实是自然语言模糊匹配的</b>（比如产品手册、法规库）。制造业 ERP 的内部制度库几乎从不满足这三条。</p></div>
+
+<h3>11.8　可迁移方法论：进场先盘点客户已有的通知系统</h3>
+
+<div class="box green"><b class="t">进场第一周就要做的「通知资产盘点」</b>
+<p>目标很直接：<b>确保你的 Agent 不是客户收到的第 N+1 个吵人的东西。</b>七个问题，一天之内可以问完：</p>
+<ol>
+<li><b>今天系统会主动给人发什么？</b>（列全清单：站内、邮件、短信、企微/钉钉/飞书、微信群机器人、甚至打印出来贴在墙上的表）</li>
+<li><b>每一条的判据、频率、收件人是什么？</b>——照 11.1.1 那张表的列填。填不满就是你还没摸清。</li>
+<li><b>哪些是"当初开了后来被吐槽然后关掉/收窄"的？</b>——这是最值钱的一问，直接给出客户的信任预算已经花在哪儿了。找收窄记录的最快方式是 <code>git log</code> 里搜"太多""不用推""关掉"。</li>
+<li><b>用户实际是怎么处理这些通知的？</b>——去看一个人的手机。他有没有把这个应用设成免打扰？未读数是多少？这一眼胜过一小时访谈。</li>
+<li><b>有没有"反直觉"的时间/对象规则？</b>——比如本项目的 15:00。问法："有没有哪个提醒是故意不在某个时间发的？"</li>
+<li><b>去重是怎么做的？有没有幂等键？</b>——没有幂等键的系统一定重复推过，那笔信任债你会继承。</li>
+<li><b>谁有权关掉一类推送？</b>——如果答案是"只有开发能改代码"，那么退订入口就是你要补的第一件事。</li>
+</ol></div>
+
+<div class="box blue"><b class="t">换个项目会怎么变</b>
+<div class="scroll"><table>
+<tr><th>场景差异</th><th>本章哪些结论仍成立</th><th>哪些要重做</th></tr>
+<tr><td><b>客户没有任何既有推送系统</b></td><td>信任预算、宁可少推四条规则、空报不推、按业务节律选时间——全部成立，而且<b>更重要</b>（你的第一条推送会定义用户对整个系统的期待）</td><td>没有现成口径可复用，你得自己从零建。<b>先建幂等键和去重语义，再谈推什么</b>；顺序反了必然重复推送</td></tr>
+<tr><td><b>客户用的是钉钉/飞书/邮件而非企微</b></td><td>双通道（站内+外部）、失败降级不阻塞主流程、silent 档位</td><td>外部通道的<b>已读回执能力不同</b>：邮件几乎不可测、飞书卡片可带交互回调。度量方案要跟着换，L3 的卡片确认也可能直接落在 IM 侧</td></tr>
+<tr><td><b>客户已有成熟 BI/报表推送</b></td><td>"汇总视角 vs 单件提醒"的分工</td><td>晨报可能已经存在了。<b>那就别做晨报</b>，改做"异常解释"——BI 推数字，Agent 解释"为什么这周应收涨了 40%"</td></tr>
+<tr><td><b>行业节律不同</b>（零售看日、医院看班次、SaaS 看周）</td><td>"提醒时机由业务而非数据决定"</td><td>15:00 这个具体数字毫无迁移价值，<b>但"去找那个数字"这个动作必须做</b>。问法固定：你们这行，什么时候的数据才算数？</td></tr>
+<tr><td><b>客户是大型企业、有正式变更管理</b></td><td>口径台账、@caliber 标记、评估用例对照表</td><td>①-④ 那套轻量方案要升级成正式流程：<b>把 Agent 维护者加进变更评审的通知列表</b>。这在大企业反而更容易——那儿有 CAB，你只需要争取一个座位</td></tr>
+<tr><td><b>知识库确实很大且有专人维护</b></td><td>三类分诊、优雅拒答模板、"答不了的问题"池</td><td>B 类可能真的需要检索。但仍然<b>先做完 A 类</b>（伪装成知识的数据问题）——那部分的投入产出比永远高于 RAG</td></tr>
+</table></div></div>
+
+<h3>11.9　本章检查清单</h3>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>检查项</th><th>判据</th></tr>
+<tr><td>1</td><td>已有推送系统被完整盘点，每条都填齐"判据/去重/对象/幂等键"</td><td>能画出 11.1.1 那张表</td></tr>
+<tr><td>2</td><td>每一个"反直觉"设计都找到了它的来源工单或那句用户原话</td><td>找不到来源的规则不要动，先问</td></tr>
+<tr><td>3</td><td class="tag no"><b>行级过滤先于定时推送上线</b></td><td>否则越权从"问了才泄露"变成"每天自动送达"</td></tr>
+<tr><td>4</td><td>晨报调用与扫描器<b>同一份判据函数</b>，不是同一段注释</td><td>判据只存在于一处代码</td></tr>
+<tr><td>5</td><td>晨报尊重去重窗口：已单推过的条目可出现、不重复触发通知</td><td><code>silent</code> 档位已实现</td></tr>
+<tr><td>6</td><td>触发方式是<b>墙上时钟对齐</b>，不是固定间隔</td><td>重启不改变推送时刻</td></tr>
+<tr><td>7</td><td>新推送挂进既有 flock 循环，不另起 asyncio 任务</td><td>多 worker 下不重复</td></tr>
+<tr><td>8</td><td>空报不推，退订可到"类别"粒度</td><td>用户不必用免打扰来退订</td></tr>
+<tr><td>9</td><td>忽略率的度量口子已修（能区分逐条已读与批量已读）</td><td>否则指标恒为好看</td></tr>
+<tr><td>10</td><td>口径台账存在：口径名/权威位置/下游读者/来源/上次验证</td><td>交接时交这份，不是交代码</td></tr>
+<tr><td>11</td><td>关键口径函数带 <code>@caliber</code> 标记，改动有提示</td><td>grep 得出来</td></tr>
+<tr><td>12</td><td>评估集<b>定期重跑</b>，不只在改代码时跑</td><td>抓零 diff 漂移</td></tr>
+<tr><td>13</td><td>知识型问题已分诊，A 类做成工具而不是 FAQ</td><td>"报销流程"读审批链表</td></tr>
+<tr><td>14</td><td>拒答有去处、有记录</td><td>"答不了的问题"池每月有人看</td></tr>
+</table></div>
+
+<div class="box red"><b class="t">最后一句：主动推送是 Agent 唯一一个"用户无法选择不听"的能力</b>
+<p>问数是用户来找你，答错了他下次不问；推送是你去找用户，推错了他关掉整个通道，连带把真正重要的那条也关掉。<b>这是 L1 到 L2 的真正门槛——不是技术门槛，是权限门槛：你从"被查询者"变成了"占用别人注意力的人"。</b><br>
+而这份权限的正当性完全建立在口径正确之上。<code>#332</code> 讲的就是这件事：口径会在你不知情的时候改变，改的人是对的，改的过程是审慎的，只是<b>没人想到要通知 AI 这一侧</b>。所以本章的两个主题其实是一个：<b>你能不能持续地推对，取决于你有没有一条能感知口径变化的信道。</b>没有那条信道，主动推送就是一门在慢慢透支信任的生意——它今天推对了，只是因为口径还没变。</p></div>
+
+</section>

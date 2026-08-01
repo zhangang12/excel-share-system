@@ -1,0 +1,250 @@
+<section id="p9">
+<h2>第九章　合规：把公司数据送给第三方模型这件事</h2>
+
+<p class="muted">前八章讨论的是「做得对不对」。这一章讨论的是「允不允许做」。企业客户的法务和内审不会问你 function calling 怎么实现，他们只问一句：<b>我们的客户名单和合同金额，现在是不是正在发给一家我们没签过合同的公司？</b>本章先把这个问题的真实答案摆出来（是的，正在发），再给出把它变成「可解释、可审批、可撤回」的完整路径。</p>
+
+<div class="box red"><b class="t">本章一句话</b>
+<p>第五章防的是<b>「我们公司的人看到了不该看的」</b>，第九章防的是<b>「数据离开了我们公司」</b>。同一批字段，两道闸，闸门位置不同、失效后果不同、可逆性完全不同——内部越权可以改权限、删记录、追责；数据出境一旦 <code>POST</code> 成功就<b>永远收不回来</b>。把这两件事混成一件事讨论，是企业 Agent 项目最常见的合规事故根因。</p></div>
+
+<h3>9.1　先把事实摆清楚：一次问答，哪些字节离开了公司</h3>
+
+<p>本项目的 LLM 调用只有一处：<code>backend/app/routers/agent_router.py:487-507</code> 的 <code>_llm_request</code>。它把 <code>cfg["base_url"]</code> 拼上 <code>/chat/completions</code>，用 <code>httpx</code> 直接 POST 出去。<code>base_url</code> 的默认值是 <code>https://api.deepseek.com/v1</code>（<code>backend/app/config.py:60</code>）。payload 里只有 <code>model</code> / <code>messages</code> / <code>temperature</code> / <code>tools</code>，<b>没有任何脱敏、字段过滤或分级判断</b>。</p>
+
+<div class="arch">          公司边界（阿里云 ECS，docker network，Postgres 不开放外网端口）
+┌──────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│  PostgreSQL ──SELECT──▶ 7 个数据工具（agent_router.py:66-306）           │
+│                              │ 原始 JSON，含客户名/金额/供应商/人名      │
+│                              ▼                                           │
+│  用户这次打的字 message ──────┼──▶ messages[] ◀── history 最近 20 条      │
+│  system prompt（:477-484） ──┘        │            每条截 2000 字（:945）│
+│  含用户真实姓名 + 角色列表            │                                  │
+│                                       ▼                                  │
+│                        _llm_request（agent_router.py:487）               │
+└───────────────────────────────────────┼──────────────────────────────────┘
+                                        │ HTTPS POST，最多 4 轮（:498）
+                                        │ 每轮把全部历史 + 工具结果重发一次
+                                        ▼
+              cfg["base_url"] + "/chat/completions"    ← 值来自 app_settings 表
+              默认 https://api.deepseek.com/v1（config.py:60）
+              ── 这个值可以被 admin 在网页表单上改成任意 http(s) 地址 ──
+
+  另有两条早已存在的出境路径（不是本次新增，但摸基线时必须一起数清楚）：
+    · 企业微信推送 notify.py:25 → https://qyapi.weixin.qq.com/cgi-bin（腾讯）
+      推送正文含项目编号+项目名+尾款金额（overdue.py:121-122），截断 2000 字（notify.py:124）
+    · 每日数据库备份 ops/backup.sh:45 → pg_dump 全库，默认保留 30 天（:20）</div>
+
+<h4>9.1.1 逐字段：今天到底什么在出境</h4>
+
+<div class="scroll"><table>
+<tr><th>字段</th><th>库里位置</th><th>出境路径（工具 → messages）</th><th>敏感理由</th></tr>
+<tr><td>客户名称</td><td><code>sales_ledger.customer</code></td><td><code>agent_router.py:159</code>、<code>:290</code></td><td>客户名单本身就是核心商业资产</td></tr>
+<tr><td>合同额 / 预付 / 发货前款 / 尾款</td><td><code>sales_ledger.amount|prepay|before_ship|balance</code></td><td><code>agent_router.py:159</code>、<code>:290-291</code></td><td>单笔合同价，可反推报价体系</td></tr>
+<tr><td>尾款到期日</td><td><code>sales_ledger.balance_date</code></td><td><code>agent_router.py:160</code>、<code>:292</code></td><td>与客户名同时出现＝完整回款计划</td></tr>
+<tr><td>供应商名称</td><td><code>suppliers.name</code></td><td><code>agent_router.py:88</code>、<code>:112</code>、<code>:279</code></td><td>供应链图谱；与到货计划同时出现更敏感</td></tr>
+<tr><td>物料名 / 采购单号 / 预计到货</td><td><code>purchase_items.*</code></td><td><code>agent_router.py:87</code>、<code>:90</code></td><td>产能与交期，竞对最想要的</td></tr>
+<tr><td>员工真实姓名 + 部门 + 合同到期日 / 转正日</td><td><code>employees.name|contract_end|regular_date</code></td><td><code>agent_router.py:213</code></td><td>个人信息（PI），且合同到期日可推断离职风险</td></tr>
+<tr><td>内部人员真实姓名（采购员 / 销售 / 派工人 / 项目经理）</td><td><code>users.full_name</code>（<code>_uname</code>，<code>agent_router.py:60-61</code>）</td><td>几乎每个工具返回值里都有</td><td>组织架构 + 岗位分工全景</td></tr>
+<tr><td>提问人的姓名与全部角色</td><td>system prompt 模板</td><td><code>agent_router.py:477</code>、<code>:514-516</code></td><td>每一次请求都带，跑不掉</td></tr>
+<tr><td>用户自己打的那句话</td><td>—</td><td><code>agent_router.py:936</code> → <code>:946</code></td><td><b>不可控</b>：用户可能把任何东西粘进去</td></tr>
+</table></div>
+
+<div class="box amber"><b class="t">一个必须说清楚的巧合</b>
+<p>在 <code>agent_router.py</code> 全文里 <code>grep</code> <code>id_card</code> / <code>bank_account</code> / <code>unit_price</code> / <code>salary</code>，<b>一次都搜不到</b>。也就是说身份证号（<code>models.py:830</code>）、供应商银行账号（<code>:597</code>）、月度工资（<code>:881</code>）、采购成本单价（<code>:627</code>）今天确实没有出境。</p>
+<p>但这不是控制，是<b>巧合</b>——它成立的唯一原因是「写工具的人当时没把这些字段抄进返回值」。没有任何一行代码在阻止下一个人把它们加进去。第五章 5.2.2 已经指出了这个巧合最短的破除路径：<code>hr_router.py</code> 的 <code>_emp_out</code> 在 <code>:122</code> 把 <code>id_card</code> 原样返回给花名册页面；一旦按第三章「单一访问路径」原则复用这个函数做人事工具，身份证号会顺着复用一起进 messages。<b>复用现有 router 函数解决的是权限继承，它一行都不解决出境脱敏。</b>这两件事必须分开做、分开测。</p></div>
+
+<h3>9.2　<code>base_url</code>：一个放在网页表单上的「数据接收方」开关</h3>
+
+<p>把 9.1 的图再看一眼：整张图里唯一决定「数据发给谁」的，是 <code>cfg["base_url"]</code> 这一个字符串。改它 = 换数据接收方。而它现在的形态是：</p>
+
+<ul>
+<li><b>存在数据库里，不在代码里。</b><code>app_settings</code> 表（<code>models.py:1067-1075</code>）的一行 kv，读取逻辑 <code>_effective_llm_config</code>（<code>agent_router.py:762-773</code>）是<b>每次请求实时读库</b>——改完不用重启、不用发版，下一秒全公司生效。</li>
+<li><b>写入口是一个普通的输入框。</b><code>frontend/src/views/AgentView.vue:354</code>，一个 <code>el-input</code>，占位符写着 <code>https://api.deepseek.com/v1</code>；保存按钮在 <code>:374</code>，<code>saveConfig</code>（<code>:87-99</code>）里<b>没有任何二次确认</b>，成功就弹一句「配置已保存，全局生效」。</li>
+<li><b>后端校验只有一行。</b><code>agent_router.py:849</code>：<code>if "base_url" in writes and not cfg["base_url"].lower().startswith("http")</code>。也就是说 <code>http://1.2.3.4:8000/v1</code> 完全合法。<b>没有域名白名单</b>。</li>
+<li><b>权限确实收紧过，但只收紧了「谁」。</b><code>_require_admin_only</code>（<code>agent_router.py:788-792</code>）比 <code>deps.require_admin</code> 更严，manager 也 403——这是个好设计。但它管的是身份，不是流程：<b>没有审批、没有双人复核、没有告警。</b></li>
+<li><b>审计几乎等于没有。</b><code>agent_router.py:875</code> 只记 <code>「LLM 配置已由 %s 更新（字段：%s）」</code>——<b>只有字段名，没有新旧值</b>。而且这条 <code>log.info</code> 写的是容器 stdout；<code>docker-compose.prod.yml</code> 的 backend 服务只挂了 <code>uploads_data</code> 一个卷，日志没有持久化卷，<code>ops/upgrade.sh:50</code> 的 <code>up -d --build</code> 一重建容器，旧日志随容器一起消失。表里也帮不上忙：<code>AppSetting</code> 只有 <code>updated_at</code>（<code>models.py:1074-1075</code>），<b>没有 <code>updated_by</code>、没有历史版本</b>。</li>
+</ul>
+
+<p>对比一下同一个仓库里另一条出境路径：企业微信的地址 <code>_WECOM_BASE</code> 是 <code>notify.py:25</code> 的一个模块级常量。要把公司数据改发到别的地方，得改代码、过 review、走 <code>ops/release.sh</code> 发版。<b>同样是「数据发给谁」，一个要发版，一个是网页上一个输入框加一次点击。</b>这个不对称本身就是本章最该修的东西。</p>
+
+<div class="box green"><b class="t">改造建议（按性价比排序，前两条是必做）</b>
+<ol>
+<li><b>记录变更前后值。</b>新增 <code>app_setting_audit</code> 表：<code>key / old_value / new_value / changed_by / changed_at / client_ip</code>。<code>api_key</code> 这一项只存 <code>_mask_key</code> 打码值（复用 <code>agent_router.py:776-780</code>），<code>base_url</code> 存明文——它不是秘密，它是证据。这是<b>唯一能回答「上周三那次问答，数据发给了谁」的东西</b>。</li>
+<li><b><code>base_url</code> 变更独立告警。</b>改动一旦落库，立刻走 <code>notify.push_message</code> 推给 manager 角色 + 记一条不可删的审计行。理由很直白：正常运营中这个值一年改不了一次，<b>任何一次变更都值得惊动人</b>。而 <code>api_key</code> 轮换是常规运维，可以不告警——把这两个字段区别对待，是让告警不被无视的前提。</li>
+<li><b>域名白名单。</b>在 <code>settings</code> 里加 <code>agent_llm_allowed_hosts</code>（<code>.env</code> 配置、不可从页面改），<code>:849</code> 的校验从「以 http 开头」升级为「host 必须命中白名单」。它防的不是恶意 admin——防的是<b>输错、被钓鱼、被社工</b>，以及「测试时临时指到一个自建代理然后忘了改回来」这种最真实的事故形态。</li>
+<li><b>变更走审批。</b>本仓库已经有现成的可逆开关范式（<code>settings.export_approval_enabled</code>、<code>sales_order_approval</code>，<code>config.py:51,56</code>）和请款/开票的审批链。<code>base_url</code> 变更完全可以套同一套流程：admin 提交 → manager 确认 → 生效。代价是多一次点击，收益是法务终于有东西可看。</li>
+</ol>
+<p class="muted">迁移提示：换个客户，「高危配置项」的名字会变（可能是 webhook 地址、SFTP 目标、导出邮箱域），但判据不变——<b>凡是「决定数据发给谁」的配置项，都不该和「决定功能怎么跑」的配置项放在同一个表单、用同一套权限、写同一份日志</b>。进场后第一件事就是把这类配置项从设置页里挑出来单列。</p>
+</div>
+
+<h3>9.3　数据分级：哪些域不该上模型，以及它和第五章红线的区别</h3>
+
+<h4>9.3.1 四级分类落到本项目的域</h4>
+
+<div class="scroll"><table>
+<tr><th>级别</th><th>判据（泄露后果）</th><th>本项目对应的域 / 字段</th><th>能否进 messages</th></tr>
+<tr><td><b>L0 公开</b></td><td>本来就对外</td><td>公司名、产品品类、状态枚举中文名（<code>agent_router.py:45-46</code>）、部门名</td><td class="tag ok">可以</td></tr>
+<tr><td><b>L1 内部</b></td><td>泄露无直接损失</td><td>任务状态、逾期天数、菜单键、日期本身、条数统计、物料通用名</td><td class="tag ok">可以</td></tr>
+<tr><td><b>L2 机密</b></td><td>泄露有商业损失，且不可召回</td><td>客户名、合同额 / 尾款、供应商名、项目编号↔客户对应关系、到货计划、员工姓名与合同到期日</td><td class="tag now">有条件——<b>现状是无条件出境</b></td></tr>
+<tr><td><b>L3 绝密</b></td><td>泄露有法律 / 人身 / 资金后果</td><td><code>employees.id_card</code>（<code>models.py:830</code>）、<code>suppliers.bank_account</code>（<code>:597</code>）、<code>employee_salary_monthly.*</code>（<code>:881</code>）、<code>purchase_items.unit_price</code> 及由它算出的成本 / 毛利（<code>:627</code>）、<code>users.password_hash</code>（<code>:45</code>）、<code>app_settings</code> 里的明文 API Key（<code>:1067</code>）</td><td class="tag no">绝不出境，代码级白名单</td></tr>
+</table></div>
+
+<p>L2 这一格是本项目真正的争议点，而且没有标准答案——它是<b>业务决定</b>，不是技术决定。可选的三档：全部放行（现状，最好用）／只放行给已签零留存条款的境内供应商（推荐）／按域切开（尾款和客户名走本地模型，采购到货走公有云）。FDE 的职责不是替客户选，是<b>把这张表摆到会议桌上，让能签字的人在上面画一条线</b>。</p>
+
+<h4>9.3.2 为什么这和第五章是两件事——讲透</h4>
+
+<p>第五章 5.2 已经列过一张几乎一模一样的字段清单。同样的字段、同样的「不许出现」，为什么要写两遍？因为<b>它们防的是不同的对手，控制点也在不同的位置</b>。</p>
+
+<div class="scroll"><table>
+<tr><th>维度</th><th>第五章（权限红线）</th><th>第九章（出境红线）</th></tr>
+<tr><td>防谁</td><td>本公司员工（销售 A 看到销售 B 的单）</td><td>第三方推理服务及其所在司法辖区</td></tr>
+<tr><td>边界在哪</td><td>用户与用户之间的行 / 字段可见性</td><td>公司法人边界，可能还是国境</td></tr>
+<tr><td>控制点</td><td><b>返回给用户之前</b>——出口序列化时 pop 掉</td><td><b>放进 messages 之前</b>——比出口早了整整两轮 HTTP</td></tr>
+<tr><td>失效后果</td><td>内部越权，可查、可追责、可补救</td><td>数据出境，<b>不可召回</b>；对方日志里有没有、留多久，你不知道</td></tr>
+<tr><td>能不能靠权限系统兜住</td><td>能——菜单 + 行级规则就是为它设计的</td><td><b>不能</b>——见下面那个决定性反例</td></tr>
+<tr><td>验收方式</td><td>换身份问同一句，断言结果集不重叠（第七章 L-权限）</td><td>抓请求体，断言字节流里不出现 L3 字段（本章新增的一层）</td></tr>
+</table></div>
+
+<div class="box red"><b class="t">决定性反例：管理层问工资</b>
+<p>管理层拥有全部菜单权限，<code>menus.py:151-152</code> 对 admin/manager 直接返回全量菜单，<code>deps.py:125</code> 的 <code>user_can_view_project</code> 对管理层无条件放行。所以当总经理问「这个月工资总共发了多少、谁最高」时——<b>第五章的所有门控全部放行，而且放行是对的</b>，他在人事页面上本来就能看到这些数字。</p>
+<p>但第九章必须拦。因为「他有权看」和「DeepSeek 可以看」是两个完全不同的命题。<b>这是唯一一类第五章拦不住、而第九章必须拦的场景，也正是这两章不能合并的原因。</b>推论很硬：出境白名单<b>不能实现成权限检查的一个分支</b>，它必须是一层与身份无关的、无条件生效的序列化过滤——无论调用者是谁，工具返回值里的 L3 字段一律不进 messages。</p>
+<p>落地形态：写一个 <code>egress_filter(payload) -&gt; payload</code>，白名单制（只允许具名字段通过，不是黑名单），在 <code>_run_tool</code> 返回之后、<code>messages.append</code> 之前无条件调用一次。它<b>不接收 <code>current</code> 参数</b>——签名里没有用户对象这件事本身就是设计声明：这一层不看你是谁。</p>
+</div>
+
+<h3>9.4　供应商选择：给客户法务看的对比表模板</h3>
+
+<p>技术选型看 benchmark，合规选型看这九行。下表是模板，最后一列填的是本项目现状（<b>诚实标注：多数格子是「未核实」——因为这个项目从来没走过供应商合规评估，这本身就是本章存在的理由</b>）。</p>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>维度</th><th>要拿到的具体答案（不接受「我们很重视安全」）</th><th>本项目现状</th></tr>
+<tr><td>1</td><td>法律主体与注册地</td><td>合同相对方的完整工商名称；是境内实体还是境外实体的代理</td><td class="tag no">未核实</td></tr>
+<tr><td>2</td><td>数据处理地</td><td>推理发生在哪个机房 / 哪个国家；是否可指定区域；是否会跨区容灾</td><td class="tag no">未核实</td></tr>
+<tr><td>3</td><td>是否用于训练</td><td>默认是否；能否关闭、怎么关（API 参数 / 合同 / 控制台开关）；<b>「用于改进服务」这类措辞必须点名排除</b></td><td class="tag no">未核实</td></tr>
+<tr><td>4</td><td>留存期</td><td>请求体和响应体各留多久；能否零留存；风控留存是否例外、例外留多久</td><td class="tag no">未核实</td></tr>
+<tr><td>5</td><td>零留存 / 私有化</td><td>是否提供 zero-retention 档位（通常要签补充协议）；是否提供专有云 / 本地部署，起售价多少</td><td class="tag no">未核实</td></tr>
+<tr><td>6</td><td>SLA 与可用性</td><td>可用性承诺、限速策略、降级预案、故障公告页；<b>不达标怎么赔</b></td><td class="tag no">未核实（本项目靠 <code>_rule_chat</code> 降级自保，<code>agent_router.py:957-962</code>）</td></tr>
+<tr><td>7</td><td>审计报告与备案</td><td>SOC 2 Type II / ISO 27001 / 等保三级备案号 / 生成式 AI 服务备案与算法备案编号；<b>要报告本身，不要网页上的徽标</b></td><td class="tag no">未核实</td></tr>
+<tr><td>8</td><td>子处理者（转委托）</td><td>是否转包给第三方云 / 第三方安全厂商；名单能否提供；变更是否提前通知</td><td class="tag no">未核实</td></tr>
+<tr><td>9</td><td>删除权与事故通知</td><td>客户要求删除数据的响应时限；安全事件通知时限（要写进合同，不要「及时」）；合同终止后的数据处置方式</td><td class="tag no">未核实</td></tr>
+</table></div>
+
+<p class="muted">用法：这张表不是给你自己填的，是<b>发给供应商销售让他们填</b>，然后带着填好的表去见客户法务。填不出来的格子和填出来的格子一样有信息量——一个连数据处理地都答不上来的供应商，技术再好也过不了内审。另外，同一份表要对<b>所有</b>候选供应商填一遍，包括你打算选的那个之外的两家，法务需要看到「比较过」这件事本身。</p>
+
+<h3>9.5　三种部署形态：成本、能力、运维、合规收益</h3>
+
+<div class="scroll"><table>
+<tr><th></th><th>A｜公有云 API（现状）</th><th>B｜专有云 / 私有化部署</th><th>C｜本地开源模型</th></tr>
+<tr><td><b>形态</b></td><td><code>base_url</code> 指向供应商域名</td><td>供应商在客户 VPC 或专属集群部署闭源模型</td><td>自建 GPU 机器跑开源权重</td></tr>
+<tr><td><b>成本量级</b></td><td>第六章 6.5 算过：40 人 × 5 问 / 天 × 22 天 ≈ ¥122 / 月，做对缓存约 ¥74</td><td>年费 <b>十万至百万级</b>（授权 + 算力），且通常有最低采购期</td><td>一次性 <b>数万</b>（一张能跑 14B–32B 的卡）+ 电费 + 折旧</td></tr>
+<tr><td><b>能力差距</b></td><td>基线（最强、迭代最快）</td><td>接近基线，但通常是上一代或裁剪版本，升级要谈</td><td><b>差距最大</b>，见下方专门讨论</td></tr>
+<tr><td><b>运维负担</b></td><td>近似为零：只有一个 <code>base_url</code> 和一个 key</td><td>中：要接对方的部署、升级、扩容窗口</td><td><b>高</b>：GPU 驱动、推理框架、显存、并发、模型升级全自己扛，而且这个人得长期在</td></tr>
+<tr><td><b>合规收益</b></td><td><b>零</b>——全部依赖合同条款，技术上无保障</td><td><b>最高性价比</b>：数据不出客户网络，法务最容易签</td><td><b>最高</b>：数据一个字节都不出机房</td></tr>
+<tr><td><b>适用判据</b></td><td>数据分级 ≤ L2 且客户接受境内公有云</td><td>客户明确「不能出公司」且预算能过会</td><td>数据含 L3，或客户在军工 / 涉密 / 强监管行业</td></tr>
+</table></div>
+
+<div class="box amber"><b class="t">诚实说明：小参数本地模型很可能撑不住本项目的 function calling</b>
+<p>本项目对模型的要求不是「文笔好」，是<b>在 7 个工具里选对那一个、把参数抽对、最多 4 轮内收敛</b>（<code>agent_router.py:522</code> 的 <code>for _ in range(4)</code>，<code>:496</code> 的 <code>tool_choice="auto"</code>）。第七章 7.1 已经记录了一个真实的漂移：同一句「下周有什么到货」，可能调 <code>po_arriving(days=7)</code>，也可能调 <code>po_arrival_overdue</code>——两者语义正好相反。<b>这是 DeepSeek 级别模型的表现。</b></p>
+<p>换成本地 14B 级模型，失败会集中在三处：多工具选择（工具越多越糊）、参数抽取（<code>days=7</code>、<code>code="2026-008"</code> 这类要精确到字符的值）、以及拿到 <code>{"error": "..."}</code> 之后要老实转述而不是编一个答案。而本项目的失败形态不是「答得差一点」，是<b>数字错了</b>——用户数了 13 条，助手说 12 条，从此他不再问助手。这个信任一旦丢掉，省下的合规风险换不回来。</p>
+<p><b>所以真正可行的降配方案不是「把 function calling 硬塞给小模型」，而是把架构改成另一种形状：</b>用规则 / 小分类器把问题路由到工具（本项目<b>已经有这条路</b>——<code>_rule_chat</code> 降级路径，<code>agent_router.py:962</code>，现在它是 LLM 挂掉时的兜底），然后<b>让小模型只负责把结构化 JSON 讲成人话</b>（纯 NLG，不做工具决策）。这样模型能力不足只会影响措辞，不会影响数字。代价是能问的问题变窄——但窄而准，好过宽而不可信。</p>
+<p class="muted">迁移提示：这个「把 <code>_rule_chat</code> 从降级路径升格为主路径」的方案之所以在本项目成立，是因为它<b>已经写好了</b>。换到一个没有规则兜底路径的客户现场，选 C 就意味着要额外写一套意图路由——把这个工作量算进报价，不要口头答应「本地模型也行」。</p>
+</div>
+
+<h3>9.6　合同与制度：技术做完之后还剩的一半</h3>
+
+<h4>9.6.1 与供应商签什么（逐条，可直接给法务）</h4>
+
+<ul>
+<li><b>不用于训练</b>：明确覆盖「模型训练、微调、评测、人工标注、服务改进」全部用途——只写「不用于训练」会被「用于服务改进」绕过。</li>
+<li><b>留存期</b>：写具体天数或「零留存」，并写明风控 / 反滥用留存是否例外、例外的留存期和访问人范围。</li>
+<li><b>删除权</b>：客户书面要求后 N 个工作日内删除并出具删除证明；<b>写清楚备份中的副本是否同步删除、多久</b>（这一条最常被含糊过去）。</li>
+<li><b>数据处理地</b>：限定境内 / 指定区域，跨区容灾需事先书面同意。</li>
+<li><b>转委托限制</b>：子处理者需提供名单、变更提前 30 天通知、客户有异议权。</li>
+<li><b>安全事件通知</b>：具体小时数（如 72 小时），不接受「及时」「尽快」。</li>
+<li><b>审计权</b>：至少能拿到最新审计报告；理想是有年度问卷回复义务。</li>
+<li><b>合同终止后</b>：数据处置方式与期限，以及 API 访问密钥的失效时点。</li>
+</ul>
+
+<h4>9.6.2 公司内部要立什么制度</h4>
+
+<div class="scroll"><table>
+<tr><th>制度项</th><th>现状（有代码证据）</th><th>建议</th></tr>
+<tr><td>谁能改 <code>base_url</code></td><td>admin 一人，一个输入框一次点击（<code>agent_router.py:788-792</code> + <code>AgentView.vue:354,374</code>）</td><td>列为变更管理事项：技术 + 法务 / 内审双人复核，走工单留痕，变更后告警</td></tr>
+<tr><td>谁能看 <code>agent_chat_logs</code></td><td>后端 <code>require_admin_or_manager</code>（<code>agent_router.py:970-975</code> + <code>deps.py:37-41</code>），前端只把这张卡片给 admin 看（<code>AgentView.vue:267</code> 的 <code>v-if="isAdmin"</code>）</td><td><b>前后端不一致：manager 直接调 API 就能读全量问答</b>。收紧到 <code>_require_admin_only</code>，并对「查审计日志」这个动作本身再记一条日志</td></tr>
+<tr><td>API Key 保管</td><td><code>app_settings</code> 明文存（<code>models.py:1067-1075</code>）；出口侧防得很好（<code>_mask_key</code> <code>:776</code>、<code>from None</code> 掐断异常链 <code>:504-507</code>、配置日志不记值 <code>:875</code>）</td><td>轮换周期写进制度；库里加密存或改用密钥托管；注意 <code>ops/backup.sh</code> 的每份 dump 里都有它的明文</td></tr>
+<tr><td>员工知情</td><td>无</td><td><b>最便宜也最有效的一条</b>：在助手输入框旁边写明「你的提问与系统返回的数据会发送至第三方模型服务（当前：×××）」。它同时解决三件事——知情同意的法律要件、降低用户往里粘敏感信息的概率、出事时证明公司尽到告知义务</td></tr>
+<tr><td>数据分级评审</td><td>无</td><td>9.3 那张表每年过一次；<b>新增工具必须先在表上定级才能合入</b>，把它加进 code review checklist</td></tr>
+</table></div>
+
+<h3>9.7　<code>agent_chat_logs</code>：它既是审计资产，也是一份泄密面</h3>
+
+<p>这张表（<code>models.py:1108-1122</code>）每次问答写一行：<code>user_id / username / question / answer</code>（各截断 5000 字，<code>agent_router.py:892,915-916</code>）<code>/ tools_used / via / model / duration_ms / created_at</code>。第七章要靠它做评估集和回归，第五章 5.2.1 已经把它整表拉黑防止 Agent 自己去读它。本章补上第三个视角，也是最容易被忽略的一个：</p>
+
+<div class="box red"><b class="t">它是全系统七类行级隔离规则的汇聚点，而且它长期留存、还有 30 份副本</b>
+<ul>
+<li><b>明文存了两份。</b><code>question</code> 是用户打的字，<code>answer</code> 是模型输出的 Markdown 表格——里面有客户名、尾款金额、供应商、人名，<b>原样落库，没有任何脱敏</b>。</li>
+<li><b>它是横向聚合。</b>销售 A 问过的尾款、采购 B 问过的供应商，答案全在这一张表里。任何能读它的人，一次性拿到全公司所有人「看到过什么」。</li>
+<li><b>没有保留期，没有清理任务。</b>全仓库找不到任何针对这张表的定时删除；<code>overdue_scheduler</code> 只跑那 6 个扫描器。它会一直长下去。</li>
+<li><b>备份把它复制了 30 份。</b><code>ops/backup.sh:45,51</code> 每天 <code>pg_dump</code> 全库，<code>:20</code> 的 <code>KEEP_DAYS</code> 默认 30、<code>:75</code> 按 <code>mtime</code> 轮转。<b>所以「删掉某一行」在 30 天内是不成立的</b>——这一点必须写进任何对内对外的「删除权」承诺里，否则那句承诺就是假的。</li>
+<li><b>前端遮挡不是访问控制。</b>见 9.6.2 那一行：<code>v-if="isAdmin"</code> 只是不渲染那张卡片，端点本身对 manager 是开的。</li>
+</ul>
+</div>
+
+<div class="box green"><b class="t">建议（保住审计价值，砍掉泄密面）</b>
+<ol>
+<li><b>分层保留期。</b>明细（<code>question</code> / <code>answer</code>）留 90 天；超期只做<b>字段级清空</b>而不是删行——保留 <code>user_id / username / tools_used / via / model / duration_ms / created_at</code>。这样第七章要的用量统计、工具分布、降级率、耗时分位全都还在，泄密面归零。删行会让统计出现断层，比留着更糟。</li>
+<li><b>入库前过同一个脱敏函数。</b>9.3.2 那个 <code>egress_filter</code> 写好之后，<code>_log_chat</code>（<code>agent_router.py:909-926</code>）也调它一次。<b>一个函数、两处调用</b>——这样「哪些字段算敏感」永远只有一个定义，不会出现出境防住了、日志里还是明文的分裂状态。</li>
+<li><b>访问收紧 + 访问留痕。</b><code>:975</code> 从 <code>require_admin_or_manager</code> 改为 <code>_require_admin_only</code>；谁在什么时候查了谁的记录，本身要记一条。<b>审计日志的访问日志</b>听起来像套娃，但正是内审最先要的东西。</li>
+<li><b>补三个字段，一次性把三章的缺口都补上。</b><code>prompt_tokens</code> / <code>completion_tokens</code>（第六章：<code>_llm_request</code> 在 <code>:502</code> 拿到了完整响应体，<code>usage</code> 字段就在里面，<code>:524</code> 只取 <code>choices[0].message</code> 把它丢了）、<code>base_url_snapshot</code>（<b>本章：让每一行都能回答「这条问答发给了谁」</b>）、<code>tool_args</code>（第五章：现在只记工具名不记入参，出事时查不出他到底问的哪个项目）。</li>
+</ol>
+</div>
+
+<h3>9.8　可迁移方法论</h3>
+
+<h4>9.8.1 进任何客户现场，关于「数据能不能出去」必问的 8 个问题</h4>
+
+<ol>
+<li><b>法律上能不能出境？</b>先定行业和数据类型再谈技术——个人信息、重要数据、以及金融 / 医疗 / 车联网 / 军工的行业专门规定，路径完全不同。这个问题的答案<b>不是工程师能给的</b>，你的任务是把它问出来并要到书面结论。</li>
+<li><b>谁有权在这件事上签字？</b>IT 总监签不了。通常是法务负责人、信息安全负责人，或者董事会。<b>找错人的代价是整个项目在验收前一周被叫停。</b></li>
+<li><b>现在已经出去的有哪些？</b>先摸基线。本项目的答案很有意思：企业微信推送（<code>notify.py:25</code>）早就把「项目编号 + 项目名 + 尾款金额」发给腾讯了（<code>overdue.py:121-122</code>）。<b>你多半不是第一个把数据发出去的人</b>——找到既有先例，谈判难度立刻降一个量级。</li>
+<li><b>客户已经批准过哪些云服务？</b>有没有过会的供应商白名单。蹭一个已批准的供应商，比新申请一个快三个月。</li>
+<li><b>有没有数据分级制度？分到字段还是只分到系统？</b>只分到系统的（「ERP 属于机密系统」）最麻烦——意味着整套 ERP 一刀切成机密，你得推动他们细化到字段，或者接受最严档。</li>
+<li><b>内审多久查一次，查什么？</b>这个答案直接决定日志留多久、留什么字段。问不到就按「随时可能查、要能回答任意一次问答的完整链路」来设计。</li>
+<li><b>出了事，谁通知谁，多久之内？</b>把它写进合同和内部制度。这个问题问出来，通常还能顺带发现客户内部的安全事件流程根本没覆盖 AI 场景。</li>
+<li><b>如果不能出境，愿不愿意为此付 GPU 的钱？</b><b>这是把技术问题转成预算问题的关键一问</b>，也是最该早问的一问。很多客户嘴上说「绝对不能出去」，听到数字之后会改口成「境内公有云 + 零留存条款可以接受」。<b>不问这一句，你会白做三个月私有化方案。</b></li>
+</ol>
+
+<h4>9.8.2 「客户说不能出境」之后，方案怎么变</h4>
+
+<div class="arch">客户说：「数据不能出去」
+  │
+  ├─ Q1 先追问一句：不能出「公司」，还是不能出「境」？
+  │    ├─ 不能出境（多数情况的真实含义）
+  │    │     → 方案 A′：境内公有云 API + 零留存条款 + 域名白名单 + 出境字段过滤
+  │    │       代价 ≈ 现状，能力不降，两周内可交付
+  │    └─ 不能出公司 ────────────────┐
+  │                                   │
+  ├─ Q2 预算能不能过会（年 ≥ 数十万）？
+  │    ├─ 能 → 方案 B：专有云 / 私有化闭源模型，能力最接近公有云
+  │    └─ 不能 ─────────────────────┐
+  │                                  │
+  ├─ Q3 能不能只让「一部分」数据出去？
+  │    ├─ 能 → 方案 A+C 混合：L0/L1 域走公有云（采购到货、任务逾期、日期统计）
+  │    │        L2/L3 域走本地（客户名、尾款、人事）——按工具分流，不按用户分流
+  │    └─ 不能 ────────────────────┐
+  │                                 │
+  └─ Q4 最后一档：规则路由 + 本地小模型只做措辞
+       （本项目已有 _rule_chat 现成路径，agent_router.py:962）
+       能问的问题变窄，但数字永远来自代码而不是模型
+       ── 再不行就诚实地说：这个场景现在不适合上 LLM，先把规则版做厚 ──</div>
+
+<div class="box blue"><b class="t">三条不随项目变的判据</b>
+<ul>
+<li><b>先摸基线，再谈方案。</b>进场先数清楚「现在有几条出境路径」——企微、邮件、短信网关、云盘、BI SaaS。你要做的那条通常不是第一条，找到先例就找到了谈判的锚点。</li>
+<li><b>出境控制必须与身份无关。</b>只要它实现成权限检查的一个分支，就一定会在某个「他本来就有权看」的场景里失效（9.3.2 那个反例）。<b>白名单制、无条件生效、签名里不接收用户对象。</b></li>
+<li><b>「发给谁」这件事必须可回溯到每一次问答。</b>不是「我们用的是 X 供应商」，而是「2026-07-14 14:03 那条问答，发给了 <code>https://api.deepseek.com/v1</code>」。做不到这一点，前面所有合同条款在事后核查时都是空的——你无法证明那天的流量没被指到别处去。</li>
+</ul>
+</div>
+
+<p class="muted">本章与前八章的关系：第三章给了「不写 SQL、只调 router 函数」的访问路径，第五章给了「谁能看什么」的红线，本章给的是<b>第三道闸——数据在离开公司之前的最后一次过滤</b>。三道闸在代码里的位置依次是：取数时（权限继承）、返回给用户前（字段脱敏）、放进 messages 前（出境过滤）。<b>它们不能合并成一道</b>，因为它们各自失效时，另外两道都拦不住。</p>
+
+</section>

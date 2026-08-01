@@ -18,6 +18,7 @@ os.environ.pop("AGENT_LLM_API_KEY", None)   # 强制走规则降级路径
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.getcwd())
 
+from sqlalchemy import select
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.database import engine, SessionLocal, Base
@@ -273,8 +274,12 @@ async def main():
         chk(r.status_code == 400, f"空 models 应 400: {r.status_code}")
 
         # ===== 3. 工具函数口径（直接调用） =====
+        # 🆕 P0 行级隔离后工具签名带 current；这里用 admin（不受任何行级限制），
+        #    保证下面的口径断言与修复前等价。行级隔离本身另见 test_agent_row_level_scope.py
         async with SessionLocal() as db:
-            d = await agent_router.tool_po_arrival_overdue(db)
+            _admin = (await db.execute(select(models.User)
+                                       .where(models.User.username == "admin"))).scalar_one()
+            d = await agent_router.tool_po_arrival_overdue(db, _admin)
             names = [x["item_name"] for x in d["items"]]
             chk("轴承" in names, f"工具查出逾期未收货「轴承」: {names}")
             chk("电机" not in names, f"工具查不出已收货「电机」: {names}")
@@ -283,12 +288,12 @@ async def main():
                 and row["po_no"] == "PO-AGT1" and row["project_code"] == "AGT-2501",
                 f"轴承行口径(超期1天/供应商/采购单号/项目编号): {row}")
 
-            d = await agent_router.tool_overdue_orders(db)
+            d = await agent_router.tool_overdue_orders(db, _admin)
             chk(d["count"] >= 1 and any(x["dept_name"] == "设计部" and x["project_code"] == "AGT-2501"
                                         and x["over_days"] == 1 for x in d["items"]),
                 f"逾期任务口径: {d['items'][:3]}")
 
-            d = await agent_router.tool_balance_due(db)
+            d = await agent_router.tool_balance_due(db, _admin)
             chk(any(x["project_code"] == "AGT-2501" and x["balance"] == 50000
                     and x["days"] == 5 for x in d["items"]),
                 f"尾款到期口径(5天后到期进窗口): {d['items'][:3]}")
@@ -299,13 +304,13 @@ async def main():
                 and d["ledger"] and d["ledger"]["balance"] == 50000,
                 f"项目进度工具聚合: {str(d)[:300]}")
 
-            d = await agent_router.tool_morning_report(db)
+            d = await agent_router.tool_morning_report(db, _admin)
             chk(d["po_arrival_overdue"]["count"] >= 1 and d["overdue_orders"]["count"] >= 1
                 and d["balance_due"]["count"] >= 1,
                 f"晨报四类聚合计数: po={d['po_arrival_overdue']['count']} "
                 f"orders={d['overdue_orders']['count']} bal={d['balance_due']['count']}")
 
-            d = await agent_router.tool_po_overdue_by_supplier(db)
+            d = await agent_router.tool_po_overdue_by_supplier(db, _admin)
             sup_names = [x["supplier"] for x in d["suppliers"]]
             chk("测试供应商A" in sup_names and "测试供应商B" in sup_names,
                 f"按供应商聚合含 A/B 两家: {sup_names}")

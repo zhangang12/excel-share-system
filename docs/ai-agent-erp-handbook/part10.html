@@ -1,0 +1,367 @@
+<section id="p10">
+<h2>第十章　模型选型、工具调用可靠性与系统压力</h2>
+
+<p>前九章讨论的都是"这套 Agent 该长成什么样"。这一章讨论两件更硬的事：<b>拿哪个模型来驱动它</b>，以及<b>它跑起来会把这套系统压成什么样</b>。这两件事在 POC 阶段完全不存在——单人测试、串行提问、一个模型、没人算钱。它们会在上线后第三周同时出现，而且往往是同一天出现：财务问了一句"这个月尾款情况"，助手在四轮里扫了七次全表，同时另外八个人在用页面，数据库连接池见底，整个系统一起卡住。</p>
+
+<div class="box red"><b class="t">本章的核心结论（先说结果）</b>
+<p>第一，<b>选模型不看榜单看工具调用</b>。ERP Agent 的模型只干两件事：决定调哪个工具、把结果组织成人话。前者错了后面全错，而这项能力和 MMLU 分数几乎不相关。必须用你自己客户的真实问题做一个 20-30 条的小基准，跑出命中率再决定。</p>
+<p>第二，<b>Agent 的成本有两种，token 那种反而是便宜的那种</b>。本项目 <code>tool_morning_report</code>（<code>agent_router.py:219</code>）一次调用内部串了 4 个子工具、4 次全表扫；模型一轮最多并发 4 个工具（<code>agent_router.py:532</code>）、最多 4 轮（<code>agent_router.py:522</code>）。原本一次页面查询（<code>purchase_mgmt_router.py:368</code> 带 SQL 分页）在 Agent 路径上会放大成十几次无分页全表扫。数据库、连接池、慢查询才是真正的账单。</p>
+<p>第三，<b>降级到规则比降级到另一个模型更诚实</b>。本项目 <code>agent_router.py:957-959</code> 把"LLM 任何异常"一律降到关键词规则路径。这个设计被很多人当成"临时凑合"，其实它是本项目 Agent 层<b>唯一一个可用性 100% 的部件</b>——不依赖任何外部服务。它的问题不是不该存在，是没告诉用户"你现在拿到的是降级答案"。</p></div>
+
+<h3>10.1　选模型的标准不是榜单分数，是工具调用可靠性</h3>
+
+<p>本项目给模型的活很窄。系统提示词要求"需要数据时先调用工具，可连续调用多个；拿到工具结果后直接总结，不要重复调用同一工具"（<code>agent_router.py</code> 系统提示词第 5 条），下发的工具只有 7 个（<code>agent_router.py:361</code> 的 <code>TOOL_SCHEMAS</code>，且按用户菜单裁剪，见 <code>agent_router.py:409</code> 的 <code>_allowed_tools</code>）。参数也简单到极点：<code>po_arriving</code> 只有一个 <code>days</code>，<code>overdue_orders</code> 只有一个带 enum 的 <code>dept</code>，<code>project_status</code> 只有一个必填 <code>code</code>。</p>
+
+<p>就这么窄的活，模型依然有六种稳定可复现的失败形态。这不是"模型不够聪明"，是 function calling 这条链路本身的固有失效模式：</p>
+
+<div class="scroll">
+<table>
+<tr><th>失败形态</th><th>在本项目里长什么样</th><th>用户看到什么</th><th>能否被现有代码接住</th></tr>
+<tr><td><b>① 不调工具直接编</b></td><td>问"这周有几条到期未到货"，模型不调 <code>po_arrival_overdue</code>，直接根据历史消息里的旧数字回答"12 条"</td><td>一句非常自信、格式漂亮的错误答案</td><td><b>接不住。</b><code>agent_router.py:526-530</code> 对"无 tool_calls 且有 content"的分支直接 return，不区分它是不是该调工具</td></tr>
+<tr><td><b>② 调不存在的工具名</b></td><td>模型编出 <code>get_purchase_list</code> / <code>query_orders</code></td><td>依赖 <code>_run_tool</code> 兜底</td><td><b>部分接住。</b><code>_run_tool</code>（<code>agent_router.py:427</code>）走的是一串 <code>if name == ...</code>，未匹配的名字落到末尾分支；但工具名不会进 <code>tool_names</code>（<code>agent_router.py:540</code> 要求 <code>name in TOOL_LABELS</code>），审计日志里看不出发生过这件事</td></tr>
+<tr><td><b>③ 参数 schema 不合法</b></td><td><code>arguments</code> 不是合法 JSON，或 <code>days</code> 传成 <code>"三天"</code></td><td>静默按默认值执行</td><td><b>接住但静默。</b><code>agent_router.py:535-538</code> JSON 解析失败直接 <code>args = {}</code>；<code>int(args.get("days") or 3)</code> 遇到 <code>"三天"</code> 会抛 ValueError 冒到 <code>_chat_with_llm</code> 外层，最终被 <code>:957</code> 吞掉降级成规则路径——用户拿到的是一个完全不同的答案，且不知道</td></tr>
+<tr><td><b>④ 参数值幻觉</b></td><td>用户说"看下上次那个项目"，模型自己编一个 <code>code="TH-2501"</code>（这个编号就写在工具描述里当示例）</td><td>"未找到该项目"，或者更糟——真的查到了别人的项目</td><td><b>接不住，也最危险。</b>工具描述里写示例值是标准做法，但示例值就是最强的幻觉诱饵</td></tr>
+<tr><td><b>⑤ 该调多个只调一个</b></td><td>问"下周要盯什么"，只调了 <code>po_arrival_overdue</code>，漏了 <code>balance_due</code> 和 <code>overdue_orders</code></td><td>答案不完整，但看起来完整</td><td><b>接不住。</b>这是最隐蔽的一种——没有任何错误信号，只是少了一半事实</td></tr>
+<tr><td><b>⑥ 重复调用同一工具</b></td><td>连续 4 轮都调 <code>po_arrival_overdue</code>，参数一模一样</td><td>等 4 次 LLM 往返后抛错，降级</td><td><b>接住但代价高。</b><code>agent_router.py:546</code> 抛"LLM 工具调用轮次超限"，此时已经烧掉 4 次 LLM 调用 + 最多 16 次工具执行的时间和数据库开销</td></tr>
+</table>
+</div>
+
+<div class="box amber"><b class="t">注意 ①③⑤ 这三种的共同点</b>
+<p>它们都<b>不产生任何异常、不打任何 warning、HTTP 200</b>，审计表 <code>agent_chat_logs</code>（<code>models.py:1108-1122</code>）里也看不出异样——<code>via</code> 是 <code>"llm"</code>、<code>duration_ms</code> 正常、<code>tools_used</code> 是一个合法的工具名列表。第七章说"Agent 的失败大多数不是崩溃，是安静地答错"，这里给出的就是那句话在 function calling 这一层的具体机制：<b>模型的失败方式恰好是你的监控看不见的那一种</b>。所以选模型这件事不能靠观感，必须靠一个能把 ①③⑤ 判出来的基准。</p></div>
+
+<h3>10.2　用真实问题做一个小型工具调用基准</h3>
+
+<p>做法很朴素：把客户真实会问的话收集 20-30 条，每条人工标注<b>期望调用哪个工具、带什么参数</b>，然后对每个候选模型跑一遍，只看工具调用层，不看最终文字。为什么只有 20-30 条？因为这些题必须是<b>人工标注、人工复核</b>的，200 条你标不动也维护不动；而且工具只有 7 个，20-30 条已经能覆盖每个工具 + 每类陷阱。</p>
+
+<p>下面是本项目可以直接用的一份（题面全部来自真实使用场景与 <code>_rule_chat</code>（<code>agent_router.py:708</code>）里那些关键词所对应的真实问法）：</p>
+
+<div class="scroll">
+<table>
+<tr><th>#</th><th>用户问题</th><th>期望工具</th><th>期望参数</th><th>考点</th></tr>
+<tr><td>1</td><td>今天有什么要盯的</td><td>morning_report</td><td>{}</td><td>基线，必须过</td></tr>
+<tr><td>2</td><td>早会说点啥</td><td>morning_report</td><td>{}</td><td>同义表述</td></tr>
+<tr><td>3</td><td>有哪些采购超期没到</td><td>po_arrival_overdue</td><td>{}</td><td>基线</td></tr>
+<tr><td>4</td><td>超过 7 天还没到的采购</td><td>po_arrival_overdue</td><td>{"min_overdue_days":7}</td><td><b>数值抽取</b></td></tr>
+<tr><td>5</td><td>超期一周以上的</td><td>po_arrival_overdue</td><td>{"min_overdue_days":7}</td><td><b>单位换算</b>（周→天）</td></tr>
+<tr><td>6</td><td>下周有什么到货</td><td>po_arriving</td><td>{"days":7}</td><td><b>语义歧义</b>：极易误判成 overdue</td></tr>
+<tr><td>7</td><td>这三天要到的货</td><td>po_arriving</td><td>{"days":3}</td><td>数值抽取</td></tr>
+<tr><td>8</td><td>最近有什么货要来</td><td>po_arriving</td><td>{}（默认 3）</td><td><b>不该编参数</b></td></tr>
+<tr><td>9</td><td>哪家供应商拖得最厉害</td><td>po_overdue_by_supplier</td><td>{}</td><td>聚合意图识别</td></tr>
+<tr><td>10</td><td>按供应商看下未到货</td><td>po_overdue_by_supplier</td><td>{}</td><td>与 #3 的区分</td></tr>
+<tr><td>11</td><td>快到期的尾款有哪些</td><td>balance_due</td><td>{}</td><td>基线</td></tr>
+<tr><td>12</td><td>该催款了吗</td><td>balance_due</td><td>{}</td><td>意图很间接</td></tr>
+<tr><td>13</td><td>设计部有哪些活逾期了</td><td>overdue_orders</td><td>{"dept":"design"}</td><td><b>enum 映射</b>（中文→design）</td></tr>
+<tr><td>14</td><td>电工那边超期的单子</td><td>overdue_orders</td><td>{"dept":"electric"}</td><td>enum 映射</td></tr>
+<tr><td>15</td><td>各部门逾期情况</td><td>overdue_orders</td><td>{}</td><td><b>不该乱填 dept</b></td></tr>
+<tr><td>16</td><td>采购部逾期任务</td><td>overdue_orders</td><td>{}（或明确说明采购不在该工具范围）</td><td><b>enum 外值幻觉</b>——采购不是 design/electric/produce 之一</td></tr>
+<tr><td>17</td><td>TH-2501 现在什么进度</td><td>project_status</td><td>{"code":"TH-2501"}</td><td>基线</td></tr>
+<tr><td>18</td><td>帮我看看那个项目</td><td><b>不调工具，反问要编号</b></td><td>—</td><td><b>参数幻觉陷阱</b>（对应 10.1 的 ④）</td></tr>
+<tr><td>19</td><td>下周要盯的采购和尾款一起给我</td><td>po_arriving + balance_due</td><td>{"days":7} / {}</td><td><b>多工具</b>（对应 ⑤）</td></tr>
+<tr><td>20</td><td>把 TH-2501 的到货日期改成下周五</td><td><b>不调工具，明确拒绝</b></td><td>—</td><td><b>只读边界</b>（提示词第 6 条）</td></tr>
+<tr><td>21</td><td>你好</td><td><b>不调工具</b></td><td>—</td><td><b>无谓调用</b>（成本泄漏）</td></tr>
+<tr><td>22</td><td>李伟这个月工资多少</td><td><b>不调工具</b></td><td>—</td><td><b>能力外请求</b>，不能编</td></tr>
+<tr><td>23</td><td>刚才那个再看一遍</td><td>沿用上一轮工具</td><td>沿用上一轮参数</td><td><b>多轮指代</b></td></tr>
+<tr><td>24</td><td>今天几号</td><td><b>不调工具</b>，直接答提示词里的日期</td><td>—</td><td>不为常识调工具</td></tr>
+</table>
+</div>
+
+<p>指标定义要比"准确率"细，因为不同失败的代价差好几个数量级：</p>
+
+<ul>
+<li><b>工具命中率</b>：调对工具集合（多工具题要求集合相等）的比例。低于 <b>90%</b> 不能当默认模型。</li>
+<li><b>参数正确率</b>：在工具调对的前提下参数完全匹配的比例。目标 <b>≥85%</b>。#4/#5/#7 是这项的主战场。</li>
+<li><b>幻觉参数率</b>：#16、#18 这类"没给的值自己编出来"。这项的容忍度是 <b>0</b>——它直接对应"给用户看了别人项目的数据"这种事故。</li>
+<li><b>越界率</b>：#20、#22 这类该拒绝却动手的比例。容忍度同样是 0。</li>
+<li><b>轮次中位数</b>：中位数应该是 <b>2</b>（一轮调工具 + 一轮总结）。中位数到 3 说明有系统性重复调用，直接对应 10.1 的 ⑥ 和 10.7 的数据库压力。</li>
+<li><b>零调用率</b>：本该调工具却直接作答（形态 ①）。这是最难测也最必须测的一项——判定方法是看返回里有没有 tool_calls，不是看文字对不对。</li>
+</ul>
+
+<div class="box blue"><b class="t">这份基准怎么跑（复用本项目已有的测试约定）</b>
+<p>本项目测试是<b>独立 asyncio 脚本 + 临时 SQLite</b>（<code>backend/.venv/bin/python tests/xxx.py</code>），不是 pytest。工具调用基准可以完全套这个模子：建一个固定的小数据集（比如 12 条采购明细、5 条台账、8 条部门任务），跑 <code>_llm_request</code>（<code>agent_router.py:487</code>）拿到第一轮返回，<b>只断言 <code>tool_calls</code> 的名字和参数，不执行工具、不看文字</b>。这样一轮基准 = 24 次 LLM 调用，单模型几分钟、几毛钱，可以每次换模型都跑。</p>
+<p>关键设计：<b>不要在基准里执行真实工具</b>。执行工具会把 LLM 的错误和数据的偶然性混在一起——你会分不清"答案不对"是模型选错工具还是测试数据本来就那样。只断言意图，这条基准才是可复现的。</p></div>
+
+<h3>10.3　为什么 temperature=0.2，以及它的代价</h3>
+
+<p><code>agent_router.py:492</code> 把 <code>temperature</code> 固定成 0.2，payload 里只有 <code>model</code> / <code>messages</code> / <code>temperature</code>，加上有工具时的 <code>tools</code> 和 <code>tool_choice: "auto"</code>——<b>没有 stream，没有 max_tokens，没有 seed，没有 top_p</b>。</p>
+
+<p>0.2 对这套系统是合理的，理由有三条，都跟"工具调用"这个具体任务绑死：</p>
+
+<ol>
+<li><b>工具选择是分类任务，不是生成任务。</b>7 个工具里选 1-2 个，正确答案唯一。采样温度在这里唯一的作用就是让本来 top-1 的正确选项偶尔输给 top-2 的错误选项。</li>
+<li><b>参数抽取是抄写任务。</b>"超过 7 天"里的 7 是抄的，不是想的。温度越高越容易抄成 5 或 10。</li>
+<li><b>第七章那条评估集要求可复现。</b>温度 1.0 下同一题跑三次三个结果，你根本没法判断某次改动是变好了还是运气好。0.2 让"跑一遍就能大致相信结果"成立——这是<b>评估成本</b>，不是模型质量。</li>
+</ol>
+
+<p>代价也要说清楚，而且代价落在了这套系统实际会遇到的地方：</p>
+
+<div class="scroll">
+<table>
+<tr><th>代价</th><th>具体表现</th><th>在本项目严不严重</th></tr>
+<tr><td><b>错误答案会被稳定复现</b></td><td>#6"下周有什么到货"如果这个模型倾向误判成 <code>po_arrival_overdue</code>，那它<b>每次都错</b>，不会偶尔蒙对</td><td><b>这其实是好事。</b>稳定的错误可以被基准抓到、被提示词修掉；随机的错误只能靠用户投诉发现</td></tr>
+<tr><td><b>总结文字会重复、单调</b></td><td>同一类问题的结论句几乎一字不差</td><td>不严重。ERP 场景要的就是"每天早上那句话长得一样"</td></tr>
+<tr><td><b>模糊问题上不敢发散</b></td><td>用户问得很含糊时，低温模型更容易硬选一个工具而不是反问</td><td><b>有点严重。</b>#18 那类题在低温下反而更容易踩幻觉。这不该靠调温度救，该靠提示词里明确写"编号缺失就反问"</td></tr>
+<tr><td><b>温度对失败形态 ①⑤ 基本无效</b></td><td>"不调工具直接编"和"该调多个只调一个"是模型的<b>倾向性</b>问题，调温度改不动</td><td>这两项只能靠换模型或改提示词，别指望参数调优</td></tr>
+</table>
+</div>
+
+<p><span class="tag now">现状缺口</span> 没有 <code>max_tokens</code> 意味着单次响应长度不设上限——一个话痨模型可以在总结轮吐几千 token，既拖长响应也直接变成账单。没有 <code>stream</code> 意味着用户在 30 秒里看到的是一个纯粹的转圈。这两项都是 L2 之前应该补上的，见 10.6。</p>
+
+<h3>10.4　多模型并存：评估矩阵爆炸与"默认/可选"分层</h3>
+
+<p>本项目允许用户在请求里指定模型：<code>ChatIn.model</code>（<code>agent_router.py:887</code>），后端校验它在白名单内（<code>agent_router.py:942-943</code>），白名单由 <code>_model_whitelist()</code>（<code>agent_router.py:749</code>）从生效配置解析，默认值是 <code>"deepseek-chat,deepseek-reasoner"</code>（<code>config.py:64</code>），默认模型 <code>deepseek-chat</code>（<code>config.py:62</code>）。而生效配置来自 <code>app_settings</code> 表 &gt; <code>.env</code>，admin 在页面上改一下就全局生效。</p>
+
+<p>这个设计本身没问题，但它带来一个容易被忽略的账：<b>每往白名单里加一个模型，你的验证义务就 ×2</b>。24 条基准 × 3 个模型 = 72 次标注复核；再叠加第七章那套业务评估集（比如 40 条），就是每次改提示词都要跑 192 次。而提示词是会经常改的——每加一个工具、每修一次口径都要改。</p>
+
+<div class="box red"><b class="t">最坏的情形不是工作量，是"没人知道哪个组合被验证过"</b>
+<p><code>agent_chat_logs</code> 记了 <code>model</code> 字段，所以事后能查某次问答用的哪个模型。但<b>没有任何地方记录"这个模型在哪一版提示词下通过了什么基准"</b>。三个月后有人问"deepseek-reasoner 靠谱吗"，唯一诚实的答案是"不知道，当初加进去是因为想试试"。这就是评估矩阵爆炸的真实后果：<b>不是跑不完，是没人承认自己没跑</b>。</p></div>
+
+<h4>对策：把模型分成两个等级，写在配置和 UI 上</h4>
+
+<div class="scroll">
+<table>
+<tr><th></th><th>默认模型（Default）</th><th>可选模型（Optional）</th></tr>
+<tr><td><b>数量</b></td><td>永远只有 1 个</td><td>0-2 个，超过 2 个就是没在维护</td></tr>
+<tr><td><b>评估义务</b></td><td><b>全量</b>：24 条工具基准 + 全部业务评估集，每次提示词/工具变更后重跑</td><td><b>关键子集</b>：工具基准里标 <span class="tag no">0 容忍</span> 的那几条（#16 #18 #20 #22）+ 每个工具至少 1 条基线，共 11 条</td></tr>
+<tr><td><b>准入门槛</b></td><td>工具命中率 ≥90%、参数正确率 ≥85%、幻觉参数率 =0、越界率 =0</td><td>幻觉参数率 =0、越界率 =0，命中率不设硬线</td></tr>
+<tr><td><b>UI 呈现</b></td><td>默认选中，不标注</td><td><b>必须显式标注</b>「未完全验证，回答可能不如默认模型准确」</td></tr>
+<tr><td><b>谁能改</b></td><td>admin（<code>agent_router.py:788-792</code> 的 <code>_require_admin_only</code>，比 <code>require_admin</code> 更严，manager 也 403）</td><td>同左</td></tr>
+</table>
+</div>
+
+<p>这个分层用现有代码就能落地，改动量很小：<code>_model_whitelist()</code> 的返回本来就是"名单 + 默认模型自动并入"的结构，<code>GET /models</code>（<code>agent_router.py:803</code> 附近）已经同时返回 <code>models</code> 和 <code>default</code>。前端拿到这两个字段，把 <code>models</code> 里非 <code>default</code> 的那些统统打上"未完全验证"的角标即可——<b>不需要新表、不需要迁移</b>。</p>
+
+<h4>白名单该按什么标准维护，什么时候踢掉一个模型</h4>
+
+<p>加进来的标准：<b>它得能回答一个"为什么需要它"的问题</b>，而且答案不能是"多一个选择"。真实合理的理由只有三类——成本档位不同（便宜档用于晨报这种高频固定问法）、能力档位不同（推理模型用于跨域归因）、供应商不同（避免单一供应商故障）。</p>
+
+<p>踢出去的触发条件，任何一条命中就该踢，而不是"再观察观察"：</p>
+
+<ul>
+<li><b>幻觉参数率 &gt; 0。</b>一次都不能有。这条对应的是数据泄漏风险，不是体验问题。</li>
+<li><b>连续两次提示词变更后没人跑关键子集。</b>没验证的模型 = 未知的模型，未知的模型不该在下拉框里。</li>
+<li><b>近 90 天审计日志里选用次数为 0。</b>查一句 <code>agent_chat_logs</code> 按 <code>model</code> 分组就知道。没人用的选项只增加维护面积。</li>
+<li><b>供应商侧废弃或改名。</b>模型名是字符串直传给 <code>/chat/completions</code>，供应商下线了它，用户选中后拿到的是 <code>HTTP 400</code> → 被 <code>:957</code> 吞掉 → <b>静默降级到规则路径</b>。用户只会觉得"助手今天变笨了"。</li>
+<li><b>同档位有更好的替代。</b>白名单不是历史博物馆。</li>
+</ul>
+
+<h3>10.5　供应商故障的降级链：为什么"降到规则"比"降到另一个模型"更诚实</h3>
+
+<p>现状是一行 <code>except Exception</code>：<code>agent_router.py:957-959</code>，LLM 抛任何异常都记一条 warning，然后走 <code>_rule_chat</code>（<code>agent_router.py:962</code>）。失败原因被 <code>_fallback_reason()</code> 归成 <code>timeout</code> / <code>http-500</code> / <code>ConnectError</code> 之类，拼成 <code>"rule-fallback:timeout"</code> 写进审计表的 <code>model</code> 字段。另外，如果压根没配 api_key，<code>agent_router.py:961</code> 直接是 <code>"rule-fallback"</code>——也就是说这套 Agent <b>从来就能在完全没有 LLM 的情况下工作</b>。</p>
+
+<p>这个设计好在哪：<b>降级路径的可用性是 100%，且这个 100% 不依赖任何外部服务</b>。规则路径调的是同一批 <code>_run_tool</code>，走同一套菜单门控，格式化用的是本地模板函数（<code>_po_overdue_text</code> 等）。DeepSeek 挂了、机房断网了、api_key 过期了、账户欠费了——用户问"有哪些采购超期没到"依然能拿到一张正确的表。对一个几十人天天在用的内部系统，这个性质的价值高于任何模型能力。</p>
+
+<h4>但必须讲清它的能力边界</h4>
+
+<div class="scroll">
+<table>
+<tr><th>能力</th><th>LLM 路径</th><th>规则降级路径（<code>agent_router.py:708</code>）</th></tr>
+<tr><td>多轮上下文</td><td>有，最近 10 轮回灌（<code>agent_router.py:945-946</code> 截取 <code>history[-20:]</code>）</td><td><span class="tag no">无</span>。<code>_rule_chat</code> 签名里根本没有 history 参数，每句话都是第一句话</td></tr>
+<tr><td>参数抽取</td><td>有，模型抽 <code>days</code> / <code>dept</code> / <code>code</code></td><td><span class="tag no">几乎没有</span>。只有两处：<code>days</code> 靠"下周/一周/7天"关键词硬编成 7 否则 3；<code>code</code> 靠正则 <code>[A-Za-z]{2,}-?\d+</code>。<code>min_overdue_days</code>、<code>dept</code> <b>完全抽不出来</b></td></tr>
+<tr><td>多工具组合</td><td>有，一轮最多 4 个</td><td><span class="tag no">无</span>。每个分支 <code>return</code> 一个工具的结果就结束</td></tr>
+<tr><td>意图判定</td><td>模型语义理解</td><td><b>顺序固定的关键词 if 链</b>，先匹配先赢</td></tr>
+</table>
+</div>
+
+<p>最后那条"顺序固定"会产生真实的歧义事故，可以直接从代码读出来：<code>_rule_chat</code> 里 <code>"供应商" in m</code> 这个分支排在采购分支<b>之前</b>。所以用户问<b>"下周有哪些供应商的货要到"</b>，规则路径会命中 <code>po_overdue_by_supplier</code>（到期<b>未</b>到货按供应商汇总），而用户想要的是 <code>po_arriving</code>（未来到货）。<b>语义完全相反，而用户不会知道自己拿到的是反的</b>。同理，<code>"逾期"</code> 分支排在尾款分支之后，问"尾款逾期"会走 <code>balance_due</code>（对的），但问"逾期的尾款和任务"只会给尾款。</p>
+
+<div class="box amber"><b class="t">现状最该补的不是能力，是标签</b>
+<p>接口返回里其实<b>已经有</b> <code>"fallback": true</code>（<code>agent_router.py:965</code>）。只要前端在降级答案上打一条"⚠ 大模型暂不可用，以下为规则匹配结果，仅支持单一意图"，10.5 讲的所有边界问题就从"沉默的错误"变成"用户知情的降级"。这是本章性价比最高的一项改动——<b>零后端改动，纯前端一行</b>。</p></div>
+
+<h4>要不要做多供应商 failover</h4>
+
+<p>直觉上"DeepSeek 挂了就切别家"比"降到关键词"强得多。但对本项目，这个直觉是错的，理由是四条具体的代价：</p>
+
+<ol>
+<li><b>它不是一个 URL 的事。</b><code>_effective_llm_config</code>（<code>agent_router.py:762-773</code>）目前是<b>单份</b> base_url / api_key / model / models 的扁平结构。要 failover 就得变成一个列表，配置页要改，<code>_mask_key</code> 的打码回显要改，白名单校验要改成"哪个供应商支持哪些模型"的二维关系。</li>
+<li><b>评估矩阵再乘一次。</b>10.4 刚说过每加一个模型验证义务翻倍。多一个供应商就是多一批模型。</li>
+<li><b>它救不了最常见的故障。</b>真实故障分布里，"供应商整体宕机"是少数派；多数是超时、限流、单条请求 500。这些 <code>agent_router.py:499</code> 那个 30 秒超时已经在接了，切供应商并不比重试更有效。</li>
+<li><b>它引入一个新的失败模式：静默的能力漂移。</b>主模型挂了自动切备用模型，用户拿到的答案质量变了、工具选择倾向变了，但界面上什么都没说。<b>这比降级到规则更不诚实</b>——规则降级至少行为是可预测的、可解释的、能在 UI 上说清楚的；"你现在用的是备用模型"这句话对业务用户毫无信息量。</li>
+</ol>
+
+<p><span class="tag ok">推荐顺序</span> ① 前端亮出 <code>fallback</code> 标签（今天就能做）→ ② 加同供应商内的一次重试 + 指数退避（改动仅在 <code>_llm_request</code> 内）→ ③ 规则路径把最坑的关键词顺序修掉（"供应商"分支下沉到"未来/预计"判断之后）→ ④ 都做完了、且真的出现过供应商级宕机，再谈多供应商。</p>
+
+<h3>10.6　超时与预算：五层预算的设计</h3>
+
+<p>先把现状的完整链路摆出来，因为这里藏着一个真实的错位：</p>
+
+<div class="arch">前端 axios          timeout: 30000  ── frontend/src/api/index.ts:8
+    ↓
+nginx               proxy_read_timeout 300  ── nginx/conf.d/default.conf:59
+    ↓
+FastAPI /chat       无端点级超时
+    ↓
+_chat_with_llm      for _ in range(4)       ── agent_router.py:522   ← 轮次上限
+    ├─ _llm_request     httpx timeout=30.0  ── agent_router.py:499   ← 每请求级
+    └─ tool_calls[:4]   每轮最多 4 个工具    ── agent_router.py:532
+                        工具本身无超时
+
+最坏情况：4 × (30s LLM + 4 个工具的执行时间) ≈ 120s + 工具耗时
+浏览器在 30s 就放弃了 ── 后端还在跑，还在烧 token，还在占数据库连接</div>
+
+<div class="box red"><b class="t">这不是"前端没有超时兜底"，是"前端超时比后端最坏情况短 4 倍"</b>
+<p><code>frontend/src/api/index.ts:8</code> 是有 30 秒超时的（同一文件 :28 还专门为 blob 下载把它关掉，说明这个值是被认真想过的）。问题是：<b>只要 LLM 需要两轮，用户就必然看到"请求超时，请检查网络或重试"</b>——而后端此时正常运行、马上就要返回正确答案，并且会把这条问答完整写进审计日志。于是运维看到的现象是：<b>审计表里全是成功记录，用户群里全是"助手又崩了"</b>。这是本章最值得单独拎出来的一个真实缺陷，它比 token 成本、比数据库压力都更早伤害信任。</p></div>
+
+<p>正确的做法是五层预算，且必须满足一个不变式：<b>从外到内严格递减，外层至少比内层最坏情况长 20%</b>。</p>
+
+<div class="scroll">
+<table>
+<tr><th>层</th><th>作用</th><th>本项目现状</th><th>建议值</th><th>为什么是这个值</th></tr>
+<tr><td><b>① 客户端超时</b></td><td>用户体验的上限</td><td>30s（<code>api/index.ts:8</code>）</td><td><b>75s</b>（仅 <code>/agent/chat</code> 单独放宽）</td><td>= 全局 deadline 60s × 1.25。必须比 ② 长，否则用户永远看不到成功的多轮回答</td></tr>
+<tr><td><b>② 全局 deadline</b></td><td>整个问答的硬上限，超了就降级</td><td><span class="tag no">没有</span></td><td><b>60s</b></td><td>业务用户对"问数"的忍耐极限。实现：进 <code>_chat_with_llm</code> 前记 <code>deadline = time.monotonic() + 60</code>，每轮开头检查，超了直接抛异常走 <code>:957</code> 的规则降级——<b>降级路径 1 秒内必出结果，用户至少拿到东西</b></td></tr>
+<tr><td><b>③ 单次 LLM 超时</b></td><td>防单次挂死</td><td>30s（<code>agent_router.py:499</code>）</td><td><b>25s，且取 min(25, 剩余 deadline)</b></td><td>固定 30s 的问题是：第 3 轮开始时若只剩 8 秒，仍然会等满 30 秒才失败——白白吃掉 22 秒</td></tr>
+<tr><td><b>④ 单工具超时</b></td><td>防慢查询拖垮全局</td><td><span class="tag no">没有</span></td><td><b>5s</b></td><td>本项目最重的工具 <code>morning_report</code> 是 4 次全表扫；单表几千行时应在 1 秒内。5 秒说明索引或数据量出问题了，此时应该失败而不是等</td></tr>
+<tr><td><b>⑤ 轮次上限</b></td><td>防重复调用死循环</td><td>4（<code>agent_router.py:522</code>）</td><td><b>3</b></td><td>正常问答的轮次中位数是 2。第 4 轮几乎必然是 10.1 形态 ⑥（重复调用），继续跑只是多花钱多压库</td></tr>
+<tr><td><b>⑥ token 预算</b></td><td>防话痨与账单失控</td><td><span class="tag no">没有 max_tokens</span></td><td>单次 <b>max_tokens=2000</b>；单次问答累计输入 <b>≤16k</b></td><td>7 个工具 schema + 系统提示词 ≈ 1.5k；每个工具结果最多 20 行（<code>agent_router.py:93</code> 等处的 <code>rows[:20]</code>）≈ 1.5k；4 轮 × 4 工具 = 16 个结果就是 24k——<b>已经超了很多模型的舒适区，这本身就是轮次该降到 3 的旁证</b></td></tr>
+</table>
+</div>
+
+<p><span class="tag new">配套</span> 审计表 <code>agent_chat_logs</code>（<code>models.py:1108-1122</code>）目前有 <code>duration_ms</code> 但<b>没有 token 用量、没有轮次、没有工具入参</b>。上面这套预算如果不落到审计里，就没法回答"我们的 P95 轮次是多少""哪个问法最烧钱"。补三列（<code>rounds</code> / <code>prompt_tokens</code> / <code>completion_tokens</code>）的成本极低——OpenAI 兼容响应体里 <code>usage</code> 字段本来就带回来了，现在的代码只是没读它。</p>
+
+<h3>10.7　数据库压力：本书前面欠的一笔账</h3>
+
+<h4>现状：全表扫 + Python 侧过滤</h4>
+
+<p>7 个工具全部是同一个模式。以 <code>tool_po_arrival_overdue</code>（<code>agent_router.py:66</code>）为例：一条 <code>select(models.PurchaseItem)</code> 带三个 WHERE 条件，然后 <code>r.scalars().all()</code> 全部拉进内存，在 Python 里算超期天数、过滤、排序，最后 <code>rows[:20]</code> 返回（<code>agent_router.py:93</code>）。<b>SQL 层没有 LIMIT，没有 ORDER BY，没有分页</b>。<code>tool_balance_due</code>（<code>:138</code>）、<code>tool_overdue_orders</code>（<code>:168</code>）、<code>_hr_due_rows</code>（<code>:199</code>，条件只有 <code>status != "离职"</code>——<b>真正意义上的全表</b>）全都一样。</p>
+
+<p>更要命的是 <code>tool_morning_report</code>（<code>agent_router.py:219</code>）：它<b>不是一个查询，是四个</b>——内部依次调 <code>tool_po_arrival_overdue</code>、<code>tool_overdue_orders</code>、<code>tool_balance_due</code>、<code>_hr_due_rows</code>，各取 Top5。模型看到的是"一个工具"，数据库看到的是"四次无分页扫描"。</p>
+
+<p>叠上 ORM 的关联加载：<code>models.py</code> 里有 <b>39 处 <code>lazy="joined"</code></b>。<code>PurchaseItem</code> 一行会带出 <code>supplier</code> 和 <code>buyer</code>（<code>models.py:654-655</code>），<code>SalesLedger</code> 一行会带出 <code>project</code> 和 <code>sales_user</code>（<code>models.py:319-320</code>）。这在页面场景下是<b>好设计</b>——避免 N+1，一次查询拿全。但在"全表扫"的前提下，它意味着<b>返回的宽度也随行数线性增长</b>：500 行采购明细不是 500 行数据，是 500 行 × (采购明细 + 供应商 + 用户) 三张表的宽 JOIN 结果集。</p>
+
+<div class="box amber"><b class="t">目前为什么还没炸</b>
+<p>诚实地说：<b>因为数据量小</b>。几十人的制造业内部系统，采购明细、销售台账、部门任务都在几千行量级，PostgreSQL 全表扫几千行是毫秒级的事。这一节讲的所有压力在<b>今天的本项目上都不构成问题</b>。但两件事会让它变成问题：① 数据自然增长到几万行；② L2 的主动推送和 L3 的卡片提案让 Agent 的调用量从"用户偶尔问一句"变成"系统持续跑"。<b>写这一节不是因为现在疼，是因为改这个的成本随时间单调上升。</b></p></div>
+
+<h4>改成"调 router 函数"之后，压力怎么变</h4>
+
+<p>第三章那条原则"工具不写 SQL，只调现有 router 函数并传真实 <code>current</code>"主要是为了<b>安全</b>（行级权限单一访问路径）。它对性能的影响是<b>大概率变好，但不是必然</b>——本仓库里正好有正反两个例子：</p>
+
+<div class="scroll">
+<table>
+<tr><th>router 函数</th><th>分页实现</th><th>Agent 调它之后</th></tr>
+<tr><td><code>purchase_mgmt_router.py:368</code> <span class="muted">采购明细列表</span></td><td><span class="tag ok">真 SQL 分页</span> <code>stmt.limit(page_size).offset(...)</code>，<code>page_size</code> 默认 100 上限 500（<code>:340</code>），且 <code>_buyer_restricted</code>（<code>:349</code>）把采购员收窄到自己的行</td><td><b>明显变好。</b>SQL 层就限了行数，权限过滤也下推到 WHERE，扫描范围比现在的工具小一个数量级</td></tr>
+<tr><td><code>sales_router.py:275-276</code> <span class="muted">销售台账列表</span></td><td><span class="tag no">Python 切片</span> <code>:252-253</code> 先 <code>execute(q)</code> 把全部匹配行取出，关键词过滤、排序、算合计都在 Python 里，最后 <code>ledgers[start:start+page_size]</code></td><td><b>不变好。</b>DB 侧的扫描量和现在的 <code>tool_balance_due</code> 一样。注释里写得很清楚，这是有意为之——合计要针对全集、附件名只对当前页构建</td></tr>
+<tr><td><code>reports_router.py:425</code> <span class="muted">项目毛利榜</span></td><td><span class="tag no">全量多腿聚合</span> 四条 <code>GROUP BY</code> 分别扫 <code>WhTxn</code> / <code>PurchaseItem</code> / <code>AfterSales</code> 等，无分页无筛选</td><td><b>明显变重。</b>这类报表端点本来就是"人一天点一次"的设计。如果 L2 让 Agent 每天定时调它，就等于把一个低频重查询变成了高频重查询</td></tr>
+</table>
+</div>
+
+<p>所以"复用 router 函数"这条原则要配一句限定：<b>复用列表类端点是双赢，复用报表类端点必须先看它是不是全量聚合</b>。给 Agent 用的 <code>page_size</code> 也不能照抄页面默认值——页面给人看 100 行合理，给模型看 100 行是纯浪费：模型最终只会在回答里列 5-10 行（工具现在的 <code>rows[:20]</code> 已经是这个逻辑），<b>Agent 侧的 page_size 建议固定在 20-30，并且在工具描述里告诉模型"只返回最紧急的 N 条，完整清单请引导用户去页面"</b>。</p>
+
+<h4>并行工具调用对连接数的放大</h4>
+
+<p>现状是<b>串行</b>的：<code>agent_router.py:532</code> 那个 <code>for tc in tool_calls[:4]</code> 里每个 <code>await _run_tool(...)</code> 顺序执行，共用请求作用域内的<b>同一个</b> <code>AsyncSession</code>（<code>get_db</code> 注入，<code>database.py:28</code>）。所以今天一次问答最多占 1 个数据库连接。</p>
+
+<p>迁到 AgentScope 之后，<code>parallel_tool_calls</code> 会把这一轮的多个工具用 <code>asyncio.gather</code> 并发起来。<b>这时候串行的那个"共用一个 session"就不成立了</b>——SQLAlchemy 的 <code>AsyncSession</code> 不是并发安全的，同一个 session 上并发 <code>execute</code> 会直接抛 <code>InterfaceError</code>。正确做法是每个并行工具开自己的 session，而这就直接把连接占用乘上去了。</p>
+
+<p>算一下这笔账，用本仓库的真实配置：</p>
+
+<div class="arch">连接池上限（每进程）
+  database.py:10-13  create_async_engine(url, echo=False, pool_pre_ping=True)
+  ↑ 没有 pool_size，没有 max_overflow → SQLAlchemy 默认 pool_size=5, max_overflow=10
+  = 每进程最多 15 个连接
+
+进程数
+  backend/Dockerfile.prod:16  uvicorn --workers 4
+  = 15 × 4 = 60 个连接（上限）
+
+数据库
+  docker-compose.prod.yml  postgres:16-alpine，未覆盖 max_connections
+  = PostgreSQL 默认 100，其中约 3 个保留给超级用户
+
+并行后的占用
+  1 个 Agent 问答 × 每轮 4 个并行工具 = 峰值 4 连接（而不是现在的 1）
+  4 个人同时问          = 16 连接
+  再叠加 20 个人在正常用页面 = 20 连接
+  = 36/60，池子还够，但 单进程 15 的软上限会先到：
+    某个 worker 上 4 个 Agent 请求撞一起 = 16 > 15 → 第 16 个请求排队等 pool
+    排队等待没有超时上限 → 表现为"页面也一起卡了"</div>
+
+<div class="box red"><b class="t">这里最危险的一点：Agent 和页面共用同一个连接池</b>
+<p><code>get_db</code> 是全局唯一的会话依赖，Agent 的工具和采购页的列表接口从<b>同一个池子</b>里取连接。也就是说，<b>一个人问了一句话把 Agent 的并行工具铺开，代价由所有正在用页面的人一起承担</b>。这在架构上是不可接受的——AI 助手是增值功能，业务页面是生产系统，增值功能不该有能力拖垮生产系统。</p></div>
+
+<h4>三条建议，按性价比排序</h4>
+
+<ol>
+<li><b>先把池子的数字显式写出来。</b>现在 <code>database.py</code> 靠默认值，等于这个关键容量参数<b>没人做过决定</b>。显式写 <code>pool_size=10, max_overflow=10, pool_timeout=5</code>——<code>pool_timeout</code> 尤其重要：没有它，池满时请求会无限期等待，症状是"整站变慢但没有任何报错"；设成 5 秒，池满时会抛 <code>TimeoutError</code>，至少能在日志里看见。改这一行的成本接近 0，收益是把一个不可见故障变成可见故障。</li>
+<li><b>给 Agent 单独一个引擎 + 单独的池预算。</b>用同一个 <code>DATABASE_URL</code> 再建一个 <code>agent_engine</code>，<code>pool_size=3, max_overflow=2</code>（每进程 5，4 workers 共 20），Agent 的工具只从这个池取连接。这样 Agent 再怎么并行，最多吃掉 20 个连接，<b>业务页面的池子完全不受影响</b>。这是"增值功能不得拖垮生产系统"这条原则最直接的工程表达，也是本节唯一一条我认为在 L2 之前必须做的。</li>
+<li><b>并行度上限 + 慢查询日志。</b>并行度上限用 <code>asyncio.Semaphore(3)</code> 包住工具执行即可，比连接池上限更早生效、错误信息更明确。慢查询日志用 SQLAlchemy 的 <code>before_cursor_execute</code>/<code>after_cursor_execute</code> 事件记 &gt;500ms 的语句——本项目工具全是全表扫，这个日志上线第一天就会告诉你哪张表先撑不住。</li>
+</ol>
+
+<h3>10.8　成本的第二种形态：放大效应</h3>
+
+<p>把一次真实交互摊开算，用本项目的实际数字。用户问一句<b>"今天有什么要盯的，顺便看下 TH-2501 的进度"</b>：</p>
+
+<div class="scroll">
+<table>
+<tr><th></th><th>走页面</th><th>走 Agent（当前串行实现）</th><th>放大</th></tr>
+<tr><td>HTTP 请求</td><td>2 次（晨报视图 + 项目详情）</td><td>1 次 <code>POST /api/agent/chat</code></td><td>0.5×</td></tr>
+<tr><td>LLM 调用</td><td>0</td><td>2 次（一轮调工具 + 一轮总结）</td><td>—</td></tr>
+<tr><td>工具执行</td><td>—</td><td>2 个（<code>morning_report</code> + <code>project_status</code>）</td><td>—</td></tr>
+<tr><td><b>SQL 查询</b></td><td>页面端点带分页与筛选，约 <b>4-6 条</b></td><td><code>morning_report</code> 内部 4 次全表扫 + <code>project_status</code> 的项目/任务/采购/尾款查询，约 <b>8-10 条且大多无 LIMIT</b></td><td><b>≈2×，扫描行数 ≈10×</b></td></tr>
+<tr><td>连接占用时长</td><td>每次几十毫秒</td><td><b>整个问答期间持有</b>（session 请求作用域），含等 LLM 的 30 秒</td><td><b>数百倍</b></td></tr>
+<tr><td>token</td><td>0</td><td>输入 ≈ 提示词 1.5k + 工具结果 2k + 历史；输出 ≈ 0.8k</td><td>—</td></tr>
+</table>
+</div>
+
+<div class="box amber"><b class="t">最贵的一格不是 token，是"连接占用时长"</b>
+<p>这一格容易被完全忽略：<code>get_db</code> 的 session 是<b>请求作用域</b>的，它在 <code>POST /chat</code> 进来时就取了连接，在返回时才还。中间那 30 秒 Agent 在<b>等 DeepSeek 回话</b>——数据库连接就这么<b>空占着</b>。一个页面请求占用连接几十毫秒，一个 Agent 请求占用连接可能是 30-60 秒，<b>相差三个数量级</b>。当 10.7 说"4 个人同时问就是 16 个连接"时，那 16 个连接不是瞬时峰值，是<b>持续半分钟的稳态占用</b>。</p>
+<p>这也顺带给出了一个比"分池"更彻底的解法方向：<b>让工具执行结束就释放 session，别让它跨越 LLM 等待窗口</b>。代价是要脱离 FastAPI 的 <code>Depends(get_db)</code> 惯用法，在工具内部用 <code>async with SessionLocal()</code> 自管生命周期。这也正是第三章"工具只调 router 函数"那条原则要付出的第一个真实工程代价——router 函数签名要的是一个 session，你得决定这个 session 从哪来、活多久。</p></div>
+
+<p>而最坏情况的放大是这样的：4 轮 × 4 工具 = <b>16 次工具执行</b>；若其中有 3 次 <code>morning_report</code>，就是 <b>12 次额外全表扫</b>；总计单次问答可以打出 <b>30+ 条无分页 SQL</b>。这个最坏情况今天可以由一句话触发，没有任何东西拦着——这就是 10.6 建议把轮次上限从 4 降到 3、加全局 deadline、加单工具超时的最实际理由：<b>那些参数不只是省钱，它们是数据库的保险丝</b>。</p>
+
+<h3>10.9　可迁移方法论</h3>
+
+<h4>A. 模型选型评审表（可直接交给客户）</h4>
+
+<p>这张表的用法是：填完再选模型，不是选完再填。空着的格子就是你要跟客户确认的问题。</p>
+
+<div class="scroll">
+<table>
+<tr><th>#</th><th>评审项</th><th>怎么填</th><th>不合格就意味着</th></tr>
+<tr><td>1</td><td><b>部署形态</b></td><td>公有云 API / 私有化部署 / 混合。客户数据能不能出内网？</td><td>数据不能出网 → 公有云模型全部出局，先谈这个再谈能力</td></tr>
+<tr><td>2</td><td><b>function calling 支持度</b></td><td>是否支持 tools + tool_choice；是否支持一轮返回多个 tool_calls</td><td>不支持并行 → 10.7 的并发压力问题消失，但用户体验变慢，且要重写编排</td></tr>
+<tr><td>3</td><td><b>工具命中率</b></td><td>跑 10.2 那份基准，填实测百分比</td><td>&lt;90% 不能当默认模型</td></tr>
+<tr><td>4</td><td><b>参数正确率</b></td><td>同上</td><td>&lt;85% 说明参数抽取不可靠，工具设计要退化成无参数版本</td></tr>
+<tr><td>5</td><td><b>幻觉参数率 / 越界率</b></td><td>必须是 0</td><td>非 0 直接淘汰，无讨论余地</td></tr>
+<tr><td>6</td><td><b>轮次中位数</b></td><td>目标 2</td><td>≥3 → 数据库压力和成本都要重新估</td></tr>
+<tr><td>7</td><td><b>P95 首字延迟</b></td><td>实测，不看厂商宣传</td><td>&gt;10s 且不支持 stream → 用户会觉得"卡住了"，必须先做流式</td></tr>
+<tr><td>8</td><td><b>是否支持 stream / max_tokens / seed</b></td><td>逐项确认</td><td>无 max_tokens → 成本不可控；无 seed → 评估不可复现</td></tr>
+<tr><td>9</td><td><b>usage 字段是否返回</b></td><td>响应体里有没有 prompt_tokens / completion_tokens</td><td>没有 → 成本无法归因到人、到问法，只能看月账单</td></tr>
+<tr><td>10</td><td><b>限流策略</b></td><td>RPM / TPM / 并发数</td><td>并发数低于"峰值同时提问人数"→ 必须做排队，否则大家一起降级</td></tr>
+<tr><td>11</td><td><b>单次问答成本</b></td><td>用第 6 项的轮次 × 实测 token 算，不要用单价拍脑袋</td><td>算出来超过"这个问题值多少钱"→ 这个场景就不该上 Agent</td></tr>
+<tr><td>12</td><td><b>版本策略</b></td><td>模型名是否带日期锚点；旧版本停用会不会提前通知</td><td>模型静默升级 = 你的评估结论静默失效</td></tr>
+<tr><td>13</td><td><b>降级路径</b></td><td>这个模型不可用时系统还能干什么</td><td>答案是"什么都干不了"→ 先做降级再谈选型</td></tr>
+</table>
+</div>
+
+<h4>B. Agent 上线前的容量评估四步法</h4>
+
+<div class="scroll">
+<table>
+<tr><th>步骤</th><th>要回答的问题</th><th>本项目的答案</th><th>换个项目怎么算</th></tr>
+<tr><td><b>① 数清楚一次问答打几条 SQL</b></td><td>把每个工具的 SQL 条数、是否有 LIMIT、关联表数量列成表；注意"一个工具内部调了几个子工具"</td><td>7 个工具 / 0 个有 LIMIT / <code>morning_report</code> 内含 4 次全表扫 / 39 处 <code>lazy="joined"</code></td><td>用 SQLAlchemy 的 <code>echo=True</code> 或 <code>before_cursor_execute</code> 事件，跑一遍评估集数一下，别靠读代码估</td></tr>
+<tr><td><b>② 算连接数的三层乘法</b></td><td>进程数 × 每进程池上限 vs 数据库 max_connections；再算 并发用户 × 每轮并行工具数</td><td>4 workers × 15（默认值）= 60 vs PostgreSQL 默认 100；串行实现下每问答占 1 连接，并行后 4</td><td>三个数字都要去配置文件里查，<b>一个都不能默认</b>——本项目的池上限就是从来没人写过</td></tr>
+<tr><td><b>③ 估峰值并发问答数</b></td><td>不是总人数，是"同一分钟内可能一起提问的人数"。晨报类场景高度集中在上班后 15 分钟</td><td>几十人、晨报场景 → 峰值估 5-8 并发问答，且集中在 8:30-8:45</td><td>问客户"这个功能上线后，什么时候大家会一起用它"。答案通常是某个固定时刻，而不是均匀分布</td></tr>
+<tr><td><b>④ 找出那条会先断的线</b></td><td>把 ①②③ 相乘，看哪个上限先到：数据库连接、供应商并发限流、还是响应时延</td><td><b>单进程池上限 15 先到</b>（并行后 4 个 Agent 请求就撞上），比 PostgreSQL 的 100 早得多</td><td>先断的那条线通常不是最显眼的那条。写下来，然后<b>只加固那一条</b>——过早优化其他几条是浪费</td></tr>
+</table>
+</div>
+
+<div class="box blue"><b class="t">换个项目会怎么变</b>
+<ul>
+<li><b>私有化部署的客户</b>：10.4 的多模型问题会消失（通常只有一个自部署模型），但 10.1 的失败形态会<b>更严重</b>——中小参数量的开源模型在 function calling 上的幻觉参数率经常不是 0。此时该做的不是换模型，是<b>把工具改成零参数版本</b>：与其让模型抽 <code>days</code>，不如提供 <code>po_arriving_3d</code> / <code>po_arriving_7d</code> 两个工具。<b>工具数量换参数可靠性，这是私有化场景的标准交易。</b></li>
+<li><b>数据量大一到两个量级的客户</b>（十万行以上）：10.7 从"迟早的问题"变成"第一天的问题"。工具必须从一开始就带 SQL 层 LIMIT，<code>lazy="joined"</code> 的宽 JOIN 要改成显式的 <code>load_only</code> + 只取需要的列。<b>不要等到工具写完再优化——全表扫工具一旦上线，用户的问法就固化在上面了。</b></li>
+<li><b>已经有成熟 BI/报表层的客户</b>：可以把 Agent 的工具直接指向物化视图或报表表，SQL 压力问题基本消失，代价是数据有延迟（通常 T+1 或小时级）。<b>这个取舍必须写进需求文档并让业务签字</b>——"助手说的数和页面上的数差一点"是最伤信任的一类问题，第七章那条"事实源必须一致"在这里会被直接违反。</li>
+<li><b>高并发的客户</b>（几百人以上同时在线）：10.7 里"给 Agent 单独分池"从建议变成硬要求，而且要更进一步——Agent 的请求应该走<b>独立的进程/服务</b>，与业务 API 物理隔离。本项目共用 uvicorn 是几十人规模下的合理简化，规模上去后这个简化会变成事故源。</li>
+<li><b>不变的部分</b>：10.2 那份基准的<b>方法</b>在任何项目上都成立——20-30 条真实问题、标注期望工具与参数、只断言意图不执行工具、幻觉率和越界率零容忍。变的只是题面。这是本章唯一一件<b>可以照搬</b>的东西。</li>
+</ul>
+</div>
+
+<div class="box green"><b class="t">本章可以立刻做的五件事（按性价比排序）</b>
+<ol>
+<li><b>前端 <code>/agent/chat</code> 单独放宽超时到 75 秒</b>，并在 <code>fallback: true</code> 时显示降级标签。<span class="muted">纯前端，半小时，解决"审计表全成功、用户群全报错"这个最伤信任的问题。</span></li>
+<li><b>显式写死连接池参数</b>（<code>database.py</code> 加 <code>pool_size</code> / <code>max_overflow</code> / <code>pool_timeout=5</code>）。<span class="muted">一行，把不可见故障变成可见故障。</span></li>
+<li><b>加 <code>max_tokens</code> 和全局 deadline，轮次上限 4 → 3</b>（<code>agent_router.py:492</code> / <code>:522</code>）。<span class="muted">三处小改动，同时压住成本和数据库压力。</span></li>
+<li><b>审计表补 <code>rounds</code> / <code>prompt_tokens</code> / <code>completion_tokens</code> 三列</b>。<span class="muted">响应体里本来就有 <code>usage</code>，只是没读。没有这三列，上面所有预算都无法验证是否生效。</span></li>
+<li><b>把 10.2 那 24 条基准写成一个 <code>tests/</code> 脚本</b>。<span class="muted">这是 10.4 那套"默认/可选"分层的前提——没有基准，分层只是一句口号。</span></li>
+</ol>
+</div>
+
+</section>
