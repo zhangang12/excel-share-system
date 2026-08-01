@@ -1,6 +1,6 @@
 {
   "name": "pms-desktop",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "private": true,
   "description": "同辉项目管理系统 Windows 桌面客户端（Electron 壳，内置前端 dist，自动更新走服务器 nginx 静态目录）",
   "main": "main.js",
@@ -13,7 +13,7 @@
   },
   "devDependencies": {
     "electron": "^31.7.7",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.tonghui.pms",
