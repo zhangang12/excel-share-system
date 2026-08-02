@@ -155,10 +155,21 @@ async def update_supplier(
         updates["code"] = updates["code"].strip() or None   # 🆕 反馈#274：入库前去空格
     if "code" in updates and (updates["code"] or "") != (s.code or "").strip():
         await _check_supplier_code_unique(db, updates["code"], exclude_id=sid)   # 🆕 反馈#274
+    # 🆕 收款账号改动单独留痕：请款审批卡要据此提示「账号 N 天前变更过」。
+    #   收款信息被改是付款诈骗最常见的入口，改了谁都不知道等于没有内控。
+    #   只记「改了、谁改的、什么时候」，不记账号明文——审计表不是存放收款账号的地方。
+    bank_before = {"bank_name": s.bank_name, "bank_account": s.bank_account}
+    bank_changed = [k for k in ("bank_name", "bank_account")
+                    if k in updates and (updates[k] or "") != (bank_before[k] or "")]
     for k, v in updates.items():
         setattr(s, k, v)
     await db.commit()
     await db.refresh(s)
+    if bank_changed:
+        await write_audit(db, user=current, action="update_supplier_bank",
+                          target_type="supplier", target_id=sid,
+                          detail=f"{s.name}：修改了 {'、'.join(bank_changed)}"
+                                 f"（尾号 {(s.bank_account or '')[-4:] or '—'}）")
     names = await _uid_name_map(db, [s.created_by])
     return _sup_out(s, names.get(s.created_by))
 
@@ -2583,6 +2594,12 @@ async def approve_payment_request(
     pr.finance_approver_id = current.id
     pr.approved_at = datetime.now(timezone.utc)
     await db.commit()
+    # 🆕 补审计：此前只在业务表落 finance_approver_id/approved_at，审计流水里查不到
+    #   「谁在什么时候从哪个 IP 批的」。H5 上线后手机批和电脑批更要分得清。
+    sup = pr.supplier
+    await write_audit(db, user=current, action="payment_approve",
+                      target_type="payment_request", target_id=pr.id,
+                      detail=f"{sup.name if sup else ''} ¥{pr.requested_amount:,.2f}")
     return {"ok": True}
 
 

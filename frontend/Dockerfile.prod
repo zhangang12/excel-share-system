@@ -7,11 +7,16 @@ COPY package.json package-lock.json* ./
 RUN npm install
 
 COPY . .
-RUN npm run build
+# 两条互不相干的构建线：
+#   build     → /app/dist      网页端（含桌面客户端复用的那份，不含任何 H5 代码）
+#   build:h5  → /app/dist-h5   H5 助手端（不含 element-plus / vxe-table）
+RUN npm run build && npm run build:h5
 
 # 运行阶段：用 nginx 托管静态资源
 FROM nginx:1.27-alpine
 # SPA 路由兜底配置（history 模式深链/刷新回退 index.html，避免 /sales 等 404）
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
+# H5 挂到 /h5/ 子路径，与网页端各自独立，互不覆盖
+COPY --from=builder /app/dist-h5 /usr/share/nginx/html/h5
 EXPOSE 80

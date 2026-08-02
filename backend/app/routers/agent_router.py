@@ -37,6 +37,7 @@ from ..database import get_db
 from ..deps import require_admin_or_manager, get_current_user, user_can_view_project
 from ..dept_config import DEPTS
 from ..overdue import _CN_TZ
+from ..utils import write_audit
 # 🆕 行级可见性：**复用页面本体的谓词，不在这里重写一遍角色判断**。
 #   重写是上一版越权的根因——页面改了规则，工具这边不会跟。这几个函数是唯一真源：
 #   _buyer_restricted 有反直觉语义（兼任 finance/logistics 不解除采购隔离），自己写必然踩坑。
@@ -1029,3 +1030,79 @@ async def list_chat_logs(
             "created_at": r.created_at.isoformat() if r.created_at else None,
         } for r in rows],
     }
+
+
+# ==================== 🆕 L3 卡片式人审门 ====================
+# 设计依据：docs/ai-agent-erp-handbook 第 3.4 / 3.5 节。
+# 本层只「提案 + 呈现」，一行写操作没有：用户点按钮后，前端拿他自己的 token
+# 打现有业务端点（URL 只存在于前端 cardRegistry.ts），后端区分不出也不需要区分。
+
+@router.get("/cards/pending")
+async def list_pending_cards(
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """当前用户的待办审批卡。第一期白名单只有请款一类（registry.CARD_TYPES）。
+
+    行级隔离交给装配层复用业务侧谓词；这里不写任何 where。
+    """
+    from ..agent import cards as _cards
+    items = await _cards.assemble_pay_req_cards(db, current)
+    total = sum(float(str(f["v"]).replace("¥", "").replace(",", ""))
+                for c in items for f in c["facts"] if f["k"] == "请款金额")
+    return {
+        "cards": items,
+        "count": len(items),
+        "amount_total": round(total, 2),
+        # 有几张卡因职责分离等原因批不了，前端可用来做「其中 N 件需他人处理」的提示
+        "blocked": sum(1 for c in items
+                       if any(f["level"] == "block" for f in c["flags"])),
+    }
+
+
+class CardActionIn(BaseModel):
+    type: str
+    ref: int
+    token: str
+    action: str
+
+
+@router.post("/cards/verify-action")
+async def verify_card_action(
+    body: CardActionIn,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """点按钮前的一道校验：确认这张卡确实是发给这个人、这条记录、这个动作的。
+
+    它 **不** 替代业务端点的鉴权——真正的权限判断仍在业务端点里（用户自己的 token）。
+    它挡的是另一类问题：卡片被串改、令牌过期后复用、把 A 卡按钮接到 B 条记录上。
+    校验通过后前端才发起真正的审批请求。
+    """
+    from ..agent.cards import registry as _reg, token as _tok
+    if not _reg.is_known(body.type):
+        await write_audit(db, user=current, action="card_action_denied",
+                          target_type=body.type, target_id=body.ref,
+                          detail="卡片类型不在白名单内")
+        raise HTTPException(400, "卡片类型不在白名单内")
+    if not _reg.allows(body.type, body.action):
+        await write_audit(db, user=current, action="card_action_denied",
+                          target_type=body.type, target_id=body.ref,
+                          detail=f"动作 {body.action} 不属于该卡")
+        raise HTTPException(400, "该卡片不支持这个动作")
+    ok, why = _tok.verify(body.token, current.id, body.type, body.ref)
+    if not ok:
+        await write_audit(db, user=current, action="card_action_denied",
+                          target_type=body.type, target_id=body.ref, detail=why)
+        raise HTTPException(400, why)
+    # 重新装配一次，拿最新的 flags：卡是 15 分钟前发的，这期间单子可能已被别人处理
+    from ..agent import cards as _cards
+    fresh = await _cards.assemble_pay_req_cards(db, current, refs=[body.ref])
+    if not fresh:
+        raise HTTPException(400, "该单已不在你的待办里，可能已被处理")
+    blocking = [f for f in fresh[0]["flags"] if f["level"] == "block"]
+    if blocking:
+        raise HTTPException(400, blocking[0]["msg"])
+    await write_audit(db, user=current, action="card_action_ok",
+                      target_type=body.type, target_id=body.ref, detail=body.action)
+    return {"ok": True, "card": fresh[0]}

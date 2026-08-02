@@ -64,3 +64,4 @@ nginx/wecom-verify/*
 !nginx/wecom-verify/.gitkeep
 nginx/conf.d/*.bak
 nginx/conf.d/default.conf.pre-https.bak.*
+frontend/dist-h5/

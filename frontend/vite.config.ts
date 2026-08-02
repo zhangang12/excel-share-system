@@ -18,7 +18,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://backend:8000',
+        // 默认走 docker compose 里的服务名；本机单跑后端时用
+        //   VITE_DEV_API=http://localhost:8000 npm run dev  覆盖
+        target: process.env.VITE_DEV_API || 'http://backend:8000',
         changeOrigin: true,
         timeout: 60000,
         proxyTimeout: 60000,
@@ -29,7 +31,7 @@ export default defineConfig({
         },
       },
       '/ws': {
-        target: 'ws://backend:8000',
+        target: (process.env.VITE_DEV_API || 'http://backend:8000').replace(/^http/, 'ws'),
         ws: true,
         changeOrigin: true,
         configure: (proxy, _options) => {

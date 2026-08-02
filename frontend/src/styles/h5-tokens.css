@@ -1,0 +1,139 @@
+/* ═══════════════════════════════════════════════════════════════
+   H5 智能体 · 设计令牌
+   全部数值从设计稿 artifact f82d64bc 的渲染结果里实测提取，不是我推断的。
+   改这里之前先回去看设计稿，别凭感觉调。
+
+   注意：这套刻意用了渐变、发光、14 档字号——跟 mobile-app-ui-design /
+   taste-skill 那两套「禁发光、字号最多 4 档」的规矩是冲突的。
+   用户明确要求 100% 复刻此风格，brief 优先，按设计稿走。
+   ═══════════════════════════════════════════════════════════════ */
+/* Outfit：设计稿指定的字体，只覆盖拉丁字符（数字、¥ 后面的金额靠它）。
+   中文自动回落苹方。字体文件从设计稿 bundle 里取出，自托管——
+   不走 Google Fonts CDN：H5 给外网的手机用，第三方 CDN 既慢又多一个外部依赖。 */
+@font-face {
+  font-family: 'Outfit'; font-style: normal; font-display: swap;
+  font-weight: 400 700;
+  src: url('/fonts/outfit-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+                 U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Outfit'; font-style: normal; font-display: swap;
+  font-weight: 400 700;
+  src: url('/fonts/outfit-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+1E00-1E9F, U+20A0-20AB, U+20AD-20C0;
+}
+
+:root {
+  /* ── 字体：Outfit 是设计稿指定的，中文回落苹方 ── */
+  --h5-font: "Outfit", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+  /* ── 主色阶 ── */
+  --h5-blue: #2B6EF6;
+  --h5-blue-hover: #1E5CE0;
+  --h5-blue-lt: #4C8DFF;
+  --h5-blue-lt2: #5C96FF;
+
+  /* ── 语义色（与桌面端设计稿一致，未改） ── */
+  --h5-danger: #C4362F;
+  --h5-good: #2A7A52;
+  --h5-warn: #A96A08;
+
+  /* ── 墨色阶 ── */
+  --h5-ink: #17181A;
+  --h5-ink-2: #4A4F57;
+  --h5-ink-3: #9AA0A8;
+  --h5-ink-4: #B4BAC2;
+  --h5-ink-5: #C5CAD1;
+
+  /* ── 底色 ── */
+  --h5-bg: #ECEEF1;
+  --h5-panel: linear-gradient(160deg, #EEF1F5, #E4E9F1);
+  /* 屏内顶部那层淡蓝光晕，叠在面板之上 */
+  --h5-screen-wash:
+    linear-gradient(180deg, rgba(120,168,255,.14), rgba(255,255,255,0) 32%),
+    radial-gradient(circle at 88% 6%, rgba(76,141,255,.14), rgba(76,141,255,0) 42%);
+
+  /* ── 渐变：主按钮与图标 ── */
+  --h5-grad-btn: linear-gradient(135deg, #4C8DFF, #2B6EF6);
+  --h5-grad-orb: linear-gradient(145deg, #5C96FF, #2B6EF6);
+
+  /* ── 阴影 ── */
+  --h5-sh-card: 0 8px 20px rgba(24,32,50,.05);
+  --h5-sh-card2: 0 6px 16px rgba(24,32,50,.06);
+  --h5-sh-raised: 0 16px 36px rgba(24,32,50,.10), inset 0 1px 0 rgba(255,255,255,.9);
+  --h5-sh-panel: 0 34px 80px rgba(24,32,50,.16), inset 0 1px 0 rgba(255,255,255,.95);
+  --h5-sh-btn: 0 10px 22px rgba(43,110,246,.32);
+  --h5-sh-btn-sm: 0 8px 18px rgba(43,110,246,.32);
+  --h5-sh-orb: 0 16px 34px rgba(43,110,246,.35), inset 0 2px 6px rgba(255,255,255,.5);
+  --h5-sh-blue-soft: 0 10px 24px rgba(43,110,246,.12);
+
+  /* ── 圆角 ── */
+  --h5-r-screen: 44px;   /* 手机屏 */
+  --h5-r-panel: 24px;    /* 外层面板 */
+  --h5-r-card: 16px;     /* 卡片 / 字段行 */
+  --h5-r-chip: 13px;     /* 小图标块 */
+  --h5-r-pill: 999px;
+  --h5-r-bubble: 22px;   /* 气泡；带尾巴那角用 6px */
+
+  /* ── 玻璃层：卡片内的字段行用半透明白 ── */
+  --h5-glass: rgba(255,255,255,.55);
+  --h5-glass-border: 1px solid rgba(255,255,255,.7);
+  --h5-glass-strong: rgba(255,255,255,.86);
+}
+
+/* ── 字号：设计稿实测 14 档，全列出来避免有人随手造新的 ── */
+.h5-t-29 { font-size: 29px }   /* 金额整数位 */
+.h5-t-28 { font-size: 28px }
+.h5-t-22 { font-size: 22px }
+.h5-t-19 { font-size: 19px }
+.h5-t-16 { font-size: 16px }   /* 金额小数位 */
+.h5-t-15 { font-size: 15px }
+.h5-t-14 { font-size: 14px }
+.h5-t-13 { font-size: 13px }
+.h5-t-12 { font-size: 12px }
+.h5-t-11 { font-size: 11px }
+
+/* ── 金额：整数大、小数小，是这套设计最有辨识度的一处 ── */
+.h5-amount {
+  font-size: 29px; font-weight: 700; color: var(--h5-ink);
+  letter-spacing: -.5px; line-height: 1.2; margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.h5-amount .dec { font-size: 16px }
+
+/* ── 药丸标签（1/2、已通过） ── */
+.h5-pill {
+  font-size: 11.5px; font-weight: 500; border-radius: var(--h5-r-pill);
+  padding: 4px 11px; border: 1px solid rgba(255,255,255,.6);
+}
+.h5-pill--blue { color: var(--h5-blue); background: rgba(76,141,255,.15) }
+.h5-pill--good { color: var(--h5-good); background: rgba(42,122,82,.12) }
+
+/* ── 主按钮 ── */
+.h5-btn {
+  background: var(--h5-grad-btn); color: #fff; border: 0;
+  border-radius: var(--h5-r-card); box-shadow: var(--h5-sh-btn);
+  font: 600 16px/1 var(--h5-font); padding: 15px 20px; width: 100%;
+  cursor: pointer; transition: transform .14s, box-shadow .14s;
+}
+.h5-btn:active { transform: translateY(1px); box-shadow: var(--h5-sh-btn-sm) }
+
+/* ── 字段行（收款账号那种） ── */
+.h5-field {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--h5-glass); border: var(--h5-glass-border);
+  border-radius: var(--h5-r-card); padding: 11px 14px;
+}
+
+/* ── 动画：设计稿原样 ── */
+@keyframes h5FadeUp { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:translateY(0) } }
+@keyframes h5Blink  { 0%,100%{opacity:1} 50%{opacity:0} }
+@keyframes h5DotJump{ 0%,80%,100%{transform:translateY(0);opacity:.35} 40%{transform:translateY(-4px);opacity:1} }
+@keyframes h5OrbFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+@keyframes h5GlowPulse{ 0%,100%{opacity:.55;transform:scale(1)} 50%{opacity:.9;transform:scale(1.12)} }
+
+@media (prefers-reduced-motion: reduce) {
+  /* 手册 6.x 的可访问性底线：关掉装饰性动画，功能不受影响 */
+  .h5-orb, .h5-orb-glow, .h5-fade-up { animation: none !important }
+}
