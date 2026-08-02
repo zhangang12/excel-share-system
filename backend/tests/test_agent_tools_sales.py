@@ -82,6 +82,27 @@ async def main():
             # 缺件：合同额为 0
             db.add(models.SalesLedger(project_id=p3.id, customer="丙客户",
                                       sales_uid=uid["s1"], amount=0))
+            # ⚠️ 每个工具都要有**非空**数据，否则列表推导根本不执行，
+            #    字段名写错也测不出来——线索工具最初把 customer 写成 company，
+            #    因为测试库里线索是 0 条，本地全绿，一上生产就 AttributeError。
+            db.add(models.SalesLead(source="网络", customer="丁客户", contact="张三",
+                                    status="潜在需求", owner_uid=uid["s1"]))
+            db.add(models.SalesLead(source="转介绍", customer="戊客户",
+                                    status="成交", owner_uid=uid["s1"]))
+            p4, p5, p6, p7 = (mk("P-D", "丁项目"), mk("P-E", "戊项目"),
+                              mk("P-F", "己项目"), mk("P-G", "庚项目"))
+            await db.flush()
+            # shipments.project_id 非空
+            db.add(models.Shipment(project_id=p6.id, receiver_company="己客户", status="待发货"))
+            db.add(models.Shipment(project_id=p7.id, receiver_company="己客户",
+                                   receiver_name="李四", receiver_phone="13800000000",
+                                   status="已发货"))
+            db.add(models.SalesLedger(project_id=p4.id, customer="庚客户",
+                                      sales_uid=uid["s1"], amount=50000,
+                                      order_state="pending"))
+            db.add(models.SalesLedger(project_id=p5.id, customer="辛客户",
+                                      sales_uid=uid["s1"], amount=60000,
+                                      invoice_state="pending_invoice"))
             await db.commit()
 
         async def call(hdrs, tool):
@@ -134,6 +155,19 @@ async def main():
         d = await data("s1", ts.tool_ledger_incomplete)
         miss = [i for i in d["items"] if i["customer"] == "丙客户"]
         chk(miss and "合同额" in miss[0]["missing"], f"标出缺合同额: {miss}")
+
+        print("\n===== 5a. 每个工具都有非空数据，字段访问真的被执行 =====")
+        leads = await data("s1", ts.tool_leads_followup)
+        chk(leads["count"] == 1, f"线索只算未闭环的（成交的不算）: {leads['count']}")
+        chk(leads["items"][0]["customer"] == "丁客户", f"线索字段名对: {leads['items'][0]}")
+        ships = await data("mgr", ts.tool_shipment_receiver)
+        chk(ships["count"] == 1, f"只列没填收货人的: {ships['count']}")
+        chk(ships["items"][0]["suggest"]["name"] == "李四",
+            f"带出同客户历史收货人做候选: {ships['items'][0]['suggest']}")
+        op = await data("s1", ts.tool_order_pending)
+        chk(op["count"] == 1 and op["items"][0]["customer"] == "庚客户", f"待审订单: {op}")
+        ip = await data("s1", ts.tool_invoice_pending)
+        chk(ip["count"] == 1 and ip["items"][0]["customer"] == "辛客户", f"待开票: {ip}")
 
         print("\n===== 5b. 六个工具端到端都能出文本 =====")
         for n in NEW:

@@ -375,7 +375,7 @@ TOOL_DESC = {
     "receivable_blind": "催办和尾款清单都盯不到的应收：没填到期日的尾款 + 发货款应收",
     "shipment_receiver": "已建发货单但收货人还空着的，填了才能送货签收",
     "ledger_incomplete": "台账缺合同额或客户的行；合同额为 0 会让毛利算成假亏损",
-    "leads_followup": "既没成交也没放弃、还挂着的销售线索",
+    "leads_followup": "既没成交也没丢单、还挂着的销售线索",
     "order_pending": "销售下了单、等主管审批的订单",
     "invoice_pending": "已申请开票、等财务出票的台账行",
 }
@@ -1520,10 +1520,10 @@ def _ledger_incomplete_text(d: dict) -> str:
 def _leads_followup_text(d: dict) -> str:
     if not d.get("count"):
         return "**没有挂着的线索** ✅"
-    lines = [f"**{d['count']} 条线索还没闭环**（既没成交也没放弃）。", ""]
+    lines = [f"**{d['count']} 条线索还没闭环**（既没成交也没丢单）。", ""]
     for r in d["items"][:5]:
         age = f" · {r['age_days']} 天前" if r.get("age_days") else ""
-        lines.append(f"- {r['company']} · {r['status']}{age}")
+        lines.append(f"- {r['customer']} · {r['status']}{age}")
     if d["count"] > 5:
         lines.append(f"- 另有 {d['count'] - 5} 条")
     return "\n".join(lines)

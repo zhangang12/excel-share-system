@@ -137,13 +137,23 @@ async def tool_ledger_incomplete(db: AsyncSession, current: models.User) -> dict
 
 # ────────────────────────── 4. 销售线索待跟进 ──────────────────────────
 
+# 线索状态枚举来自 models.SalesLead.status 的注释：潜在需求 / 报价 / 成交 / 丢单。
+# 别照搬别处的「已成交/已放弃」——那是另一套说法，写错了这个工具会把全部线索都算成未闭环。
+_LEAD_CLOSED = ("成交", "丢单")
+
+
 async def tool_leads_followup(db: AsyncSession, current: models.User) -> dict:
-    """还没闭环（既未成交也未放弃）的销售线索。"""
+    """还没闭环（既没成交也没丢单）的销售线索。
+
+    行级隔离按 owner_uid：非管理层只看分给自己的。
+    """
     q = select(models.SalesLead).where(
-        models.SalesLead.status.notin_(["已成交", "已放弃"])
+        models.SalesLead.status.notin_(_LEAD_CLOSED)
     ).order_by(models.SalesLead.id.desc())
-    rows = [{"id": x.id, "company": x.company or "—", "status": x.status or "—",
-             "age_days": _age_days(x.created_at)}
+    if not _all_view(current):
+        q = q.where(models.SalesLead.owner_uid == current.id)
+    rows = [{"id": x.id, "customer": x.customer or "—", "status": x.status or "—",
+             "contact": x.contact or "", "age_days": _age_days(x.created_at)}
             for x in (await db.execute(q)).scalars().all()]
     return {"count": len(rows), "items": rows[:_LIMIT]}
 

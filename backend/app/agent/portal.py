@@ -60,7 +60,7 @@ CATALOG: list[dict] = [
      "desc": "已申请开票、等财务出票的台账行",
      "glyph": "票", "tone": "blue", "q": "待开票", "tool": "invoice_pending"},
     {"key": "leads_followup", "label": "线索待跟进",
-     "desc": "既没成交也没放弃、还挂着的销售线索",
+     "desc": "既没成交也没丢单、还挂着的销售线索",
      "glyph": "索", "tone": "good", "q": "线索待跟进", "tool": "leads_followup"},
 ]
 _BY_KEY = {c["key"]: c for c in CATALOG}
