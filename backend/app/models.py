@@ -368,6 +368,9 @@ class Attachment(Base):
     # 🆕 #303 上传与推送分离：接单产物(设计图纸/电工电路图)上传后 pushed=0(待推送)，
     #   点「推送」置 1 后下游才可见；存量附件由 data_migration 补列(默认 TRUE=已推送，行为不变)
     pushed: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 🆕 #338 推送时间：下游（采购/生产各组）按此排序，避免多个设计师同时推送时漏单。
+    #   存量由 data_migration 从 audit_logs(action=push) 回填；回填不到的退回 created_at。
+    pushed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     path: Mapped[str] = mapped_column(String(512))             # 相对 files_dir 的存储路径
     uploaded_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

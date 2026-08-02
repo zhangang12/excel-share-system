@@ -12,13 +12,14 @@ import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
 
-interface Att { id: number; name: string }
+interface Att { id: number; name: string; pushed_at?: string | null }
 interface Row {
   project_id: number; code: string; name: string; designer?: string | null
   outsource_sheet_id?: number | null; sheetmetal_sheet_id?: number | null
   material_sheet_id?: number | null; laser_sheet_id?: number | null
   elec_po_sheet_id?: number | null; standard_sheet_id?: number | null
   cad_laser_files: Att[]; outsource_img_files: Att[]
+  sheet_times?: Record<string, string>   // 🆕 #338 各清单的导入时间
 }
 
 const auth = useAuthStore()
@@ -39,6 +40,39 @@ const showCadLaser      = computed(() => seeAll.value || isWangqin.value)    // 
 const showElecPo        = computed(() => seeAll.value || isLixinxin.value)   // 电工采购单
 const showStandardSheet = computed(() => seeAll.value || isLixinxin.value)   // 标准件清单
 const showOutImg        = computed(() => seeAll.value || isLixinxin.value)   // 外购附图
+
+// ===== 🆕 #338 最近推送时间：三四个设计师同时推送时靠它排序，不再漏单 =====
+// 只统计「这个账号实际能看到的列」——李新新的排序不该被王芹的激光件清单带偏。
+function rowLastPush(r: Row): number {
+  const ts: number[] = []
+  const push = (v?: string | null) => { if (v) { const t = Date.parse(v); if (!isNaN(t)) ts.push(t) } }
+  const sheets = r.sheet_times || {}
+  if (showSheetmetal.value) push(sheets.sheetmetal)
+  if (showStandardSheet.value) push(sheets.standard)
+  if (showOutsource.value) push(sheets.outsource)
+  if (showMaterial.value) push(sheets.material)
+  if (showLaser.value) push(sheets.laser)
+  if (showElecPo.value) push(sheets.elec_po)
+  if (showCadLaser.value) r.cad_laser_files.forEach(f => push(f.pushed_at))
+  if (showOutImg.value) r.outsource_img_files.forEach(f => push(f.pushed_at))
+  return ts.length ? Math.max(...ts) : 0
+}
+function fmtTime(t: number): string {
+  if (!t) return '—'
+  const d = new Date(t)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+// 今天推送的高亮一下：她要的是「别漏单」，新到的一眼看见比排序更直接
+function isFresh(t: number): boolean {
+  if (!t) return false
+  return Date.now() - t < 24 * 3600 * 1000
+}
+// 默认按最近推送倒序（没有推送记录的沉底，同为 0 时按项目编号倒序保持原观感）
+const sortedRows = computed(() => rows.value.slice().sort((a, b) => {
+  const d = rowLastPush(b) - rowLastPush(a)
+  return d !== 0 ? d : b.code.localeCompare(a.code)
+}))
 
 const curYear = String(new Date().getFullYear())
 const yearFilter = ref(curYear)
@@ -174,12 +208,23 @@ async function packDownload() {
     </div>
 
     <el-card shadow="never">
-      <el-table :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+      <el-table :data="sortedRows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
         <el-table-column type="index" label="#" width="50" fixed />
         <el-table-column label="项目编号" width="116" fixed>
           <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
         </el-table-column>
         <el-table-column prop="name" label="项目名称" min-width="170" show-overflow-tooltip />
+        <!-- 🆕 #338 最近推送：默认按它倒序，24 小时内的标「新」，多设计师同时推送不漏单 -->
+        <el-table-column label="最近推送" width="142" align="center" sortable
+                         :sort-method="(a: Row, b: Row) => rowLastPush(a) - rowLastPush(b)">
+          <template #default="{ row }">
+            <span v-if="rowLastPush(row)" :class="{ fresh: isFresh(rowLastPush(row)) }">
+              {{ fmtTime(rowLastPush(row)) }}
+              <el-tag v-if="isFresh(rowLastPush(row))" size="small" type="danger" effect="dark" round>新</el-tag>
+            </span>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column v-if="showDesigner" label="设计师" min-width="90" align="center">
           <template #default="{ row }">{{ row.designer || '—' }}</template>
         </el-table-column>
@@ -188,6 +233,8 @@ async function packDownload() {
         <el-table-column v-if="showSheetmetal" label="钣金装配表" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.sheetmetal_sheet_id" size="small" link type="primary"
+                       :title="row.sheet_times?.sheetmetal ? '导入时间 ' + fmtTime(Date.parse(row.sheet_times.sheetmetal)) : ''"
+                       :class="{ fresh: row.sheet_times?.sheetmetal && isFresh(Date.parse(row.sheet_times.sheetmetal)) }"
                        @click="openPreview(row.sheetmetal_sheet_id, `${row.code} · 钣金装配表`)">
               <el-icon><View /></el-icon>预览
             </el-button>
@@ -197,6 +244,8 @@ async function packDownload() {
         <el-table-column v-if="showStandardSheet" label="标准件清单" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.standard_sheet_id" size="small" link type="primary"
+                       :title="row.sheet_times?.standard ? '导入时间 ' + fmtTime(Date.parse(row.sheet_times.standard)) : ''"
+                       :class="{ fresh: row.sheet_times?.standard && isFresh(Date.parse(row.sheet_times.standard)) }"
                        @click="openPreview(row.standard_sheet_id, `${row.code} · 标准件清单`)">
               <el-icon><View /></el-icon>预览
             </el-button>
@@ -206,6 +255,8 @@ async function packDownload() {
         <el-table-column v-if="showOutsource" label="外协加工表" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.outsource_sheet_id" size="small" link type="primary"
+                       :title="row.sheet_times?.outsource ? '导入时间 ' + fmtTime(Date.parse(row.sheet_times.outsource)) : ''"
+                       :class="{ fresh: row.sheet_times?.outsource && isFresh(Date.parse(row.sheet_times.outsource)) }"
                        @click="openPreview(row.outsource_sheet_id, `${row.code} · 外协加工表`)">
               <el-icon><View /></el-icon>预览
             </el-button>
@@ -215,6 +266,8 @@ async function packDownload() {
         <el-table-column v-if="showMaterial" label="不锈钢原料下料单" min-width="120" align="center">
           <template #default="{ row }">
             <el-button v-if="row.material_sheet_id" size="small" link type="primary"
+                       :title="row.sheet_times?.material ? '导入时间 ' + fmtTime(Date.parse(row.sheet_times.material)) : ''"
+                       :class="{ fresh: row.sheet_times?.material && isFresh(Date.parse(row.sheet_times.material)) }"
                        @click="openPreview(row.material_sheet_id, `${row.code} · 不锈钢原料下料单`)">
               <el-icon><View /></el-icon>预览
             </el-button>
@@ -224,6 +277,8 @@ async function packDownload() {
         <el-table-column v-if="showLaser" label="激光件清单" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.laser_sheet_id" size="small" link type="primary"
+                       :title="row.sheet_times?.laser ? '导入时间 ' + fmtTime(Date.parse(row.sheet_times.laser)) : ''"
+                       :class="{ fresh: row.sheet_times?.laser && isFresh(Date.parse(row.sheet_times.laser)) }"
                        @click="openPreview(row.laser_sheet_id, `${row.code} · 激光件清单`)">
               <el-icon><View /></el-icon>预览
             </el-button>
@@ -233,6 +288,8 @@ async function packDownload() {
         <el-table-column v-if="showElecPo" label="电工采购单" min-width="100" align="center">
           <template #default="{ row }">
             <el-button v-if="row.elec_po_sheet_id" size="small" link type="primary"
+                       :title="row.sheet_times?.elec_po ? '导入时间 ' + fmtTime(Date.parse(row.sheet_times.elec_po)) : ''"
+                       :class="{ fresh: row.sheet_times?.elec_po && isFresh(Date.parse(row.sheet_times.elec_po)) }"
                        @click="openPreview(row.elec_po_sheet_id, `${row.code} · 电工采购单`)">
               <el-icon><View /></el-icon>预览
             </el-button>
@@ -244,9 +301,9 @@ async function packDownload() {
           <template #default="{ row }">
             <el-tooltip v-if="row.cad_laser_files.length" placement="top">
               <template #content>
-                <div v-for="f in row.cad_laser_files" :key="f.id" class="tip-line">{{ f.name }}</div>
+                <div v-for="f in row.cad_laser_files" :key="f.id" class="tip-line">{{ f.name }}<span v-if="f.pushed_at" class="tip-ts">{{ fmtTime(Date.parse(f.pushed_at)) }}</span></div>
               </template>
-              <el-tag size="small" type="success" effect="light" round>已推送 {{ row.cad_laser_files.length }}</el-tag>
+              <el-tag size="small" :type="row.cad_laser_files.some((f: Att) => f.pushed_at && isFresh(Date.parse(f.pushed_at))) ? 'danger' : 'success'" effect="light" round>已推送 {{ row.cad_laser_files.length }}</el-tag>
             </el-tooltip>
             <span v-else class="muted">待推送</span>
           </template>
@@ -255,9 +312,9 @@ async function packDownload() {
           <template #default="{ row }">
             <el-tooltip v-if="row.outsource_img_files.length" placement="top">
               <template #content>
-                <div v-for="f in row.outsource_img_files" :key="f.id" class="tip-line">{{ f.name }}</div>
+                <div v-for="f in row.outsource_img_files" :key="f.id" class="tip-line">{{ f.name }}<span v-if="f.pushed_at" class="tip-ts">{{ fmtTime(Date.parse(f.pushed_at)) }}</span></div>
               </template>
-              <el-tag size="small" type="success" effect="light" round>已推送 {{ row.outsource_img_files.length }}</el-tag>
+              <el-tag size="small" :type="row.outsource_img_files.some((f: Att) => f.pushed_at && isFresh(Date.parse(f.pushed_at))) ? 'danger' : 'success'" effect="light" round>已推送 {{ row.outsource_img_files.length }}</el-tag>
             </el-tooltip>
             <span v-else class="muted">待推送</span>
           </template>
@@ -339,6 +396,9 @@ async function packDownload() {
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); font-size: 12.5px; }
 .tip-line { line-height: 1.7; }
+.tip-ts { margin-left: 8px; opacity: .75; font-size: 12px; }
+/* 🆕 #338 24 小时内推送/导入的标红，多设计师同时推送时不漏单 */
+.fresh { color: var(--el-color-danger); font-weight: 600; }
 
 /* 打包下载抽屉 */
 .dl-tip { font-size: 12.5px; color: var(--el-text-color-secondary); margin-bottom: 14px; line-height: 1.6; }

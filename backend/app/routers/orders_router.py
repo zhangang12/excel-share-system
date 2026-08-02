@@ -724,8 +724,10 @@ async def start_push(
         models.Attachment.pushed == True,  # noqa: E712
     ))
     is_update = (prev.scalar() or 0) > 0
+    now = datetime.now(timezone.utc)
     for a in atts:
         a.pushed = True
+        a.pushed_at = now   # 🆕 #338 下游按推送时间排序，多设计师同时推送不漏单
     await db.commit()
 
     p = o.project

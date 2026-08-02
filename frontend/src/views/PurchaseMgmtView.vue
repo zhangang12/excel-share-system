@@ -367,6 +367,9 @@ const filterProjectCode = ref('')
 const filterMonth = ref('')
 const filterInvoiceStatus = ref('')
 const filterCategory = ref('')   // 🆕 按供应商分类筛选
+// 🆕 #336 物料查询：按名称/规格查历史采购价（上次多少钱、跟新供应商报价对比）。
+//   空格分词逐词 AND，「轴承 6016」能同时命中规格写成 `6016.0` 和 `GB／T276-94深沟球轴承6016-2R` 的行。
+const filterKeyword = ref('')
 const itemSheetType = ref('')    // 🆕 ④ 采购明细按清单类型分 tab('' = 全部, 'loose' = 散单)
 function onItemSheetTab() { page.value = 1; loadItems() }
 
@@ -377,10 +380,12 @@ async function onFilterChange() { page.value = 1; await loadItems() }
 
 // 🆕 一键清空所有筛选
 const hasFilter = computed(() =>
-  !!(filterSupplierId.value || filterProjectCode.value || filterMonth.value || filterInvoiceStatus.value || filterCategory.value))
+  !!(filterSupplierId.value || filterProjectCode.value || filterMonth.value || filterInvoiceStatus.value
+     || filterCategory.value || filterKeyword.value))
 async function resetFilters() {
   filterSupplierId.value = ''; filterProjectCode.value = ''
   filterMonth.value = ''; filterInvoiceStatus.value = ''; filterCategory.value = ''
+  filterKeyword.value = ''
   page.value = 1
   await loadItems()
 }
@@ -1408,6 +1413,7 @@ async function loadItems() {
     if (filterInvoiceStatus.value) fparams.invoice_status = filterInvoiceStatus.value
     if (filterCategory.value) fparams.category = filterCategory.value
     if (itemSheetType.value) fparams.sheet_type = itemSheetType.value
+    if (filterKeyword.value.trim()) fparams.keyword = filterKeyword.value.trim()
     const [ir, sr] = await Promise.all([
       http.get<PurchaseItemOut[]>('/purchase-mgmt/items', {
         params: { ...fparams, page: String(page.value), page_size: String(pageSize.value) } }),
@@ -2233,6 +2239,20 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <!-- ==================== Tab 1: 采购明细 ==================== -->
         <el-tab-pane v-if="tv('items')" label="📦 采购明细" name="items" lazy>
           <div class="filter-bar">
+            <!-- 🆕 #336 物料查询：查历史价格、跟新供应商报价做对比 -->
+            <el-input v-model="filterKeyword" placeholder="物料名称 / 规格" clearable :prefix-icon="Search"
+                      style="width:190px" @change="onFilterChange" @keyup.enter="onFilterChange">
+              <template #suffix>
+                <el-tooltip placement="top">
+                  <template #content>
+                    查物料的历史采购价：输入名称或规格，列出所有买过的记录（供应商 / 单价 / 下单日期），<br>
+                    点「单价」表头排序即可比价。<br>
+                    多个词用空格分开逐词匹配，如「轴承 6016」——规格写法不统一时也能查全。
+                  </template>
+                  <el-icon class="hint-icon"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </template>
+            </el-input>
             <el-select v-model="filterSupplierId" placeholder="全部供应商" clearable filterable style="width:160px" @change="onFilterChange">
               <el-option v-for="s in filterSuppliers" :key="s.id" :label="s.name" :value="s.id" />
             </el-select>
@@ -2377,7 +2397,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column prop="qty" label="数量" width="68" align="right">
               <template #default="{ row }">{{ row.qty == null ? '—' : (row.is_kit ? `${row.qty} 套` : row.qty) }}</template>
             </el-table-column>
-            <el-table-column label="单价" width="96" align="right">
+            <el-table-column prop="unit_price" label="单价" width="96" align="right" sortable>
               <template #default="{ row }">{{ row.unit_price != null ? fmtMoney(row.unit_price) : '—' }}</template>
             </el-table-column>
             <el-table-column prop="received_amount" label="收货金额" width="116" align="right" sortable>
@@ -3763,6 +3783,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 </template>
 
 <style scoped>
+/* 🆕 #336 物料查询输入框里的用法提示图标 */
+.hint-icon { color: var(--el-text-color-placeholder); cursor: help; }
 /* 弹窗表单：行距统一 16px */
 :deep(.el-dialog .el-form-item) { margin-bottom: 16px; }
 :deep(.el-dialog .el-form-item:last-child) { margin-bottom: 0; }

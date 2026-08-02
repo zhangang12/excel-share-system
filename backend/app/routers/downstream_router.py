@@ -7,6 +7,7 @@
 import io
 import re
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import quote
@@ -131,6 +132,11 @@ class PurchaseProjectRow(BaseModel):
     # 设计师推送的附件
     cad_laser_files: list[schemas.AttachmentOut] = []      # CAD激光图纸(order_start_output/sheetpkg)
     outsource_img_files: list[schemas.AttachmentOut] = []  # 外购附图(order_start_output/outsource_img)
+    # 🆕 #338 每张表的导入时间，key 与上面 *_sheet_id 的前缀一致
+    #   （outsource/sheetmetal/material/laser/elec_po/standard）。
+    #   行级「最近推送时间」由前端按该账号实际可见的列取最大值——李新新的排序不该被
+    #   王芹的激光件清单带偏，可见性规则只在前端有一份（PurchaseView 的 show* computed）。
+    sheet_times: dict[str, datetime] = {}
 
 
 @router.get("/purchase/projects", response_model=List[PurchaseProjectRow])
@@ -167,8 +173,11 @@ async def purchase_projects(
         models.Datasheet.project_id.in_(pids),
         models.Datasheet.name.in_(tuple(_NAME2KEY.keys()))))
     sheet_ids: dict[int, dict[str, int]] = {}
+    sheet_ts: dict[int, dict[str, datetime]] = {}   # 🆕 #338 导入时间
     for d in res.scalars().all():
         sheet_ids.setdefault(d.project_id, {})[_NAME2KEY[d.name]] = d.id
+        if d.imported_at:
+            sheet_ts.setdefault(d.project_id, {})[_NAME2KEY[d.name]] = d.imported_at
 
     # 设计师推送的 CAD激光图纸 / 外购附图（排除已作废来源单；🆕 #303 仅已推送 pushed=1 可见）
     res = await db.execute(select(models.Attachment)
@@ -181,8 +190,11 @@ async def purchase_projects(
     cad_by_pid: dict[int, list] = {}
     img_by_pid: dict[int, list] = {}
     for a in res.scalars().all():
+        out = schemas.AttachmentOut.model_validate(a)
+        # 🆕 #338 #303 之前是「上传即推送」，那批没有 pushed_at，上传时间就是推送时间
+        out.pushed_at = a.pushed_at or a.created_at
         (cad_by_pid if a.kind == "sheetpkg" else img_by_pid).setdefault(
-            a.project_id, []).append(schemas.AttachmentOut.model_validate(a))
+            a.project_id, []).append(out)
 
     # 设计师名：优先一览 __o__设计师（接单回写），否则回退设计任务单负责人
     res = await db.execute(
@@ -204,6 +216,7 @@ async def purchase_projects(
             elec_po_sheet_id=sm.get("elec_po"), standard_sheet_id=sm.get("standard"),
             cad_laser_files=cad_by_pid.get(p.id, []),
             outsource_img_files=img_by_pid.get(p.id, []),
+            sheet_times=sheet_ts.get(p.id, {}),
         ))
     return rows
 

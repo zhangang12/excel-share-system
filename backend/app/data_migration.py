@@ -30,7 +30,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("done_at", "TIMESTAMP"),
     ],
     "attachments": [("kind", "VARCHAR(32)"),      # 附件业务内细分
-                    ("pushed", "BOOLEAN DEFAULT TRUE")],  # 🆕 #303 上传与推送分离(存量=已推送,行为不变)
+                    ("pushed", "BOOLEAN DEFAULT TRUE"),   # 🆕 #303 上传与推送分离(存量=已推送,行为不变)
+                    ("pushed_at", "TIMESTAMP")],  # 🆕 #338 推送时间(下游排序用)；存量见 backfill_attachment_pushed_at
     "wh_materials": [("material_grade", "VARCHAR(32)"), ("custom_values", "JSON"),
                      ("unit_price", "FLOAT")],   # 🆕 材质（字典管理）+ 自定义字段值 + 需求三 参考单价
     "produce_group_tasks": [("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)")],  # 🆕 派给具体人 + 本组预计完成
@@ -1107,6 +1108,74 @@ async def merge_buyers_into_purchase(db: AsyncSession) -> dict:
     return {"users": len(users), "perms": merged}
 
 
+async def backfill_attachment_pushed_at(db: AsyncSession) -> dict:
+    """🆕 #338 存量回填 attachments.pushed_at（下游按推送时间排序的依据）。
+
+    推送动作本身有审计：audit_logs(action='push', target_type='dept_order',
+    target_id=任务单id, detail='start-push:{kind} x{n}')。按 (任务单, kind) 把
+    审计时间对到该批附件上（与 start_push 一次性置位整批的口径一致）。
+
+    **从最新一批倒着对**：附件推送后可能被删/换（生产上就有一组审计声称 5 个、
+    实际只剩 4 个），正着对会把幸存的都算成较早那次的时间——而这个列是给采购员
+    「别漏单」用的，宁可偏新不可偏旧。倒着对能保证最后推的那批拿到最后那个时间。
+
+    审计里找不到的（#303 之前上传即推送的存量），退回 created_at——那时上传即推送，
+    created_at 就是推送时间。幂等：已有 pushed_at 的不动。
+    """
+    res = await db.execute(
+        select(models.Attachment)
+        .where(models.Attachment.pushed_at.is_(None),
+               models.Attachment.pushed == True)  # noqa: E712
+        .order_by(models.Attachment.id)
+    )
+    atts = list(res.scalars().all())
+    if not atts:
+        return {"from_audit": 0, "from_created": 0}
+
+    res = await db.execute(
+        select(models.AuditLog)
+        .where(models.AuditLog.action == "push",
+               models.AuditLog.target_type == "dept_order")
+        .order_by(models.AuditLog.id)
+    )
+    # (order_id, kind) -> [(时间, 条数), ...] 按时间升序
+    batches: dict[tuple[int, str], list] = {}
+    for a in res.scalars().all():
+        m = re.match(r"start-push:(\w+)\s+x(\d+)", a.detail or "")
+        if not m or a.target_id is None:
+            continue
+        batches.setdefault((a.target_id, m.group(1)), []).append(
+            (a.created_at, int(m.group(2))))
+
+    # 附件按 (biz_id, kind) 分组，id 升序 —— 与推送批次先后一一对应
+    by_key: dict[tuple[int, str], list] = {}
+    for att in atts:
+        if att.biz_id is not None and att.kind:
+            by_key.setdefault((att.biz_id, att.kind), []).append(att)
+
+    from_audit = 0
+    for key, group in by_key.items():
+        end = len(group)   # 从最新的附件往前分配，最后一批审计拿最后那几个
+        for ts, n in reversed(batches.get(key, [])):
+            if end <= 0:
+                break
+            for att in group[max(end - n, 0):end]:
+                att.pushed_at = ts
+                from_audit += 1
+            end -= n
+
+    from_created = 0
+    for att in atts:
+        if att.pushed_at is None:
+            att.pushed_at = att.created_at
+            from_created += 1
+
+    await db.commit()
+    log.info("[backfill_attachment_pushed_at] 审计回填 %d 条 / 退回 created_at %d 条",
+             from_audit, from_created)
+    return {"from_audit": from_audit, "from_created": from_created}
+
+
 async def backfill_datasheet_imported_at(db: AsyncSession) -> dict:
     """🆕 v3 P-16 存量回填：四表中已有数据行的 datasheet 视为"已导入"，
     置 imported_at = updated_at（最佳近似）。
@@ -2174,6 +2243,10 @@ async def run_all(db: AsyncSession) -> None:
         await merge_buyers_into_purchase(db)
     except Exception as e:
         log.warning("merge_buyers_into_purchase failed: %s", e)
+    try:
+        await backfill_attachment_pushed_at(db)   # 🆕 #338 存量附件补推送时间（下游排序用）
+    except Exception as e:
+        log.warning("backfill_attachment_pushed_at failed: %s", e)
     try:
         await backfill_datasheet_imported_at(db)
     except Exception as e:

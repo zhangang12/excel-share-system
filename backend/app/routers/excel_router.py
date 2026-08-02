@@ -21,8 +21,61 @@ from ..deps import (
     user_can_view_project, user_can_edit_project,
 )
 from ..sheet_templates import SHEET_TEMPLATES, is_known_sheet, map_excel_to_template
+from ..dept_config import BUYER_SHEET_MAP
+from ..notify import push_message
 
 router = APIRouter(prefix="/api", tags=["Excel 导入导出"])
+
+# 🆕 #337：清单导入原来一声不吭——图纸(附件)走 start-push 有推送，清单走 Excel 导入零通知，
+#   采购员只能靠微信群里喊。这里把清单名对到采购员分工域(BUYER_SHEET_MAP)，导入后按域通知。
+#   key 与 downstream_router._NAME2KEY / BUYER_SHEET_MAP 的域名保持一致。
+_SHEET_DOMAIN = {
+    "标准件清单": "standard",
+    "电工采购单": "elec_po",
+    "不锈钢原料下料单": "material",
+    "激光件清单": "laser",
+    "外协加工": "outsource",
+}
+
+
+async def _notify_sheet_import(
+    db: AsyncSession, project: models.Project, sheet_names: list[str],
+    reimported: set[str],
+) -> int:
+    """清单导入后通知对应分工域的采购员。一个采购员一条消息（多张表合并成一条，
+    避免五表齐导时刷屏）。域内没有活跃采购员就不发——清单没人管，发了也没人看。
+
+    reimported = 本次导入前就已经导过的表名。判「更新」要看这张表自己的 imported_at，
+    不能看项目里有没有旧表——新项目建好时模板表就已存在（只是没导过），
+    拿它当依据会让首次导入也发成「【更新】」。
+    某采购员这批里只要有一张是新的，就按「已上传」发——有新东西比「更新」更该看。
+    """
+    by_uid: dict[int, list[str]] = {}
+    for name in sheet_names:
+        domain = _SHEET_DOMAIN.get(name)
+        if not domain:
+            continue
+        unames = [u for u, ds in BUYER_SHEET_MAP.items() if domain in ds]
+        if not unames:
+            continue
+        res = await db.execute(select(models.User.id).where(
+            models.User.username.in_(unames),
+            models.User.is_active == True,  # noqa: E712
+        ))
+        for (uid,) in res.all():
+            if name not in by_uid.setdefault(uid, []):
+                by_uid[uid].append(name)
+    if not by_uid:
+        return 0
+    for uid, names in by_uid.items():
+        label = "、".join(names)
+        # 口径与 orders_router.start_push 的图纸推送一致（#323 二次推送用「更新」）
+        text = (f"【更新】设计部已更新 {project.code} {label}，请以最新为准"
+                if all(n in reimported for n in names) else
+                f"【{label}】设计部已上传 {project.code} {label}，请查收。")
+        await push_message(db, to_user_id=uid, kind="info", text=text,
+                           biz_type="project", biz_id=project.id)
+    return len(by_uid)
 
 # 🆕 2026-07-27：导入后进度列空白自动填「进行中」（与前端 DatasheetGrid 的
 #   进度列字段名白名单/「一键标记进行中」同口径：空白才填，Excel 里已填值的不动）
@@ -518,6 +571,12 @@ async def import_excel(
         )
     )
     ds_ids_to_del = [r[0] for r in ds_ids_res.all()]
+    # 🆕 #337 记下「本次导入前已经导过的表名」——通知文案判「更新」用它，不能用
+    #   项目里有没有旧表（新项目建好时模板表就已存在，只是从没导过）
+    reimported = {r[0] for r in (await db.execute(
+        select(models.Datasheet.name).where(
+            models.Datasheet.project_id == pid,
+            models.Datasheet.imported_at.isnot(None)))).all()}
     field_ids = []
     if ds_ids_to_del:
         fres = await db.execute(
@@ -552,6 +611,7 @@ async def import_excel(
 
     # 入库：每个 sheet 一个 datasheet
     total_records = 0
+    imported_names: list[str] = []   # 🆕 #337 实际入库的表名——用于导入后通知采购员
     # 导入的表从 0 开始排（全量替换模板表）；受保护的电工采购单已被置 sort_order=100 留在末尾
     base_order = 0
     for idx, (sname, headers, rows, preamble) in enumerate(sheets_meta):
@@ -566,9 +626,12 @@ async def import_excel(
         )
         db.add(d)
         await db.flush()  # 拿到 d.id
+        imported_names.append(sname)
         total_records += await _rebuild_datasheet_rows(db, d, headers, rows, current.id)
 
     await db.commit()
+    # 🆕 #337 导入后通知对应采购员
+    await _notify_sheet_import(db, p, imported_names, reimported)
     return schemas.Msg(
         message=(
             f"导入完成：清除旧数据 {old_ds_count} 个数据表 / {old_record_count} 行 → "
@@ -620,11 +683,14 @@ async def import_datasheet_excel(
 
     # 只替换该表：删旧字段/记录重建；datasheet 本身 id/name/sort_order 不动
     await _clear_datasheet_rows(db, did)
+    was_imported = d.imported_at is not None   # 🆕 #337 重导 → 用「更新」口径
     d.header_lines = json.dumps(preamble, ensure_ascii=False) if preamble else None
     d.imported_at = datetime.now(timezone.utc)
     await db.flush()
     n = await _rebuild_datasheet_rows(db, d, headers, rows, current.id)
     await db.commit()
+    # 🆕 #337 单表导入同样通知——设计部逐张上传是常态，原来这条路径全程静默
+    await _notify_sheet_import(db, p, [d.name], {d.name} if was_imported else set())
     return schemas.Msg(message=f"「{d.name}」导入完成：{n} 行")
 
 

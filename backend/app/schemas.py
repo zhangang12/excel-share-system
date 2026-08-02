@@ -103,6 +103,7 @@ class AttachmentOut(BaseModel):
     size: int
     uploaded_by: Optional[int] = None
     created_at: datetime
+    pushed_at: Optional[datetime] = None   # 🆕 #338 推送时间（未走推送动作的按上传即推送，取 created_at）
 
 
 # ---------- 🆕 部门任务单 ----------

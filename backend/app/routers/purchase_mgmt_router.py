@@ -287,6 +287,24 @@ def _apply_sheet_type_filter(stmt, sheet_type: Optional[str]):
     return stmt.where(models.PurchaseItem.source_sheet_id.in_(sub))
 
 
+def _apply_item_keyword(stmt, keyword: Optional[str]):
+    """🆕 #336 物料关键字：查历史采购价（"上次这东西多少钱"/跟新供应商报价对比）。
+
+    空格分词后逐词 AND —— 规格写法不统一（同一个 6016 轴承有的填 `6016.0`，
+    有的填 `GB／T276-94深沟球轴承6016-2R`），整串 LIKE 命中率太低；
+    拆成「轴承 6016」两词各自匹配名称/规格/品牌/单号任一列，两种写法都能查出来。
+    """
+    for w in (keyword or "").split():
+        like = f"%{w}%"
+        stmt = stmt.where(or_(
+            models.PurchaseItem.item_name.ilike(like),
+            models.PurchaseItem.spec.ilike(like),
+            models.PurchaseItem.brand.ilike(like),
+            models.PurchaseItem.po_no.ilike(like),
+        ))
+    return stmt
+
+
 # 注意：summary 路由须在 /{iid} 之前，避免 "summary" 被解析为 id 参数
 @router.get("/items/summary", response_model=schemas.PurchaseItemSummary)
 async def items_summary(
@@ -295,10 +313,11 @@ async def items_summary(
     month: Optional[str] = Query(None),
     invoice_status: Optional[str] = Query(None),
     sheet_type: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None),   # 🆕 #336 物料关键字（与 /items 同口径）
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(models.PurchaseItem)
+    stmt = _apply_item_keyword(select(models.PurchaseItem), keyword)
     if _buyer_restricted(current):
         stmt = stmt.where(models.PurchaseItem.buyer_id == current.id)
     if supplier_id:
@@ -336,13 +355,14 @@ async def list_items(
     invoice_status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     sheet_type: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None),   # 🆕 #336 物料关键字（名称/规格/品牌/单号）
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=10, le=500),
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
     """采购明细（服务端分页：总条数用 /items/summary 的 count，随筛选联动）。"""
-    stmt = select(models.PurchaseItem).order_by(
+    stmt = _apply_item_keyword(select(models.PurchaseItem), keyword).order_by(
         models.PurchaseItem.delivery_date.desc(),
         models.PurchaseItem.id.desc(),
     )
