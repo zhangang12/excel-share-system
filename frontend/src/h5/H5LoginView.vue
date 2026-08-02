@@ -222,9 +222,12 @@ h1 { margin: 0; font-size: 22px; font-weight: 700; color: var(--h5-ink); letter-
   color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700;
 }
 .err {
-  margin: 0 0 12px; font-size: 12px; color: var(--h5-danger);
+  margin: 18px 0 0; font-size: 12px; color: var(--h5-danger);
   background: rgba(196, 54, 47, .09); border-radius: 10px; padding: 9px 12px; text-align: left;
 }
+.h5-btn { margin-top: 18px }
+/* 错误提示出现时它自己顶了 18px，按钮就不再重复留白 */
+.err + .h5-btn { margin-top: 10px }
 .h5-btn:disabled { opacity: .6; cursor: not-allowed }
 .foot { margin: 12px 0 0; font-size: 11.5px; color: var(--h5-ink-4) }
 .links { display: flex; gap: 18px; justify-content: center; margin-top: 14px }

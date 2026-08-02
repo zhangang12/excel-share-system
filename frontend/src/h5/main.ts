@@ -19,7 +19,8 @@ const router = createRouter({
   routes: [
     { path: '/login', name: 'login', component: () => import('./H5LoginView.vue'),
       meta: { public: true } },
-    { path: '/', name: 'chat', component: () => import('./H5ChatView.vue') },
+    { path: '/', name: 'home', component: () => import('./H5HomeView.vue') },
+    { path: '/chat', name: 'chat', component: () => import('./H5ChatView.vue') },
     { path: '/:rest(.*)', redirect: '/' },
   ],
 })

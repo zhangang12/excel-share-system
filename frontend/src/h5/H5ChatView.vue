@@ -6,13 +6,16 @@
  * 这里刻意不做业务页面——手机上填单子是灾难，看数和批单才合适。
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { http, errText } from './http'
 import { clearSession, displayName } from './session'
+import { renderMd } from './markdown'
+import { useSpeech } from './useSpeech'
 import H5ApproveCard from './H5ApproveCard.vue'
 import { isKnownCard, type AgentCard } from './cardRegistry'
 
 const router = useRouter()
+const route = useRoute()
 
 type Msg =
   | { kind: 'user'; text: string }
@@ -26,6 +29,8 @@ const scroller = ref<HTMLElement>()
 const pending = ref<{ count: number; amount_total: number; blocked: number }>(
   { count: 0, amount_total: 0, blocked: 0 })
 const suggestions = ref<string[]>(['这月销售额多少？', '哪些供应商老迟到？', '待我审批的请款单'])
+/** 走卡片通道的精确入口文案；只有这几条，别改成模糊匹配 */
+const CARD_ENTRIES = new Set(['待我审批的请款单', '待我审批', '请款审批'])
 
 const greet = computed(() => {
   const h = new Date().getHours()
@@ -68,7 +73,8 @@ async function openApprovals() {
     const n = cards.length
     msgs.value.push({
       kind: 'ai',
-      text: n === 0 ? '你名下没有待审的请款单。'
+      text: n === 0
+        ? '你名下没有待审的请款单。想看别的可以直接问我，比如「采购未到货」「尾款到期」。'
         : `共 ${n} 单${data.blocked ? `，其中 ${data.blocked} 单按职责分离需他人处理` : ''}。`
           + (dropped ? `（另有 ${dropped} 条无法安全展示，请到电脑端查看）` : ''),
     })
@@ -85,8 +91,11 @@ async function send(text?: string) {
   const q = (text ?? input.value).trim()
   if (!q || thinking.value) return
   input.value = ''
-  // 审批类走卡片通道，不进 LLM——审批不能靠模型转述
-  if (/待我审批|待审|请款单|审批/.test(q) && /请款|审批/.test(q)) return openApprovals()
+  // ⚠️ 只对「门户/建议按钮」这几条精确文案走卡片通道。
+  //   曾经用模糊正则(/待审|审批/)拦截，结果把用户自己打的
+  //   「查询一下所有的待审批的待办?」也劫持成查请款单——用户打的字必须原样送模型，
+  //   宁可模型答不好，也不能把问题偷换掉。
+  if (CARD_ENTRIES.has(q)) return openApprovals()
 
   msgs.value.push({ kind: 'user', text: q })
   thinking.value = true
@@ -109,6 +118,12 @@ async function send(text?: string) {
   }
 }
 
+// 语音：能力探测不通过就整个不显示按钮，别摆一个点了没反应的
+const speech = useSpeech((text, final) => {
+  input.value = text
+  if (final && text.trim()) send()
+})
+
 function onCardDone() {
   loadPending()
 }
@@ -118,7 +133,12 @@ function logout() {
   router.replace('/login')
 }
 
-onMounted(loadPending)
+onMounted(() => {
+  loadPending()
+  // 从门户点卡片进来：带着问题直接发，用户不用打字
+  const q = route.query.q
+  if (typeof q === 'string' && q.trim()) send(q.trim())
+})
 </script>
 
 <template>
@@ -126,6 +146,7 @@ onMounted(loadPending)
     <div class="panel">
       <!-- 顶栏 -->
       <header class="hd">
+        <button class="back" @click="router.push({ name: 'home' })" aria-label="返回">‹</button>
         <div class="ttl">
           <div class="t1">同辉项目管理智能体</div>
           <div class="t2"><i class="dot"></i>在线 · {{ who }} · {{ today }}</div>
@@ -163,7 +184,9 @@ onMounted(loadPending)
           <div v-if="m.kind === 'user'" class="row me"><div class="bubble mine">{{ m.text }}</div></div>
           <div v-else-if="m.kind === 'ai'" class="row">
             <div class="bubble theirs">
-              {{ m.text }}
+              <!-- renderMd 里 html:false，模型输出的原始 HTML 会被转义成文本；
+                   这两处是成对的，改任一处都会打穿 XSS 防线（手册 3.4.2） -->
+              <div class="md" v-html="renderMd(m.text)"></div>
               <div v-if="m.sources?.length" class="src">来源：{{ m.sources.join('、') }}</div>
             </div>
           </div>
@@ -183,8 +206,18 @@ onMounted(loadPending)
         <div v-if="showWelcome" class="sugg">
           <button v-for="s in suggestions" :key="s" class="chip" @click="send(s)">{{ s }}</button>
         </div>
+        <div v-if="speech.error.value" class="serr">{{ speech.error.value }}</div>
         <div class="composer">
-          <input v-model="input" placeholder="问点什么…" @keyup.enter="send()" />
+          <input v-model="input" :placeholder="speech.listening.value ? '正在听…' : '问点什么…'"
+                 @keyup.enter="send()" />
+          <button v-if="speech.supported" class="mic" :class="{ on: speech.listening.value }"
+                  @click="speech.toggle()" :aria-label="speech.listening.value ? '停止' : '语音输入'">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+              <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/>
+              <path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round"/>
+            </svg>
+          </button>
           <button class="send" :disabled="thinking || !input.trim()" @click="send()">↑</button>
         </div>
       </footer>
@@ -261,6 +294,32 @@ onMounted(loadPending)
   box-shadow: var(--h5-sh-card);
 }
 .src { margin-top: 6px; font-size: 11px; color: var(--h5-ink-4) }
+
+/* Markdown 排版：模型爱用加粗小标题和列表，不排一下就是一坨字 */
+.md :deep(p) { margin: 0 0 8px }
+.md :deep(p:last-child) { margin-bottom: 0 }
+.md :deep(strong) { font-weight: 700; color: var(--h5-ink) }
+.md :deep(ul), .md :deep(ol) { margin: 6px 0 8px; padding-left: 20px }
+.md :deep(li) { margin-bottom: 4px }
+.md :deep(li:last-child) { margin-bottom: 0 }
+.md :deep(h1), .md :deep(h2), .md :deep(h3), .md :deep(h4) {
+  margin: 10px 0 6px; font-size: 13.5px; font-weight: 700; color: var(--h5-ink);
+}
+.md :deep(h1:first-child), .md :deep(h2:first-child),
+.md :deep(h3:first-child), .md :deep(p:first-child) { margin-top: 0 }
+.md :deep(code) {
+  background: rgba(24, 32, 50, .06); border-radius: 5px;
+  padding: 1px 5px; font-size: 12px;
+}
+.md :deep(pre) { overflow-x: auto; background: rgba(24,32,50,.05); padding: 10px 12px; border-radius: 10px }
+.md :deep(table) { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0 }
+.md :deep(th), .md :deep(td) {
+  border-bottom: 1px solid rgba(24, 32, 50, .08); padding: 6px 8px; text-align: left;
+}
+.md :deep(blockquote) {
+  margin: 6px 0; padding-left: 10px; border-left: 3px solid rgba(43,110,246,.3);
+  color: var(--h5-ink-3);
+}
 .dots { display: flex; gap: 5px; align-items: center; padding: 14px 16px }
 .dots i {
   width: 6px; height: 6px; border-radius: 50%; background: var(--h5-blue); display: block;
@@ -277,6 +336,20 @@ onMounted(loadPending)
   backdrop-filter: blur(10px); box-shadow: var(--h5-sh-card);
   border-radius: var(--h5-r-pill); padding: 11px 18px; font-size: 12.5px;
   color: var(--h5-ink-2); cursor: pointer; font-family: inherit;
+}
+.back {
+  width: 30px; height: 34px; flex: none; border: 0; background: none; cursor: pointer;
+  color: var(--h5-blue); font-size: 24px; line-height: 1; padding: 0; margin-left: -6px;
+}
+.serr { font-size: 11.5px; color: var(--h5-warn); padding: 0 6px 8px }
+.mic {
+  width: 46px; height: 46px; flex: none; border-radius: 50%; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.7);
+  color: var(--h5-ink-3); display: grid; place-items: center;
+}
+.mic.on {
+  background: var(--h5-danger); color: #fff; border-color: transparent;
+  animation: h5GlowPulse 1.4s ease-in-out infinite;
 }
 .composer { display: flex; gap: 10px; align-items: center }
 .composer input {
