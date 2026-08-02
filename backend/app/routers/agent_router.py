@@ -1106,3 +1106,58 @@ async def verify_card_action(
     await write_audit(db, user=current, action="card_action_ok",
                       target_type=body.type, target_id=body.ref, detail=body.action)
     return {"ok": True, "card": fresh[0]}
+
+
+# ==================== 🆕 H5 门户配置（按用户） ====================
+
+@router.get("/portal")
+async def get_portal(
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """当前用户的门户配置 + 他能摆的卡片目录。
+
+    没配置过返回角色默认值（不是空门户）；目录按 _allowed_tools 过滤——
+    没权限用某个工具的人，压根看不到那张卡，也就摆不上去（原则三）。
+    """
+    from ..agent import portal
+    allowed = _allowed_tools(current)
+    tiles = await portal.get_tiles(db, current, allowed)
+    return {
+        "tiles": portal.expand(tiles),
+        "catalog": portal.visible_catalog(allowed),
+        "limits": {"max_tiles": portal.MAX_TILES,
+                   "max_label": portal.MAX_LABEL,
+                   "max_question": portal.MAX_QUESTION},
+    }
+
+
+class PortalIn(BaseModel):
+    tiles: list[dict] = []
+
+
+@router.put("/portal")
+async def save_portal(
+    body: PortalIn,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """保存门户配置。提交内容一律先 sanitize：内置卡只认目录里的 key 且要有权限，
+    自定义卡只留 label/q 两个字段并限长，其余字段全丢。"""
+    from ..agent import portal
+    allowed = _allowed_tools(current)
+    clean = portal.sanitize(body.tiles, allowed)
+    await portal.set_tiles(db, current, clean)
+    return {"tiles": portal.expand(clean)}
+
+
+@router.delete("/portal")
+async def reset_portal(
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """恢复角色默认门户。"""
+    from ..agent import portal
+    allowed = _allowed_tools(current)
+    await portal.set_tiles(db, current, [])
+    return {"tiles": portal.expand(portal.default_tiles(current, allowed))}

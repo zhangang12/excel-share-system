@@ -1,22 +1,34 @@
 <script setup lang="ts">
 /**
- * 智能体门户。
+ * 智能体门户（可定制）。
  *
  * 为什么要有这一页：只给一个对话框，等于逼所有人打字。手机上打字本来就烦，
- * 管理层更不会为了看个数去敲一行问题。门户把「他常问的那几件事」摆成可点的入口，
- * 点一下直接出答案；真有别的问题再进对话框。
+ * 管理层更不会为了看个数去敲一行问题。门户把他常做的事摆成可点入口。
  *
- * 入口只列后端真有工具支撑的（agent_router 的 7 个只读工具 + 请款审批卡）。
- * 没有工具的别摆——摆了点进去只会得到「查不到」，比不摆更伤信任。
+ * 定制化：卡片配置按人存在服务端（user_settings.portal_tiles）。
+ * 能摆什么由服务端目录说了算（原则三 能力可枚举）——用户只能挑选、排序，
+ * 以及把自己常问的话沉淀成一张自定义卡；自定义卡本质只是一句预置提问，
+ * 点下去仍走 /agent/chat，不会凭配置多出任何数据访问路径。
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { http } from './http'
+import { http, errText } from './http'
 import { clearSession, displayName } from './session'
+
+interface Tile {
+  key: string; label: string; desc?: string; glyph?: string
+  tone?: string; q: string; custom?: boolean; kind?: string | null
+}
 
 const router = useRouter()
 const pending = ref({ count: 0, amount_total: 0, blocked: 0 })
+const tiles = ref<Tile[]>([])
+const catalog = ref<Tile[]>([])
+const limits = ref({ max_tiles: 12, max_label: 10, max_question: 120 })
 const loading = ref(true)
+const editing = ref(false)
+const saving = ref(false)
+const err = ref('')
 
 const greet = computed(() => {
   const h = new Date().getHours()
@@ -25,42 +37,73 @@ const greet = computed(() => {
 const amountText = computed(() =>
   '¥' + pending.value.amount_total.toLocaleString('zh-CN', { maximumFractionDigits: 0 }))
 
-/** 每一项都对应 agent_router 里一个真实工具，别加没有后端支撑的条目 */
-const groups = [
-  {
-    title: '每天看一眼',
-    items: [
-      { q: '今日晨报', label: '今日晨报', desc: '一条消息看完全部要紧事', glyph: '报', tone: 'blue' },
-      { q: '采购未到货', label: '采购超期', desc: '到期未到货的料和供应商', glyph: '箱', tone: 'danger' },
-    ],
-  },
-  {
-    title: '钱在哪儿',
-    items: [
-      { q: '尾款到期', label: '尾款到期', desc: '14 天内到期与已逾期的应收', glyph: '收', tone: 'warn' },
-      { q: '按供应商汇总未到货', label: '按供应商汇总', desc: '哪家供应商拖得最狠', glyph: '供', tone: 'blue' },
-    ],
-  },
-  {
-    title: '事推到哪儿了',
-    items: [
-      { q: '部门逾期任务', label: '部门逾期', desc: '各部门超期未完成的任务', glyph: '逾', tone: 'danger' },
-      { q: '未来 7 天到货', label: '近期到货', desc: '接下来一周能到的料', glyph: '期', tone: 'good' },
-    ],
-  },
-]
+/** 审批卡单独渲染成大卡，不混在网格里 */
+const approveTile = computed(() => tiles.value.find((t) => t.kind === 'approve'))
+const gridTiles = computed(() => tiles.value.filter((t) => t.kind !== 'approve'))
+/** 目录里还没摆上门户的 */
+const addable = computed(() => {
+  const on = new Set(tiles.value.map((t) => t.key))
+  return catalog.value.filter((c) => !on.has(c.key))
+})
 
 async function load() {
   try {
-    const { data } = await http.get('/agent/cards/pending')
-    pending.value = { count: data.count, amount_total: data.amount_total, blocked: data.blocked }
-  } catch { /* 拿不到不影响门户其它入口 */ } finally { loading.value = false }
+    const [p, c] = await Promise.all([
+      http.get('/agent/cards/pending').catch(() => ({ data: null })),
+      http.get('/agent/portal'),
+    ])
+    if (p.data) pending.value = { count: p.data.count, amount_total: p.data.amount_total, blocked: p.data.blocked }
+    tiles.value = c.data.tiles
+    catalog.value = c.data.catalog
+    limits.value = c.data.limits
+  } catch (e: any) {
+    err.value = errText(e, '门户加载失败')
+  } finally { loading.value = false }
 }
 
-const ask = (q: string) => router.push({ name: 'chat', query: { q } })
-const openApprovals = () => router.push({ name: 'chat', query: { q: '待我审批的请款单' } })
-const openChat = () => router.push({ name: 'chat' })
+async function save() {
+  saving.value = true; err.value = ''
+  try {
+    // 只回传 key 与自定义卡的 label/q，其余字段服务端会重新填，不用带
+    const payload = tiles.value.map((t) =>
+      t.custom ? { key: t.key, label: t.label, q: t.q, custom: true } : { key: t.key })
+    const { data } = await http.put('/agent/portal', { tiles: payload })
+    tiles.value = data.tiles
+    editing.value = false
+  } catch (e: any) { err.value = errText(e, '保存失败') } finally { saving.value = false }
+}
 
+async function reset() {
+  if (!confirm('恢复成系统默认门户？你的自定义卡会被清掉。')) return
+  saving.value = true
+  try {
+    const { data } = await http.delete('/agent/portal')
+    tiles.value = data.tiles
+  } catch (e: any) { err.value = errText(e, '恢复失败') } finally { saving.value = false }
+}
+
+function addTile(c: Tile) {
+  if (tiles.value.length >= limits.value.max_tiles) { err.value = `最多摆 ${limits.value.max_tiles} 张`; return }
+  tiles.value.push({ ...c })
+}
+function removeTile(i: number) { tiles.value.splice(i, 1) }
+function moveTile(i: number, d: number) {
+  const j = i + d
+  if (j < 0 || j >= tiles.value.length) return
+  const [x] = tiles.value.splice(i, 1)
+  tiles.value.splice(j, 0, x)
+}
+function addCustom() {
+  const label = window.prompt(`卡片标题（${limits.value.max_label} 字以内）`)?.trim()
+  if (!label) return
+  const q = window.prompt('点这张卡时要问的话')?.trim()
+  if (!q) return
+  if (tiles.value.length >= limits.value.max_tiles) { err.value = `最多摆 ${limits.value.max_tiles} 张`; return }
+  tiles.value.push({ key: `custom:new${Date.now()}`, label, q, custom: true, glyph: '问', tone: 'blue', desc: q })
+}
+
+const ask = (q: string) => { if (!editing.value) router.push({ name: 'chat', query: { q } }) }
+const openChat = () => router.push({ name: 'chat' })
 function logout() { clearSession(); router.replace('/login') }
 onMounted(load)
 </script>
@@ -73,11 +116,20 @@ onMounted(load)
           <div class="t1">同辉项目管理智能体</div>
           <div class="t2"><i class="dot"></i>在线 · {{ displayName }}</div>
         </div>
-        <button class="more" @click="logout" aria-label="退出">···</button>
+        <template v-if="editing">
+          <button class="tbtn" :disabled="saving" @click="reset">恢复默认</button>
+          <button class="tbtn primary" :disabled="saving" @click="save">
+            {{ saving ? '保存中…' : '完成' }}
+          </button>
+        </template>
+        <template v-else>
+          <button class="tbtn" @click="editing = true">定制</button>
+          <button class="more" @click="logout" aria-label="退出">···</button>
+        </template>
       </header>
 
       <main class="scroll">
-        <div class="hero">
+        <div v-if="!editing" class="hero">
           <div class="orb-wrap">
             <div class="orb-glow"></div>
             <div class="orb">
@@ -89,36 +141,55 @@ onMounted(load)
           <div class="ht">{{ greet }}，{{ displayName }}</div>
           <div class="hs">点一下就看，不用打字</div>
         </div>
+        <div v-else class="edithint">拖不了就用箭头调顺序；「+ 常问的话」把你自己的问题存成卡片</div>
 
-        <!-- 等你签字：唯一一个「要动手」的入口，所以单独做大 -->
-        <button v-if="pending.count" class="sign" @click="openApprovals">
-          <div class="sk">等你签字</div>
-          <div class="sv">{{ amountText }}</div>
-          <div class="chips">
-            <span class="h5-pill h5-pill--blue">{{ pending.count }} 件待办</span>
-            <span v-if="pending.blocked" class="h5-pill h5-pill--warn">
-              {{ pending.blocked }} 件需他人处理
-            </span>
+        <p v-if="err" class="err">{{ err }}</p>
+
+        <!-- 等你签字：唯一「要动手」的入口，单独做大 -->
+        <template v-if="approveTile">
+          <button v-if="pending.count && !editing" class="sign" @click="ask(approveTile.q)">
+            <div class="sk">{{ approveTile.label }}</div>
+            <div class="sv">{{ amountText }}</div>
+            <div class="chips">
+              <span class="h5-pill h5-pill--blue">{{ pending.count }} 件待办</span>
+              <span v-if="pending.blocked" class="h5-pill h5-pill--warn">
+                {{ pending.blocked }} 件需他人处理
+              </span>
+            </div>
+            <span class="go">去处理 ›</span>
+          </button>
+          <div v-else-if="!editing && !loading" class="clear">
+            <span class="tick">✓</span>没有待你签字的单子
           </div>
-          <span class="go">去处理 ›</span>
-        </button>
-        <div v-else-if="!loading" class="clear">
-          <span class="tick">✓</span>没有待你签字的单子
+        </template>
+
+        <div class="grid" :class="{ edit: editing }">
+          <div v-for="(t, i) in gridTiles" :key="t.key" class="cell">
+            <button class="tile" :class="{ dim: editing }" @click="ask(t.q)">
+              <span class="tg" :class="t.tone">{{ t.glyph }}</span>
+              <span class="tl">{{ t.label }}</span>
+              <span class="td">{{ t.desc }}</span>
+            </button>
+            <div v-if="editing" class="ops">
+              <button @click="moveTile(tiles.indexOf(t), -1)" aria-label="上移">‹</button>
+              <button @click="moveTile(tiles.indexOf(t), 1)" aria-label="下移">›</button>
+              <button class="del" @click="removeTile(tiles.indexOf(t))" aria-label="移除">×</button>
+            </div>
+          </div>
         </div>
 
-        <section v-for="g in groups" :key="g.title" class="grp">
-          <div class="gh">{{ g.title }}</div>
-          <div class="grid">
-            <button v-for="it in g.items" :key="it.q" class="tile" @click="ask(it.q)">
-              <span class="tg" :class="it.tone">{{ it.glyph }}</span>
-              <span class="tl">{{ it.label }}</span>
-              <span class="td">{{ it.desc }}</span>
+        <template v-if="editing">
+          <div class="gh">还能加这些</div>
+          <div class="addrow">
+            <button v-for="c in addable" :key="c.key" class="addchip" @click="addTile(c)">
+              + {{ c.label }}
             </button>
+            <button class="addchip custom" @click="addCustom">+ 常问的话</button>
           </div>
-        </section>
+        </template>
       </main>
 
-      <footer class="ft">
+      <footer v-if="!editing" class="ft">
         <button class="askbar" @click="openChat">
           <span>问点别的…</span>
           <span class="send">↑</span>
@@ -191,9 +262,8 @@ onMounted(load)
   color: #fff; display: grid; place-items: center; font-size: 11px; flex: none;
 }
 
-.grp { margin-top: 20px }
 .gh { font-size: 12px; color: var(--h5-ink-3); padding: 0 4px 8px; font-weight: 500 }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px }
+.grid { margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px }
 .tile {
   display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   text-align: left; cursor: pointer; font-family: inherit;
@@ -213,6 +283,41 @@ onMounted(load)
 .tg.good { background: rgba(42,122,82,.12); color: var(--h5-good) }
 .tl { font-size: 13.5px; font-weight: 600; color: var(--h5-ink) }
 .td { font-size: 11px; color: var(--h5-ink-3); line-height: 1.5 }
+
+.tbtn {
+  flex: none; border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.6);
+  color: var(--h5-ink-2); border-radius: var(--h5-r-pill); padding: 7px 14px;
+  font: 600 12.5px var(--h5-font); cursor: pointer;
+}
+.tbtn.primary { background: var(--h5-grad-btn); color: #fff; border: 0; box-shadow: var(--h5-sh-btn-sm) }
+.tbtn:disabled { opacity: .5 }
+.edithint {
+  font-size: 12px; color: var(--h5-ink-3); line-height: 1.6;
+  background: rgba(255,255,255,.5); border-radius: var(--h5-r-card); padding: 10px 14px; margin: 6px 0 14px;
+}
+.err {
+  margin: 0 0 12px; font-size: 12px; color: var(--h5-danger);
+  background: rgba(196,54,47,.09); border-radius: 10px; padding: 9px 12px;
+}
+.cell { position: relative }
+.grid.edit .tile { pointer-events: none }
+.tile.dim { opacity: .82 }
+.ops {
+  position: absolute; top: 6px; right: 6px; display: flex; gap: 4px;
+}
+.ops button {
+  width: 24px; height: 24px; border-radius: 50%; border: 1px solid rgba(255,255,255,.9);
+  background: rgba(255,255,255,.92); color: var(--h5-ink-2); font-size: 13px;
+  line-height: 1; cursor: pointer; padding: 0;
+}
+.ops .del { color: var(--h5-danger); font-size: 15px }
+.addrow { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 8px }
+.addchip {
+  border: 1px dashed rgba(43,110,246,.4); background: rgba(76,141,255,.08);
+  color: var(--h5-blue); border-radius: var(--h5-r-pill); padding: 9px 14px;
+  font: 600 12.5px var(--h5-font); cursor: pointer;
+}
+.addchip.custom { border-style: solid; background: var(--h5-grad-btn); color: #fff; border-color: transparent }
 
 .ft { flex: none; padding: 8px 16px calc(env(safe-area-inset-bottom, 0px) + 14px) }
 .askbar {

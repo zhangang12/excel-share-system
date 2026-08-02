@@ -1067,6 +1067,25 @@ class ManagementTodoTarget(Base):
 
 
 # ---------- 🆕 Agent 助手：应用级 kv 配置（页面可改，优先于 .env 默认值） ----------
+class UserSetting(Base):
+    """🆕 按用户的 kv 配置（app_settings 是全局的，这张是每人一份）。
+
+    目前只有一个 key：portal_tiles —— H5 智能体门户上摆哪些卡、什么顺序。
+    值是 JSON 数组，形如 [{"key":"morning_report"}, {"key":"custom:xxx","label":..,"q":..}]。
+    表由 Base.metadata.create_all 自动创建，无需迁移脚本。
+
+    没有记录 = 用角色默认配置（见 app/agent/portal.py），不是空门户。
+    """
+    __tablename__ = "user_settings"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_user_settings_user_key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    key: Mapped[str] = mapped_column(String(64), index=True)
+    value: Mapped[Optional[str]] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class AppSetting(Base):
     """通用 kv 配置表（key 主键）。目前仅 Agent 助手用来存 LLM 配置
     （agent_llm.base_url / agent_llm.api_key / agent_llm.model / agent_llm_models），
