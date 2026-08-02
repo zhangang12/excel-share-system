@@ -131,6 +131,98 @@ function log(...args) {
   console.log('[pms-desktop]', ...args);
 }
 
+// ============================================================
+// 🆕 故障自动上报：把 crash.log 送到服务器，不再靠「让用户把文件发过来」
+//
+// 起因：old-uninstaller 崩溃导致升级失败，排查时手里什么都没有——没有崩溃转储、
+// 没有日志、无法复现，只能去读 electron-builder 的 NSIS 模板反推。而更新器的日志
+// 本来就写在 console.log 里，打包后没有控制台，等于全部丢弃。
+//
+// 关键设计：安装器是在 app 退出之后才跑的，崩溃时本进程已经不在了，没法当场上报。
+// 所以改成「下次启动回溯」——下载完成时把目标版本记到 pending-update.json，
+// 下次启动发现版本没变，就说明上次安装失败了。
+// ============================================================
+const REPORT_URL = 'http://8.141.123.141/api/desktop/report';
+const PENDING_FILE = () => path.join(app.getPath('userData'), 'pending-update.json');
+const REPORT_MAX_BYTES = 60 * 1024;   // 与服务端 64KB 上限留出余量
+
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return null; }
+}
+function writeJson(file, obj) {
+  try { fs.writeFileSync(file, JSON.stringify(obj, null, 2)); } catch (_) { /* 写失败不致命 */ }
+}
+
+/** 上报一条。kind 用于分类（update_failed / crash / error），detail 是正文。
+ *  失败一律吞掉——上报本身绝不能影响客户端可用性。 */
+async function sendReport(kind, detail, extra) {
+  try {
+    const body = {
+      device_id: deviceId,
+      version: app.getVersion(),
+      kind,
+      detail: String(detail || '').slice(-REPORT_MAX_BYTES),
+      extra: extra || null,
+    };
+    const res = await fetch(REPORT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    });
+    log('故障上报', kind, res.ok ? '成功' : `失败 ${res.status}`);
+    return res.ok;
+  } catch (e) {
+    log('故障上报异常（已忽略）：', e && e.message);
+    return false;
+  }
+}
+
+function crashLogTail(bytes = REPORT_MAX_BYTES) {
+  try { return fs.readFileSync(CRASH_LOG(), 'utf8').slice(-bytes); } catch (_) { return ''; }
+}
+
+// electron-updater 的日志出口：原来接的是 console.log，打包后没有控制台等于全丢。
+// 现在落到 crash.log，升级失败时随上报一起送回服务器。
+const updaterLogger = {
+  info: (...a) => { log(...a); logCrash('updater', a.join(' ')); },
+  warn: (...a) => { log(...a); logCrash('updater-warn', a.join(' ')); },
+  error: (...a) => { log(...a); logCrash('updater-error', a.join(' ')); },
+};
+
+/** 启动时回溯：上次下载了新版本但现在版本没变 → 安装失败了。
+ *  这是抓 old-uninstaller 那类问题的唯一信号（安装器崩溃时客户端已退出）。 */
+async function reportPendingUpdateFailure() {
+  const p = readJson(PENDING_FILE());
+  if (!p || !p.version) return;
+  const cur = app.getVersion();
+  if (compareVersions(cur, p.version) >= 0) {
+    // 装上了，正常路径，清掉标记
+    fs.rmSync(PENDING_FILE(), { force: true });
+    return;
+  }
+  // 版本没变 = 上次安装没成功
+  logCrash('update-failed', `目标 ${p.version}，重启后仍是 ${cur}（下载于 ${p.at}）`);
+  const ok = await sendReport('update_failed', crashLogTail(), {
+    target_version: p.version,
+    current_version: cur,
+    downloaded_at: p.at,
+    attempts: (p.attempts || 0) + 1,
+  });
+  // 上报成功才清标记；没成功就累加次数，下次启动再报（别把唯一的线索弄丢）
+  if (ok) fs.rmSync(PENDING_FILE(), { force: true });
+  else writeJson(PENDING_FILE(), { ...p, attempts: (p.attempts || 0) + 1 });
+}
+
+// 主进程未捕获异常/Promise：原来只有渲染进程和子进程有钩子，主进程炸了什么都不留
+process.on('uncaughtException', (err) => {
+  logCrash('uncaughtException', (err && err.stack) || String(err));
+  sendReport('crash', crashLogTail(), { where: 'main:uncaughtException' });
+});
+process.on('unhandledRejection', (reason) => {
+  logCrash('unhandledRejection', (reason && reason.stack) || String(reason));
+});
+
 // ---- 强制最低版本检查：拉服务器 version.json，失败（还没这文件）视为不强制 ----
 async function checkForceUpdate() {
   try {
@@ -326,7 +418,7 @@ ipcMain.on('pms-desktop:check-update-silent', () => {
 
 function setupAutoUpdate() {
   autoUpdater.autoDownload = true;
-  autoUpdater.logger = { info: log, warn: log, error: log };
+  autoUpdater.logger = updaterLogger;   // 🆕 落 crash.log，否则打包后全丢
 
   // 状态推给渲染进程（manualChecking 外的后台轮询一律吞掉）
   const sendStatus = (status, extra) => {
@@ -342,6 +434,9 @@ function setupAutoUpdate() {
   autoUpdater.on('update-not-available', () => sendStatus('not-available'));
 
   autoUpdater.on('update-downloaded', (info) => {
+    // 🆕 记下目标版本：下次启动若版本没变，说明安装失败了（安装器在 app 退出后才跑，
+    //    崩溃时本进程已经不在，只能这样回溯）
+    writeJson(PENDING_FILE(), { version: info.version, at: new Date().toISOString() });
     sendStatus('downloaded', { version: info.version });
     dialog.showMessageBox(mainWindow, {
       type: 'info',
@@ -357,6 +452,7 @@ function setupAutoUpdate() {
   });
   // 检查失败（断网/服务器没传清单等）静默记日志，不打扰用户（手动触发的经 sendStatus 告知）
   autoUpdater.on('error', (err) => {
+    logCrash('updater-error', (err && err.stack) || String(err));
     log('自动更新检查失败（已忽略）：', err && err.message);
     sendStatus('error', { message: (err && err.message) || '' });
   });
@@ -369,13 +465,14 @@ function setupAutoUpdate() {
 // ---- 强制更新模式：进度推给 force-update.html，下完自动重启安装 ----
 function setupForceUpdateIpc() {
   autoUpdater.autoDownload = true;
-  autoUpdater.logger = { info: log, warn: log, error: log };
+  autoUpdater.logger = updaterLogger;   // 🆕 落 crash.log，否则打包后全丢
 
   const send = (channel, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
   };
   autoUpdater.on('download-progress', (p) => send('force-update:progress', p));
-  autoUpdater.on('update-downloaded', () => {
+  autoUpdater.on('update-downloaded', (info) => {
+    writeJson(PENDING_FILE(), { version: info && info.version, at: new Date().toISOString() });
     send('force-update:downloaded');
     autoUpdater.quitAndInstall(); // 下完自动重启安装，不给绕过出口
   });
@@ -417,6 +514,9 @@ if (!gotLock) {
     createSplash();
 
     if (app.isPackaged) {
+      // 🆕 先回溯上次的升级结果：下载了新版本但版本没变 = 安装失败，上报出去。
+      //    不 await——上报走网络，不能拖慢启动；失败了下次启动还会再报。
+      reportPendingUpdateFailure().catch(() => { /* 上报失败不影响启动 */ });
       // 打包模式：先查强制最低版本，再决定进应用还是进强制更新页
       const forced = await checkForceUpdate();
       forceMode = !!forced;

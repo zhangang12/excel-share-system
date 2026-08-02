@@ -1092,6 +1092,28 @@ class DesktopClient(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class DesktopReport(Base):
+    """🆕 桌面客户端故障自动上报：升级失败 / 崩溃 / 更新器报错。
+
+    起因：old-uninstaller 崩溃导致部分机器永远升不了级，排查时手里什么都没有——
+    没有崩溃转储、没有日志、无法复现，只能去读 electron-builder 的 NSIS 模板反推。
+    有了这张表，下次这类问题直接查库就知道是哪台、卡在哪一步、装到几号版本失败的。
+
+    写入端点 POST /api/desktop/report **不要求认证**——升级失败发生在用户登录之前，
+    要认证就永远抓不到目标场景。防滥用靠：单条 detail 截断 64KB + 每设备每天限流。
+    表由 Base.metadata.create_all 自动创建，无需迁移脚本。"""
+    __tablename__ = "desktop_reports"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(32), index=True)   # update_failed / crash / error
+    detail: Mapped[Optional[str]] = mapped_column(Text)          # crash.log 尾部
+    extra: Mapped[Optional[dict]] = mapped_column(PortableJSON())  # 目标版本/当前版本/来源等
+    username: Mapped[Optional[str]] = mapped_column(String(64))  # 由 device_id 反查台账，仅展示
+    handled: Mapped[bool] = mapped_column(Boolean, default=False)  # 处理标记（管理页勾掉）
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 # ---------- 🆕 外网登录验证码（浏览器外网登录两步闸门，码经 push_message 发管理层企微/站内） ----------
 class LoginGateCode(Base):
     """🆕 外网登录验证码：一次一码（pre_token 关联登录会话），库中只存 sha256 哈希不存明文。
