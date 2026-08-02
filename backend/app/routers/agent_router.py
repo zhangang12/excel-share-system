@@ -19,6 +19,7 @@
 - 查询口径照抄 overdue.py（采购到期未到货/部门逾期任务/尾款到期/人事到期），
   日期字段为 ISO 字符串可直接字典序比较；业务时区中国 UTC+8（复用 overdue._CN_TZ）
 """
+import asyncio
 import json
 import logging
 import re
@@ -33,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import menus, models
 from ..config import settings
-from ..database import get_db
+from ..database import get_db, SessionLocal
 from ..deps import require_admin_or_manager, get_current_user, user_can_view_project
 from ..dept_config import DEPTS
 from ..overdue import _CN_TZ
@@ -513,8 +514,11 @@ async def _run_tool(name: str, args: dict, db: AsyncSession, current: models.Use
 _SYSTEM_PROMPT = """你是制造业 ERP 项目管理系统内置的数据分析助手（只读），当前服务对象：「{user_name}」（角色：{roles}）。严格遵守：
 1. 只能根据工具返回的真实数据回答，严禁编造任何数字、日期、金额、项目编号、人名；
 2. 工具没有返回的信息就如实说"系统里查不到"，不要推测、不要举例；
-3. 回答用中文、Markdown 格式：先一句话结论概览，明细数据（≥2 条）一律用 Markdown 表格呈现，最后给 1-2 条可执行的建议或跟进方向；
-4. 表格列从工具字段里挑最有用的 4-6 列（如物料/供应商/预计到货/超期天数/项目），超期严重的用 **加粗** 标出；金额保留原始数值，日期原样引用；
+3. **手机上看，务必简短**：先一句话结论，再列关键明细，全文控制在 250 字以内。
+   不要写"建议""下一步""如需…可以…"这类收尾套话，用户要的是数，不是小作文；
+4. 明细最多列 5 条，按严重程度排序，多出来的只写"另有 N 条"。
+   每条一行，形如「江苏鸿旭隆 · 4 条 · 超 12 天」；条数 ≤2 时直接用句子说完，不要摆表格；
+   金额保留原始数值，日期原样引用，超期最狠的那条用 **加粗**；
 5. 需要数据时先调用工具，可连续调用多个；拿到工具结果后直接总结，不要重复调用同一工具；
 6. 你只能查询，不能修改任何数据；用户要求改数据时明确拒绝。
 今天日期：{today}（中国时区）。"""
@@ -526,6 +530,10 @@ async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[
         "model": model,
         "messages": messages,
         "temperature": 0.2,
+        # 🆕 生产实测：耗时几乎线性于**输出字数**（每字 12-15ms），答案平均 1300 字 → 18s。
+        #   手机上没人读 1300 字。封顶 700 tokens（约 450 中文字），配合 system prompt
+        #   里的"先给结论"要求，把 p50 从 17s 压下来。截断优于让人等。
+        "max_tokens": 700,
     }
     if tools:  # 🆕 只下放调用者有权的数据工具；无可用工具则纯对话（不下发 tools 字段，防空数组被拒）
         payload["tools"] = tools
@@ -565,6 +573,10 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
                 raise RuntimeError("LLM 返回空内容")
             return content, tool_names
         messages.append(msg)  # 含 tool_calls 的 assistant 消息原样回灌
+        # 🆕 同一轮里的多个工具并发跑：它们之间没有依赖，串行等于把等待时间乘以工具数。
+        #   注意共用同一个 db session —— SQLAlchemy 的 AsyncSession 不是并发安全的，
+        #   所以每个工具用独立 session，跑完即关。
+        calls = []
         for tc in tool_calls[:4]:
             fn = (tc.get("function") or {})
             name = fn.get("name") or ""
@@ -572,8 +584,20 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            result = await _run_tool(name, args, db, user)
-            if name in TOOL_LABELS and name not in tool_names:
+            calls.append((tc, name, args))
+
+        async def _one(name: str, args: dict):
+            async with SessionLocal() as s2:
+                return await _run_tool(name, args, s2, user)
+
+        results = await asyncio.gather(*[_one(n, a) for _, n, a in calls],
+                                       return_exceptions=True)
+        for (tc, name, _), result in zip(calls, results):
+            if isinstance(result, Exception):
+                # 单个工具炸掉不能拖垮整轮：把错误回灌给模型，让它据此作答
+                log.warning("[agent] 工具 %s 执行失败: %s", name, result)
+                result = {"error": f"{TOOL_LABELS.get(name, name)}查询失败"}
+            elif name in TOOL_LABELS and name not in tool_names:
                 tool_names.append(name)
             messages.append({
                 "role": "tool", "tool_call_id": tc.get("id"),
@@ -1161,3 +1185,57 @@ async def reset_portal(
     allowed = _allowed_tools(current)
     await portal.set_tiles(db, current, [])
     return {"tiles": portal.expand(portal.default_tiles(current, allowed))}
+
+
+# ==================== 🆕 直答：门户卡片不经 LLM ====================
+# 生产实测：一次 LLM 往返 ~8-10s，答案每字 12-15ms，p50 17s / p95 34s。
+# 而门户卡片是**确定性**的——「今日晨报」就是调 morning_report，没有歧义，
+# 让模型再想一遍纯属浪费。直接调工具 + 复用规则降级的格式化模板，几十毫秒出结果。
+#
+# 复用 _run_tool（菜单门控）与 _xxx_text（Markdown 模板），不新增任何数据访问路径。
+
+_DIRECT_FORMATTERS = {
+    "morning_report": _morning_text,
+    "po_arrival_overdue": _po_overdue_text,
+    "po_arriving": _po_arriving_text,
+    "po_overdue_by_supplier": _po_by_supplier_text,
+    "balance_due": _balance_text,
+    "overdue_orders": _overdue_orders_text,
+}
+
+
+class DirectToolIn(BaseModel):
+    tool: str
+    args: dict = {}
+
+
+@router.post("/tool")
+async def run_tool_direct(
+    body: DirectToolIn,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """直接执行一个数据工具并返回排好版的答案。不经 LLM。
+
+    工具白名单 = _DIRECT_FORMATTERS ∩ 该用户有权的工具；越界 400。
+    权限仍由 _run_tool 内部按菜单门控（与 LLM 路径同一套，不另开口子）。
+    """
+    t0 = time.perf_counter()
+    name = body.tool
+    if name not in _DIRECT_FORMATTERS:
+        raise HTTPException(400, "不支持直接执行该工具")
+    if name not in _allowed_tools(current):
+        raise HTTPException(403, "无权使用该工具")
+
+    d = await _run_tool(name, body.args or {}, db, current)
+    if isinstance(d, dict) and "error" in d:
+        reply, tools = d["error"], []
+    else:
+        reply, tools = _DIRECT_FORMATTERS[name](d), [name]
+
+    ms = int((time.perf_counter() - t0) * 1000)
+    await _log_chat(db, current, f"[直答]{TOOL_LABELS.get(name, name)}", reply, tools,
+                    via="direct", model="direct", duration_ms=ms)
+    return {"reply": reply, "fallback": False, "direct": True, "duration_ms": ms,
+            "sources": [TOOL_LABELS[n] for n in tools],
+            "suggestions": _suggestions_for(tools, _allowed_tools(current))}

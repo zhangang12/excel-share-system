@@ -143,8 +143,9 @@ def expand(tiles: list[dict]) -> list[dict]:
             out.append(t)
         elif t["key"] in _BY_KEY:
             c = _BY_KEY[t["key"]]
+            # 带上 tool：前端据此判断能不能走直答通道（不经 LLM，快两个数量级）
             out.append({k: c[k] for k in ("key", "label", "desc", "glyph", "tone", "q")}
-                       | {"kind": c.get("kind")})
+                       | {"kind": c.get("kind"), "tool": c.get("tool")})
     return out
 
 

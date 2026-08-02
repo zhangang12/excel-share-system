@@ -17,7 +17,7 @@ import { clearSession, displayName } from './session'
 
 interface Tile {
   key: string; label: string; desc?: string; glyph?: string
-  tone?: string; q: string; custom?: boolean; kind?: string | null
+  tone?: string; q: string; custom?: boolean; kind?: string | null; tool?: string | null
 }
 
 const router = useRouter()
@@ -102,7 +102,11 @@ function addCustom() {
   tiles.value.push({ key: `custom:new${Date.now()}`, label, q, custom: true, glyph: '问', tone: 'blue', desc: q })
 }
 
-const ask = (q: string) => { if (!editing.value) router.push({ name: 'chat', query: { q } }) }
+/** 有 tool 的卡走直答通道（不经 LLM，几十毫秒）；自定义卡只能走对话 */
+const ask = (t: Tile) => {
+  if (editing.value) return
+  router.push({ name: 'chat', query: t.tool ? { q: t.q, tool: t.tool } : { q: t.q } })
+}
 const openChat = () => router.push({ name: 'chat' })
 function logout() { clearSession(); router.replace('/login') }
 onMounted(load)
@@ -147,7 +151,7 @@ onMounted(load)
 
         <!-- 等你签字：唯一「要动手」的入口，单独做大 -->
         <template v-if="approveTile">
-          <button v-if="pending.count && !editing" class="sign" @click="ask(approveTile.q)">
+          <button v-if="pending.count && !editing" class="sign" @click="ask(approveTile)">
             <div class="sk">{{ approveTile.label }}</div>
             <div class="sv">{{ amountText }}</div>
             <div class="chips">
@@ -165,7 +169,7 @@ onMounted(load)
 
         <div class="grid" :class="{ edit: editing }">
           <div v-for="(t, i) in gridTiles" :key="t.key" class="cell">
-            <button class="tile" :class="{ dim: editing }" @click="ask(t.q)">
+            <button class="tile" :class="{ dim: editing }" @click="ask(t)">
               <span class="tg" :class="t.tone">{{ t.glyph }}</span>
               <span class="tl">{{ t.label }}</span>
               <span class="td">{{ t.desc }}</span>

@@ -87,6 +87,20 @@ async function openApprovals() {
   }
 }
 
+/** 直答：确定性查询不经 LLM。生产实测 LLM 路径 p50 17s，直答只要几十毫秒。 */
+async function askTool(tool: string, label: string) {
+  msgs.value.push({ kind: 'user', text: label })
+  thinking.value = true
+  await scrollDown()
+  try {
+    const { data } = await http.post('/agent/tool', { tool })
+    msgs.value.push({ kind: 'ai', text: data.reply, sources: data.sources })
+    if (data.suggestions?.length) suggestions.value = data.suggestions
+  } catch (e: any) {
+    msgs.value.push({ kind: 'ai', text: errText(e, '查询失败，请稍后重试') })
+  } finally { thinking.value = false; await scrollDown() }
+}
+
 async function send(text?: string) {
   const q = (text ?? input.value).trim()
   if (!q || thinking.value) return
@@ -137,7 +151,9 @@ onMounted(() => {
   loadPending()
   // 从门户点卡片进来：带着问题直接发，用户不用打字
   const q = route.query.q
-  if (typeof q === 'string' && q.trim()) send(q.trim())
+  const tool = route.query.tool
+  if (typeof tool === 'string' && tool && typeof q === 'string') askTool(tool, q)
+  else if (typeof q === 'string' && q.trim()) send(q.trim())
 })
 </script>
 
