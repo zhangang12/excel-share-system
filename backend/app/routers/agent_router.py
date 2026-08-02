@@ -28,6 +28,7 @@ from datetime import date, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1239,3 +1240,180 @@ async def run_tool_direct(
     return {"reply": reply, "fallback": False, "direct": True, "duration_ms": ms,
             "sources": [TOOL_LABELS[n] for n in tools],
             "suggestions": _suggestions_for(tools, _allowed_tools(current))}
+
+
+# ==================== 🆕 流式输出（SSE） ====================
+# 为什么要流式：生产实测 p50 17s。总时长压不到 1s，但**感知延迟**可以——
+# 模型出第一个字通常在 1-2s 内，之后逐字推给前端，人不再对着白屏干等。
+#
+# 工具轮次不流给用户（那是内部过程），只推一条「正在查 xxx」的状态；
+# 最后一轮的正文才逐块推。
+
+async def _llm_stream(messages: list[dict], model: str, cfg: dict, tools: list[dict]):
+    """向 LLM 发流式请求，逐块 yield 原始 delta。"""
+    url = cfg["base_url"].rstrip("/") + "/chat/completions"
+    payload: dict = {"model": model, "messages": messages,
+                     "temperature": 0.2, "max_tokens": 700, "stream": True}
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+    headers = {"Authorization": f"Bearer {cfg['api_key']}"}
+    async with httpx.AsyncClient(timeout=60.0) as cli:
+        async with cli.stream("POST", url, json=payload, headers=headers) as r:
+            if r.status_code != 200:
+                await r.aread()
+                # 安全红线：只透状态码，绝不把可能含 key 的异常链带出去
+                raise RuntimeError(f"LLM 接口返回 HTTP {r.status_code}")
+            async for line in r.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                chunk = line[5:].strip()
+                if not chunk or chunk == "[DONE]":
+                    continue
+                try:
+                    yield json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+
+
+def _merge_tool_call_deltas(acc: dict, deltas: list) -> None:
+    """流式下 tool_calls 是按 index 分片来的，要按索引拼回完整调用。"""
+    for d in deltas or []:
+        i = d.get("index", 0)
+        cur = acc.setdefault(i, {"id": "", "function": {"name": "", "arguments": ""}})
+        if d.get("id"):
+            cur["id"] = d["id"]
+        fn = d.get("function") or {}
+        if fn.get("name"):
+            cur["function"]["name"] += fn["name"]
+        if fn.get("arguments"):
+            cur["function"]["arguments"] += fn["arguments"]
+
+
+async def _chat_stream(message: str, history: list[dict], model: str,
+                       cfg: dict, user: models.User):
+    """流式主循环。yield (事件类型, 数据)。DB session 自己开——
+    StreamingResponse 的生成器在请求处理函数返回之后才跑，Depends 给的 session 那时已关。"""
+    tool_names: list[str] = []
+    roles = "、".join(sorted(user.role_codes)) if getattr(user, "role_codes", None) else "—"
+    sys_prompt = _SYSTEM_PROMPT.format(today=_today().isoformat(),
+                                       user_name=_uname(user), roles=roles)
+    allowed = _allowed_tools(user)
+    schemas = [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
+    messages = ([{"role": "system", "content": sys_prompt}]
+                + history + [{"role": "user", "content": message}])
+
+    for _ in range(4):
+        content_parts: list[str] = []
+        tc_acc: dict = {}
+        async for data in _llm_stream(messages, model, cfg, schemas):
+            choices = data.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            if delta.get("tool_calls"):
+                _merge_tool_call_deltas(tc_acc, delta["tool_calls"])
+            piece = delta.get("content")
+            if piece:
+                content_parts.append(piece)
+                yield "delta", piece          # ← 正文逐块推给前端
+
+        if not tc_acc:
+            text = "".join(content_parts).strip()
+            if not text:
+                raise RuntimeError("LLM 返回空内容")
+            yield "done", {"text": text, "tools": tool_names}
+            return
+
+        # 这一轮是工具调用：不推正文，只报状态，然后并发执行
+        calls = []
+        for _, tc in sorted(tc_acc.items()):
+            name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            calls.append((tc, name, args))
+            if name in TOOL_LABELS:
+                yield "tool", TOOL_LABELS[name]
+
+        messages.append({"role": "assistant", "content": None,
+                         "tool_calls": [{"id": tc["id"], "type": "function",
+                                         "function": tc["function"]} for tc, _, _ in calls]})
+
+        async def _one(name: str, args: dict):
+            async with SessionLocal() as s2:
+                return await _run_tool(name, args, s2, user)
+
+        results = await asyncio.gather(*[_one(n, a) for _, n, a in calls],
+                                       return_exceptions=True)
+        for (tc, name, _), result in zip(calls, results):
+            if isinstance(result, Exception):
+                log.warning("[agent] 工具 %s 失败: %s", name, result)
+                result = {"error": f"{TOOL_LABELS.get(name, name)}查询失败"}
+            elif name in TOOL_LABELS and name not in tool_names:
+                tool_names.append(name)
+            messages.append({"role": "tool", "tool_call_id": tc["id"],
+                             "content": json.dumps(result, ensure_ascii=False, default=str)})
+
+    raise RuntimeError("LLM 工具调用轮次超限")
+
+
+@router.post("/chat/stream")
+async def chat_stream(
+    body: ChatIn,
+    current: models.User = Depends(get_current_user),
+):
+    """SSE 流式问答。事件：tool（正在查什么）/ delta（正文片段）/ done / error。
+
+    降级路径不流式——规则模板是一次成型的文本，没有逐字生成的过程，
+    直接当作一个 delta 推出去即可。
+    """
+    text = (body.message or "").strip()
+    if not text:
+        raise HTTPException(400, "请输入问题")
+    history = [{"role": h.role, "content": h.content[:2000]}
+               for h in body.history[-20:] if h.role in ("user", "assistant")]
+
+    async def gen():
+        t0 = time.perf_counter()
+        def sse(ev: str, data) -> str:
+            return f"event: {ev}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        async with SessionLocal() as db:
+            cfg = await _effective_llm_config(db)
+            model = (body.model or "").strip() or cfg["model"]
+            if model not in _model_whitelist(cfg):
+                yield sse("error", {"message": f"无效模型「{model}」"})
+                return
+            allowed = _allowed_tools(current)
+            reply, tools, via = "", [], "llm"
+            try:
+                if not cfg["api_key"]:
+                    raise RuntimeError("未配置 api_key")
+                async for kind, payload in _chat_stream(text, history, model, cfg, current):
+                    if kind == "delta":
+                        yield sse("delta", {"text": payload})
+                    elif kind == "tool":
+                        yield sse("tool", {"label": payload})
+                    else:
+                        reply, tools = payload["text"], payload["tools"]
+            except Exception as e:  # noqa: BLE001 —— 任何异常都降级，保证可用
+                log.warning("[agent] 流式失败，转规则降级: %s", e)
+                via = "rule-stream-fallback"
+                reply, tools = await _rule_chat(text, db, current)
+                yield sse("delta", {"text": reply})
+
+            ms = int((time.perf_counter() - t0) * 1000)
+            await _log_chat(db, current, text, reply, tools, via=via,
+                            model=model if via == "llm" else via, duration_ms=ms)
+            yield sse("done", {
+                "duration_ms": ms, "fallback": via != "llm",
+                "sources": [TOOL_LABELS[n] for n in tools],
+                "suggestions": _suggestions_for(tools, allowed),
+            })
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",   # ← 关键：不加这行 nginx 会缓冲整个响应，流式失效
+    })

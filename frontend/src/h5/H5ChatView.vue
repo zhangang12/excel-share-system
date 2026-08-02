@@ -25,6 +25,7 @@ type Msg =
 const msgs = ref<Msg[]>([])
 const input = ref('')
 const thinking = ref(false)
+const toolHint = ref('')   // 「正在查 xxx…」，工具轮次不流正文，给个状态别让人以为卡住了
 const scroller = ref<HTMLElement>()
 const pending = ref<{ count: number; amount_total: number; blocked: number }>(
   { count: 0, amount_total: 0, blocked: 0 })
@@ -87,20 +88,6 @@ async function openApprovals() {
   }
 }
 
-/** 直答：确定性查询不经 LLM。生产实测 LLM 路径 p50 17s，直答只要几十毫秒。 */
-async function askTool(tool: string, label: string) {
-  msgs.value.push({ kind: 'user', text: label })
-  thinking.value = true
-  await scrollDown()
-  try {
-    const { data } = await http.post('/agent/tool', { tool })
-    msgs.value.push({ kind: 'ai', text: data.reply, sources: data.sources })
-    if (data.suggestions?.length) suggestions.value = data.suggestions
-  } catch (e: any) {
-    msgs.value.push({ kind: 'ai', text: errText(e, '查询失败，请稍后重试') })
-  } finally { thinking.value = false; await scrollDown() }
-}
-
 async function send(text?: string) {
   const q = (text ?? input.value).trim()
   if (!q || thinking.value) return
@@ -119,11 +106,7 @@ async function send(text?: string) {
       .filter((m): m is Extract<Msg, { kind: 'user' | 'ai' }> => m.kind === 'user' || m.kind === 'ai')
       .slice(-10)
       .map((m) => ({ role: m.kind === 'user' ? 'user' : 'assistant', content: m.text }))
-    const { data } = await http.post('/agent/chat', { message: q, history: history.slice(0, -1) })
-    msgs.value.push({ kind: 'ai', text: data.reply, sources: data.sources })
-    if (Array.isArray(data.suggestions) && data.suggestions.length) {
-      suggestions.value = data.suggestions
-    }
+    await streamChat(q, history.slice(0, -1))
   } catch (e: any) {
     msgs.value.push({ kind: 'ai', text: errText(e, '暂时问不通，请稍后再试') })
   } finally {
@@ -138,6 +121,64 @@ const speech = useSpeech((text, final) => {
   if (final && text.trim()) send()
 })
 
+/**
+ * SSE 流式问答。用 fetch + ReadableStream 而不是 EventSource——
+ * EventSource 只能 GET，带不了 Authorization 头，也发不了 body。
+ *
+ * 总时长压不下去（模型出字就那么快），但第一个字通常 1-2s 内就到，
+ * 人不再对着白屏干等 17 秒。
+ */
+async function streamChat(q: string, history: { role: string; content: string }[]) {
+  const bubble: Extract<Msg, { kind: 'ai' }> = { kind: 'ai', text: '' }
+  let opened = false
+  const res = await fetch('/api/agent/chat/stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('pms_token') || ''}`,
+    },
+    body: JSON.stringify({ message: q, history }),
+  })
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+
+  const reader = res.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += dec.decode(value, { stream: true })
+    // SSE 以空行分隔事件；最后一段可能不完整，留在缓冲里等下一片
+    const parts = buf.split('\n\n')
+    buf = parts.pop() || ''
+    for (const raw of parts) {
+      let ev = 'message', data = ''
+      for (const line of raw.split('\n')) {
+        if (line.startsWith('event:')) ev = line.slice(6).trim()
+        else if (line.startsWith('data:')) data += line.slice(5).trim()
+      }
+      if (!data) continue
+      let d: any
+      try { d = JSON.parse(data) } catch { continue }
+      if (ev === 'tool') {
+        toolHint.value = `正在查 ${d.label}…`
+      } else if (ev === 'delta') {
+        if (!opened) { opened = true; thinking.value = false; toolHint.value = ''; msgs.value.push(bubble) }
+        bubble.text += d.text
+        await scrollDown()
+      } else if (ev === 'done') {
+        if (!opened) { msgs.value.push(bubble) }
+        bubble.sources = d.sources
+        if (d.suggestions?.length) suggestions.value = d.suggestions
+        toolHint.value = ''
+      } else if (ev === 'error') {
+        if (!opened) { opened = true; msgs.value.push(bubble) }
+        bubble.text += d.message || '出错了'
+      }
+    }
+  }
+}
+
 function onCardDone() {
   loadPending()
 }
@@ -151,9 +192,7 @@ onMounted(() => {
   loadPending()
   // 从门户点卡片进来：带着问题直接发，用户不用打字
   const q = route.query.q
-  const tool = route.query.tool
-  if (typeof tool === 'string' && tool && typeof q === 'string') askTool(tool, q)
-  else if (typeof q === 'string' && q.trim()) send(q.trim())
+  if (typeof q === 'string' && q.trim()) send(q.trim())
 })
 </script>
 
@@ -213,7 +252,10 @@ onMounted(() => {
         </template>
 
         <div v-if="thinking" class="row">
-          <div class="bubble theirs dots"><i></i><i></i><i></i></div>
+          <div class="bubble theirs dots">
+            <i></i><i></i><i></i>
+            <span v-if="toolHint" class="thint">{{ toolHint }}</span>
+          </div>
         </div>
       </main>
 
@@ -343,6 +385,7 @@ onMounted(() => {
 }
 .dots i:nth-child(2) { animation-delay: .15s }
 .dots i:nth-child(3) { animation-delay: .3s }
+.thint { font-size: 11.5px; color: var(--h5-ink-3); margin-left: 6px }
 .cards { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px }
 
 .ft { flex: none; padding: 8px 16px calc(env(safe-area-inset-bottom, 0px) + 14px) }
