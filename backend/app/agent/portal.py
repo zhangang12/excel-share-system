@@ -40,6 +40,28 @@ CATALOG: list[dict] = [
      "glyph": "箱", "tone": "danger", "q": "采购未到货", "tool": "po_arrival_overdue"},
     {"key": "po_arriving", "label": "近期到货", "desc": "接下来一周能到的料",
      "glyph": "期", "tone": "good", "q": "未来 7 天到货", "tool": "po_arriving"},
+
+    # ── 🆕 第二批：销售/台账域 ──
+    # 加这批的依据是杨坛的真实操作轨迹（台账 243 次 / 请款 40 / 收货人 34 / 订单 29，
+    # 采购 0 次）。desc 与 agent_router.TOOL_DESC 保持同一句话，别写两份说法。
+    {"key": "receivable_blind", "label": "盯不住的应收",
+     "desc": "催办查不到的钱：没填到期日的尾款 + 发货款应收",
+     "glyph": "盯", "tone": "danger", "q": "盯不住的应收", "tool": "receivable_blind"},
+    {"key": "shipment_receiver", "label": "待填收货人",
+     "desc": "发货单收货人还空着，填了才能送货签收",
+     "glyph": "收", "tone": "warn", "q": "待填收货人", "tool": "shipment_receiver"},
+    {"key": "ledger_incomplete", "label": "台账缺件",
+     "desc": "缺合同额或客户；合同额为 0 会让毛利算成假亏损",
+     "glyph": "缺", "tone": "warn", "q": "台账缺件", "tool": "ledger_incomplete"},
+    {"key": "order_pending", "label": "待审销售单",
+     "desc": "销售下了单、等主管审批的订单",
+     "glyph": "单", "tone": "blue", "q": "待审批销售订单", "tool": "order_pending"},
+    {"key": "invoice_pending", "label": "待开票",
+     "desc": "已申请开票、等财务出票的台账行",
+     "glyph": "票", "tone": "blue", "q": "待开票", "tool": "invoice_pending"},
+    {"key": "leads_followup", "label": "线索待跟进",
+     "desc": "既没成交也没放弃、还挂着的销售线索",
+     "glyph": "索", "tone": "good", "q": "线索待跟进", "tool": "leads_followup"},
 ]
 _BY_KEY = {c["key"]: c for c in CATALOG}
 
@@ -58,15 +80,21 @@ _BY_KEY = {c["key"]: c for c in CATALOG}
 # ⚠️ key 必须是 roles 表里的真实 code。系统里采购角色叫 buyer（还有 buyer_lead /
 #    buyer_standard / buyer_outsource），不叫 purchase——写错了这组默认永远不会命中。
 _DEFAULTS: dict[str, list[str]] = {
-    "manager": ["approvals", "balance_due", "morning_report", "overdue_orders"],
-    "finance_lead": ["approvals", "balance_due", "morning_report", "overdue_orders"],
-    "finance": ["approvals", "balance_due", "morning_report"],
+    # 杨坛(manager)：按「他做过多少 × 此刻还有多少在等」排——
+    #   请款审批 40 次/2 笔在等、盯不住的应收 36 次/63 笔在等、收货人 34 次/49 单在等、
+    #   晨报他 3 次会话每次都调。采购三件套一张不进（两个月 0 次操作）。
+    "manager": ["approvals", "receivable_blind", "shipment_receiver",
+                "morning_report", "ledger_incomplete", "overdue_orders"],
+    "finance_lead": ["approvals", "receivable_blind", "balance_due",
+                     "invoice_pending", "morning_report"],
+    "finance": ["approvals", "balance_due", "invoice_pending", "morning_report"],
     "buyer_lead": ["po_arrival_overdue", "po_overdue_by_supplier",
                    "po_arriving", "morning_report"],
     "buyer": ["po_arrival_overdue", "po_overdue_by_supplier",
               "po_arriving", "morning_report"],
-    "sales_lead": ["balance_due", "morning_report", "overdue_orders"],
-    "sales": ["balance_due", "morning_report"],
+    "sales_lead": ["order_pending", "receivable_blind", "shipment_receiver",
+                   "leads_followup", "morning_report"],
+    "sales": ["receivable_blind", "balance_due", "leads_followup", "morning_report"],
 }
 # 查找顺序：先管理层、再主管、再普通岗。杨坛同时是 manager/sales_lead/finance_lead，
 # 命中第一个 manager，拿到含请款审批的那组。

@@ -59,8 +59,11 @@ async def main():
         m = (await c.get("/api/agent/portal", headers=Hm)).json()
         keys = [t["key"] for t in m["tiles"]]
         chk(len(keys) > 0, f"manager 有默认门户: {keys}")
-        chk("approvals" in keys and "balance_due" in keys,
-            f"管理层默认含请款审批与尾款到期: {keys}")
+        # 默认门户按杨坛真实操作轨迹排：请款审批 40 次 + 盯不住的应收 63 笔在等。
+        # balance_due 已不在管理层默认里——它只覆盖填了到期日的那部分（¥21万），
+        # receivable_blind 覆盖的是催办完全够不着的那 ¥254 万。
+        chk("approvals" in keys and "receivable_blind" in keys,
+            f"管理层默认含请款审批与盯不住的应收: {keys}")
         chk("po_arrival_overdue" not in keys,
             f"采购卡不进管理层默认（他两个月没碰过采购）: {keys}")
 

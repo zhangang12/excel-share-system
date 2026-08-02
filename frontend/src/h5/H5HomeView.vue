@@ -184,11 +184,23 @@ onMounted(load)
 
         <template v-if="editing">
           <div class="gh">还能加这些</div>
-          <div class="addrow">
-            <button v-for="c in addable" :key="c.key" class="addchip" @click="addTile(c)">
-              + {{ c.label }}
+          <div class="addlist">
+            <button v-for="c in addable" :key="c.key" class="additem" @click="addTile(c)">
+              <span class="ag" :class="c.tone">{{ c.glyph }}</span>
+              <span class="atx">
+                <span class="al">{{ c.label }}</span>
+                <span class="ad">{{ c.desc }}</span>
+              </span>
+              <span class="aplus">+</span>
             </button>
-            <button class="addchip custom" @click="addCustom">+ 常问的话</button>
+            <button class="additem custom" @click="addCustom">
+              <span class="ag">问</span>
+              <span class="atx">
+                <span class="al">常问的话</span>
+                <span class="ad">把你自己的问题存成一张卡</span>
+              </span>
+              <span class="aplus">+</span>
+            </button>
           </div>
         </template>
       </main>
@@ -315,13 +327,25 @@ onMounted(load)
   line-height: 1; cursor: pointer; padding: 0;
 }
 .ops .del { color: var(--h5-danger); font-size: 15px }
-.addrow { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 8px }
-.addchip {
-  border: 1px dashed rgba(43,110,246,.4); background: rgba(76,141,255,.08);
-  color: var(--h5-blue); border-radius: var(--h5-r-pill); padding: 9px 14px;
-  font: 600 12.5px var(--h5-font); cursor: pointer;
+.addlist { display: flex; flex-direction: column; gap: 8px; padding-bottom: 8px }
+.additem {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  border: 1px dashed rgba(43,110,246,.35); background: rgba(255,255,255,.5);
+  border-radius: var(--h5-r-card); padding: 11px 13px; cursor: pointer; font-family: inherit;
 }
-.addchip.custom { border-style: solid; background: var(--h5-grad-btn); color: #fff; border-color: transparent }
+.additem.custom { border-style: solid; border-color: rgba(43,110,246,.45) }
+.ag {
+  width: 28px; height: 28px; flex: none; border-radius: var(--h5-r-chip);
+  display: grid; place-items: center; font-size: 12.5px; font-weight: 700;
+  background: rgba(76,141,255,.15); color: var(--h5-blue);
+}
+.ag.danger { background: rgba(196,54,47,.12); color: var(--h5-danger) }
+.ag.warn { background: rgba(169,106,8,.13); color: var(--h5-warn) }
+.ag.good { background: rgba(42,122,82,.12); color: var(--h5-good) }
+.atx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px }
+.al { font-size: 13px; font-weight: 600; color: var(--h5-ink) }
+.ad { font-size: 11px; color: var(--h5-ink-3); line-height: 1.5 }
+.aplus { flex: none; color: var(--h5-blue); font-size: 17px; font-weight: 700 }
 
 .ft { flex: none; padding: 8px 16px calc(env(safe-area-inset-bottom, 0px) + 14px) }
 .askbar {

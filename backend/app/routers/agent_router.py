@@ -353,6 +353,31 @@ TOOL_LABELS = {
     "balance_due": "尾款到期清单",
     "overdue_orders": "部门逾期任务",
     "project_status": "项目进度查询",
+    # 🆕 第二批：销售/台账域。依据是杨坛真实操作轨迹（台账 243 次、请款 40 笔、
+    #    收货人 34 次、销售订单 29 次；采购 0 次），不是拍脑袋。
+    "receivable_blind": "盯不住的应收",
+    "shipment_receiver": "待填收货人",
+    "ledger_incomplete": "台账缺件",
+    "leads_followup": "线索待跟进",
+    "order_pending": "待审批销售订单",
+    "invoice_pending": "待开票",
+}
+
+# 🆕 每个工具一句人话说明：给用户看的（门户小字、能力清单），也给模型当选型依据。
+TOOL_DESC = {
+    "morning_report": "把今天要盯的事聚成一条：采购超期、尾款到期、部门逾期、人事到期",
+    "po_arrival_overdue": "预计到货日已过、货还没到的采购明细",
+    "po_arriving": "未来几天预计能到的料，用来提前安排生产",
+    "po_overdue_by_supplier": "把未到货按供应商归堆，看哪家拖得最狠",
+    "balance_due": "14 天内到期或已逾期的尾款（只含填了到期日的）",
+    "overdue_orders": "各部门预计完成日已过、仍未完成的任务",
+    "project_status": "按项目编号查这个项目的进度、采购、尾款",
+    "receivable_blind": "催办和尾款清单都盯不到的应收：没填到期日的尾款 + 发货款应收",
+    "shipment_receiver": "已建发货单但收货人还空着的，填了才能送货签收",
+    "ledger_incomplete": "台账缺合同额或客户的行；合同额为 0 会让毛利算成假亏损",
+    "leads_followup": "既没成交也没放弃、还挂着的销售线索",
+    "order_pending": "销售下了单、等主管审批的订单",
+    "invoice_pending": "已申请开票、等财务出票的台账行",
 }
 
 # 追问建议：按实际调用的工具映射固定建议（去重保序，取前 3 条）
@@ -431,6 +456,16 @@ TOOL_SCHEMAS = [
             "code": {"type": "string", "description": "项目编号，如 TH-2501"}}, "required": ["code"]}}},
 ]
 
+# 🆕 第二批工具的 schema 由 TOOL_DESC 自动生成——它们都无参数，
+#   手工再抄一遍 description 就是给漂移留口子（手册 6.3 说的七处同步问题）。
+TOOL_SCHEMAS += [{
+    "type": "function",
+    "function": {"name": _n, "description": TOOL_DESC[_n],
+                 "parameters": {"type": "object", "properties": {}}},
+} for _n in ("receivable_blind", "shipment_receiver", "ledger_incomplete",
+             "leads_followup", "order_pending", "invoice_pending")]
+
+
 
 # ==================== 🆕 数据域-菜单门控（LLM 与规则降级共用） ====================
 
@@ -451,7 +486,12 @@ def _allowed_tools(user: models.User) -> set[str]:
     if "purchase_mgmt" in keys:
         out |= {"po_arrival_overdue", "po_arriving", "po_overdue_by_supplier"}
     if keys & {"finance", "sales"}:
-        out.add("balance_due")
+        # 🆕 销售/台账域第二批：与 balance_due 同一道菜单门控。
+        #   admin/manager 走 menus.user_menu_keys 的全量分支，自动拿到全部。
+        out |= {"balance_due", "receivable_blind", "ledger_incomplete",
+                "order_pending", "invoice_pending", "leads_followup"}
+    if keys & {"finance", "sales", "logistics"}:
+        out.add("shipment_receiver")
     if keys & set(_DEPT_MENU_KEYS):
         out.add("overdue_orders")
     if "list" in keys:
@@ -462,6 +502,20 @@ def _allowed_tools(user: models.User) -> set[str]:
 
 
 async def _run_tool(name: str, args: dict, db: AsyncSession, current: models.User):
+    # 🆕 第二批工具：独立模块，签名统一 (db, current)，无额外参数
+    from ..agent import tools_sales as _ts
+    _SECOND = {
+        "receivable_blind": _ts.tool_receivable_blind,
+        "shipment_receiver": _ts.tool_shipment_receiver,
+        "ledger_incomplete": _ts.tool_ledger_incomplete,
+        "leads_followup": _ts.tool_leads_followup,
+        "order_pending": _ts.tool_order_pending,
+        "invoice_pending": _ts.tool_invoice_pending,
+    }
+    if name in _SECOND:
+        if name not in _allowed_tools(current):
+            return _deny("finance", "sales")
+        return await _SECOND[name](db, current)
     """执行数据工具（只读）。按调用者菜单门控数据域，无权域返回 {"error": ...} 而非数据。"""
     keys = set(menus.user_menu_keys(current))
     if name == "morning_report":
@@ -1417,3 +1471,111 @@ async def chat_stream(
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",   # ← 关键：不加这行 nginx 会缓冲整个响应，流式失效
     })
+
+
+# ==================== 🆕 第二批工具的文本模板 ====================
+
+def _money0(x) -> str:
+    return f"¥{float(x or 0):,.0f}"
+
+
+def _receivable_blind_text(d: dict) -> str:
+    if not d.get("count"):
+        return "**没有盯不住的应收** ✅ 所有未收款都填了到期日，催办能覆盖到。"
+    lines = [f"**盯不住的应收：{d['count']} 笔，合计 {_money0(d['total'])}**",
+             "现有催办与「尾款到期」都查不到这些——没填到期日的尾款、以及发货款应收。", ""]
+    for r in d["items"][:5]:
+        age = f" · 挂了 {r['age_days']} 天" if r.get("age_days") else ""
+        lines.append(f"- {r['customer']} · {r['kind_cn']} **{_money0(r['amount'])}**"
+                     f" · {r['project_code']}{age}")
+    if d["count"] > 5:
+        lines.append(f"- 另有 {d['count'] - 5} 笔")
+    return "\n".join(lines)
+
+
+def _shipment_receiver_text(d: dict) -> str:
+    if not d.get("count"):
+        return "**发货单收货人都填齐了** ✅"
+    lines = [f"**{d['count']} 张发货单还没填收货人**，填了才能安排送货签收。", ""]
+    for r in d["items"][:5]:
+        sug = r.get("suggest")
+        tip = f"（上次是 {sug['name']}）" if sug and sug.get("name") else ""
+        lines.append(f"- #{r['id']} {r['company']}{tip}")
+    if d["count"] > 5:
+        lines.append(f"- 另有 {d['count'] - 5} 张")
+    return "\n".join(lines)
+
+
+def _ledger_incomplete_text(d: dict) -> str:
+    if not d.get("count"):
+        return "**台账关键字段都填齐了** ✅"
+    lines = [f"**{d['count']} 行台账缺关键字段**。缺合同额会让项目毛利算成假亏损。", ""]
+    for r in d["items"][:5]:
+        lines.append(f"- {r['project_code']} {r['customer']} · 缺 {'、'.join(r['missing'])}")
+    if d["count"] > 5:
+        lines.append(f"- 另有 {d['count'] - 5} 行")
+    return "\n".join(lines)
+
+
+def _leads_followup_text(d: dict) -> str:
+    if not d.get("count"):
+        return "**没有挂着的线索** ✅"
+    lines = [f"**{d['count']} 条线索还没闭环**（既没成交也没放弃）。", ""]
+    for r in d["items"][:5]:
+        age = f" · {r['age_days']} 天前" if r.get("age_days") else ""
+        lines.append(f"- {r['company']} · {r['status']}{age}")
+    if d["count"] > 5:
+        lines.append(f"- 另有 {d['count'] - 5} 条")
+    return "\n".join(lines)
+
+
+def _order_pending_text(d: dict) -> str:
+    if not d.get("count"):
+        return "**没有待审批的销售订单** ✅"
+    lines = [f"**{d['count']} 笔销售订单等你审批**。", ""]
+    for r in d["items"][:5]:
+        lines.append(f"- {r['project_code']} {r['customer']} · {_money0(r['amount'])}")
+    return "\n".join(lines)
+
+
+def _invoice_pending_text(d: dict) -> str:
+    if not d.get("count"):
+        return "**没有待开票的台账行** ✅"
+    lines = [f"**{d['count']} 行已申请开票，等财务出票**。", ""]
+    for r in d["items"][:5]:
+        lines.append(f"- {r['project_code']} {r['customer']} · {_money0(r['amount'])}")
+    return "\n".join(lines)
+
+
+_DIRECT_FORMATTERS.update({
+    "receivable_blind": _receivable_blind_text,
+    "shipment_receiver": _shipment_receiver_text,
+    "ledger_incomplete": _ledger_incomplete_text,
+    "leads_followup": _leads_followup_text,
+    "order_pending": _order_pending_text,
+    "invoice_pending": _invoice_pending_text,
+})
+
+
+@router.get("/capabilities")
+async def list_capabilities(
+    current: models.User = Depends(get_current_user),
+):
+    """当前用户能用的工具清单 + 每个是干什么的。
+
+    做这个接口的理由：用户问「你会什么」时，模型只能靠 system prompt 里那几句
+    自己描述，容易吹得比实际大。这里给的是**代码里真实注册过的**那一份，
+    而且按 _allowed_tools 过滤——他看到的每一条都是他真能用的。
+    """
+    allowed = _allowed_tools(current)
+    return {
+        "count": len(allowed),
+        "items": [{"key": k, "label": TOOL_LABELS[k], "desc": TOOL_DESC[k]}
+                  for k in TOOL_LABELS if k in allowed],
+        # 明确说明不做什么，比含糊其辞强（手册 11.7 优雅拒答）
+        "not_supported": [
+            "改数据——助手只读，任何修改都要回到业务页面或卡片按钮上做",
+            "销售额/毛利统计——成本归集率不足，给数会误导",
+            "人事花名册详情、库存单价等未开放域",
+        ],
+    }
