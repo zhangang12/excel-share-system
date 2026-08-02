@@ -14,10 +14,33 @@ const showPwd = ref(false)   // 仅 UI：密码明文/密文切换
 const form = reactive({ username: '', password: '' })
 
 // 🆕 外网登录两步闸门：第一步命中闸门（gate_required）→ 第二步输 6 位码（码由管理层企微告知）。
-//   桌面客户端共用此页，但客户端请求头免闸、永远不会走到第二步，无需特判。
+//   桌面客户端默认免闸；但「客户端设备限制」开启后，不在名单里的机器同样会走到第二步。
 const step = ref<'pwd' | 'gate'>('pwd')
 const preToken = ref('')
 const gateCode = ref('')
+
+// 🆕 设备 ID：只在客户端里显示。管理层要把它录进「外网访问 → 客户端设备 ID 名单」，
+//   而使用者自己在 %APPDATA% 里翻文件太难为人——被拦下时人就卡在这一页，
+//   放这儿他能直接复制发给管理层。
+const deviceId = window.pmsDesktop?.isDesktop ? (window.pmsDesktop.deviceId || '') : ''
+const copied = ref(false)
+async function copyDeviceId() {
+  try {
+    await navigator.clipboard.writeText(deviceId)
+  } catch {
+    // file:// 下 clipboard API 可能不可用，退回老办法；再失败就提示手抄
+    const ta = document.createElement('textarea')
+    ta.value = deviceId
+    ta.style.position = 'fixed'; ta.style.opacity = '0'
+    document.body.appendChild(ta); ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    if (!ok) { ElMessage.warning('复制失败，请手动选中上面的编号'); return }
+  }
+  copied.value = true
+  ElMessage.success('设备 ID 已复制，发给管理层录入即可')
+  setTimeout(() => { copied.value = false }, 2000)
+}
 
 // 🆕 记住用户名：勾选后登录成功把账号存本地，下次开页自动回填；取消勾选即清除
 const remember = ref(false)
@@ -183,6 +206,15 @@ function backToPwd() {
       </div>
     </form>
 
+    <!-- 🆕 设备 ID：仅客户端显示。两步都在这一层，被闸门拦下时也看得到、复制得到 -->
+    <div v-if="deviceId" class="lg-dev">
+      <span class="lg-dev-k">本机设备 ID</span>
+      <code class="lg-dev-v">{{ deviceId }}</code>
+      <button class="lg-dev-btn" type="button" @click="copyDeviceId">
+        {{ copied ? '已复制' : '复制' }}
+      </button>
+    </div>
+
     <div class="lg-foot">同辉智能装备（无锡）有限公司 · 项目管理系统</div>
   </div>
 </template>
@@ -304,6 +336,25 @@ function backToPwd() {
   position: absolute; bottom: 22px; left: 0; right: 0; z-index: 3; text-align: center;
   color: rgba(255,255,255,.34); font-size: 12px; letter-spacing: .02em;
 }
+/* 🆕 设备 ID 条：坐在页脚正上方，两个登录步骤都看得到 */
+.lg-dev {
+  position: absolute; bottom: 50px; left: 0; right: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  color: rgba(255,255,255,.46); font-size: 12px;
+}
+.lg-dev-k { letter-spacing: .02em; }
+.lg-dev-v {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12px;
+  color: rgba(255,255,255,.72); background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: 3px 9px;
+  user-select: all;   /* 复制按钮失效时还能一键全选 */
+}
+.lg-dev-btn {
+  background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.16);
+  color: rgba(255,255,255,.8); border-radius: 6px; padding: 4px 12px;
+  font-size: 12px; cursor: pointer; font-family: inherit;
+}
+.lg-dev-btn:hover { background: rgba(255,255,255,.16); }
 @media (max-width: 560px) {
   .lg-top { left: 20px; right: 20px; top: 20px; }
   .lg-card { padding: 28px 24px; }

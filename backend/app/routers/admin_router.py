@@ -416,7 +416,16 @@ async def set_gate_config(
 ):
     from .. import gate
     cidrs = [c.strip() for c in data.cidrs if c and c.strip()]
-    await gate.set_gate_config(db, enabled=data.enabled, cidrs=cidrs)
+    # 设备 ID 去重且保序：同一台机器录两遍不该在名单里出现两次
+    device_ids, seen = [], set()
+    for d in data.device_ids:
+        v = (d or "").strip()
+        if v and v not in seen:
+            seen.add(v); device_ids.append(v)
+    await gate.set_gate_config(db, enabled=data.enabled, cidrs=cidrs,
+                               device_gate=data.device_gate, device_ids=device_ids)
     await write_audit(db, user=current, action="set_gate_config",
-                      detail=f"enabled={data.enabled} cidrs={cidrs}")
-    return schemas.GateConfigOut(enabled=data.enabled, cidrs=cidrs)
+                      detail=f"enabled={data.enabled} cidrs={cidrs} "
+                             f"device_gate={data.device_gate} device_ids={len(device_ids)}个")
+    return schemas.GateConfigOut(enabled=data.enabled, cidrs=cidrs,
+                                 device_gate=data.device_gate, device_ids=device_ids)

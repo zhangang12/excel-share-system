@@ -99,6 +99,10 @@ function revealMainWindow() {
 ipcMain.on('pms-desktop:app-ready', () => setTimeout(() => revealMainWindow(), 300));
 
 // ---- 设备 ID：userData 下存 JSON，首次启动生成 uuid（前端统计请求头用）----
+// 🆕 服务端「客户端设备限制」按这个 ID 放行，所以它**必须能持久化**：
+//   写失败时每次启动都会生成新 ID，那台机器就永远不在名单里，批了也没用，
+//   而且现象是「登录老要验证码」，从服务端完全看不出原因。故写失败要上报。
+let deviceIdPersisted = true;
 function loadDeviceId() {
   const file = path.join(app.getPath('userData'), 'device.json');
   try {
@@ -106,7 +110,13 @@ function loadDeviceId() {
     if (j && j.deviceId) return j.deviceId;
   } catch (_) { /* 首次启动或文件损坏，走生成 */ }
   const deviceId = crypto.randomUUID();
-  try { fs.writeFileSync(file, JSON.stringify({ deviceId }, null, 2)); } catch (_) { /* 写失败不致命 */ }
+  try {
+    fs.writeFileSync(file, JSON.stringify({ deviceId }, null, 2));
+  } catch (err) {
+    // 不致命：本次仍能用，但下次启动会换 ID
+    deviceIdPersisted = false;
+    try { console.error('[device-id] 写入失败，设备 ID 无法固定:', err && err.message); } catch (_) {}
+  }
   return deviceId;
 }
 const deviceId = loadDeviceId();
@@ -517,6 +527,14 @@ if (!gotLock) {
       // 🆕 先回溯上次的升级结果：下载了新版本但版本没变 = 安装失败，上报出去。
       //    不 await——上报走网络，不能拖慢启动；失败了下次启动还会再报。
       reportPendingUpdateFailure().catch(() => { /* 上报失败不影响启动 */ });
+      // 🆕 设备 ID 没能落盘：这台机器每次启动都会换 ID，服务端设备名单永远认不出它。
+      //    报出来，管理层在故障列表里能直接看到原因，不用对着"批了还是要验证码"瞎猜。
+      if (!deviceIdPersisted) {
+        sendReport('error', 'device.json 写入失败，设备 ID 无法固定；每次启动都会生成新 ID，'
+          + '服务端「客户端设备限制」将永远认不出这台机器（常见原因：杀毒软件拦截 %APPDATA% 写入）',
+          { where: 'loadDeviceId', userData: app.getPath('userData') })
+          .catch(() => { /* 上报失败不影响启动 */ });
+      }
       // 打包模式：先查强制最低版本，再决定进应用还是进强制更新页
       const forced = await checkForceUpdate();
       forceMode = !!forced;

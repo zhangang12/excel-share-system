@@ -671,11 +671,16 @@ class GateVerifyIn(BaseModel):
 class GateConfigIn(BaseModel):
     enabled: bool
     cidrs: list[str] = []
+    # 🆕 设备闸：默认关；打开后桌面端还要设备 ID 在 device_ids 里才免验证码
+    device_gate: bool = False
+    device_ids: list[str] = []
 
 
 class GateConfigOut(BaseModel):
     enabled: bool
     cidrs: list[str]
+    device_gate: bool = False
+    device_ids: list[str] = []
 
 
 class ChangePasswordIn(BaseModel):

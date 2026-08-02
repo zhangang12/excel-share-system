@@ -77,11 +77,18 @@ async def login(data: schemas.LoginIn, request: Request, db: AsyncSession = Depe
     await db.refresh(u)
 
     # ---- 🆕 外网登录两步闸门（免闸：admin 角色 / 桌面客户端 / 内网 IP / 开关关闭）----
+    # 🆕 设备闸（device_gate，默认关）：打开后桌面端还要 X-PMS-Device 落在名单里才免闸，
+    #    不在名单的机器照样走验证码。名单是管理层在「外网访问」页手工录入的。
     ip = _client_ip(request)
     is_desktop = request.headers.get("x-pms-client", "").startswith("desktop/")
-    if not u.has_role("admin") and not is_desktop:
+    device_id = (request.headers.get("x-pms-device") or "").strip()
+    if not u.has_role("admin"):
         cfg = await gate.get_gate_config(db)
-        if cfg["enabled"] and not gate.is_intranet(ip, cfg["cidrs"]):
+        exempt = (gate.is_intranet(ip, cfg["cidrs"])
+                  or gate.desktop_exempt(is_desktop, device_id,
+                                         device_gate=cfg["device_gate"],
+                                         device_ids=cfg["device_ids"]))
+        if cfg["enabled"] and not exempt:
             try:
                 pre_token = await gate.issue_code(db, u)
             except HTTPException as e:

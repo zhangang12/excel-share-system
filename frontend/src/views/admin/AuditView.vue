@@ -107,6 +107,13 @@ onMounted(load)
             <span v-else class="muted">-</span>
           </template>
         </el-table-column>
+        <!-- 🆕 来源 IP：后端一直有存，之前没显示。配「外网访问」的免闸名单要照着这一列填 -->
+        <el-table-column label="来源 IP" width="150">
+          <template #default="{ row }">
+            <span v-if="row.ip" class="ip">{{ row.ip }}</span>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -114,5 +121,6 @@ onMounted(load)
 
 <style scoped>
 .muted { color: var(--text-3); }
+.ip { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
 .small { font-size: 12px; }
 </style>
