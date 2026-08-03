@@ -483,7 +483,22 @@ function createWindow() {
   const indexHtml = path.join(__dirname, 'app', 'index.html');
   // 兜底：前端因故没发 app-ready（如老版本内置页），10s 后也要亮窗
   setTimeout(() => revealMainWindow(), 10000);
-  mainWindow.webContents.on('did-fail-load', () => revealMainWindow());
+  // ⚠️ 这里原来只 revealMainWindow()，等于「加载失败就把一个空窗口亮给用户」——
+  //    那正是 #343 用户看到的一整片深蓝。真身是前端 401 后 location.href='/login'
+  //    在 file:// 下解析成 file:///login（不存在），前端已修；这里再加一道兜底：
+  //    主框架加载失败就退回内置首页，绝不把人扔在空文档里。
+  let failLoadRecovering = false;
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    revealMainWindow();
+    if (!isMainFrame) return;          // 子框架/图片失败不管
+    if (code === -3) return;           // ERR_ABORTED：正常的导航被打断，不是故障
+    logCrash('did-fail-load', `${code} ${desc} ${url}`);
+    sendReport('error', crashLogTail(), { where: 'did-fail-load', code, desc, url });
+    if (failLoadRecovering) return;    // 防止失败风暴里反复重载
+    failLoadRecovering = true;
+    setTimeout(() => { failLoadRecovering = false; }, 5000);
+    try { mainWindow.loadFile(indexHtml); } catch { /* 连内置页都加载不了就没辙了 */ }
+  });
 
   // ---- 🆕 崩溃自恢复：闲置一段时间后"黑屏"的真身 ----
   // 渲染进程被系统回收/崩溃后，窗口还在，但已经没有任何内容在画，只剩上面那句

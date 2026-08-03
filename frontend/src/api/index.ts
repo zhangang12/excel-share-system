@@ -87,6 +87,38 @@ function extractErrorMessage(err: AxiosError): string {
   return STATUS_MAP[status] || `请求失败（HTTP ${status}）`
 }
 
+// 桌面客户端与网页端的路由模式不同，跳登录必须分开处理。判据与 router/index.ts 完全一致。
+const HASH_ROUTER = !!import.meta.env.VITE_API_BASE
+let redirecting = false
+
+/**
+ * 登录过期后跳回登录页。
+ *
+ * ⚠️ 这里**绝不能**写 `location.href = '/login'`。
+ * 桌面客户端的页面是 file:// 加载的（desktop/app/index.html），绝对路径会解析成
+ * `file:///login` —— 这个文件不存在，导航直接失败，Chromium 把文档换成空的错误页，
+ * 窗口里一个像素都不画，用户看到的就是一整片 BrowserWindow.backgroundColor 的深蓝，
+ * 点什么都没反应，只能去任务管理器杀进程。
+ *
+ * 这就是反馈 #343「到4点多一点就黑屏了」的真身：令牌 8 小时到期，早上 8:15 登录的人
+ * 下午 16:15 前后必然踩到，每天一次。近 14 天 8 个人踩了 23 次，只有一个人报上来。
+ * 跟显卡、跟机器都没关系。
+ */
+function goLogin() {
+  if (redirecting) return          // 一次 401 风暴里只跳一次
+  const onLogin = HASH_ROUTER ? location.hash.startsWith('#/login') : location.pathname === '/login'
+  if (onLogin) return
+  redirecting = true
+  ElMessage.warning('登录已过期，请重新登录')
+  if (HASH_ROUTER) {
+    // hash 模式：先把路由指到登录页，再整页重载，把残留的 store 状态一并清干净
+    location.hash = '#/login'
+    location.reload()
+  } else {
+    location.href = '/login'
+  }
+}
+
 http.interceptors.response.use(
   (res) => res,
   (err: AxiosError) => {
@@ -98,10 +130,7 @@ http.interceptors.response.use(
       // 已登录态过期 → 清认证、跳登录
       localStorage.removeItem('pms_token')
       localStorage.removeItem('pms_user')
-      if (location.pathname !== '/login') {
-        ElMessage.warning('登录已过期，请重新登录')
-        location.href = '/login'
-      }
+      goLogin()
     } else {
       const msg = extractErrorMessage(err)
       if (msg) ElMessage.error(msg)
