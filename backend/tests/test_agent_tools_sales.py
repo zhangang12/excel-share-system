@@ -187,6 +187,14 @@ async def main():
             if c2.get("tool") in NEW:
                 chk(len(c2["desc"]) > 8, f"{c2['key']} 门户小字非空：{c2['desc'][:20]}")
 
+        print("\n===== 7b. admin 与 manager 拿到同一套门户 =====")
+        # _all_view 里 _is_mgr 把 admin 和 manager 一起放行，工具/卡片都是全量；
+        # 门户默认也该一致，否则 admin 看到的入口跟他实际能用的东西对不上。
+        ta = [t["key"] for t in (await c.get("/api/agent/portal", headers=H)).json()["tiles"]]
+        tm = [t["key"] for t in (await c.get("/api/agent/portal", headers=Hm)).json()["tiles"]]
+        chk(ta == tm, f"admin 门户 == manager 门户\n     admin={ta}\n     mgr  ={tm}")
+        chk("receivable_blind" in ta, f"admin 也拿到盯不住的应收: {ta}")
+
         print("\n===== 8. 管理层默认门户按真实轨迹排（不含采购卡）=====")
         tiles = [t["key"] for t in (await c.get("/api/agent/portal", headers=Hm)).json()["tiles"]]
         chk("receivable_blind" in tiles, f"含盯不住的应收: {tiles}")

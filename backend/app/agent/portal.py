@@ -83,6 +83,11 @@ _BY_KEY = {c["key"]: c for c in CATALOG}
 # ⚠️ key 必须是 roles 表里的真实 code。系统里采购角色叫 buyer（还有 buyer_lead /
 #    buyer_standard / buyer_outsource），不叫 purchase——写错了这组默认永远不会命中。
 _DEFAULTS: dict[str, list[str]] = {
+    # admin 与 manager 同一套：`_all_view` 里 `_is_mgr` 本来就把 admin 和 manager
+    # 一起放行，工具与卡片都是全量可见。但 _ROLE_ORDER 早先漏了 admin，
+    # 导致 admin 落到 _FALLBACK 那组采购向的通用配置——跟他实际能看到的东西对不上。
+    "admin": ["approvals", "receivable_blind", "shipment_receiver",
+              "morning_report", "ledger_incomplete", "overdue_orders"],
     # 杨坛(manager)：按「他做过多少 × 此刻还有多少在等」排——
     #   请款审批 40 次/2 笔在等、盯不住的应收 36 次/63 笔在等、收货人 34 次/49 单在等、
     #   晨报他 3 次会话每次都调。采购三件套一张不进（两个月 0 次操作）。
@@ -101,7 +106,7 @@ _DEFAULTS: dict[str, list[str]] = {
 }
 # 查找顺序：先管理层、再主管、再普通岗。杨坛同时是 manager/sales_lead/finance_lead，
 # 命中第一个 manager，拿到含请款审批的那组。
-_ROLE_ORDER = ("manager", "finance_lead", "buyer_lead", "sales_lead",
+_ROLE_ORDER = ("admin", "manager", "finance_lead", "buyer_lead", "sales_lead",
                "finance", "buyer", "sales")
 _FALLBACK = ["morning_report", "overdue_orders", "po_arrival_overdue"]
 
