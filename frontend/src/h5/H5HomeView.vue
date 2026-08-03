@@ -27,6 +27,10 @@ const tiles = ref<Tile[]>([])
 const catalog = ref<Tile[]>([])
 const limits = ref({ max_tiles: 12, max_label: 10, max_question: 120 })
 const loading = ref(true)
+// 今天该管的 3 件事：进来就看见，不用先想「该问什么」。
+// 后端 /agent/briefing/me 已经排过序、带了「为什么是它」。
+interface BriefItem { title: string; why: string; action: string; card: string; ref: number }
+const brief = ref<{ items: BriefItem[]; rest: number } | null>(null)
 const editing = ref(false)
 const saving = ref(false)
 const err = ref('')
@@ -42,6 +46,10 @@ const amountText = computed(() =>
 const approveTile = computed(() => tiles.value.find((t) => t.kind === 'approve'))
 const gridTiles = computed(() => tiles.value.filter((t) => t.kind !== 'approve'))
 /** 目录里还没摆上门户的 */
+function openBrief(it: BriefItem) {
+  router.push({ path: '/chat', query: { card: it.card } })
+}
+
 const addable = computed(() => {
   const on = new Set(tiles.value.map((t) => t.key))
   return catalog.value.filter((c) => !on.has(c.key))
@@ -49,11 +57,14 @@ const addable = computed(() => {
 
 async function load() {
   try {
-    const [p, c] = await Promise.all([
+    const [p, c, b] = await Promise.all([
       http.get('/agent/cards/pending').catch(() => ({ data: null })),
       http.get('/agent/portal'),
+      // 简报挂了不能把整个首页拖垮，单独兜住
+      http.get('/agent/briefing/me').catch(() => ({ data: null })),
     ])
     if (p.data) pending.value = { count: p.data.count, amount_total: p.data.amount_total, blocked: p.data.blocked }
+    if (b.data && b.data.items?.length) brief.value = { items: b.data.items, rest: b.data.rest }
     tiles.value = c.data.tiles
     catalog.value = c.data.catalog
     limits.value = c.data.limits
@@ -147,6 +158,20 @@ onMounted(load)
 
         <p v-if="err" class="err">{{ err }}</p>
 
+        <!-- 今天该管的：排过序、带理由，比「有多少件待办」有用得多 -->
+        <section v-if="brief && !editing" class="brief">
+          <div class="bh">今天该管的 {{ brief.items.length }} 件</div>
+          <button v-for="(it, i) in brief.items" :key="i" class="brow" @click="openBrief(it)">
+            <span class="bno">{{ i + 1 }}</span>
+            <span class="bmain">
+              <span class="bt">{{ it.title }}</span>
+              <span class="bw">{{ it.why }}</span>
+            </span>
+            <span class="bact">{{ it.action }} ›</span>
+          </button>
+          <div v-if="brief.rest" class="brest">另有 {{ brief.rest }} 项，问我「还有什么」</div>
+        </section>
+
         <!-- 等你签字：唯一「要动手」的入口，单独做大 -->
         <template v-if="approveTile">
           <button v-if="pending.count && !editing" class="sign" @click="ask(approveTile)">
@@ -214,6 +239,28 @@ onMounted(load)
 </template>
 
 <style scoped>
+.brief {
+  background: rgba(255,255,255,.7); border: 1px solid rgba(255,255,255,.85);
+  border-radius: var(--h5-r-panel); box-shadow: var(--h5-sh-raised);
+  padding: 14px 4px 6px; margin-bottom: 14px;
+}
+.bh { font-size: 12.5px; color: var(--h5-ink-3); padding: 0 14px 8px; font-weight: 500 }
+.brow {
+  width: 100%; display: flex; align-items: flex-start; gap: 10px; text-align: left;
+  border: 0; background: none; padding: 11px 14px; cursor: pointer;
+}
+.brow + .brow { border-top: 1px solid rgba(24,32,50,.06) }
+.bno {
+  flex: none; width: 18px; height: 18px; border-radius: 50%; margin-top: 1px;
+  background: var(--h5-grad-btn); color: #fff; font: 600 11px/18px var(--h5-font);
+  text-align: center;
+}
+.bmain { flex: 1; min-width: 0 }
+.bt { display: block; font-size: 14px; font-weight: 600; color: var(--h5-ink); line-height: 1.4 }
+/* 理由是这张卡的价值所在，别截断成一行 */
+.bw { display: block; font-size: 11.5px; color: var(--h5-ink-3); line-height: 1.5; margin-top: 3px }
+.bact { flex: none; font-size: 12px; color: var(--h5-blue); font-weight: 500; margin-top: 1px }
+.brest { font-size: 11.5px; color: var(--h5-ink-4); padding: 8px 14px 6px }
 .wrap { min-height: 100vh; min-height: 100dvh; background: var(--h5-bg); display: flex; justify-content: center }
 .panel {
   width: 100%; max-width: 440px; height: 100vh; height: 100dvh;

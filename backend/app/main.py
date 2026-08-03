@@ -93,7 +93,12 @@ async def lifespan(app: FastAPI):
              settings.database_url.split("@")[-1], files_path,
              os.access(files_path, os.W_OK))
     task = asyncio.create_task(overdue_scheduler())  # 🆕 v3 M15 逾期每日提醒
+    # 🆕 智能体每日简报：每天中国时间 8 点推「今天该管的 3 件事」
+    #    收件人在 app_settings.agent_briefing_users，默认空 = 不推，不会一上线就全员轰炸
+    from .agent.daily import briefing_scheduler
+    task2 = asyncio.create_task(briefing_scheduler())
     yield
+    task2.cancel()
     task.cancel()
     await engine.dispose()
 

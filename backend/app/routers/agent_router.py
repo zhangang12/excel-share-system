@@ -1619,3 +1619,78 @@ async def list_capabilities(
             "人事花名册详情、库存单价等未开放域",
         ],
     }
+
+# ==================== 每日简报（主动推）====================
+# 智能体原来只在被问时答。推送通道（站内 + 企微）早就有，助手一次没调过。
+# 这里把两头接上，并把「推给谁」做成可配，避免上线即全员轰炸。
+
+
+class BriefingUsersIn(BaseModel):
+    usernames: list[str]
+
+
+@router.get("/briefing/config")
+async def briefing_config(
+    _: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """当前收件人 + 下次推送时间。"""
+    from ..agent import daily
+    users = await daily._get_setting(db, daily._SETTING_USERS, [])
+    return {
+        "usernames": users,
+        "push_hour_cn": daily._PUSH_HOUR_CN,
+        "next_run_in_seconds": int(daily._seconds_to_next_run()),
+        "cooldown_days": _briefing_cooldown(),
+    }
+
+
+def _briefing_cooldown() -> int:
+    from ..agent import briefing as _b
+    return _b._REPEAT_COOLDOWN_DAYS
+
+
+@router.put("/briefing/config")
+async def set_briefing_users(
+    body: BriefingUsersIn,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """设置收件人。空数组 = 关掉推送。"""
+    from ..agent import daily
+    names = [u.strip() for u in body.usernames if u.strip()]
+    if names:
+        found = {u.username for u in (await db.execute(select(models.User).where(
+            models.User.username.in_(names)))).scalars().all()}
+        missing = [n for n in names if n not in found]
+        if missing:
+            raise HTTPException(400, f"这些用户不存在：{'、'.join(missing)}")
+    await daily._set_setting(db, daily._SETTING_USERS, names)
+    await write_audit(db, user=current, action="agent_briefing_config",
+                      target_type="app_setting", target_id=0,
+                      detail=",".join(names) or "(已关闭)")
+    return {"message": f"已设置 {len(names)} 位收件人" if names else "已关闭每日简报"}
+
+
+@router.post("/briefing/preview")
+async def briefing_preview(
+    dry: bool = Query(True, description="true=只看不发（默认）；false=真推出去"),
+    _: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """手动跑一轮。默认 dry=true 只返回将要发的内容，方便调完排序马上看效果，
+    不用等到第二天早上 8 点。"""
+    from ..agent import daily
+    return await daily.run_once(db, dry=dry)
+
+
+@router.get("/briefing/me")
+async def my_briefing(
+    top: int = Query(3, ge=1, le=10),
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """当前用户自己的简报（H5 首页顶部用：进来就看见今天该管什么，不用先打字）。"""
+    from ..agent import briefing
+    brief = await briefing.build(db, current, top=top)
+    return {**brief, "text": briefing.render(brief, current.full_name or current.username)}

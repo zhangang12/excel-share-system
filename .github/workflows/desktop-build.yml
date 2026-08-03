@@ -50,6 +50,17 @@ jobs:
           npm ci --prefix frontend
           npm ci --prefix desktop
 
+      # ⚠️ 必经关卡：打包完整性检查。
+      #    2026-08-03 把 lib/health.js 抽出来，但 build.files 是**白名单**，忘了加 lib/**，
+      #    构建成功、artifact 正常、上传通过、latest.yml 校验也绿 —— 因为这些查的都是
+      #    「包在不在」，没人查「包能不能启动」。用户装上 1.0.30/1.0.31 一开就是
+      #    Cannot find module './lib/health'，而那时强制更新开着，等于把所有人推到
+      #    一个开不起来的包上；客户端启动即崩，autoUpdater 跑不到，只能手工重装。
+      #    这一步扫 main.js/preload.js 的本地 require，逐个比对 build.files，红了就不打包。
+      - name: 打包完整性检查（缺文件的包绝不能产出）
+        shell: bash
+        run: npm test --prefix desktop
+
       - name: 版本号（仅当显式传入时覆盖）
         shell: bash
         run: |

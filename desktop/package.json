@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "pack:win": "electron-builder --win nsis --publish never",
-    "test": "node test/health.test.js"
+    "test": "node test/packaging.test.js && node test/health.test.js"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
@@ -25,6 +25,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "lib/**/*",
       "renderer/**/*",
       "app/**/*"
     ],

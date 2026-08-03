@@ -81,13 +81,18 @@ if [[ "$NEW" != "$CUR" ]]; then
   # 本地先验一次 npm ci，别把问题留给 CI 去发现
   say "本地预检 npm ci（CI 挂在这一步的话本地也会挂）"
   run "rm -rf /tmp/ship-ci && mkdir -p /tmp/ship-ci && cp desktop/package.json desktop/package-lock.json /tmp/ship-ci/ && (cd /tmp/ship-ci && npm ci >/dev/null 2>&1) && echo '  ✅ npm ci 通过' && rm -rf /tmp/ship-ci"
-  run "(cd desktop && npm test)"
   run "git add desktop/package.json desktop/package-lock.json"
   run "git commit -q -m '客户端 $NEW' || true"
   run "git push -q \"https://\${GITHUB_PAT}@github.com/$REPO.git\" main"
 fi
 
-# ---------- 2. 触发构建 ----------
+# ---------- 2. 打包完整性 + 逻辑测试（无条件跑，--no-bump 也要跑）----------
+# 曾经把 npm test 放在「版本号变了才跑」的分支里，等于重发同一版时不检查。
+# 而 lib/ 漏打那次恰恰是新建目录、不改逻辑的改动。
+say "本地预检：打包完整性 + 判定逻辑"
+run "(cd desktop && npm test)"
+
+# ---------- 3. 触发构建 ----------
 say "触发 GitHub Actions 打包（windows-latest 原生）"
 if [[ $DRY == 1 ]]; then
   echo "[dry-run] POST .../workflows/$WORKFLOW/dispatches"

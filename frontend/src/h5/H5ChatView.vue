@@ -229,7 +229,11 @@ onMounted(() => {
   loadPending()
   // 从门户点卡片进来：带着问题直接发，用户不用打字
   const q = route.query.q
-  if (typeof q === 'string' && q.trim()) send(q.trim())
+  if (typeof q === 'string' && q.trim()) { send(q.trim()); return }
+  // 只带 card 不带 q（首页「今天该管的」就是这样跳过来的）也要直接开卡片。
+  // 原来 card 只在 send() 里读，光带 card 进来会停在空白对话页，等于点了没反应。
+  const ct = route.query.card
+  if (typeof ct === 'string' && ct.trim()) openApprovals(ct.trim())
 })
 </script>
 
