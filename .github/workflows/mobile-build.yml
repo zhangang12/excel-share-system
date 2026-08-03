@@ -51,6 +51,22 @@ jobs:
           fi
           echo "VERSION=$(grep -oP 'versionName = "\K[^"]+' mobile/app/build.gradle.kts)" >> "$GITHUB_ENV"
 
+      # ⚠️ CI 机器上没有 ~/.android/debug.keystore，而 release 用的是 debug 签名 ——
+      #    不生成的话 APK 出来是**没签名的**，手机直接拒绝安装。
+      #    上一轮就是栽在这：编译全绿、包也有 2.5M，校验一开包才发现没签名。
+      #    固定口令 android/androiddebugkey 是 Android 官方 debug 签名的约定值，
+      #    只用于内部分发；上应用商店必须换正式签名（keystore 不入仓库）。
+      - name: 准备 debug 签名（内部分发用）
+        shell: bash
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkeypair -v -keystore ~/.android/debug.keystore \
+              -storepass android -keypass android -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
       - name: 打 APK
         shell: bash
         working-directory: mobile
