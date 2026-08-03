@@ -114,7 +114,7 @@ async def tool_po_arrival_overdue(db: AsyncSession, current: models.User,
                                   min_overdue_days: int = 0) -> dict:
     """采购到期未到货明细：预计到货日期已到(含当天)且仍未收货（口径同 overdue.scan_po_arrival_overdue）。"""
     rows = await _po_arrival_overdue_rows(db, current, min_overdue_days)
-    return {"count": len(rows), "items": rows[:20]}
+    return {"count": len(rows), "items": rows}
 
 
 async def tool_po_arriving(db: AsyncSession, current: models.User, days: int = 3) -> dict:
@@ -139,7 +139,7 @@ async def tool_po_arriving(db: AsyncSession, current: models.User, days: int = 3
         "in_days": (_parse_d(it.expected_arrival) - today).days,
     } for it in r.scalars().all() if _parse_d(it.expected_arrival)]
     rows.sort(key=lambda x: x["expected_arrival"])
-    return {"count": len(rows), "days": days, "items": rows[:20]}
+    return {"count": len(rows), "days": days, "items": rows}
 
 
 async def tool_po_overdue_by_supplier(db: AsyncSession, current: models.User) -> dict:
@@ -158,7 +158,7 @@ async def tool_po_overdue_by_supplier(db: AsyncSession, current: models.User) ->
     rows = sorted(agg.values(), key=lambda x: (-x["max_over_days"], -x["count"]))
     for a in rows:
         a["projects"] = sorted(a["projects"])
-    return {"count": len(rows), "item_total": len(all_rows), "suppliers": rows[:20]}
+    return {"count": len(rows), "item_total": len(all_rows), "suppliers": rows}
 
 
 async def tool_balance_due(db: AsyncSession, current: models.User) -> dict:
@@ -190,7 +190,7 @@ async def tool_balance_due(db: AsyncSession, current: models.User) -> dict:
             "sales": _uname(led.sales_user),
         })
     rows.sort(key=lambda x: x["balance_date"])
-    return {"count": len(rows), "items": rows[:20]}
+    return {"count": len(rows), "items": rows}
 
 
 async def tool_overdue_orders(db: AsyncSession, current: models.User, dept: str | None = None,
@@ -229,7 +229,7 @@ async def tool_overdue_orders(db: AsyncSession, current: models.User, dept: str 
             "due_date": o.due_date, "over_days": (today - due).days,
         })
     rows.sort(key=lambda x: -x["over_days"])
-    return {"count": len(rows), "items": rows[:20]}
+    return {"count": len(rows), "items": rows}
 
 
 async def _hr_due_rows(db: AsyncSession) -> list[dict]:
@@ -424,35 +424,39 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "morning_report",
         "description": "晨报聚合：采购到期未到货/部门逾期任务/尾款到期/人事到期 各 Top5 + 计数",
-        "parameters": {"type": "object", "properties": {}}}},
+        "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "最多返回几条明细，默认 20；用户说「全部/都列出来/完整清单」时传 200"}}}}},
     {"type": "function", "function": {
         "name": "po_arrival_overdue",
         "description": "采购到期未到货明细（预计到货日期已过或当天但仍未收货），含超期天数/供应商/采购单号/项目编号",
-        "parameters": {"type": "object", "properties": {
+        "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "最多返回几条明细，默认 20；用户说「全部/都列出来/完整清单」时传 200"},
+            
             "min_overdue_days": {"type": "integer", "description": "最小超期天数，默认 0（含当天到期）"}}}}},
     {"type": "function", "function": {
         "name": "po_arriving",
         "description": "未来 N 天预计到货的采购明细（默认 3 天）",
-        "parameters": {"type": "object", "properties": {
+        "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "最多返回几条明细，默认 20；用户说「全部/都列出来/完整清单」时传 200"},
+            
             "days": {"type": "integer", "description": "未来天数，默认 3"}}}}},
     {"type": "function", "function": {
         "name": "po_overdue_by_supplier",
         "description": "到期未到货按供应商聚合：每家供应商的未收货条数、最大超期天数、涉及项目",
-        "parameters": {"type": "object", "properties": {}}}},
+        "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "最多返回几条明细，默认 20；用户说「全部/都列出来/完整清单」时传 200"}}}}},
     {"type": "function", "function": {
         "name": "balance_due",
         "description": "尾款到期/逾期清单（尾款>0 且约定日期在未来 14 天内或已逾期）",
-        "parameters": {"type": "object", "properties": {}}}},
+        "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "最多返回几条明细，默认 20；用户说「全部/都列出来/完整清单」时传 200"}}}}},
     {"type": "function", "function": {
         "name": "overdue_orders",
         "description": "各部门逾期未完成任务（设计/电工/生产）",
-        "parameters": {"type": "object", "properties": {
+        "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "最多返回几条明细，默认 20；用户说「全部/都列出来/完整清单」时传 200"},
+            
             "dept": {"type": "string", "enum": ["design", "electric", "produce"],
                      "description": "部门，留空查全部"}}}}},
     {"type": "function", "function": {
         "name": "project_status",
         "description": "按项目编号查询项目进度：基本信息/各部门任务/未到货采购/尾款",
-        "parameters": {"type": "object", "properties": {
+        "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "最多返回几条明细，默认 20；用户说「全部/都列出来/完整清单」时传 200"},
+            
             "code": {"type": "string", "description": "项目编号，如 TH-2501"}}, "required": ["code"]}}},
 ]
 
@@ -501,7 +505,42 @@ def _allowed_tools(user: models.User) -> set[str]:
     return out
 
 
+_LIMIT_MAX = 200      # 再多模型也读不完，而且会把上下文顶爆
+
+
+def _cap(result, args: dict):
+    """按调用方要的 limit 截断，并**把截断说清楚**。
+
+    ⚠️ 以前每个工具写死 `rows[:20]`，用户问「全部列举」时结构上就给不出来，
+       而且回答里完全不提「我只给了 20 条」——用户以为那就是全部。
+       现在：limit 可调（默认 20，上限 200），并回 `shown/truncated`，
+       系统提示词里要求截断必须明说。
+    """
+    if not isinstance(result, dict):
+        return result
+    try:
+        lim = int(args.get("limit") or 20)
+    except (TypeError, ValueError):
+        lim = 20
+    lim = max(1, min(lim, _LIMIT_MAX))
+    for key in ("items", "suppliers", "rows"):
+        rows = result.get(key)
+        if isinstance(rows, list):
+            total = result.get("count")
+            total = total if isinstance(total, int) else len(rows)
+            result[key] = rows[:lim]
+            result["shown"] = len(result[key])
+            result["truncated"] = max(0, total - len(result[key]))
+    return result
+
+
 async def _run_tool(name: str, args: dict, db: AsyncSession, current: models.User):
+    """统一出口：所有工具结果都过 _cap，保证 limit 生效、截断被记录下来。
+    别在各个 tool_xxx 里各写各的截断——那样 limit 参数形同虚设（踩过）。"""
+    return _cap(await _run_tool_inner(name, args, db, current), args)
+
+
+async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: models.User):
     # 🆕 第二批工具：独立模块，签名统一 (db, current)，无额外参数
     from ..agent import tools_sales as _ts
     _SECOND = {
@@ -566,20 +605,57 @@ async def _run_tool(name: str, args: dict, db: AsyncSession, current: models.Use
 
 # ==================== 大脑：OpenAI 兼容 function calling ====================
 
-_SYSTEM_PROMPT = """你是制造业 ERP 项目管理系统内置的数据分析助手（只读），当前服务对象：「{user_name}」（角色：{roles}）。严格遵守：
-1. 只能根据工具返回的真实数据回答，严禁编造任何数字、日期、金额、项目编号、人名；
-2. 工具没有返回的信息就如实说"系统里查不到"，不要推测、不要举例；
-3. **手机上看，务必简短**：先一句话结论，再列关键明细，全文控制在 250 字以内。
-   不要写"建议""下一步""如需…可以…"这类收尾套话，用户要的是数，不是小作文；
-4. 明细最多列 5 条，按严重程度排序，多出来的只写"另有 N 条"。
-   每条一行，形如「江苏鸿旭隆 · 4 条 · 超 12 天」；条数 ≤2 时直接用句子说完，不要摆表格；
-   金额保留原始数值，日期原样引用，超期最狠的那条用 **加粗**；
-5. 需要数据时先调用工具，可连续调用多个；拿到工具结果后直接总结，不要重复调用同一工具；
-6. 你只能查询，不能修改任何数据；用户要求改数据时明确拒绝。
-今天日期：{today}（中国时区）。"""
+# 用户明确要全量时的措辞。命中就放开 max_tokens ——
+# 700 tokens 连 20 条中文明细都写不完，用户问「全部列举」只会得到半截清单。
+_FULL_LIST_HINT = ("全部", "都列", "列全", "完整", "所有", "一个不漏", "逐条", "详细列举")
+_MAX_TOKENS_DEFAULT = 700
+_MAX_TOKENS_FULL = 3000
 
 
-async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[dict]) -> dict:
+def _max_tokens_for(message: str) -> int:
+    return _MAX_TOKENS_FULL if any(k in (message or "") for k in _FULL_LIST_HINT) \
+        else _MAX_TOKENS_DEFAULT
+
+_SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只读），当前服务对象：「{user_name}」（角色：{roles}）。今天：{today}（中国时区）。
+
+# 铁律
+1. 只用工具返回的真实数据。严禁编造任何数字、日期、金额、编号、人名。
+2. 工具没返回的就说"系统里查不到"，不推测、不举例。
+3. **凡是截断都必须说出来。** 工具结果里的 `count` 是总数、`shown` 是本次给了几条、
+   `truncated` 是没给的条数。只要 truncated>0，结尾必须写「已列 N 条，另有 M 条未列」。
+   **绝不允许**给了 5 条却让人以为那就是全部。
+4. 用户说"全部/都列出来/完整清单/所有"时，**重新调用工具并传 limit=200**，然后**全部列完**，
+   这种情况不受下面的条数与字数限制。
+5. 只读。用户要改数据时明确拒绝，并说清该去哪个页面改。
+
+# 输出格式（手机上看）
+- **第一行永远是结论**，一句话，带上最关键的那个数，加粗。
+- 明细用无序列表，**一条一行**，字段之间用「·」分隔，顺序固定：
+  `主体 · 关键量 · 时间/状态 · (补充)`
+  例：`- **无锡诺朋商贸** · 钢丝软管 · 超 10 天 · (预计 7/25，2026-063)`
+- 金额写原始数值（¥220,000 不写 22 万）；日期原样引用；最严重那条整行加粗。
+- 默认最多 5 条，按严重度降序，其余写「另有 N 条」。用户要全部时不受此限。
+- 不写"建议""下一步""如需…可以…"这类收尾套话。
+
+# 必须做的分析（这是你和一张报表的区别）
+拿到数据后**先想「这堆数里最该被指出来的是什么」**，再写。至少做到其中一条：
+- **排序与集中度**：谁最严重、前几名占了多少。例：「11 家里 3 家占了 30 条」。
+- **异常点**：明显偏离其余的那条要单独点名。
+- **口径提醒**：数据本身有坑时必须提醒。已知的几个：
+  · 发货单大量停在「待发货」（shipped_at 几乎没人填），所以"发货款应收"不等于客户欠钱，
+    要先确认货到底发没发，别直接说"去催款"。
+  · 尾款没填到期日的，催办按到期日扫，永远扫不到。
+  · 合同额为 0 的台账会让项目毛利算成假亏损。
+- **算得出来的就算**：合计、占比、平均超期天数——别让用户自己拿计算器。
+禁止把分析写成空话（"需要关注""建议跟进"），要落到具体是哪条、差多少。
+
+# 数字口径
+- 比例/合计一律用 `count` 这个总数算，**不要拿截断后的 shown 去算**。
+- 同一事实在多个工具里出现时以更专门的那个为准，并说明来源差异。"""
+
+
+async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[dict],
+                       max_tokens: int = _MAX_TOKENS_DEFAULT) -> dict:
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
     payload: dict = {
         "model": model,
@@ -588,7 +664,7 @@ async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[
         # 🆕 生产实测：耗时几乎线性于**输出字数**（每字 12-15ms），答案平均 1300 字 → 18s。
         #   手机上没人读 1300 字。封顶 700 tokens（约 450 中文字），配合 system prompt
         #   里的"先给结论"要求，把 p50 从 17s 压下来。截断优于让人等。
-        "max_tokens": 700,
+        "max_tokens": max_tokens,
     }
     if tools:  # 🆕 只下放调用者有权的数据工具；无可用工具则纯对话（不下发 tools 字段，防空数组被拒）
         payload["tools"] = tools
@@ -613,13 +689,14 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
     roles = "、".join(sorted(user.role_codes)) if getattr(user, "role_codes", None) else "—"
     sys_prompt = _SYSTEM_PROMPT.format(today=_today().isoformat(),
                                        user_name=_uname(user), roles=roles)
+    max_tokens = _max_tokens_for(message)
     # 🆕 只下放该用户菜单可用的数据工具（_run_tool 内仍二次门控，双保险）
     allowed = _allowed_tools(user)
     schemas = [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
     messages = ([{"role": "system", "content": sys_prompt}]
                 + history + [{"role": "user", "content": message}])
     for _ in range(4):  # 工具轮次上限，防死循环
-        data = await _llm_request(messages, model, cfg, schemas)
+        data = await _llm_request(messages, model, cfg, schemas, max_tokens)
         msg = data["choices"][0]["message"]
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
@@ -1347,7 +1424,7 @@ async def _llm_stream(messages: list[dict], model: str, cfg: dict, tools: list[d
     """向 LLM 发流式请求，逐块 yield 原始 delta。"""
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
     payload: dict = {"model": model, "messages": messages,
-                     "temperature": 0.2, "max_tokens": 700, "stream": True}
+                     "temperature": 0.2, "max_tokens": max_tokens, "stream": True}
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
@@ -1392,6 +1469,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
     roles = "、".join(sorted(user.role_codes)) if getattr(user, "role_codes", None) else "—"
     sys_prompt = _SYSTEM_PROMPT.format(today=_today().isoformat(),
                                        user_name=_uname(user), roles=roles)
+    max_tokens = _max_tokens_for(message)
     allowed = _allowed_tools(user)
     schemas = [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
     messages = ([{"role": "system", "content": sys_prompt}]
@@ -1537,12 +1615,18 @@ def _shipment_receiver_text(d: dict) -> str:
     if not d.get("count"):
         return "**发货单收货人都填齐了** ✅"
     lines = [f"**{d['count']} 张发货单还没填收货人**，填了才能安排送货签收。", ""]
-    for r in d["items"][:5]:
+    shown = d.get("items", [])
+    for r in shown[:5]:
         sug = r.get("suggest")
-        tip = f"（上次是 {sug['name']}）" if sug and sug.get("name") else ""
-        lines.append(f"- #{r['id']} {r['company']}{tip}")
-    if d["count"] > 5:
-        lines.append(f"- 另有 {d['count'] - 5} 张")
+        tip = f" · 上次收货人 {sug['name']}" if sug and sug.get("name") else ""
+        # 客户名摆最前——「#95」这种单据号对人没有任何意义，认不出是哪一单。
+        # 客户名一直都在（沿 project_id 取得到），以前没取才显得「系统里查不到」。
+        cust = r.get("customer") or "（台账没填客户）"
+        lines.append(f"- **{cust}** · {r.get('project_code') or f'#{r[chr(105)+chr(100)]}'}"
+                     f" · 单号 #{r['id']}{tip}")
+    rest = d["count"] - len(shown[:5])
+    if rest > 0:
+        lines.append(f"- 另有 {rest} 张（共 {d['count']} 张）")
     return "\n".join(lines)
 
 

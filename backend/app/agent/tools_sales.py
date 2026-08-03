@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import models
 from ..routers.sales_router import _all_view          # ← 行级隔离唯一真源，勿重写
 
-_LIMIT = 20        # 单次最多返回多少条明细；总数另给，不让模型拿截断后的数去算比例
+# 截断统一由 agent_router._cap 处理（可被 limit 参数调整）；
+# 工具本身返回全量，别在这里再截一次，否则 limit=200 也拿不到第 21 条。
 
 
 def _scope(q, current: models.User):
@@ -80,7 +81,7 @@ async def tool_receivable_blind(db: AsyncSession, current: models.User) -> dict:
     rows.sort(key=lambda r: -(r["amount"] or 0))
     return {"count": len(rows),
             "total": round(sum(r["amount"] or 0 for r in rows), 2),
-            "items": rows[:_LIMIT]}
+            "items": rows}
 
 
 # ────────────────────────── 2. 待填收货人 ──────────────────────────
@@ -97,19 +98,51 @@ async def tool_shipment_receiver(db: AsyncSession, current: models.User) -> dict
          .order_by(models.Shipment.id.desc()))
     ships = list((await db.execute(q)).scalars().all())
 
-    # 历史收货人：按公司名归集，供前端做候选
-    hist_q = select(models.Shipment.receiver_company, models.Shipment.receiver_name,
-                    models.Shipment.receiver_phone).where(
-        models.Shipment.receiver_name.isnot(None), models.Shipment.receiver_name != "")
-    hist: dict[str, dict] = {}
-    for comp, name, phone in (await db.execute(hist_q)).all():
-        if comp:
-            hist.setdefault(comp, {"name": name, "phone": phone})
+    # ⚠️ 客户名必须沿 project_id 取，**不能**用 shipment.receiver_company ——
+    #    那正是「还没填」的那个字段，拿它当客户名的结果是每条都空，
+    #    助手于是回「系统里查不到客户信息」，让人以为数据不存在。
+    #    实际生产上 49 条待填里 49 条有项目编号、44 条有客户名，全都在，只是没去取。
+    pids = {s_.project_id for s_ in ships if s_.project_id}
+    proj: dict[int, str] = {}
+    cust: dict[int, str] = {}
+    if pids:
+        for pr in (await db.execute(select(models.Project).where(
+                models.Project.id.in_(pids)))).scalars().all():
+            proj[pr.id] = pr.code or f"#{pr.id}"
+        for led in (await db.execute(select(models.SalesLedger).where(
+                models.SalesLedger.project_id.in_(pids)))).scalars().all():
+            if led.customer:
+                cust[led.project_id] = led.customer
 
-    rows = [{"id": s.id, "company": s.receiver_company or "—",
-             "status": s.status,
-             "suggest": hist.get(s.receiver_company or "")} for s in ships]
-    return {"count": len(rows), "items": rows[:_LIMIT]}
+    # 历史收货人：**按客户名**归集，供前端做候选（同一客户往往重复用同一个收货人）。
+    # ⚠️ 索引键必须和查找键一致。曾经索引用 receiver_company、查找用客户名 ——
+    #    两套键永远对不上，候选功能等于没有。
+    filled = list((await db.execute(select(models.Shipment).where(
+        models.Shipment.receiver_name.isnot(None),
+        models.Shipment.receiver_name != ""))).scalars().all())
+    hist_pids = {x.project_id for x in filled if x.project_id}
+    hist_cust: dict[int, str] = {}
+    if hist_pids:
+        for led in (await db.execute(select(models.SalesLedger).where(
+                models.SalesLedger.project_id.in_(hist_pids)))).scalars().all():
+            if led.customer:
+                hist_cust[led.project_id] = led.customer
+    hist: dict[str, dict] = {}
+    for x in filled:
+        key = hist_cust.get(x.project_id) or x.receiver_company
+        if key:
+            hist.setdefault(key, {"name": x.receiver_name, "phone": x.receiver_phone})
+
+    rows = [{"id": s_.id,
+             "project_code": proj.get(s_.project_id, f"#{s_.project_id}"),
+             "customer": cust.get(s_.project_id) or "—",
+             "status": s_.status,
+             # 同一客户的历史收货人，前端可做候选，省得在手机上打字。
+             # ⚠️ 查找键要和上面 hist 的索引键**同一套兜底**（客户名优先，退回 receiver_company），
+             #    否则两边键不一致，候选永远命中不了。
+             "suggest": hist.get(cust.get(s_.project_id) or s_.receiver_company or "")}
+            for s_ in ships]
+    return {"count": len(rows), "items": rows}
 
 
 # ────────────────────────── 3. 台账缺件 ──────────────────────────
@@ -132,7 +165,7 @@ async def tool_ledger_incomplete(db: AsyncSession, current: models.User) -> dict
         if not (led.customer or "").strip():
             miss.append("客户")
         rows.append(_row(led) | {"missing": miss})
-    return {"count": len(rows), "items": rows[:_LIMIT]}
+    return {"count": len(rows), "items": rows}
 
 
 # ────────────────────────── 4. 销售线索待跟进 ──────────────────────────
@@ -155,7 +188,7 @@ async def tool_leads_followup(db: AsyncSession, current: models.User) -> dict:
     rows = [{"id": x.id, "customer": x.customer or "—", "status": x.status or "—",
              "contact": x.contact or "", "age_days": _age_days(x.created_at)}
             for x in (await db.execute(q)).scalars().all()]
-    return {"count": len(rows), "items": rows[:_LIMIT]}
+    return {"count": len(rows), "items": rows}
 
 
 # ────────────────────────── 5. 待审批销售订单 ──────────────────────────
@@ -167,7 +200,7 @@ async def tool_order_pending(db: AsyncSession, current: models.User) -> dict:
     rows = [_row(led) | {"amount": led.amount or 0,
                          "age_days": _age_days(led.created_at)}
             for led in (await db.execute(q)).scalars().all()]
-    return {"count": len(rows), "items": rows[:_LIMIT]}
+    return {"count": len(rows), "items": rows}
 
 
 # ────────────────────────── 6. 待开票 ──────────────────────────
@@ -179,4 +212,4 @@ async def tool_invoice_pending(db: AsyncSession, current: models.User) -> dict:
     rows = [_row(led) | {"amount": led.amount or 0,
                          "age_days": _age_days(led.created_at)}
             for led in (await db.execute(q)).scalars().all()]
-    return {"count": len(rows), "items": rows[:_LIMIT]}
+    return {"count": len(rows), "items": rows}
