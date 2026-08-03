@@ -114,6 +114,35 @@ async def main():
     chk("假亏损" in t, "提示词带上「合同额为 0 → 毛利算成假亏损」这个口径坑")
     chk("不要拿截断后的 shown 去算" in t, "禁止拿截断后的条数算比例")
 
+    # ================= 流式路径不能因作用域错误静默降级 =================
+    print("\n===== 流式请求不能悄悄掉进降级 =====")
+    import ast, inspect
+    from app.routers import agent_router as ar
+
+    # 这条是血的教训：_llm_stream 里引用了调用方的局部变量 max_tokens，
+    # 运行时 NameError 被外层 except 吞掉 → 整条流式请求降级成规则应答，
+    # 返回「我是 ERP 数据助手」那段功能菜单。现象是**秒回但答非所问**，
+    # 极易被误读成「变快了」。所以这里静态扫一遍作用域。
+    src = inspect.getsource(ar)
+    tree = ast.parse(src)
+    bad = []
+    for fn in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+        local = {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+                local.add(n.id)
+        for n in ast.walk(fn):
+            if (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                    and n.id == "max_tokens" and "max_tokens" not in local):
+                bad.append(f"{fn.name}:{n.lineno}")
+    chk(not bad, f"没有函数引用作用域外的 max_tokens：{bad}")
+
+    sig = inspect.signature(ar._llm_stream)
+    chk("max_tokens" in sig.parameters,
+        f"_llm_stream 必须把 max_tokens 当参数收（不是蹭调用方的局部变量）：{sig}")
+    chk("_llm_stream(messages, model, cfg, schemas, max_tokens)" in src,
+        "调用点必须真的把 max_tokens 传进去")
+
     print("\n" + "=" * 56)
     if FAIL:
         print(f"❌ {len(FAIL)} 条失败：")

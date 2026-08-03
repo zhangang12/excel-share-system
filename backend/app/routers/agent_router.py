@@ -1420,8 +1420,15 @@ async def run_tool_direct(
 # 工具轮次不流给用户（那是内部过程），只推一条「正在查 xxx」的状态；
 # 最后一轮的正文才逐块推。
 
-async def _llm_stream(messages: list[dict], model: str, cfg: dict, tools: list[dict]):
-    """向 LLM 发流式请求，逐块 yield 原始 delta。"""
+async def _llm_stream(messages: list[dict], model: str, cfg: dict, tools: list[dict],
+                      max_tokens: int = _MAX_TOKENS_DEFAULT):
+    """向 LLM 发流式请求，逐块 yield 原始 delta。
+
+    ⚠️ max_tokens 必须**当参数传进来**。我一度直接引用调用方的同名局部变量，
+       运行时 NameError → 被外层 except 吞掉 → 整条流式请求掉进规则降级，
+       返回那段「我是 ERP 数据助手」的功能菜单。现象是「秒回但答非所问」，
+       很容易被误读成「变快了」。
+    """
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
     payload: dict = {"model": model, "messages": messages,
                      "temperature": 0.2, "max_tokens": max_tokens, "stream": True}
@@ -1478,7 +1485,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
     for _ in range(4):
         content_parts: list[str] = []
         tc_acc: dict = {}
-        async for data in _llm_stream(messages, model, cfg, schemas):
+        async for data in _llm_stream(messages, model, cfg, schemas, max_tokens):
             choices = data.get("choices") or []
             if not choices:
                 continue
