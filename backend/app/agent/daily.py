@@ -73,21 +73,41 @@ async def run_once(db: AsyncSession, *, dry: bool = False) -> dict:
     cutoff = (datetime.now(timezone.utc) - timedelta(
         days=briefing._REPEAT_COOLDOWN_DAYS)).date().isoformat()
 
-    out, n_sent = [], 0
+    # ⚠️ 读并发、写串行。
+    #    算简报是纯读，N 个人本来就该并发（每人 3 路取数，再串起来就是 3N 轮往返）；
+    #    但 push_message / 写 setting 是写操作，共用 caller 的 session，
+    #    并发写同一个 AsyncSession 会炸（concurrent operations not permitted），
+    #    所以下面拿到结果之后再顺序落库。
+    users = []
     for uname in usernames:
         u = (await db.execute(select(models.User).where(
             models.User.username == uname,
             models.User.is_active == True))).scalar_one_or_none()  # noqa: E712
+        users.append((uname, u))
+
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    async def _brief_for(uname, u):
+        if not u:
+            return None
+        mine = {k: v for k, v in (sent_log.get(uname) or {}).items() if v >= cutoff}
+        skip_refs = {(k.split(":")[0], int(k.split(":")[1])) for k in mine}
+        brief = await briefing.build(u, top=3, skip_refs=skip_refs)
+        return u, mine, brief, briefing.render(brief, u.full_name or u.username)
+
+    computed = await asyncio.gather(
+        *(_brief_for(n, u) for n, u in users), return_exceptions=True)
+
+    out, n_sent = [], 0
+    for (uname, u), res in zip(users, computed):
         if not u:
             out.append({"user": uname, "skip": "用户不存在或已停用"})
             continue
-
-        # 冷却期内推过的不再推；顺手把过期记录清掉，免得这个 setting 无限长大
-        mine = {k: v for k, v in (sent_log.get(uname) or {}).items() if v >= cutoff}
-        skip_refs = {(k.split(":")[0], int(k.split(":")[1])) for k in mine}
-
-        brief = await briefing.build(db, u, top=3, skip_refs=skip_refs)
-        text = briefing.render(brief, u.full_name or u.username)
+        if isinstance(res, Exception):
+            log.warning("[agent.daily] %s 的简报算失败: %s", uname, res)
+            out.append({"user": uname, "skip": f"生成失败：{res}"})
+            continue
+        u, mine, brief, text = res
         if not text:
             out.append({"user": uname, "skip": "没有待办，不打扰"})
             continue
@@ -99,7 +119,6 @@ async def run_once(db: AsyncSession, *, dry: bool = False) -> dict:
 
         await push_message(db, to_user_id=u.id, kind="info", text=text,
                            biz_type="agent_briefing", biz_id=u.id)
-        today = datetime.now(timezone.utc).date().isoformat()
         for it in brief["items"]:
             mine[f"{it['card']}:{it['ref']}"] = today
         sent_log[uname] = mine

@@ -1692,5 +1692,5 @@ async def my_briefing(
 ):
     """当前用户自己的简报（H5 首页顶部用：进来就看见今天该管什么，不用先打字）。"""
     from ..agent import briefing
-    brief = await briefing.build(db, current, top=top)
+    brief = await briefing.build(current, top=top)
     return {**brief, "text": briefing.render(brief, current.full_name or current.username)}

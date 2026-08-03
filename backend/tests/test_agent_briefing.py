@@ -103,7 +103,7 @@ async def main():
                 "账龄只说「台账建了 N 天」这个站得住的事实")
 
             print("\n===== 配额：审批不能被大额应收挤掉 =====")
-            b = await briefing.build(db, me, top=3)
+            b = await briefing.build(me, top=3)
             cats = [i["cat"] for i in b["items"]]
             chk(cats.count("approve") == 1, f"3 条里固定留 1 条审批：{cats}")
             chk(cats.count("recv") == 2, f"另外 2 条是应收：{cats}")
@@ -112,7 +112,7 @@ async def main():
 
             print("\n===== 冷却去重 =====")
             first = {(i["card"], i["ref"]) for i in b["items"]}
-            b2 = await briefing.build(db, me, top=3, skip_refs=first)
+            b2 = await briefing.build(me, top=3, skip_refs=first)
             second = {(i["card"], i["ref"]) for i in b2["items"]}
             chk(not (first & second), f"第二次不再出现推过的：{first & second}")
 
@@ -120,7 +120,7 @@ async def main():
             allrefs = {(i["card"], i["ref"]) for i in
                        (await briefing._ledger_items(db, me))
                        + (await briefing._order_items(db, me))}
-            b3 = await briefing.build(db, me, top=3, skip_refs=allrefs)
+            b3 = await briefing.build(me, top=3, skip_refs=allrefs)
             chk(b3["items"] == [], "冷却期内全推过 → 一条都不推（不是再推一遍）")
             chk(briefing.render(b3, "某人") == "", "没内容时渲染成空串，daily 据此不发消息")
 

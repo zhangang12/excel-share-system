@@ -38,6 +38,8 @@
 - **配额**：纯按分数排，前三名会被大额应收包圆，审批永远排不上——
   可审批是卡着别人干活的。所以固定「应收 2 + 审批 1」，见 `_compose`。
 """
+import asyncio
+import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -45,7 +47,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
+from ..database import SessionLocal
 from .cards import ledger_settle, pay_req, sales_order
+
+log = logging.getLogger("agent.briefing")
 
 _BLIND_BOOST = 1.6         # 无人管的加成
 _AGE_CAP_DAYS = 90         # 时间系数封顶
@@ -184,20 +189,35 @@ def _compose(items: list[dict], top: int) -> list[dict]:
     return picked[:top]
 
 
-async def build(db: AsyncSession, current: models.User, top: int = 3,
+# 三路取数互不依赖 → 并发跑（定义在三个函数之后）
+_FETCHERS = (_ledger_items, _pay_req_items, _order_items)
+
+
+async def build(current: models.User, top: int = 3,
                 skip_refs: set[tuple[str, int]] | None = None) -> dict[str, Any]:
     """给某个人生成今日简报。
 
     `skip_refs` 是最近推过的 (card, ref)，用来避免天天推同样三条——
     催办就是栽在这上面（83 条推送没人理）。调用方从 messages 表取，见 daily.py。
+
+    ⚠️ 三路取数**并发**跑，而且每路必须用**自己的** AsyncSession ——
+    同一个 session 不能并发复用（SQLAlchemy 会报 concurrent operations not permitted）。
+    这也是 agent_router 里工具并行的写法，别再退回 `for fn in ...: await fn(db, ...)`
+    那种串行版：三路本来互不依赖，串起来白等两轮往返。
+    所以这里不收外部 session，自己开——收了反而会诱使人复用它。
     """
+    async def _one(fn):
+        async with SessionLocal() as s:
+            return await fn(s, current)
+
+    results = await asyncio.gather(*(_one(fn) for fn in _FETCHERS), return_exceptions=True)
     items: list[dict] = []
-    for fn in (_ledger_items, _pay_req_items, _order_items):
-        try:
-            items.extend(await fn(db, current))
-        except Exception:            # noqa: BLE001
-            # 一类取数炸掉不能让整份简报发不出去；缺的那类下次再补
+    for fn, r in zip(_FETCHERS, results):
+        if isinstance(r, Exception):
+            # 一路炸掉不能让整份简报发不出去；缺的那类下次再补
+            log.warning("[briefing] %s 取数失败: %s", fn.__name__, r)
             continue
+        items.extend(r)
     items.sort(key=lambda x: -x["score"])
 
     fresh = items
