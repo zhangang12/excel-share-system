@@ -1,5 +1,5 @@
 {
-  "min_version": "0.0.1",
+  "min_version": "1.0.29",
   "notes": "修复：采购资料可单个下载、下载位置可自选；字典分类段码自动顺延、新增后不再整棵树弹开；财务金额 ¥¥ 重复；闲置黑屏自恢复。",
-  "force_latest": false
+  "force_latest": true
 }
