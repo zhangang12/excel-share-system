@@ -111,8 +111,15 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 filePathCallback?.onReceiveValue(null)   // 上一次没走完的先取消，防泄漏
                 filePathCallback = cb
+                // createIntent() 可能返回 null（某些机型/输入类型），拿不到就
+                // 老老实实告诉 WebView 选不了，别抛异常把页面带崩
+                val intent = params?.createIntent()
+                if (intent == null) {
+                    filePathCallback = null
+                    return false
+                }
                 return try {
-                    filePicker.launch(params?.createIntent())
+                    filePicker.launch(intent)
                     true
                 } catch (e: Exception) {
                     filePathCallback = null
