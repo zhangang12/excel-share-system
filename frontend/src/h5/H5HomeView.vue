@@ -140,14 +140,6 @@ onMounted(load)
 
       <main class="scroll">
         <div v-if="!editing" class="hero">
-          <div class="orb-wrap">
-            <div class="orb-glow"></div>
-            <div class="orb">
-              <svg width="26" height="26" viewBox="0 0 20 20" fill="none">
-                <path d="M10 2.5c.9 4.2 3.3 6.6 7.5 7.5-4.2.9-6.6 3.3-7.5 7.5-.9-4.2-3.3-6.6-7.5-7.5 4.2-.9 6.6-3.3 7.5-7.5Z" fill="#fff"/>
-              </svg>
-            </div>
-          </div>
           <div class="ht">{{ greet }}，{{ displayName }}</div>
           <div class="hs">点一下就看，不用打字</div>
         </div>
@@ -173,16 +165,18 @@ onMounted(load)
           </div>
         </template>
 
-        <div class="grid" :class="{ edit: editing }">
-          <div v-for="(t, i) in gridTiles" :key="t.key" class="cell">
-            <button class="tile" :class="{ dim: editing }" @click="ask(t)">
-              <span class="tg" :class="t.tone">{{ t.glyph }}</span>
-              <span class="tl">{{ t.label }}</span>
-              <span class="td">{{ t.desc }}</span>
+        <div class="list" :class="{ edit: editing }">
+          <div v-for="t in gridTiles" :key="t.key" class="cell">
+            <button class="row" :class="{ dim: editing }" @click="ask(t)">
+              <span class="rtx">
+                <span class="rl">{{ t.label }}</span>
+                <span class="rd">{{ t.desc }}</span>
+              </span>
+              <span class="rgo">›</span>
             </button>
             <div v-if="editing" class="ops">
-              <button @click="moveTile(tiles.indexOf(t), -1)" aria-label="上移">‹</button>
-              <button @click="moveTile(tiles.indexOf(t), 1)" aria-label="下移">›</button>
+              <button @click="moveTile(tiles.indexOf(t), -1)" aria-label="上移">↑</button>
+              <button @click="moveTile(tiles.indexOf(t), 1)" aria-label="下移">↓</button>
               <button class="del" @click="removeTile(tiles.indexOf(t))" aria-label="移除">×</button>
             </div>
           </div>
@@ -192,7 +186,6 @@ onMounted(load)
           <div class="gh">还能加这些</div>
           <div class="addlist">
             <button v-for="c in addable" :key="c.key" class="additem" @click="addTile(c)">
-              <span class="ag" :class="c.tone">{{ c.glyph }}</span>
               <span class="atx">
                 <span class="al">{{ c.label }}</span>
                 <span class="ad">{{ c.desc }}</span>
@@ -200,7 +193,6 @@ onMounted(load)
               <span class="aplus">+</span>
             </button>
             <button class="additem custom" @click="addCustom">
-              <span class="ag">问</span>
               <span class="atx">
                 <span class="al">常问的话</span>
                 <span class="ad">把你自己的问题存成一张卡</span>
@@ -244,20 +236,9 @@ onMounted(load)
 
 .scroll { flex: 1; overflow-y: auto; padding: 4px 16px 12px; -webkit-overflow-scrolling: touch }
 
-.hero { text-align: center; padding: 14px 0 18px }
-.orb-wrap { position: relative; width: 50px; height: 50px; margin: 0 auto 12px }
-.orb {
-  position: relative; z-index: 1; width: 50px; height: 50px; border-radius: 50%;
-  background: var(--h5-grad-orb); box-shadow: var(--h5-sh-orb);
-  display: grid; place-items: center; animation: h5OrbFloat 4s ease-in-out infinite;
-}
-.orb-glow {
-  position: absolute; inset: -12px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(76,141,255,.42), rgba(76,141,255,0) 70%);
-  animation: h5GlowPulse 3.2s ease-in-out infinite;
-}
-.ht { font-size: 19px; font-weight: 700; color: var(--h5-ink); letter-spacing: .3px }
-.hs { font-size: 12.5px; color: var(--h5-ink-3); margin-top: 4px }
+.hero { padding: 6px 4px 16px }
+.ht { font-size: 20px; font-weight: 700; color: var(--h5-ink); letter-spacing: .2px }
+.hs { font-size: 12.5px; color: var(--h5-ink-3); margin-top: 3px }
 
 .sign {
   display: block; width: 100%; text-align: left; position: relative; cursor: pointer;
@@ -285,26 +266,20 @@ onMounted(load)
 }
 
 .gh { font-size: 12px; color: var(--h5-ink-3); padding: 0 4px 8px; font-weight: 500 }
-.grid { margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px }
-.tile {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
-  text-align: left; cursor: pointer; font-family: inherit;
-  background: rgba(255,255,255,.58); border: 1px solid rgba(255,255,255,.8);
+.list { margin-top: 14px; display: flex; flex-direction: column; gap: 8px }
+.row {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  cursor: pointer; font-family: inherit;
+  background: rgba(255,255,255,.66); border: 1px solid rgba(255,255,255,.85);
   border-radius: var(--h5-r-card); box-shadow: var(--h5-sh-card);
-  padding: 13px 14px; min-height: 92px;
+  padding: 14px 16px; min-height: 56px;
   transition: transform .14s, box-shadow .14s;
 }
-.tile:active { transform: translateY(1px); box-shadow: none }
-.tg {
-  width: 30px; height: 30px; border-radius: var(--h5-r-chip); display: grid; place-items: center;
-  font-size: 13px; font-weight: 700; margin-bottom: 4px;
-  background: rgba(76,141,255,.15); color: var(--h5-blue);
-}
-.tg.danger { background: rgba(196,54,47,.12); color: var(--h5-danger) }
-.tg.warn { background: rgba(169,106,8,.13); color: var(--h5-warn) }
-.tg.good { background: rgba(42,122,82,.12); color: var(--h5-good) }
-.tl { font-size: 13.5px; font-weight: 600; color: var(--h5-ink) }
-.td { font-size: 11px; color: var(--h5-ink-3); line-height: 1.5 }
+.row:active { transform: translateY(1px); box-shadow: none }
+.rtx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px }
+.rl { font-size: 14.5px; font-weight: 600; color: var(--h5-ink) }
+.rd { font-size: 11.5px; color: var(--h5-ink-3); line-height: 1.45 }
+.rgo { flex: none; color: var(--h5-ink-4); font-size: 17px }
 
 .tbtn {
   flex: none; border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.6);
@@ -322,10 +297,11 @@ onMounted(load)
   background: rgba(196,54,47,.09); border-radius: 10px; padding: 9px 12px;
 }
 .cell { position: relative }
-.grid.edit .tile { pointer-events: none }
-.tile.dim { opacity: .82 }
+.list.edit .row { pointer-events: none }
+.row.dim { opacity: .82 }
 .ops {
-  position: absolute; top: 6px; right: 6px; display: flex; gap: 4px;
+  position: absolute; top: 50%; right: 10px; transform: translateY(-50%);
+  display: flex; gap: 5px;
 }
 .ops button {
   width: 24px; height: 24px; border-radius: 50%; border: 1px solid rgba(255,255,255,.9);
@@ -340,14 +316,6 @@ onMounted(load)
   border-radius: var(--h5-r-card); padding: 11px 13px; cursor: pointer; font-family: inherit;
 }
 .additem.custom { border-style: solid; border-color: rgba(43,110,246,.45) }
-.ag {
-  width: 28px; height: 28px; flex: none; border-radius: var(--h5-r-chip);
-  display: grid; place-items: center; font-size: 12.5px; font-weight: 700;
-  background: rgba(76,141,255,.15); color: var(--h5-blue);
-}
-.ag.danger { background: rgba(196,54,47,.12); color: var(--h5-danger) }
-.ag.warn { background: rgba(169,106,8,.13); color: var(--h5-warn) }
-.ag.good { background: rgba(42,122,82,.12); color: var(--h5-good) }
 .atx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px }
 .al { font-size: 13px; font-weight: 600; color: var(--h5-ink) }
 .ad { font-size: 11px; color: var(--h5-ink-3); line-height: 1.5 }

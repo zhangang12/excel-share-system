@@ -23,9 +23,12 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(subject, extra: Optional[dict] = None) -> str:
+def create_access_token(subject, extra: Optional[dict] = None,
+                        minutes: Optional[int] = None) -> str:
+    """minutes 只给「记住我」用（H5 端 30 天）。默认仍是 settings 里的 8 小时。
+    注意：延长的是**令牌有效期**，密码一个字都不存在客户端。"""
     expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.access_token_expire_minutes
+        minutes=minutes or settings.access_token_expire_minutes
     )
     payload = {"sub": str(subject), "exp": expire}
     if extra:

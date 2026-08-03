@@ -56,9 +56,16 @@ def _client_ip(request: Request) -> str:
     return parts[-1] if parts else (request.client.host if request.client else "")
 
 
-async def _issue_token(db: AsyncSession, u: models.User, *, ip: str = "") -> schemas.TokenOut:
+# 🆕「记住我」的令牌寿命。H5 给手机用，每次登录都要管理层报验证码，
+#   8 小时一过就得再来一遍，体验太差。延长的只是**令牌有效期**，
+#   密码一个字都不落客户端；用户点「退出」即清除。
+REMEMBER_MINUTES = 30 * 24 * 60
+
+
+async def _issue_token(db: AsyncSession, u: models.User, *, ip: str = "",
+                       remember: bool = False) -> schemas.TokenOut:
     """登录成功签发 token + 写审计（login 免闸路径与 verify-gate 共用）。"""
-    token = create_access_token(u.id)
+    token = create_access_token(u.id, minutes=REMEMBER_MINUTES if remember else None)
     await write_audit(db, user=u, action="login", ip=ip or None)
     return schemas.TokenOut(access_token=token, user=_user_to_out(u))
 
@@ -99,7 +106,7 @@ async def login(data: schemas.LoginIn, request: Request, db: AsyncSession = Depe
             return schemas.GateRequiredOut(
                 gate_required=True, pre_token=pre_token,
                 message="已通知管理层，请联系管理层获取验证码")
-    return await _issue_token(db, u, ip=ip)
+    return await _issue_token(db, u, ip=ip, remember=bool(data.remember))
 
 
 @router.post("/login/verify-gate", response_model=schemas.TokenOut)
@@ -120,7 +127,7 @@ async def login_verify_gate(data: schemas.GateVerifyIn, request: Request,
     u.last_login = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(u)
-    return await _issue_token(db, u, ip=ip)
+    return await _issue_token(db, u, ip=ip, remember=bool(data.remember))
 
 
 @router.get("/me", response_model=schemas.UserOut)

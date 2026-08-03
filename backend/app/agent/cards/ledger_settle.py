@@ -71,8 +71,21 @@ async def assemble_settle_cards(db: AsyncSession, current: models.User,
                           "msg": "这不是你负责的台账行，只能由负责销售登记"})
 
         actions = []
+        # 明细要够判断：光有「客户 + 金额」没法决定要不要销账。
+        # 补上合同额与已收的两笔，他一眼能看出这笔应收在整单里占多少、收到哪一步了。
         facts = [{"k": "客户", "v": led.customer or "—"},
                  {"k": "项目", "v": p.code if p else f"#{led.project_id}"}]
+        if led.amount:
+            facts.append({"k": "合同额", "v": _money(led.amount)})
+        paid = []
+        if led.prepay:
+            paid.append(f"预付 {_money(led.prepay)}"
+                        + ("（已收）" if led.prepay_note else ""))
+        if led.before_ship:
+            paid.append(f"发货前付 {_money(led.before_ship)}"
+                        + ("（已收）" if led.before_ship_note else ""))
+        if paid:
+            facts.append({"k": "收款条款", "v": " · ".join(paid)})
 
         if (led.ship_receivable or 0) > 0:
             facts.append({"k": "发货款应收", "v": _money(led.ship_receivable),
@@ -105,3 +118,30 @@ async def assemble_settle_cards(db: AsyncSession, current: models.User,
             "actions": actions,
         })
     return cards
+
+
+async def summarize(db: AsyncSession, current: models.User) -> dict:
+    """汇总口径与 assemble_settle_cards 同源（都走 blind_ledgers）。
+
+    做这个是因为一次弹 20 张卡没法看——先给一张「总账」，
+    点开才逐条处理。合计要基于**全量**而不是截断后的前 20 条，
+    否则「共 ¥253 万」和列表加起来对不上。
+    """
+    leds = await blind_ledgers(db, current)
+    ship = [l for l in leds if (l.ship_receivable or 0) > 0]
+    bal = [l for l in leds if (l.balance or 0) > 0 and not (l.balance_date or "").strip()]
+    ages = [a for a in (_age(l.created_at) for l in leds) if a is not None]
+    return {
+        "count": len(leds),
+        "total": round(sum((l.ship_receivable or 0) + (l.balance or 0) for l in leds), 2),
+        "groups": [
+            {"key": "ship", "label": "发货款应收", "count": len(ship),
+             "amount": round(sum(l.ship_receivable or 0 for l in ship), 2),
+             "note": "全系统没有任何提醒碰过这个字段"},
+            {"key": "balance", "label": "尾款·没填到期日", "count": len(bal),
+             "amount": round(sum(l.balance or 0 for l in bal), 2),
+             "note": "催办按到期日扫，没填的一条都扫不到"},
+        ],
+        "oldest_days": max(ages) if ages else 0,
+        "shown": min(len(leds), _MAX_CARDS),
+    }

@@ -17,9 +17,16 @@ import { isKnownCard, type AgentCard } from './cardRegistry'
 const router = useRouter()
 const route = useRoute()
 
+interface CardSummary {
+  count: number; total: number; oldest_days: number; shown: number
+  groups: { key: string; label: string; count: number; amount: number; note: string }[]
+}
+
 type Msg =
   | { kind: 'user'; text: string }
   | { kind: 'ai'; text: string; sources?: string[] }
+  // 汇总卡：先给总账，点「逐条处理」才展开明细。一次弹 20 张没人看得下去。
+  | { kind: 'summary'; summary: CardSummary; cards: AgentCard[]; expanded: boolean }
   | { kind: 'cards'; cards: AgentCard[] }
 
 const msgs = ref<Msg[]>([])
@@ -74,14 +81,23 @@ async function openApprovals(cardType = 'pay_req_approve', label = '待我审批
                     - Number(b.flags.some((f) => f.level === 'block')))
     const dropped = data.cards.length - cards.length
     const n = cards.length
-    msgs.value.push({
-      kind: 'ai',
-      text: n === 0
-        ? '这一类现在没有待办。想看别的可以直接问我。'
-        : `共 ${n} 单${data.blocked ? `，其中 ${data.blocked} 单按职责分离需他人处理` : ''}。`
-          + (dropped ? `（另有 ${dropped} 条无法安全展示，请到电脑端查看）` : ''),
-    })
-    if (n) msgs.value.push({ kind: 'cards', cards })
+    const hasSummary = !!data.summary && n > 3
+    if (!hasSummary) {
+      msgs.value.push({
+        kind: 'ai',
+        text: n === 0
+          ? '这一类现在没有待办。想看别的可以直接问我。'
+          : `共 ${n} 单${data.blocked ? `，其中 ${data.blocked} 单按职责分离需他人处理` : ''}。`
+            + (dropped ? `（另有 ${dropped} 条无法安全展示，请到电脑端查看）` : ''),
+      })
+    }
+    if (n) {
+      if (data.summary && n > 3) {
+        msgs.value.push({ kind: 'summary', summary: data.summary, cards, expanded: false })
+      } else {
+        msgs.value.push({ kind: 'cards', cards })
+      }
+    }
   } catch (e: any) {
     msgs.value.push({ kind: 'ai', text: errText(e, '取待办失败，请稍后重试') })
   } finally {
@@ -134,7 +150,12 @@ const speech = useSpeech((text, final) => {
  * 人不再对着白屏干等 17 秒。
  */
 async function streamChat(q: string, history: { role: string; content: string }[]) {
-  const bubble: Extract<Msg, { kind: 'ai' }> = { kind: 'ai', text: '' }
+  // ⚠️ 关键：push 进去之后必须用**数组里的那个引用**（Vue 的响应式代理）来累加文字。
+  //   直接改 push 之前的原始对象，改的是 raw target，不走代理的 set 陷阱，
+  //   Vue 收不到通知——表现就是「只显示第一个字，后面全不动」。
+  //   第一个字之所以能出来，是因为同一批里 thinking.value=false 触发了一次渲染。
+  const draft: Extract<Msg, { kind: 'ai' }> = { kind: 'ai', text: '' }
+  let bubble = draft
   let opened = false
   const res = await fetch('/api/agent/chat/stream', {
     method: 'POST',
@@ -168,16 +189,27 @@ async function streamChat(q: string, history: { role: string; content: string }[
       if (ev === 'tool') {
         toolHint.value = `正在查 ${d.label}…`
       } else if (ev === 'delta') {
-        if (!opened) { opened = true; thinking.value = false; toolHint.value = ''; msgs.value.push(bubble) }
+        if (!opened) {
+          opened = true; thinking.value = false; toolHint.value = ''
+          msgs.value.push(draft)
+          bubble = msgs.value[msgs.value.length - 1] as Extract<Msg, { kind: 'ai' }>
+        }
         bubble.text += d.text
         await scrollDown()
       } else if (ev === 'done') {
-        if (!opened) { msgs.value.push(bubble) }
+        if (!opened) {
+          msgs.value.push(draft)
+          bubble = msgs.value[msgs.value.length - 1] as Extract<Msg, { kind: 'ai' }>
+        }
         bubble.sources = d.sources
         if (d.suggestions?.length) suggestions.value = d.suggestions
         toolHint.value = ''
       } else if (ev === 'error') {
-        if (!opened) { opened = true; msgs.value.push(bubble) }
+        if (!opened) {
+          opened = true
+          msgs.value.push(draft)
+          bubble = msgs.value[msgs.value.length - 1] as Extract<Msg, { kind: 'ai' }>
+        }
         bubble.text += d.message || '出错了'
       }
     }
@@ -249,6 +281,28 @@ onMounted(() => {
               <div class="md" v-html="renderMd(m.text)"></div>
               <div v-if="m.sources?.length" class="src">来源：{{ m.sources.join('、') }}</div>
             </div>
+          </div>
+          <div v-else-if="m.kind === 'summary'" class="cards">
+            <div class="sumcard">
+              <div class="sk">合计待处理</div>
+              <div class="sv">¥{{ m.summary.total.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) }}</div>
+              <div class="ssub">{{ m.summary.count }} 笔 · 最久的挂了 {{ m.summary.oldest_days }} 天</div>
+              <div class="sgrp">
+                <div v-for="g in m.summary.groups" :key="g.key" class="sg">
+                  <div class="sgl">{{ g.label }}</div>
+                  <div class="sgv">¥{{ g.amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) }}
+                    <span class="sgn">{{ g.count }} 笔</span></div>
+                  <div class="sgd">{{ g.note }}</div>
+                </div>
+              </div>
+              <button v-if="!m.expanded" class="sbtn" @click="m.expanded = true">
+                逐条处理（{{ m.summary.shown }} 笔）
+              </button>
+            </div>
+            <template v-if="m.expanded">
+              <H5ApproveCard v-for="(c, k) in m.cards" :key="c.ref" :card="c"
+                             :index="k + 1" :total="m.cards.length" @done="onCardDone" />
+            </template>
           </div>
           <div v-else class="cards">
             <H5ApproveCard v-for="(c, k) in m.cards" :key="c.ref" :card="c"
@@ -392,6 +446,30 @@ onMounted(() => {
 .dots i:nth-child(3) { animation-delay: .3s }
 .thint { font-size: 11.5px; color: var(--h5-ink-3); margin-left: 6px }
 .cards { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px }
+.sumcard {
+  background: rgba(255,255,255,.7); border: 1px solid rgba(255,255,255,.85);
+  border-radius: var(--h5-r-panel); box-shadow: var(--h5-sh-raised); padding: 18px 20px;
+}
+.sk { font-size: 12px; color: var(--h5-ink-3) }
+.sv {
+  font-size: 28px; font-weight: 700; color: var(--h5-ink); letter-spacing: -.5px;
+  line-height: 1.2; margin-top: 2px; font-variant-numeric: tabular-nums;
+}
+.ssub { font-size: 11.5px; color: var(--h5-ink-3); margin-top: 4px }
+.sgrp { margin-top: 14px; display: flex; flex-direction: column; gap: 10px }
+.sg { border-top: 1px solid rgba(24,32,50,.07); padding-top: 10px }
+.sgl { font-size: 12.5px; color: var(--h5-ink-2); font-weight: 500 }
+.sgv {
+  font-size: 17px; font-weight: 700; color: var(--h5-ink); margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.sgn { font-size: 11.5px; font-weight: 400; color: var(--h5-ink-3); margin-left: 6px }
+.sgd { font-size: 11px; color: var(--h5-ink-4); margin-top: 3px; line-height: 1.45 }
+.sbtn {
+  width: 100%; margin-top: 16px; border: 0; border-radius: var(--h5-r-card);
+  background: var(--h5-grad-btn); color: #fff; box-shadow: var(--h5-sh-btn-sm);
+  font: 600 15px/1 var(--h5-font); padding: 14px; cursor: pointer;
+}
 
 .ft { flex: none; padding: 8px 16px calc(env(safe-area-inset-bottom, 0px) + 14px) }
 .sugg { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px }

@@ -646,6 +646,8 @@ class ExportConfigOut(BaseModel):
 class LoginIn(BaseModel):
     username: str
     password: str
+    # 🆕 记住我：仅延长令牌有效期到 30 天，不在客户端保存密码
+    remember: bool = False
 
 
 class TokenOut(BaseModel):
@@ -666,6 +668,7 @@ class GateVerifyIn(BaseModel):
     username: str
     pre_token: str
     code: str
+    remember: bool = False
 
 
 class GateConfigIn(BaseModel):

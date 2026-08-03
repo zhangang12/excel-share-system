@@ -1161,13 +1161,18 @@ async def list_cards_by_type(
         for f in c["facts"]:
             if f.get("emphasis") and str(f["v"]).startswith("¥"):
                 total += float(str(f["v"])[1:].replace(",", ""))
-    return {
+    out = {
         "cards": items,
         "count": len(items),
         "amount_total": round(total, 2),
         "blocked": sum(1 for c in items
                        if any(f["level"] == "block" for f in c["flags"])),
     }
+    # 🆕 汇总：一次弹 20 张卡没法看，先给一张总账再逐条展开。
+    #   合计基于全量而非截断后的前 20 条，否则总数与列表对不上。
+    if card_type == "ledger_settle":
+        out["summary"] = await _cards.summarize_settle(db, current)
+    return out
 
 
 class CardActionIn(BaseModel):

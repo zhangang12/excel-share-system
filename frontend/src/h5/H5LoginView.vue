@@ -18,8 +18,13 @@ interface LoginResult extends Partial<LoginResp> {
 
 const router = useRouter()
 
+const REMEMBER_KEY = 'pms_h5_remember'
+
 const step = ref<1 | 2>(1)
-const form = reactive({ username: '', password: '' })
+// 记住的只有用户名。密码一个字都不存——「记住我」延长的是服务端令牌有效期(30 天)，
+// 不是把密码缓存在手机上。手机丢了点「退出」即失效。
+const form = reactive({ username: localStorage.getItem(REMEMBER_KEY) || '', password: '' })
+const remember = ref(!!localStorage.getItem(REMEMBER_KEY))
 const showPwd = ref(false)
 const preToken = ref('')
 const digits = ref<string[]>(['', '', '', '', '', ''])
@@ -29,6 +34,8 @@ const err = ref('')
 
 async function finishLogin(resp: LoginResp) {
   setSession(resp.access_token, resp.user)
+  if (remember.value) localStorage.setItem(REMEMBER_KEY, form.username)
+  else localStorage.removeItem(REMEMBER_KEY)
   await router.replace('/')
 }
 
@@ -37,7 +44,7 @@ async function submit() {
   busy.value = true; err.value = ''
   try {
     const { data: resp } = await http.post<LoginResult>('/auth/login',
-      { username: form.username, password: form.password })
+      { username: form.username, password: form.password, remember: remember.value })
     if (resp.gate_required && resp.pre_token) {
       preToken.value = resp.pre_token
       step.value = 2
@@ -75,7 +82,7 @@ async function verify() {
   busy.value = true; err.value = ''
   try {
     const { data } = await http.post<LoginResp>('/auth/login/verify-gate',
-      { username: form.username, pre_token: preToken.value, code })
+      { username: form.username, pre_token: preToken.value, code, remember: remember.value })
     await finishLogin(data)
   } catch (e: any) {
     err.value = errText(e, '验证码不正确')
@@ -89,7 +96,7 @@ async function resend() {
   busy.value = true; err.value = ''
   try {
     const { data: resp } = await http.post<LoginResult>('/auth/login',
-      { username: form.username, password: form.password })
+      { username: form.username, password: form.password, remember: remember.value })
     if (resp.pre_token) preToken.value = resp.pre_token
     err.value = '新验证码已发出，旧码作废'
   } catch (e: any) {
@@ -129,6 +136,10 @@ async function resend() {
             </button>
           </label>
         </div>
+        <label class="remember">
+          <input type="checkbox" v-model="remember" />
+          <span>30 天内免登录</span>
+        </label>
         <p v-if="err" class="err">{{ err }}</p>
         <button class="h5-btn" :disabled="busy" @click="submit">
           {{ busy ? '登录中…' : '继续' }}
@@ -221,11 +232,16 @@ h1 { margin: 0; font-size: 22px; font-weight: 700; color: var(--h5-ink); letter-
   flex: none; width: 16px; height: 16px; border-radius: 50%; background: var(--h5-blue);
   color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700;
 }
+.remember {
+  display: flex; align-items: center; gap: 8px; margin-top: 14px;
+  font-size: 12.5px; color: var(--h5-ink-2); cursor: pointer;
+}
+.remember input { width: 17px; height: 17px; accent-color: var(--h5-blue); margin: 0 }
 .err {
   margin: 18px 0 0; font-size: 12px; color: var(--h5-danger);
   background: rgba(196, 54, 47, .09); border-radius: 10px; padding: 9px 12px; text-align: left;
 }
-.h5-btn { margin-top: 18px }
+.h5-btn { margin-top: 16px }
 /* 错误提示出现时它自己顶了 18px，按钮就不再重复留白 */
 .err + .h5-btn { margin-top: 10px }
 .h5-btn:disabled { opacity: .6; cursor: not-allowed }
