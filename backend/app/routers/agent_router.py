@@ -1236,7 +1236,10 @@ async def _log_chat(db: AsyncSession, user: models.User, question: str, answer: 
             question=(question or "")[:_LOG_TEXT_MAX],
             answer=(answer or "")[:_LOG_TEXT_MAX],
             tools_used=list(tool_names or []),
-            via=via, model=(model or "")[:64], duration_ms=duration_ms,
+            # ⚠️ via 列是 String(8)。传 "rule-stream-fallback"（19 字符）会
+            #    StringDataRightTruncationError → 日志写不进去。真正的降级原因
+            #    本来就记在 model 字段（rule-fallback:<原因>），via 只需要粗分类。
+            via=(via or "")[:8], model=(model or "")[:64], duration_ms=duration_ms,
         ))
         await db.commit()
     except Exception as e:  # noqa: BLE001 —— 审计是旁路，任何失败都不能炸掉聊天
@@ -1644,10 +1647,12 @@ async def _chat_stream(message: str, history: list[dict], model: str,
 
         if not tc_acc:
             text = "".join(content_parts).strip()
-            if not text:
-                raise RuntimeError("LLM 返回空内容")
-            # 把 ```render 块换成代码渲染的明细，再把没推过的尾巴一次推出去
+            # ⚠️ 判空必须在**渲染之后**。模型完全可以只回一句结论 + 一个编排块，
+            #    而编排块整段被 suppress 吞掉了 —— 拿吞之前的文本判空会误判成
+            #    「LLM 返回空内容」→ 抛异常 → 整条请求降级成功能菜单。踩过。
             final = apply_render(text, last_result)
+            if not final.strip():
+                raise RuntimeError("LLM 返回空内容")
             if len(final) > streamed:
                 yield "delta", final[streamed:]
             yield "done", {"text": final, "tools": tool_names}
