@@ -254,6 +254,24 @@ async def main():
     chk("不要自己一行一行写数据" in t, "明确要求不要自己打明细")
     chk("find_entity" in str(TOOL_SCHEMAS), "模型知道有 find_entity 可用")
 
+    print("\n===== 两条回复路径必须都完整接上渲染 =====")
+    # ⚠️ 血的教训：last_result 只在非流式那条路加了赋值，流式声明了却从不赋值，
+    #    结果 H5（走流式）永远只有结论没有明细 —— 而且不报错，测不出来。
+    #    所以这里静态扫两条路径的三个环节，缺一个就红。
+    import ast as _ast, inspect as _in
+    from app.routers import agent_router as _ar
+    _src = _in.getsource(_ar)
+    _lines = _src.split("\n")
+    _tree = _ast.parse(_src)
+    for _name in ("_chat_with_llm", "_chat_stream"):
+        _fn = [n for n in _ast.walk(_tree)
+               if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and n.name == _name][0]
+        _t = "\n".join(_lines[_fn.lineno - 1:_fn.end_lineno])
+        chk("last_result: dict" in _t, f"{_name} 声明了 last_result")
+        chk("last_result = result" in _t, f"{_name} **真的给 last_result 赋了值**（漏过一次）")
+        chk("apply_render" in _t and "last_result" in _t, f"{_name} 把它传给了 apply_render")
+        chk("want_list" in _t, f"{_name} 算了 want_list（决定要不要自动补明细）")
+
     print("\n" + "=" * 58)
     if FAIL:
         print(f"❌ {len(FAIL)} 条失败：")

@@ -1712,6 +1712,12 @@ async def _chat_stream(message: str, history: list[dict], model: str,
                 result = {"error": f"{TOOL_LABELS.get(name, name)}查询失败"}
             elif name in TOOL_LABELS and name not in tool_names:
                 tool_names.append(name)
+            # 留住带明细的那份结果，收尾时按编排渲染（v2 阶段二）。
+            # ⚠️ 这行漏过一次：只在非流式那条路径加了，流式声明了 last_result
+            #    却从不赋值 → H5（走流式）永远出不来明细，只有结论。
+            if isinstance(result, dict) and any(
+                    isinstance(result.get(k), list) for k in ("items", "suppliers", "rows")):
+                last_result = result
             messages.append({"role": "tool", "tool_call_id": tc["id"],
                              "content": json.dumps(result, ensure_ascii=False, default=str)})
 
