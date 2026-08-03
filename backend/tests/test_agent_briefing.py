@@ -130,6 +130,40 @@ async def main():
             chk(txt.count("→ 可「") == 3, "每条都带一个可执行动作")
             chk("另有" in txt, "剩余项要说清楚，否则他以为只有这 3 件")
 
+        print("\n===== 按人给：两位管理层不能收到一模一样的简报 =====")
+        # ⚠️ 踩出来的：两人菜单权限都是全量，光按权限过滤，赵仁辉（仓库占其操作 36%）
+        #    收到的和杨坛一模一样、全是应收，对他等于没用。
+        #    权限只决定「能不能看」，**侧重必须从行为里来**（近 30 天审计日志）。
+        async with SessionLocal() as db2:
+            me2 = (await db2.execute(select(models.User).where(
+                models.User.username == "admin"))).scalar_one()
+            for i in range(30):
+                db2.add(models.AuditLog(user_id=me2.id, username=me2.username,
+                                        action="wh_txn", target_type="wh_txn", target_id=i))
+            for i in range(5):
+                db2.add(models.AuditLog(user_id=me2.id, username=me2.username,
+                                        action="login", target_type=None, target_id=0))
+            await db2.commit()
+            w = await briefing._focus_weights(db2, me2)
+            chk(w.get("stock") == briefing._FOCUS_BOOST,
+                f"30 次仓库操作 → 识别出仓库是他的主场：{w}")
+            chk("recv" not in w, "他不碰台账，应收不算他主场")
+
+        chk("login" in briefing._NON_BIZ_ACTIONS
+            and "user_feedback_submit" in briefing._NON_BIZ_ACTIONS,
+            "非业务动作要剔出分母（赵仁辉 40% 的操作是登录+提反馈）")
+        chk("material_category" in briefing._CAT_TARGETS["stock"],
+            "按 target_type 归类——create/update/delete 各模块通用，只看动作名归不了类")
+
+        print("\n===== 跨类别要先归一化再比 =====")
+        # 应收是几十万量纲、库存缺口才几百，不归一化的话主场加成根本翻不过来
+        mixed = [{"cat": "recv", "score": 500000.0}, {"cat": "stock", "score": 300.0}]
+        for i in mixed:
+            top_in_cat = max(x["score"] for x in mixed if x["cat"] == i["cat"])
+            i["rank"] = i["score"] / top_in_cat * (1.5 if i["cat"] == "stock" else 1.0)
+        chk(max(mixed, key=lambda x: x["rank"])["cat"] == "stock",
+            "归一化后主场（仓库）能排到大额应收前面——这才叫按人给")
+
         # ================= 端点 =================
         print("\n===== 端点 =====")
         r = await c.get("/api/agent/briefing/config", headers=H)
