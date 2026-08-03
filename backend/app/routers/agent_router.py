@@ -1139,6 +1139,37 @@ async def list_pending_cards(
     }
 
 
+@router.get("/cards/{card_type}")
+async def list_cards_by_type(
+    card_type: str,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按类型取卡。类型必须在白名单里（原则三），否则 400 并留痕。
+
+    ledger_settle 额外给 amount_total —— 门户上「盯不住的应收 ¥253万」那个数
+    要与卡片列表同源，两处各算一遍必然对不上。
+    """
+    from ..agent import cards as _cards
+    if card_type not in _cards.ASSEMBLERS:
+        await write_audit(db, user=current, action="card_action_denied",
+                          target_type=card_type, detail="未知卡片类型")
+        raise HTTPException(400, "未知的卡片类型")
+    items = await _cards.ASSEMBLERS[card_type](db, current)
+    total = 0.0
+    for c in items:
+        for f in c["facts"]:
+            if f.get("emphasis") and str(f["v"]).startswith("¥"):
+                total += float(str(f["v"])[1:].replace(",", ""))
+    return {
+        "cards": items,
+        "count": len(items),
+        "amount_total": round(total, 2),
+        "blocked": sum(1 for c in items
+                       if any(f["level"] == "block" for f in c["flags"])),
+    }
+
+
 class CardActionIn(BaseModel):
     type: str
     ref: int
@@ -1174,9 +1205,13 @@ async def verify_card_action(
         await write_audit(db, user=current, action="card_action_denied",
                           target_type=body.type, target_id=body.ref, detail=why)
         raise HTTPException(400, why)
-    # 重新装配一次，拿最新的 flags：卡是 15 分钟前发的，这期间单子可能已被别人处理
+    # 重新装配一次，拿最新的 flags：卡是 15 分钟前发的，这期间单子可能已被别人处理。
+    # 按 type 找装配器——写死某一类的话，新加的卡类型永远校验不过。
     from ..agent import cards as _cards
-    fresh = await _cards.assemble_pay_req_cards(db, current, refs=[body.ref])
+    assembler = _cards.ASSEMBLERS.get(body.type)
+    if assembler is None:
+        raise HTTPException(400, "该卡片类型没有装配器")
+    fresh = await assembler(db, current, refs=[body.ref])
     if not fresh:
         raise HTTPException(400, "该单已不在你的待办里，可能已被处理")
     blocking = [f for f in fresh[0]["flags"] if f["level"] == "block"]

@@ -39,6 +39,49 @@ interface CardDef {
 }
 
 export const CARD_REGISTRY: Record<string, CardDef> = {
+  /**
+   * 回款登记。两个动作都打 payment-note——跟他在台账页点批注是同一个端点。
+   * 副作用在后端：settle_ship 清 ship_receivable，settle_balance 清 balance
+   * 并把原值存进 balance_contract。两者都可逆（删批注即恢复），
+   * 2026-08-03 本地跑过完整往返验证才放出来。
+   */
+  ledger_settle: {
+    title: '回款登记',
+    glyph: '收',
+    actions: {
+      settle_ship: {
+        label: '发货款已收',
+        needsReason: true,
+        run: (ref, reason) => http.put(`/sales/ledger/${ref}/payment-note`,
+          { field: 'before_ship', note: reason || '' }),
+      },
+      settle_balance: {
+        label: '尾款已收',
+        needsReason: true,
+        run: (ref, reason) => http.put(`/sales/ledger/${ref}/payment-note`,
+          { field: 'balance', note: reason || '' }),
+      },
+    },
+  },
+
+  sales_order_approve: {
+    title: '销售订单审批',
+    glyph: '单',
+    actions: {
+      approve: {
+        label: '通过',
+        run: (ref) => http.post(`/sales/ledger/${ref}/order-approve`, {}),
+      },
+      reject: {
+        label: '驳回',
+        danger: true,
+        needsReason: true,
+        run: (ref, reason) => http.post(`/sales/ledger/${ref}/order-reject`,
+          { reason: reason || '' }),
+      },
+    },
+  },
+
   pay_req_approve: {
     title: '请款审批',
     glyph: '￥',

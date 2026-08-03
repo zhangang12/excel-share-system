@@ -46,7 +46,9 @@ CATALOG: list[dict] = [
     # 采购 0 次）。desc 与 agent_router.TOOL_DESC 保持同一句话，别写两份说法。
     {"key": "receivable_blind", "label": "盯不住的应收",
      "desc": "催办查不到的钱：没填到期日的尾款 + 发货款应收",
-     "glyph": "盯", "tone": "danger", "q": "盯不住的应收", "tool": "receivable_blind"},
+     "glyph": "盯", "tone": "danger", "q": "盯不住的应收", "tool": "receivable_blind",
+     # 这张卡不止是查：点进去能直接登记回款（ledger_settle 卡），查到就能销账
+     "card": "ledger_settle"},
     {"key": "shipment_receiver", "label": "待填收货人",
      "desc": "发货单收货人还空着，填了才能送货签收",
      "glyph": "收", "tone": "warn", "q": "待填收货人", "tool": "shipment_receiver"},
@@ -55,7 +57,8 @@ CATALOG: list[dict] = [
      "glyph": "缺", "tone": "warn", "q": "台账缺件", "tool": "ledger_incomplete"},
     {"key": "order_pending", "label": "待审销售单",
      "desc": "销售下了单、等主管审批的订单",
-     "glyph": "单", "tone": "blue", "q": "待审批销售订单", "tool": "order_pending"},
+     "glyph": "单", "tone": "blue", "q": "待审批销售订单", "tool": "order_pending",
+     "card": "sales_order_approve"},
     {"key": "invoice_pending", "label": "待开票",
      "desc": "已申请开票、等财务出票的台账行",
      "glyph": "票", "tone": "blue", "q": "待开票", "tool": "invoice_pending"},
@@ -173,7 +176,8 @@ def expand(tiles: list[dict]) -> list[dict]:
             c = _BY_KEY[t["key"]]
             # 带上 tool：前端据此判断能不能走直答通道（不经 LLM，快两个数量级）
             out.append({k: c[k] for k in ("key", "label", "desc", "glyph", "tone", "q")}
-                       | {"kind": c.get("kind"), "tool": c.get("tool")})
+                       | {"kind": c.get("kind"), "tool": c.get("tool"),
+                          "card": c.get("card")})
     return out
 
 

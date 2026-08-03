@@ -58,12 +58,14 @@ async function loadPending() {
   } catch { /* 拿不到待办不影响聊天，静默 */ }
 }
 
-async function openApprovals() {
+async function openApprovals(cardType = 'pay_req_approve', label = '待我审批的请款单') {
   thinking.value = true
-  msgs.value.push({ kind: 'user', text: '待我审批的请款单' })
+  msgs.value.push({ kind: 'user', text: label })
   await scrollDown()
   try {
-    const { data } = await http.get('/agent/cards/pending')
+    const url = cardType === 'pay_req_approve'
+      ? '/agent/cards/pending' : `/agent/cards/${cardType}`
+    const { data } = await http.get(url)
     // 白名单在前端再过一道：后端给了未登记的 type 就整张不渲染（原则三）
     // 白名单在前端再过一道；再把能批的排前面——批不了的压后，别让人先划过一堆灰按钮
     const cards = (data.cards as AgentCard[])
@@ -75,7 +77,7 @@ async function openApprovals() {
     msgs.value.push({
       kind: 'ai',
       text: n === 0
-        ? '你名下没有待审的请款单。想看别的可以直接问我，比如「采购未到货」「尾款到期」。'
+        ? '这一类现在没有待办。想看别的可以直接问我。'
         : `共 ${n} 单${data.blocked ? `，其中 ${data.blocked} 单按职责分离需他人处理` : ''}。`
           + (dropped ? `（另有 ${dropped} 条无法安全展示，请到电脑端查看）` : ''),
     })
@@ -97,6 +99,9 @@ async function send(text?: string) {
   //   「查询一下所有的待审批的待办?」也劫持成查请款单——用户打的字必须原样送模型，
   //   宁可模型答不好，也不能把问题偷换掉。
   if (CARD_ENTRIES.has(q)) return openApprovals()
+  // 门户带 card= 进来的，走对应类型的卡片通道
+  const ct = route.query.card
+  if (typeof ct === 'string' && ct && msgs.value.length === 0) return openApprovals(ct, q)
 
   msgs.value.push({ kind: 'user', text: q })
   thinking.value = true
@@ -223,7 +228,7 @@ onMounted(() => {
           <div class="wt">{{ greet }}，{{ who }}</div>
           <div class="ws">查数据、批单子，一句话交给我</div>
 
-          <button v-if="pending.count" class="sumcard" @click="openApprovals">
+          <button v-if="pending.count" class="sumcard" @click="openApprovals()">
             <div class="sk">等你签字</div>
             <div class="sv">{{ amountText }}</div>
             <div class="chips">

@@ -17,7 +17,8 @@ import { clearSession, displayName } from './session'
 
 interface Tile {
   key: string; label: string; desc?: string; glyph?: string
-  tone?: string; q: string; custom?: boolean; kind?: string | null; tool?: string | null
+  tone?: string; q: string; custom?: boolean; kind?: string | null
+  tool?: string | null; card?: string | null
 }
 
 const router = useRouter()
@@ -102,10 +103,15 @@ function addCustom() {
   tiles.value.push({ key: `custom:new${Date.now()}`, label, q, custom: true, glyph: '问', tone: 'blue', desc: q })
 }
 
-/** 有 tool 的卡走直答通道（不经 LLM，几十毫秒）；自定义卡只能走对话 */
+/**
+ * 有 card 的走卡片通道（能查也能动手）；其余走对话（LLM 流式）。
+ * 直答那条通道保留但门户不用——绕过模型的话它就是个普通报表页。
+ */
 const ask = (t: Tile) => {
   if (editing.value) return
-  router.push({ name: 'chat', query: t.tool ? { q: t.q, tool: t.tool } : { q: t.q } })
+  const query: Record<string, string> = { q: t.q }
+  if (t.card) query.card = t.card
+  router.push({ name: 'chat', query })
 }
 const openChat = () => router.push({ name: 'chat' })
 function logout() { clearSession(); router.replace('/login') }

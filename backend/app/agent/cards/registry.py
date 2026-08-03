@@ -16,6 +16,11 @@
 # 后端只认「这个 type 允许哪些 key」，多一个字都不给模型发挥的空间。
 CARD_TYPES: dict[str, set[str]] = {
     "pay_req_approve": {"approve", "reject"},
+    # 🆕 回款登记：查询工具找出 49 笔 ¥253 万无人管的应收，这张卡让他当场销账。
+    #    两个动作都打 PUT /sales/ledger/{id}/payment-note，可逆（删批注即恢复）。
+    "ledger_settle": {"settle_ship", "settle_balance"},
+    # 🆕 销售订单审批：打 POST /sales/ledger/{id}/order-approve|order-reject
+    "sales_order_approve": {"approve", "reject"},
 }
 
 
