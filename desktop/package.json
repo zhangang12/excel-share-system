@@ -1,12 +1,13 @@
 {
   "name": "pms-desktop",
-  "version": "1.0.29",
+  "version": "1.0.30",
   "private": true,
   "description": "同辉项目管理系统 Windows 桌面客户端（Electron 壳，内置前端 dist，自动更新走服务器 nginx 静态目录）",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "pack:win": "electron-builder --win nsis --publish never"
+    "pack:win": "electron-builder --win nsis --publish never",
+    "test": "node test/health.test.js"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"

@@ -11,11 +11,14 @@
 //  - 自动更新走 electron-updater（generic provider，服务器 nginx 静态目录）。
 //  - 强制最低版本：启动时拉 version.json，低于 min_version 只给「立即更新」一条路。
 // ============================================================
-const { app, BrowserWindow, Menu, dialog, session, shell, ipcMain, Notification } = require('electron');
+const { app, BrowserWindow, Menu, dialog, session, shell, ipcMain, Notification,
+        powerMonitor } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { shouldRecoverPaint, paintAction, compareVersions,
+        requiredVersion } = require('./lib/health');
 
 const UPDATE_BASE_URL = 'http://8.141.123.141/desktop/';
 const VERSION_JSON_URL = UPDATE_BASE_URL + 'version.json';
@@ -52,13 +55,75 @@ try {
   }
 } catch { /* ignore */ }
 
-// GPU / 工具进程崩溃：记录并打标记（下次启动降级），当前这次由页面自恢复兜着
+// GPU / 工具进程崩溃。
+// ⚠️ 这里原来只打个「下次启动禁用硬件加速」的标记，注释写「当前这次由页面自恢复兜着」——
+//    **是错的**。页面自恢复只挂在 render-process-gone / unresponsive 上，
+//    而 GPU 进程死掉时渲染进程还活着、也照常响应，那两个事件一个都不会触发。
+//    结果就是：窗口停止合成 → 只剩 backgroundColor 的深蓝 → 本次会话没有任何补救，
+//    用户只能去任务管理器杀进程。王利利报的「到4点多一点就黑屏了」就是这个
+//    （他跑的是 1.0.28，render 崩溃自恢复本来就装着，可见崩的不是渲染进程）。
 app.on('child-process-gone', (_e, details) => {
-  logCrash('child-process-gone', `${details.type} ${details.reason} exitCode=${details.exitCode}`);
+  const d = `${details.type} ${details.reason} exitCode=${details.exitCode}`;
+  logCrash('child-process-gone', d);
+  sendReport('crash', crashLogTail(), { where: 'child-process-gone', type: details.type,
+                                        reason: details.reason });
   if (details.type === 'GPU') {
     try { fs.writeFileSync(GPU_FLAG(), new Date().toISOString()); } catch { /* ignore */ }
+    // 本次也要救。同理不能用重载——坏的是 GPU 进程，换个文档没用。
+    // 给 Chromium 几秒自己拉起 GPU 进程的机会；心跳回来了就当没事，
+    // 没回来说明真拉不起来，走重启（下次启动已被 GPU 标记降级为软件渲染）。
+    setTimeout(() => checkPaint('GPU 进程退出后画面未恢复'), 20000);
   }
 });
+
+// ---- 画面心跳：接住「什么事件都不触发」的黑屏 ----
+// requestAnimationFrame 由合成器驱动，合成器没了 rAF 就停，而渲染进程仍然活着且响应，
+// 所以这是唯一能从主进程侧察觉「窗口不画了」的信号。preload 里每 2 秒报一次。
+let lastPaintBeat = Date.now();
+ipcMain.on('pms-desktop:paint-beat', () => { lastPaintBeat = Date.now(); });
+// 画面卡死不能用「重载页面」救。
+// 合成器活在 **GPU 进程**里，不在渲染进程；webContents.reload() 换的是渲染进程的文档，
+// 用的还是那个坏掉的 GPU 进程 —— 重载完大概率还是一片深蓝。
+// 用户手工的解法是「任务管理器杀进程重开」，那就把这件事自动化：
+// 打上 GPU 标记（下次启动禁用硬件加速，从根上不再犯）后 relaunch。
+// token 在 localStorage 里，重启回来不用重新登录。
+const APP_START = Date.now();
+let paintRelaunching = false;
+function recoverPaint(why, stalledMs) {
+  const act = paintAction({ uptimeMs: Date.now() - APP_START,
+                            alreadyRelaunching: paintRelaunching });
+  if (act === 'noop') return;
+  if (act === 'log-only') { logCrash('paint-stall', `${why}（启动未满宽限期，只记录不重启）`); return; }
+  paintRelaunching = true;
+  const detail = `${why}：${Math.round(stalledMs / 1000)}s 没有画面心跳`;
+  logCrash('paint-stall', detail);
+  sendReport('crash', crashLogTail(), { where: 'paint-stall', why });
+  try { fs.writeFileSync(GPU_FLAG(), new Date().toISOString()); } catch { /* ignore */ }
+  try {
+    new Notification({ title: '画面无响应，正在自动重启',
+                       body: '重启后仍是登录状态，无需重新输入密码。' }).show();
+  } catch { /* 通知失败不影响重启 */ }
+  setTimeout(() => { app.relaunch(); app.exit(0); }, 1500);
+}
+
+function checkPaint(why) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const stalledMs = Date.now() - lastPaintBeat;
+  if (!shouldRecoverPaint({ focused: mainWindow.isFocused(),
+                            minimized: mainWindow.isMinimized(), stalledMs })) return;
+  recoverPaint(why, stalledMs);
+}
+
+// 息屏/锁屏时 rAF 合法地停，回来时先把计时清零，别把睡了一夜当成崩溃
+powerMonitor.on('resume', () => { lastPaintBeat = Date.now(); setTimeout(() => checkPaint('系统唤醒'), 8000); });
+powerMonitor.on('unlock-screen', () => { lastPaintBeat = Date.now(); setTimeout(() => checkPaint('解锁'), 8000); });
+// 用户回到窗口前：给 rAF 几秒缓过来，还不动就是真死了
+app.on('browser-window-focus', () => setTimeout(() => checkPaint('窗口获得焦点'), 5000));
+// 兜底轮询：只在人确实坐在机器前时才判（否则息屏期间会误判）
+setInterval(() => {
+  // 人确实坐在机器前（而不是息屏挂着）才判
+  if (powerMonitor.getSystemIdleTime() < 30) checkPaint('人在操作但画面不动');
+}, 20000);
 
 // ---- 启动页：无框小窗，先声夺人；主窗口 Vue 挂载完成（app-ready）后切换 ----
 function createSplash() {
@@ -125,17 +190,6 @@ const deviceId = loadDeviceId();
 ipcMain.on('pms-desktop:info', (e) => {
   e.returnValue = { version: app.getVersion(), deviceId, forceNotes };
 });
-
-// ---- 简易 semver 比较：a<b 返回 -1，相等 0，a>b 返回 1（只比 x.y.z 数字段）----
-function compareVersions(a, b) {
-  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
-    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
-  }
-  return 0;
-}
 
 function log(...args) {
   console.log('[pms-desktop]', ...args);
@@ -257,11 +311,7 @@ async function checkForceUpdate() {
     const res = await fetch(VERSION_JSON_URL, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
     if (!res.ok) { log('version.json 不可用（', res.status, '），跳过强制检查'); return null; }
     const j = (await res.json()) || {};
-    let need = j.min_version || '';
-    if (j.force_latest) {
-      const latest = await latestChannelVersion();
-      if (latest && (!need || compareVersions(latest, need) > 0)) need = latest;
-    }
+    const need = requiredVersion(j, j.force_latest ? await latestChannelVersion() : '', true);
     if (need && compareVersions(app.getVersion(), need) < 0) {
       log(`当前版本 ${app.getVersion()} 低于要求 ${need}，进入强制更新`);
       return { ...j, need };
@@ -447,6 +497,10 @@ function createWindow() {
     if (reloadingAfterCrash) return;          // 防止崩溃风暴里反复重载
     reloadingAfterCrash = true;
     setTimeout(() => { reloadingAfterCrash = false; }, 5000);
+    // ⚠️ 原来这里只写本地 crash.log，从不上报 —— 所以生产 desktop_reports 一条都没有，
+    //    而那**不代表没崩过**，只代表我们看不见。现在补上，否则下次还是两眼一抹黑。
+    sendReport('crash', crashLogTail(), { where: 'renderer-recover', tag });
+    lastPaintBeat = Date.now();               // 重载后 rAF 要重开，先给个宽限期
     if (!mainWindow || mainWindow.isDestroyed()) return;
     try {
       mainWindow.webContents.reload();

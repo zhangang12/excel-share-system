@@ -40,3 +40,16 @@ contextBridge.exposeInMainWorld('pmsDesktop', {
   triggerUpdate: () => ipcRenderer.send('force-update:trigger'),
   quitAndInstall: () => ipcRenderer.send('force-update:quit'),
 });
+
+// ---- 画面心跳 ----
+// 只有合成器还活着 rAF 才会被回调。GPU 进程掉了的话：渲染进程照常跑、照常响应、
+// setTimeout 照常走，但 rAF 停 —— 主进程那两个崩溃事件都不触发，窗口就一直是
+// backgroundColor 的深蓝。所以用 rAF 而不是 setInterval，换成定时器就测不出来了。
+(function paintBeat() {
+  let last = 0;
+  function tick(ts) {
+    if (ts - last > 2000) { last = ts; ipcRenderer.send('pms-desktop:paint-beat'); }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
