@@ -603,9 +603,20 @@ def _cap(result, args: dict):
     return result
 
 
-async def _run_tool(name: str, args: dict, db: AsyncSession, current: models.User):
+async def _run_tool(name: str, args: dict, db: AsyncSession, current: models.User,
+                    seen: set | None = None):
     """统一出口：所有工具结果都过 _cap，保证 limit 生效、截断被记录下来。
-    别在各个 tool_xxx 里各写各的截断——那样 limit 参数形同虚设（踩过）。"""
+    别在各个 tool_xxx 里各写各的截断——那样 limit 参数形同虚设（踩过）。
+
+    seen：本轮对话已调过的 (工具, 参数)。**同工具同参数重复调用直接拦掉** ——
+    v1 靠提示词第 5 条口头约束「不要重复调用同一工具」，模型照样重复，
+    白烧一轮往返。硬拦比嘱咐可靠。
+    """
+    if seen is not None:
+        sig = (name, json.dumps(args or {}, sort_keys=True, ensure_ascii=False))
+        if sig in seen:
+            return {"error": "这个查询本轮已经做过了，直接用上一次的结果作答，不要重复查"}
+        seen.add(sig)
     return _cap(await _run_tool_inner(name, args, db, current), args)
 
 
@@ -692,6 +703,26 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
 # 用户明确要全量时的措辞。命中就放开 max_tokens ——
 # 700 tokens 连 20 条中文明细都写不完，用户问「全部列举」只会得到半截清单。
 _FULL_LIST_HINT = ("全部", "都列", "列全", "完整", "所有", "一个不漏", "逐条", "详细列举")
+
+# ── v2 阶段六：模型路由 ──
+# v1 是 `model = body.model or cfg["model"]`，一个默认值走到底：
+# 意图分类、实体解析、清单格式化、深度分析全用同一个大模型。
+# 分析类问题才值得用大模型；单点查询用小模型就够，快一半、便宜一截。
+_HEAVY_HINT = ("为什么", "分析", "复盘", "怎么办", "建议", "对比", "趋势",
+               "靠谱", "风险", "评估", "原因", "怎么样")
+
+
+def _route_model(message: str, cfg: dict, explicit: str | None) -> str:
+    """按任务挑模型。用户显式指定的优先，永远不覆盖他的选择。"""
+    if explicit:
+        return explicit
+    fast = (cfg.get("model_fast") or "").strip()
+    if not fast:
+        return cfg["model"]
+    t = message or ""
+    if any(k in t for k in _HEAVY_HINT) or any(k in t for k in _FULL_LIST_HINT):
+        return cfg["model"]          # 需要推理/长输出 → 大模型
+    return fast                      # 单点查询 → 小模型
 _MAX_TOKENS_DEFAULT = 700
 _MAX_TOKENS_FULL = 3000
 
@@ -797,6 +828,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
     messages = ([{"role": "system", "content": sys_prompt}]
                 + history + [{"role": "user", "content": message}])
     last_result: dict | None = None   # v2：明细交给代码渲染，需要留住原始工具结果
+    seen: set = set()                 # v2：同工具同参数不得重复调用（硬拦，不靠提示词）
     for _ in range(4):  # 工具轮次上限，防死循环
         data = await _llm_request(messages, model, cfg, schemas, max_tokens)
         msg = data["choices"][0]["message"]
@@ -822,7 +854,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
 
         async def _one(name: str, args: dict):
             async with SessionLocal() as s2:
-                return await _run_tool(name, args, s2, user)
+                return await _run_tool(name, args, s2, user, seen)
 
         results = await asyncio.gather(*[_one(n, a) for _, n, a in calls],
                                        return_exceptions=True)
@@ -1631,8 +1663,20 @@ async def _chat_stream(message: str, history: list[dict], model: str,
     StreamingResponse 的生成器在请求处理函数返回之后才跑，Depends 给的 session 那时已关。"""
     tool_names: list[str] = []
     roles = "、".join(sorted(user.role_codes)) if getattr(user, "role_codes", None) else "—"
+    # ── v2 阶段四/七：别名展开 + 口径召回 + 会话焦点 ──
+    from ..agent import memory as _mem, skills as _sk
+    async with SessionLocal() as _s:
+        message = await _mem.expand(_s, message)          # 「南京那个」→ 准确说法
+        recalled = await _mem.recall(_s, message)         # 相关口径（RAG）
+    focus = _mem.focus_from_history(history)
+
     sys_prompt = _SYSTEM_PROMPT.format(today=_today().isoformat(),
                                        user_name=_uname(user), roles=roles)
+    if recalled:
+        # 口径原来硬编码在提示词里，加一条改一次代码。现在按需注入，只给相关的那几条。
+        sys_prompt += "\n\n# 与本次提问相关的口径（务必遵守）\n" + \
+                      "\n".join(f"- {r}" for r in recalled)
+    sys_prompt += _mem.focus_hint(focus)
     max_tokens = _max_tokens_for(message)
     want_list = max_tokens > _MAX_TOKENS_DEFAULT
     allowed = _allowed_tools(user)
@@ -1641,6 +1685,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
                 + history + [{"role": "user", "content": message}])
 
     last_result: dict | None = None   # v2 阶段二：留住工具原始结果，收尾时代码渲染明细
+    seen: set = set()                 # v2：同工具同参数不得重复调用（硬拦，不靠提示词）
     for _ in range(4):
         content_parts: list[str] = []
         tc_acc: dict = {}
@@ -1702,7 +1747,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
 
         async def _one(name: str, args: dict):
             async with SessionLocal() as s2:
-                return await _run_tool(name, args, s2, user)
+                return await _run_tool(name, args, s2, user, seen)
 
         results = await asyncio.gather(*[_one(n, a) for _, n, a in calls],
                                        return_exceptions=True)
@@ -1747,12 +1792,37 @@ async def chat_stream(
 
         async with SessionLocal() as db:
             cfg = await _effective_llm_config(db)
-            model = (body.model or "").strip() or cfg["model"]
+            model = _route_model(text, cfg, (body.model or "").strip() or None)
             if model not in _model_whitelist(cfg):
                 yield sse("error", {"message": f"无效模型「{model}」"})
                 return
             allowed = _allowed_tools(current)
             reply, tools, via = "", [], "llm"
+
+            # ── v2 阶段三：Skill 命中就不进 ReAct ──
+            # 可预测性来自固定编排，不来自模型即兴发挥。省一次规划、答案稳定、能写测试。
+            # ⚠️ 命中判定必须严（全词匹配）：宁可漏判走 ReAct，也不能把用户真正的问题
+            #    劫持成预设编排 —— v1 那个贪婪正则把「查询一下所有的待审批的待办?」
+            #    劫持成查请款单，教训还在。
+            from ..agent import skills as _sk, memory as _mem2
+            _menu = set(menus.user_menu_keys(current))
+            _hit = _sk.match(await _mem2.expand(db, text))
+            if _hit and (not _hit["needs"] or set(_hit["needs"]) & _menu):
+                try:
+                    reply = await _sk.run(db, current, _hit, text)
+                    via = "skill"
+                    yield sse("tool", {"label": _hit["name"]})
+                    yield sse("delta", {"text": reply})
+                    ms = int((time.perf_counter() - t0) * 1000)
+                    await _log_chat(db, current, text, reply, [], via="skill",
+                                    model=f"skill:{_hit['key']}", duration_ms=ms)
+                    yield sse("done", {"duration_ms": ms, "fallback": False,
+                                       "sources": [_hit["name"]],
+                                       "suggestions": _suggestions_for([], allowed)})
+                    return
+                except Exception as e:  # noqa: BLE001 —— 技能炸了就退回 ReAct，别整条挂掉
+                    log.warning("[agent] 技能 %s 执行失败，转 LLM: %s", _hit["key"], e)
+
             try:
                 if not cfg["api_key"]:
                     raise RuntimeError("未配置 api_key")
@@ -1971,3 +2041,63 @@ async def my_briefing(
     from ..agent import briefing
     brief = await briefing.build(current, top=top)
     return {**brief, "text": briefing.render(brief, current.full_name or current.username)}
+
+# ==================== v2：知识库 / 别名 / 技能（可维护，不用改代码）====================
+
+
+class KnowledgeIn(BaseModel):
+    items: list[dict]
+
+
+class AliasIn(BaseModel):
+    word: str
+    target: str
+
+
+@router.get("/knowledge")
+async def list_knowledge(
+    _: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """口径/SOP 知识条目。原来这些**硬编码在提示词里**，加一条要改代码。"""
+    from ..agent import memory as mem
+    return {"items": await mem.knowledge(db), "aliases": await mem.aliases(db)}
+
+
+@router.put("/knowledge")
+async def save_knowledge(
+    body: KnowledgeIn,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..agent import memory as mem
+    items = [{"q": str(i.get("q", "")).strip(), "a": str(i.get("a", "")).strip()}
+             for i in body.items if str(i.get("a", "")).strip()]
+    await mem.save_knowledge(db, items)
+    await write_audit(db, user=current, action="agent_knowledge_save",
+                      target_type="app_setting", target_id=0, detail=f"{len(items)} 条")
+    return {"message": f"已保存 {len(items)} 条口径"}
+
+
+@router.post("/alias")
+async def add_alias(
+    body: AliasIn,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """术语别名：「南京那个」→ 项目号。整词替换，不做模糊。"""
+    from ..agent import memory as mem
+    w, t = body.word.strip(), body.target.strip()
+    if not w or not t:
+        raise HTTPException(400, "别名和目标都不能为空")
+    await mem.set_alias(db, w, t)
+    await write_audit(db, user=current, action="agent_alias_add",
+                      target_type="app_setting", target_id=0, detail=f"{w}→{t}")
+    return {"message": f"「{w}」以后会被理解成「{t}」"}
+
+
+@router.get("/skills")
+async def list_skills(current: models.User = Depends(get_current_user)):
+    """当前用户能用的技能。命中触发词就走固定编排，不进 ReAct。"""
+    from ..agent import skills as sk
+    return {"items": sk.available(set(menus.user_menu_keys(current)))}
