@@ -12,7 +12,7 @@ import { clearSession, displayName } from './session'
 import { renderMd } from './markdown'
 import { useSpeech } from './useSpeech'
 import H5ApproveCard from './H5ApproveCard.vue'
-import { isKnownCard, type AgentCard } from './cardRegistry'
+import { isKnownCard, cardTitle, type AgentCard } from './cardRegistry'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,7 +26,10 @@ type Msg =
   | { kind: 'user'; text: string }
   | { kind: 'ai'; text: string; sources?: string[] }
   // 汇总卡：先给总账，点「逐条处理」才展开明细。一次弹 20 张没人看得下去。
-  | { kind: 'summary'; summary: CardSummary; cards: AgentCard[]; expanded: boolean }
+  // 汇总 → 列表 → 单笔明细，三级都能退回。
+  // 原来是 expanded 布尔：一点就把 20 张卡全铺开，而且**收不回去**。
+  | { kind: 'summary'; summary: CardSummary; cards: AgentCard[]
+      view: 'sum' | 'list' | 'one'; ref?: number }
   | { kind: 'cards'; cards: AgentCard[] }
 
 const msgs = ref<Msg[]>([])
@@ -65,9 +68,12 @@ async function loadPending() {
   } catch { /* 拿不到待办不影响聊天，静默 */ }
 }
 
-async function openApprovals(cardType = 'pay_req_approve', label = '待我审批的请款单') {
+async function openApprovals(cardType = 'pay_req_approve', label?: string) {
   thinking.value = true
-  msgs.value.push({ kind: 'user', text: label })
+  // ⚠️ 别给 label 写死默认值。曾经默认成「待我审批的请款单」，
+  //    而首页「今天该管的」只传 cardType 不传 label，结果点回款登记、
+  //    点销售订单，气泡统统显示「待我审批的请款单」——三类卡片一个名字。
+  msgs.value.push({ kind: 'user', text: label || cardTitle(cardType) })
   await scrollDown()
   try {
     const url = cardType === 'pay_req_approve'
@@ -93,7 +99,7 @@ async function openApprovals(cardType = 'pay_req_approve', label = '待我审批
     }
     if (n) {
       if (data.summary && n > 3) {
-        msgs.value.push({ kind: 'summary', summary: data.summary, cards, expanded: false })
+        msgs.value.push({ kind: 'summary', summary: data.summary, cards, view: 'sum' })
       } else {
         msgs.value.push({ kind: 'cards', cards })
       }
@@ -216,8 +222,29 @@ async function streamChat(q: string, history: { role: string; content: string }[
   }
 }
 
+/** 列表行的主副文案。卡片的 facts 是后端排好序的，第一条是客户/项目，
+ *  emphasis 的那条是金额——直接复用，不为了列表再开一个接口。 */
+function rowOf(c: AgentCard) {
+  const money = c.facts.find((f) => f.emphasis)
+  const warn = c.flags.find((f) => f.level === 'warn')
+  return {
+    title: c.facts[0]?.v || `#${c.ref}`,
+    money: money ? `${money.k} ${money.v}` : '',
+    warn: warn?.msg || '',
+    blocked: c.flags.some((f) => f.level === 'block'),
+  }
+}
+
 function onCardDone() {
   loadPending()
+}
+
+/** 明细页里处理完一笔：从列表去掉并退回列表。
+ *  留在原地会让人以为没生效，还得自己想办法退出去。 */
+function onSummaryCardDone(m: Extract<Msg, { kind: 'summary' }>, ref: number) {
+  loadPending()
+  m.cards = m.cards.filter((c) => c.ref !== ref)
+  m.view = m.cards.length ? 'list' : 'sum'
 }
 
 function logout() {
@@ -287,7 +314,8 @@ onMounted(() => {
             </div>
           </div>
           <div v-else-if="m.kind === 'summary'" class="cards">
-            <div class="sumcard">
+            <!-- ① 总账 -->
+            <div v-if="m.view === 'sum'" class="sumcard">
               <div class="sk">合计待处理</div>
               <div class="sv">¥{{ m.summary.total.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) }}</div>
               <div class="ssub">{{ m.summary.count }} 笔 · 最久的挂了 {{ m.summary.oldest_days }} 天</div>
@@ -299,13 +327,40 @@ onMounted(() => {
                   <div class="sgd">{{ g.note }}</div>
                 </div>
               </div>
-              <button v-if="!m.expanded" class="sbtn" @click="m.expanded = true">
-                逐条处理（{{ m.summary.shown }} 笔）
+              <button class="sbtn" @click="m.view = 'list'">
+                逐条处理（{{ m.cards.length }} 笔）
               </button>
             </div>
-            <template v-if="m.expanded">
-              <H5ApproveCard v-for="(c, k) in m.cards" :key="c.ref" :card="c"
-                             :index="k + 1" :total="m.cards.length" @done="onCardDone" />
+
+            <!-- ② 列表：一行一笔，点进去才看明细 -->
+            <div v-else-if="m.view === 'list'" class="lst">
+              <button class="lhd" @click="m.view = 'sum'">
+                <span class="lback">‹</span>
+                <span>共 {{ m.cards.length }} 笔 · 点一笔处理</span>
+              </button>
+              <button v-for="(c, k) in m.cards" :key="c.ref" class="lrow"
+                      @click="m.view = 'one'; m.ref = c.ref">
+                <span class="lno">{{ k + 1 }}</span>
+                <span class="lmain">
+                  <span class="lt">{{ rowOf(c).title }}</span>
+                  <span v-if="rowOf(c).warn" class="lw">{{ rowOf(c).warn }}</span>
+                </span>
+                <span class="lright">
+                  <span class="lm">{{ rowOf(c).money }}</span>
+                  <span v-if="rowOf(c).blocked" class="lb">需他人处理</span>
+                </span>
+                <span class="lgo">›</span>
+              </button>
+            </div>
+
+            <!-- ③ 单笔明细 -->
+            <template v-else>
+              <button class="lhd" @click="m.view = 'list'">
+                <span class="lback">‹</span><span>返回列表</span>
+              </button>
+              <H5ApproveCard v-for="c in m.cards.filter((x) => x.ref === m.ref)" :key="c.ref"
+                             :card="c" :index="m.cards.findIndex((x) => x.ref === m.ref) + 1"
+                             :total="m.cards.length" @done="onSummaryCardDone(m, c.ref)" />
             </template>
           </div>
           <div v-else class="cards">
@@ -469,6 +524,37 @@ onMounted(() => {
 }
 .sgn { font-size: 11.5px; font-weight: 400; color: var(--h5-ink-3); margin-left: 6px }
 .sgd { font-size: 11px; color: var(--h5-ink-4); margin-top: 3px; line-height: 1.45 }
+.lst {
+  background: rgba(255,255,255,.7); border: 1px solid rgba(255,255,255,.85);
+  border-radius: var(--h5-r-panel); box-shadow: var(--h5-sh-raised); overflow: hidden;
+}
+.lhd {
+  width: 100%; display: flex; align-items: center; gap: 6px; border: 0; cursor: pointer;
+  background: rgba(24,32,50,.03); padding: 11px 14px; text-align: left;
+  font: 500 12.5px/1 var(--h5-font); color: var(--h5-ink-3);
+}
+.lback { font-size: 17px; line-height: 1; color: var(--h5-blue) }
+.lrow {
+  width: 100%; display: flex; align-items: center; gap: 10px; border: 0; cursor: pointer;
+  background: none; padding: 12px 14px; text-align: left;
+  border-top: 1px solid rgba(24,32,50,.06);
+}
+.lno {
+  flex: none; width: 18px; height: 18px; border-radius: 50%; background: rgba(24,32,50,.06);
+  font: 600 11px/18px var(--h5-font); color: var(--h5-ink-3); text-align: center;
+}
+.lmain { flex: 1; min-width: 0 }
+.lt {
+  display: block; font-size: 13.5px; font-weight: 600; color: var(--h5-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lw { display: block; font-size: 11px; color: var(--h5-warn, #b26a00); margin-top: 2px }
+.lright { flex: none; text-align: right }
+.lm { display: block; font-size: 12.5px; font-weight: 600; color: var(--h5-ink-2);
+      font-variant-numeric: tabular-nums }
+.lb { display: block; font-size: 10.5px; color: var(--h5-ink-4); margin-top: 2px }
+.lgo { flex: none; color: var(--h5-ink-4); font-size: 15px }
+
 .sbtn {
   width: 100%; margin-top: 16px; border: 0; border-radius: var(--h5-r-card);
   background: var(--h5-grad-btn); color: #fff; box-shadow: var(--h5-sh-btn-sm);

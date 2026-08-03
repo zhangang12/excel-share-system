@@ -105,6 +105,13 @@ export function isKnownCard(type: string): boolean {
   return Object.prototype.hasOwnProperty.call(CARD_REGISTRY, type)
 }
 
+/** 卡片类型 → 给人看的名字。对话里那句「用户气泡」用它，
+ *  别在别处再写死一个默认值——写死过一次，结果不管点哪类卡片，
+ *  气泡都显示「待我审批的请款单」。 */
+export function cardTitle(type: string): string {
+  return CARD_REGISTRY[type]?.title || '待办'
+}
+
 /**
  * 执行卡片动作：先让后端核一遍这张卡（令牌、白名单、最新 flags），
  * 通过之后才打真正的业务端点——用的是用户自己的 token，
