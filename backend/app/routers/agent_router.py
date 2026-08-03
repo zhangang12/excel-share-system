@@ -790,6 +790,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
     sys_prompt = _SYSTEM_PROMPT.format(today=_today().isoformat(),
                                        user_name=_uname(user), roles=roles)
     max_tokens = _max_tokens_for(message)
+    want_list = max_tokens > _MAX_TOKENS_DEFAULT
     # 🆕 只下放该用户菜单可用的数据工具（_run_tool 内仍二次门控，双保险）
     allowed = _allowed_tools(user)
     schemas = [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
@@ -804,7 +805,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
             content = (msg.get("content") or "").strip()
             if not content:
                 raise RuntimeError("LLM 返回空内容")
-            return apply_render(content, last_result), tool_names
+            return apply_render(content, last_result, want_list), tool_names
         messages.append(msg)  # 含 tool_calls 的 assistant 消息原样回灌
         # 🆕 同一轮里的多个工具并发跑：它们之间没有依赖，串行等于把等待时间乘以工具数。
         #   注意共用同一个 db session —— SQLAlchemy 的 AsyncSession 不是并发安全的，
@@ -1192,25 +1193,49 @@ _LOG_TEXT_MAX = 5000   # question/answer 入库前截断上限，防超大文本
 _RENDER_RE = re.compile(r"```render\s*(\{.*?\})\s*```", re.S)
 
 
-def apply_render(reply: str, last_result: dict | None) -> str:
-    """把模型给的 ```render 编排块换成代码渲染的明细。
+def _has_detail_lines(text: str) -> bool:
+    """模型是不是已经自己写了明细行（连续两行以上以 - 开头）。"""
+    n = sum(1 for l in (text or "").split("\n") if l.strip().startswith(("-", "•", "·")))
+    return n >= 2
 
-    ⚠️ 模型给不出合法 JSON、或者没有可渲染的工具结果时，**原样去掉这个块**，
+
+def apply_render(reply: str, last_result: dict | None, want_list: bool = False) -> str:
+    """把明细交给代码渲染。
+
+    两条路径：
+      1. 模型给了 ```render 编排块 → 按它的 sort/fields/highlight 渲染
+      2. **模型没给块，但用户明确要清单** → 代码用默认编排自动补上明细
+
+    ⚠️ 第 2 条是必要的：实测模型经常只写结论就收尾（它被「务必简短」和
+       「不要自己打明细」两条同时约束，容易两头都不做）。指望模型主动 opt-in
+       不可靠，所以**由代码决定要不要出明细**。
+
+    ⚠️ 模型给不出合法 JSON、或没有可渲染的结果时，**原样去掉这个块**，
        绝不把 JSON 漏给用户看。宁可少一段明细，也不能露出内部结构。
     """
-    m = _RENDER_RE.search(reply or "")
-    if not m:
-        return reply
-    body = reply[:m.start()].rstrip() + reply[m.end():].rstrip()
-    if not isinstance(last_result, dict):
-        return body
-    try:
-        plan = json.loads(m.group(1))
-    except (ValueError, TypeError):
-        return body
     from ..agent import render as _rd
-    detail = _rd.table(last_result, plan=plan)
-    return (body + "\n\n" + detail).strip() if detail else body
+    text = reply or ""
+    m = _RENDER_RE.search(text)
+
+    if m:
+        body = text[:m.start()].rstrip() + text[m.end():].rstrip()
+        if not isinstance(last_result, dict):
+            return body
+        try:
+            plan = json.loads(m.group(1))
+        except (ValueError, TypeError):
+            # ⚠️ 模型给了坏 JSON 就**只删块、不渲染**。
+            #    这时它的意图（排序/挑哪些字段）已经丢了，硬用默认编排铺一堆行，
+            #    等于把一段读不懂的东西塞给用户。宁可只留结论。
+            return body
+        detail = _rd.table(last_result, plan=plan)
+        return (body + "\n\n" + detail).strip() if detail else body
+
+    # 没有编排块：只有「用户要清单 + 有可渲染结果 + 模型自己没写明细」三者同时成立才补
+    if not (want_list and isinstance(last_result, dict) and not _has_detail_lines(text)):
+        return text
+    detail = _rd.table(last_result, plan=_rd.default_plan(last_result))
+    return (text.rstrip() + "\n\n" + detail).strip() if detail else text
 
 
 def _fallback_reason(e: Exception) -> str:
@@ -1609,6 +1634,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
     sys_prompt = _SYSTEM_PROMPT.format(today=_today().isoformat(),
                                        user_name=_uname(user), roles=roles)
     max_tokens = _max_tokens_for(message)
+    want_list = max_tokens > _MAX_TOKENS_DEFAULT
     allowed = _allowed_tools(user)
     schemas = [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
     messages = ([{"role": "system", "content": sys_prompt}]
@@ -1650,7 +1676,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
             # ⚠️ 判空必须在**渲染之后**。模型完全可以只回一句结论 + 一个编排块，
             #    而编排块整段被 suppress 吞掉了 —— 拿吞之前的文本判空会误判成
             #    「LLM 返回空内容」→ 抛异常 → 整条请求降级成功能菜单。踩过。
-            final = apply_render(text, last_result)
+            final = apply_render(text, last_result, want_list)
             if not final.strip():
                 raise RuntimeError("LLM 返回空内容")
             if len(final) > streamed:

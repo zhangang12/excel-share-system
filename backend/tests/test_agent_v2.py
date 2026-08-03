@@ -222,6 +222,23 @@ async def main():
     chk(apply_render("没有编排块的普通回答", result) == "没有编排块的普通回答",
         "没有编排块时原样返回")
 
+    print("\n===== 模型忘了给编排块时，代码自己补 =====")
+    # 实测：模型经常只写结论就收尾（被「务必简短」和「不要自己打明细」两条同时约束，
+    # 容易两头都不做）。指望它主动 opt-in 不可靠，所以由代码决定要不要出明细。
+    auto = apply_render("**共 46 条。**", result, want_list=True)
+    chk("甲公司" in auto and auto.startswith("**共 46 条。**"),
+        f"用户要清单 + 模型只写结论 → 代码补明细：{auto[:50]}")
+    chk(auto.split(chr(10))[2].startswith("- **") is False
+        and "超 9 天" in auto, "默认按 over_days 降序（default_plan 挑的）")
+    chk(apply_render("**共 46 条。**", result, want_list=False) == "**共 46 条。**",
+        "用户没要清单就别硬塞明细")
+    chk(apply_render("结论\n- 甲\n- 乙", result, want_list=True) == "结论\n- 甲\n- 乙",
+        "模型自己已经写了明细就不重复补")
+    chk(rd.default_plan(result)["sort"] == "over_days",
+        f"default_plan 挑「越大越紧迫」的字段：{rd.default_plan(result)}")
+    chk(rd.default_plan({"items": [{"x": "a"}]}) == {},
+        "没有可排序的数值字段时返回空编排，不硬排")
+
     print("\n===== 提示词要引导模型别自己打明细 =====")
     from app.routers.agent_router import _SYSTEM_PROMPT
     t = _SYSTEM_PROMPT.format(today="2026-08-04", user_name="杨坛", roles="管理层")

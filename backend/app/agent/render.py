@@ -166,6 +166,25 @@ def summary_line(result: dict, label: str = "") -> str:
     return f"**{label}{' · '.join(bits)}**" if label or bits else ""
 
 
+def default_plan(result: dict) -> dict:
+    """模型没给编排时的默认排法：挑一个「越大越紧迫」的数值字段降序。
+
+    宁可用一个讲得通的默认，也不要因为模型忘了给块就一条明细都不出。
+    """
+    items = None
+    for k in ("items", "suppliers", "rows"):
+        if isinstance(result.get(k), list) and result[k]:
+            items = result[k]
+            break
+    if not items or not isinstance(items[0], dict):
+        return {}
+    for key in ("over_days", "age_days", "ledger_age_days",
+                "amount", "ship_receivable", "balance", "qty"):
+        if any(isinstance(i.get(key), (int, float)) for i in items):
+            return {"sort": key, "desc": True}
+    return {}
+
+
 def compose(conclusion: str, result: dict, plan: dict | None = None) -> str:
     """结论（模型给） + 明细（代码渲染）。这就是最终发给用户的正文。"""
     body = table(result, plan=plan)
