@@ -10,7 +10,6 @@
 //   node test/verify-asar.js dist/win-unpacked/resources/app.asar
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const asarPath = process.argv[2];
@@ -43,8 +42,31 @@ for (const e of [pkg.main || 'main.js', 'preload.js']) {
 // 内置前端页面：没有它窗口会一片空白（#343 那种），也必须在包里
 need.add('app/index.html');
 
-const listed = execFileSync('npx', ['--yes', 'asar', 'list', asarPath], { encoding: 'utf8' })
-  .split('\n').map((l) => l.replace(/^[\\/]/, '').trim()).filter(Boolean);
+// 自己解 asar 头，不调 `npx asar` ——
+// Windows 上 npx 是 .cmd，spawnSync 直接 ENOENT（CI 上实测挂过一次）；
+// 而且多一个网络依赖就多一个发版时会掉链子的地方。
+// 格式：4×uint32 头部，第 4 个是 JSON 长度，随后就是那段 JSON。
+function asarEntries(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const head = Buffer.alloc(16);
+    fs.readSync(fd, head, 0, 16, 0);
+    const jsonLen = head.readUInt32LE(12);
+    const json = Buffer.alloc(jsonLen);
+    fs.readSync(fd, json, 0, jsonLen, 16);
+    const tree = JSON.parse(json.toString('utf8'));
+    const out = [];
+    (function walk(node, prefix) {
+      for (const [name, v] of Object.entries(node.files || {})) {
+        const rel = prefix ? `${prefix}/${name}` : name;
+        if (v.files) walk(v, rel); else out.push(rel);
+      }
+    })(tree, '');
+    return out;
+  } finally { fs.closeSync(fd); }
+}
+
+const listed = asarEntries(asarPath);
 const have = new Set(listed);
 
 console.log(`\n===== 安装包内容校验 =====`);
