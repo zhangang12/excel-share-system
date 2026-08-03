@@ -95,6 +95,15 @@ jobs:
         # 不设 npmmirror 镜像：那是给国内网络防超时用的，GitHub runner 直连原站更快。
         run: npx electron-builder --win nsis --x64 --publish never
 
+      # 打开刚产出的包，逐个确认主进程需要的文件都在里面。
+      # 上一步的「打包完整性检查」查的是**配置意图**（build.files 覆没覆盖到），
+      # 这一步查的是**实际产物**。1.0.30/1.0.31 那次全流程绿灯却装不上，
+      # 就是因为没有任何一环打开包看过里面缺不缺东西。
+      - name: 校验安装包内容（缺文件就不发）
+        shell: bash
+        working-directory: desktop
+        run: node test/verify-asar.js dist/win-unpacked/resources/app.asar
+
       - name: 收集待上传文件
         shell: bash
         run: |
