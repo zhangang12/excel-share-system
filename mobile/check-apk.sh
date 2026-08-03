@@ -1,0 +1,40 @@
+#!/bin/bash
+# 打开刚产出的 APK 看里面对不对。
+# 「构建成功」和「装上能用」是两件事 —— Windows 客户端 1.0.30 就是全流程绿灯
+# 却装不上，因为没有一环打开包看过。
+set -euo pipefail
+APK="${1:?用法: check-apk.sh <apk 路径>}"
+[ -f "$APK" ] || { echo "❌ 找不到 $APK —— 产物路径变了？"; exit 1; }
+bad=0
+ok(){ echo "  ok: $1"; }
+no(){ echo "  FAIL: $1"; bad=1; }
+
+echo "===== APK 内容校验 ====="
+echo "  文件：$APK（$(du -h "$APK" | cut -f1)）"
+
+AAPT=$(ls "${ANDROID_HOME:-/nonexistent}"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)
+if [ -n "$AAPT" ]; then
+  DUMP=$("$AAPT" dump badging "$APK" 2>/dev/null || true)
+  echo "$DUMP" | grep -q "package: name='com.tonghui.pms'" \
+    && ok "包名 com.tonghui.pms" || no "包名不对"
+  echo "$DUMP" | grep -q "uses-permission: name='android.permission.INTERNET'" \
+    && ok "有联网权限" || no "没有联网权限，APP 打不开任何页面"
+  echo "$DUMP" | grep -q "launchable-activity" \
+    && ok "有启动入口（桌面上能点开）" || no "没有 launcher activity，装上桌面看不到图标"
+  echo "$DUMP" | grep -q "application-label" \
+    && ok "有应用名" || no "没有应用名"
+else
+  echo "  warn: 找不到 aapt2，跳过 badging 检查"
+fi
+
+if command -v unzip >/dev/null 2>&1; then
+  unzip -l "$APK" | grep -q "classes.dex" \
+    && ok "有 classes.dex（代码真的编进去了）" || no "没有 classes.dex"
+  unzip -l "$APK" | grep -q "resources.arsc" \
+    && ok "有 resources.arsc（布局/明文放行配置在里面）" || no "没有资源表"
+  unzip -l "$APK" | grep -qE "META-INF/.*\.(RSA|EC|DSA)" \
+    && ok "已签名（没签名的 APK 手机装不上）" || no "没签名，手机会拒绝安装"
+fi
+
+echo
+if [ "$bad" = 0 ]; then echo "✅ APK 校验通过"; else echo "❌ 这个包别发"; exit 1; fi

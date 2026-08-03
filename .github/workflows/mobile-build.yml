@@ -1,0 +1,78 @@
+name: 手机 APP 打包（Android APK）
+
+# 这个 APP 就是把服务器上的 H5（/h5/）包进一个 WebView —— **页面资源全部走服务器**，
+# 改一行前端不用重新发 APP，手机上看到的和网页端永远一致。
+#
+# 产物**不自动上传服务器**：本仓库是公开仓库，不把生产 SSH 私钥放进 Actions Secrets。
+# 打完包下载 artifact，再在本机跑：bash mobile/ship.sh --upload-only <解压目录>
+#
+# ⚠️ release 包用 debug 签名，只供内部分发（微信/企微发 APK 直接装）。
+#    要上应用商店得换正式签名，keystore 绝不能进仓库。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（留空 = 用 app/build.gradle.kts 里的当前版本）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      # ⚠️ 必经关卡：APP 的三个死条件，缺一个装上去就是白屏或每次都要重登。
+      #    与 Windows 客户端那次「打包缺文件却一路绿灯」同一个教训 ——
+      #    构建成功不等于装上能用，得单独检查。
+      - name: 配置自检（明文放行 / DOM storage / URL）
+        shell: bash
+        run: bash mobile/check.sh
+
+      - name: 版本号（仅当显式传入时覆盖）
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            sed -i "s/versionName = \".*\"/versionName = \"${{ inputs.version }}\"/" \
+              mobile/app/build.gradle.kts
+            CODE=$(echo "${{ inputs.version }}" | tr -d '.')
+            sed -i "s/versionCode = .*/versionCode = ${CODE}/" mobile/app/build.gradle.kts
+          fi
+          echo "VERSION=$(grep -oP 'versionName = "\K[^"]+' mobile/app/build.gradle.kts)" >> "$GITHUB_ENV"
+
+      - name: 打 APK
+        shell: bash
+        working-directory: mobile
+        run: |
+          chmod +x gradlew 2>/dev/null || true
+          gradle wrapper --gradle-version 8.7 --no-daemon
+          ./gradlew assembleRelease --no-daemon
+
+      - name: 校验产物真的能装（不是「构建成功」就算数）
+        shell: bash
+        run: bash mobile/check-apk.sh mobile/app/build/outputs/apk/release/app-release.apk
+
+      - name: 收集待上传文件
+        shell: bash
+        run: |
+          mkdir -p out
+          cp mobile/app/build/outputs/apk/release/app-release.apk \
+             "out/同辉项目管理-${VERSION}.apk"
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-${{ env.VERSION }}
+          path: out/
+          retention-days: 30

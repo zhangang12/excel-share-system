@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️ 服务器目前只有 HTTP，没有 HTTPS。安卓 9(API 28) 起默认禁明文传输，
+     不放行的话 APP 一打开就是「连接不上服务器」。
+     这里**只对自家服务器**放行，其它域名仍按默认走 HTTPS —— 别图省事全局放开。
+     等服务器上了 HTTPS，把下面这段删掉即可。
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">8.141.123.141</domain>
+        <domain includeSubdomains="true">pms.tonghui-tech.com</domain>
+    </domain-config>
+</network-security-config>
