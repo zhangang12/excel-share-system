@@ -361,10 +361,23 @@ TOOL_LABELS = {
     "leads_followup": "线索待跟进",
     "order_pending": "待审批销售订单",
     "invoice_pending": "待开票",
+    # 🆕 v2 阶段一：find → get 递进。依据是两位管理层近 30 天真实操作
+    #    （杨坛 188 次里销售台账+订单占 32%；赵仁辉 635 次里仓库占 36%，
+    #     而 v1 对赵仁辉的工具覆盖率只有 5%）。
+    "find_entity": "找实体",
+    "get_customer": "客户全景",
+    "get_project": "项目全景",
+    "get_supplier": "供应商画像",
+    "get_material": "物料全景",
 }
 
 # 🆕 每个工具一句人话说明：给用户看的（门户小字、能力清单），也给模型当选型依据。
 TOOL_DESC = {
+    "find_entity": "说个大概的名字就能找到项目/客户/供应商/物料，不用记编号",
+    "get_customer": "这家客户一共几单、收了多少、还欠多少、卡在哪一步",
+    "get_project": "一个项目从台账到发货全看完：收款、各部门任务、采购在途、发货状态",
+    "get_supplier": "这家供应商准时率多少、平均拖几天、现在还欠几批货",
+    "get_material": "这个物料还有多少库存、低不低于安全线、最近进出了多少",
     "morning_report": "把今天要盯的事聚成一条：采购超期、尾款到期、部门逾期、人事到期",
     "po_arrival_overdue": "预计到货日已过、货还没到的采购明细",
     "po_arriving": "未来几天预计能到的料，用来提前安排生产",
@@ -470,6 +483,51 @@ TOOL_SCHEMAS += [{
              "leads_followup", "order_pending", "invoice_pending")]
 
 
+# ══════════ v2 阶段一：find → get 递进（docs/agent-architecture-v2.md）══════════
+# v1 的 13 个工具里 12 个是「列一类」，多轮循环无事可做——第一轮列完就没下一步。
+# 下面这 5 个才让 ReAct 有链可走：find_entity 拿到实体 → get_* 纵深 → 再决定下一步。
+_LIM_PROP = {"limit": {"type": "integer",
+                       "description": "最多返回几条明细，默认 20；用户要「全部」时传 200"}}
+
+TOOL_SCHEMAS += [
+    {"type": "function", "function": {
+        "name": "find_entity",
+        "description": "模糊词找实体（项目/客户/供应商/物料）。用户说「南京那个项目」「迈克斯」"
+                       "「诺朋」这类不完整的名字时**先调它**拿到准确名称，再调 get_*",
+        "parameters": {"type": "object", "properties": {
+            "q": {"type": "string", "description": "用户说的那个词，原样传"},
+            "kind": {"type": "string", "enum": ["project", "customer", "supplier", "material"],
+                     "description": "限定只找某一类；不确定就别传"},
+        }, "required": ["q"]}}},
+    {"type": "function", "function": {
+        "name": "get_customer",
+        "description": "客户全景：这家客户所有台账、合同额、已收/未收、回款到哪一步、"
+                       "几笔尾款没填到期日、几笔发货款其实还没发货",
+        "parameters": {"type": "object", "properties": dict(
+            _LIM_PROP, name={"type": "string", "description": "客户名，可以不全"}),
+            "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "get_project",
+        "description": "项目全景：台账收款分解 + 各部门任务与逾期 + 采购未到货 + 发货状态，一次给全",
+        "parameters": {"type": "object", "properties": dict(
+            _LIM_PROP, code={"type": "string", "description": "项目编号或名称"}),
+            "required": ["code"]}}},
+    {"type": "function", "function": {
+        "name": "get_supplier",
+        "description": "供应商画像：准时率、平均超期天数、最大超期、当前未到货明细。"
+                       "回答「哪家供应商靠不住」「要不要换供应商」用它",
+        "parameters": {"type": "object", "properties": dict(
+            _LIM_PROP, name={"type": "string", "description": "供应商名，可以不全"}),
+            "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "get_material",
+        "description": "物料全景：当前库存、安全库存、是否低于安全线及缺口、库位、近期出入库流水",
+        "parameters": {"type": "object", "properties": dict(
+            _LIM_PROP, q={"type": "string", "description": "物料编码或名称或规格"}),
+            "required": ["q"]}}},
+]
+
+
 
 # ==================== 🆕 数据域-菜单门控（LLM 与规则降级共用） ====================
 
@@ -500,6 +558,17 @@ def _allowed_tools(user: models.User) -> set[str]:
         out.add("overdue_orders")
     if "list" in keys:
         out.add("project_status")
+        out.add("get_project")
+    # 🆕 v2：找实体是所有纵深查询的入口，任何能查数的人都该有
+    if out:
+        out.add("find_entity")
+    if keys & {"finance", "sales"}:
+        out.add("get_customer")
+    if "purchase_mgmt" in keys:
+        out.add("get_supplier")
+    if "warehouse" in keys:
+        # 赵仁辉 36% 的操作在仓库，v1 一个仓库工具都没有
+        out.add("get_material")
     if "purchase_mgmt" in keys or "hr" in keys or keys & {"finance", "sales", *_DEPT_MENU_KEYS}:
         out.add("morning_report")
     return out
@@ -555,6 +624,21 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
         if name not in _allowed_tools(current):
             return _deny("finance", "sales")
         return await _SECOND[name](db, current)
+
+    # 🆕 v2 阶段一：find → get。门控沿用 _allowed_tools（各自的业务域），
+    #    工具内部的行级隔离继续走 sales_router._all_view，不另写谓词。
+    from ..agent import tools_entity as _te
+    _V2 = {
+        "find_entity":  lambda: _te.find_entity(db, current, args.get("q", ""), args.get("kind")),
+        "get_customer": lambda: _te.get_customer(db, current, args.get("name", "")),
+        "get_project":  lambda: _te.get_project(db, current, args.get("code", "")),
+        "get_supplier": lambda: _te.get_supplier(db, current, args.get("name", "")),
+        "get_material": lambda: _te.get_material(db, current, args.get("q", "")),
+    }
+    if name in _V2:
+        if name not in _allowed_tools(current):
+            return _deny("list", "finance", "sales", "purchase_mgmt", "warehouse")
+        return await _V2[name]()
     """执行数据工具（只读）。按调用者菜单门控数据域，无权域返回 {"error": ...} 而非数据。"""
     keys = set(menus.user_menu_keys(current))
     if name == "morning_report":
@@ -628,6 +712,22 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
    这种情况不受下面的条数与字数限制。
 5. 只读。用户要改数据时明确拒绝，并说清该去哪个页面改。
 
+# ⚡ 明细不要你打字（这条优先级最高）
+调完工具、需要列明细时，**不要自己一行一行写数据**。改成在正文末尾附一个编排块：
+
+```render
+{{"sort":"over_days","desc":true,
+ "fields":["supplier","item_name","over_days","expected_arrival","project_code"],
+ "highlight":["TH20260724-006"]}}
+```
+
+- 明细行、合计、截断声明**全部由代码按这个编排渲染**，你一个数字都不用打。
+- 你只负责：**结论那一句** + 上面这个编排块。
+- 实测：46 条明细你自己打要 ~1700 字 / 35.9 秒；用编排块只要 ~70 字 / 3~5 秒，
+  而且数字不可能出错（代码直接取工具原始值）。
+- 只在「确实要列明细」时给这个块；一句话能答完的问题不要给。
+- `fields` 从工具返回的字段里挑，按 `主体 · 关键量 · 时间/状态 · (补充)` 的顺序，最多 5 个。
+
 # 输出格式（手机上看）
 - **第一行永远是结论**，一句话，带上最关键的那个数，加粗。
 - 明细用无序列表，**一条一行**，字段之间用「·」分隔，顺序固定：
@@ -695,6 +795,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
     schemas = [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
     messages = ([{"role": "system", "content": sys_prompt}]
                 + history + [{"role": "user", "content": message}])
+    last_result: dict | None = None   # v2：明细交给代码渲染，需要留住原始工具结果
     for _ in range(4):  # 工具轮次上限，防死循环
         data = await _llm_request(messages, model, cfg, schemas, max_tokens)
         msg = data["choices"][0]["message"]
@@ -703,7 +804,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
             content = (msg.get("content") or "").strip()
             if not content:
                 raise RuntimeError("LLM 返回空内容")
-            return content, tool_names
+            return apply_render(content, last_result), tool_names
         messages.append(msg)  # 含 tool_calls 的 assistant 消息原样回灌
         # 🆕 同一轮里的多个工具并发跑：它们之间没有依赖，串行等于把等待时间乘以工具数。
         #   注意共用同一个 db session —— SQLAlchemy 的 AsyncSession 不是并发安全的，
@@ -731,6 +832,10 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
                 result = {"error": f"{TOOL_LABELS.get(name, name)}查询失败"}
             elif name in TOOL_LABELS and name not in tool_names:
                 tool_names.append(name)
+            # 留住带明细的那份结果，收尾时按模型给的编排块渲染（v2 阶段二）
+            if isinstance(result, dict) and any(
+                    isinstance(result.get(k), list) for k in ("items", "suppliers", "rows")):
+                last_result = result
             messages.append({
                 "role": "tool", "tool_call_id": tc.get("id"),
                 "content": json.dumps(result, ensure_ascii=False, default=str),
@@ -1082,6 +1187,30 @@ class ChatIn(BaseModel):
 # ==================== 🆕 审计日志（问答全量落 agent_chat_logs，失败不影响聊天） ====================
 
 _LOG_TEXT_MAX = 5000   # question/answer 入库前截断上限，防超大文本撑爆行
+
+
+_RENDER_RE = re.compile(r"```render\s*(\{.*?\})\s*```", re.S)
+
+
+def apply_render(reply: str, last_result: dict | None) -> str:
+    """把模型给的 ```render 编排块换成代码渲染的明细。
+
+    ⚠️ 模型给不出合法 JSON、或者没有可渲染的工具结果时，**原样去掉这个块**，
+       绝不把 JSON 漏给用户看。宁可少一段明细，也不能露出内部结构。
+    """
+    m = _RENDER_RE.search(reply or "")
+    if not m:
+        return reply
+    body = reply[:m.start()].rstrip() + reply[m.end():].rstrip()
+    if not isinstance(last_result, dict):
+        return body
+    try:
+        plan = json.loads(m.group(1))
+    except (ValueError, TypeError):
+        return body
+    from ..agent import render as _rd
+    detail = _rd.table(last_result, plan=plan)
+    return (body + "\n\n" + detail).strip() if detail else body
 
 
 def _fallback_reason(e: Exception) -> str:
@@ -1482,9 +1611,12 @@ async def _chat_stream(message: str, history: list[dict], model: str,
     messages = ([{"role": "system", "content": sys_prompt}]
                 + history + [{"role": "user", "content": message}])
 
+    last_result: dict | None = None   # v2 阶段二：留住工具原始结果，收尾时代码渲染明细
     for _ in range(4):
         content_parts: list[str] = []
         tc_acc: dict = {}
+        streamed = 0          # 已推给前端的字符数
+        suppress = False      # 进入 ``` 之后不再推——render 块的裸 JSON 不能让用户看见
         async for data in _llm_stream(messages, model, cfg, schemas, max_tokens):
             choices = data.get("choices") or []
             if not choices:
@@ -1493,15 +1625,32 @@ async def _chat_stream(message: str, history: list[dict], model: str,
             if delta.get("tool_calls"):
                 _merge_tool_call_deltas(tc_acc, delta["tool_calls"])
             piece = delta.get("content")
-            if piece:
-                content_parts.append(piece)
-                yield "delta", piece          # ← 正文逐块推给前端
+            if not piece:
+                continue
+            content_parts.append(piece)
+            if suppress:
+                continue
+            acc = "".join(content_parts)
+            # ``` 可能被切在两个 chunk 之间，所以按累计文本判断，不看单块
+            fence = acc.find("```")
+            if fence >= 0:
+                suppress = True
+                if fence > streamed:
+                    yield "delta", acc[streamed:fence]
+                    streamed = fence
+            else:
+                yield "delta", piece
+                streamed = len(acc)
 
         if not tc_acc:
             text = "".join(content_parts).strip()
             if not text:
                 raise RuntimeError("LLM 返回空内容")
-            yield "done", {"text": text, "tools": tool_names}
+            # 把 ```render 块换成代码渲染的明细，再把没推过的尾巴一次推出去
+            final = apply_render(text, last_result)
+            if len(final) > streamed:
+                yield "delta", final[streamed:]
+            yield "done", {"text": final, "tools": tool_names}
             return
 
         # 这一轮是工具调用：不推正文，只报状态，然后并发执行
