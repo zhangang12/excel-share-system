@@ -21,5 +21,7 @@ interface Window {
     onUpdateStatus?: (cb: (s: { status: string; version?: string; message?: string }) => void) => void
     /** 🆕 登录成功后静默检查更新（30 分钟节流，有新版静默下载后提示重启） */
     checkUpdateSilent?: () => void
+    /** 🆕 登录前强制版本检查：true = 版本过低，主进程已切到强制更新页，别继续登录 */
+    enforceVersion?: () => Promise<boolean>
   }
 }

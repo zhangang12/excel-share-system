@@ -245,10 +245,43 @@ def _uniq_name(used: set, name: str) -> str:
         i += 1
 
 
+async def _sheet_rows(db: AsyncSession, d: models.Datasheet):
+    """取一张数据表的字段与记录（按显示顺序）。"""
+    fields = list((await db.execute(select(models.Field).where(
+        models.Field.datasheet_id == d.id
+    ).order_by(models.Field.sort_order, models.Field.id))).scalars().all())
+    records = list((await db.execute(select(models.Record).where(
+        models.Record.datasheet_id == d.id
+    ).order_by(models.Record.sort_order, models.Record.id))).scalars().all())
+    return fields, records
+
+
+def _sheet_to_workbook(fr, d: models.Datasheet) -> Workbook:
+    """数据表 → xlsx。单文件直下和 zip 打包共用，避免两处导出格式跑偏。"""
+    fields, records = fr
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (d.name or "Sheet")[:31]
+    ws.append([f.name for f in fields])
+    for r in records:
+        line = []
+        for f in fields:
+            v = (r.values or {}).get(str(f.id))
+            if isinstance(v, list):
+                v = "、".join(str(x) for x in v)
+            line.append(v)
+        ws.append(line)
+    return wb
+
+
 class PurchasePackageReq(BaseModel):
     project_id: int
     sheet_ids: list[int] = []        # 采购数据表（导出为 xlsx）
     attachment_ids: list[int] = []   # 设计推送附件（原始文件）
+    # 🆕 只要一份时直接给原文件，不套 zip（反馈 #340：要能单个下）。
+    # 走同一个端点是为了权限口径完全一致——另开一个 GET 就得把角色校验、
+    # 项目归属、pushed==True 再写一遍，写漏一条就是越权下载。
+    single: bool = False
 
 
 @router.post("/purchase/package")
@@ -266,6 +299,38 @@ async def purchase_package(
     if not p:
         raise HTTPException(404, "项目不存在")
 
+    # ---- 单文件直下：只勾了一项且 single=True → 原样返回，不打 zip ----
+    if req.single and len(req.sheet_ids) + len(req.attachment_ids) == 1:
+        if req.attachment_ids:
+            a = (await db.execute(select(models.Attachment).where(
+                models.Attachment.id == req.attachment_ids[0],
+                models.Attachment.project_id == req.project_id,
+                models.Attachment.biz_type == "order_start_output",
+                models.Attachment.pushed == True,  # noqa: E712
+                models.Attachment.kind.in_(("sheetpkg", "outsource_img"))))).scalar_one_or_none()
+            fp = Path(settings.files_dir) / a.path if a else None
+            if not a or not fp or not fp.is_file():
+                raise HTTPException(404, "附件不存在或已被上游撤回")
+            fname = _safe_fname(a.name)
+            return StreamingResponse(
+                fp.open("rb"), media_type="application/octet-stream",
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"})
+
+        d = (await db.execute(select(models.Datasheet).where(
+            models.Datasheet.id == req.sheet_ids[0],
+            models.Datasheet.project_id == req.project_id,
+            models.Datasheet.name.in_(_PURCHASE_SHEET_NAMES)))).scalar_one_or_none()
+        if not d:
+            raise HTTPException(404, "数据表不存在")
+        xbuf = io.BytesIO()
+        _sheet_to_workbook(await _sheet_rows(db, d), d).save(xbuf)
+        xbuf.seek(0)
+        fname = f"{p.code}_{_safe_fname(d.name)}.xlsx"
+        return StreamingResponse(
+            xbuf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"})
+
     buf = io.BytesIO()
     used: set = set()
     count = 0
@@ -277,26 +342,8 @@ async def purchase_package(
                 models.Datasheet.project_id == req.project_id,
                 models.Datasheet.name.in_(_PURCHASE_SHEET_NAMES)))
             for d in dres.scalars().all():
-                fres = await db.execute(select(models.Field).where(
-                    models.Field.datasheet_id == d.id).order_by(models.Field.sort_order, models.Field.id))
-                fields = list(fres.scalars().all())
-                rres = await db.execute(select(models.Record).where(
-                    models.Record.datasheet_id == d.id).order_by(models.Record.sort_order, models.Record.id))
-                records = list(rres.scalars().all())
-                wb = Workbook()
-                ws = wb.active
-                ws.title = (d.name or "Sheet")[:31]
-                ws.append([f.name for f in fields])
-                for r in records:
-                    line = []
-                    for f in fields:
-                        v = (r.values or {}).get(str(f.id))
-                        if isinstance(v, list):
-                            v = "、".join(str(x) for x in v)
-                        line.append(v)
-                    ws.append(line)
                 xbuf = io.BytesIO()
-                wb.save(xbuf)
+                _sheet_to_workbook(await _sheet_rows(db, d), d).save(xbuf)
                 zf.writestr(_uniq_name(used, f"{p.code}_{_safe_fname(d.name)}.xlsx"), xbuf.getvalue())
                 count += 1
         # 2) 设计推送附件 → 原始文件（仅限本项目的 sheetpkg/outsource_img；🆕 #303 仅已推送可打包）

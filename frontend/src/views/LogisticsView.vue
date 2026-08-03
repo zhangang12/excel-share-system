@@ -291,7 +291,7 @@ async function confirmShip(force = false) {
         <el-table-column label="运费" min-width="120" align="center">
           <template #default="{ row }">
             <div v-if="row.freight_cost" style="line-height:1.4">
-              <b style="color:var(--el-color-primary)">¥{{ fmtMoney(row.freight_cost) }}</b>
+              <b style="color:var(--el-color-primary)">{{ fmtMoney(row.freight_cost) }}</b>
               <el-tag size="small" :type="row.freight_payer === '到付' ? 'info' : 'warning'" effect="plain" style="margin-left:4px">{{ row.freight_payer || '我方' }}</el-tag>
               <el-button size="small" link type="primary" :icon="Edit" @click="openFreight(row)" style="margin-left:2px" />
             </div>

@@ -65,10 +65,27 @@ function onTab() { if (active.value === 'matcat') loadCats(); else load() }
 interface CatNode { id: number; parent_id: number | null; level: number; seg_code: string; name: string; sort_order: number; enabled: boolean; children?: CatNode[]; prefix?: string }
 const catFlat = ref<CatNode[]>([])
 const catLoading = ref(false)
+// 展开状态自己管。原来用 default-expand-all，但 catTree 是 computed，
+// 每次保存后 loadCats 换掉 catFlat → 整个 :data 被重建 → el-tree 重新套用
+// default-expand-all → 用户辛苦收起来的分支又全展开了（#342）。
+const expandedKeys = ref<number[]>([])
+const catFirstLoad = ref(true)
+function onNodeExpand(d: CatNode) {
+  if (!expandedKeys.value.includes(d.id)) expandedKeys.value = [...expandedKeys.value, d.id]
+}
+function onNodeCollapse(d: CatNode) {
+  expandedKeys.value = expandedKeys.value.filter(k => k !== d.id)
+}
 async function loadCats() {
   catLoading.value = true
   try { catFlat.value = (await http.get<CatNode[]>('/wh/material-categories')).data }
   catch { catFlat.value = [] } finally { catLoading.value = false }
+  if (catFirstLoad.value) {
+    // 首次进来还是全展开（原来的观感不变），之后就听用户的
+    catFirstLoad.value = false
+    const hasChild = new Set(catFlat.value.map(c => c.parent_id).filter((x): x is number => x != null))
+    expandedKeys.value = catFlat.value.filter(c => hasChild.has(c.id)).map(c => c.id)
+  }
 }
 const catTree = computed<CatNode[]>(() => {
   const byParent = new Map<number | null, CatNode[]>()
@@ -78,7 +95,10 @@ const catTree = computed<CatNode[]>(() => {
     byParent.get(k)!.push({ ...c })
   }
   const build = (pid: number | null, prefix: string): CatNode[] =>
-    (byParent.get(pid) || []).map(c => ({ ...c, prefix: prefix + c.seg_code, children: build(c.id, prefix + c.seg_code) }))
+    (byParent.get(pid) || [])
+      // 后端按 sort_order 排，并列时按 id；并列的按段码排才跟编码顺序一致
+      .sort((a, b) => a.sort_order - b.sort_order || a.seg_code.localeCompare(b.seg_code))
+      .map(c => ({ ...c, prefix: prefix + c.seg_code, children: build(c.id, prefix + c.seg_code) }))
   return build(null, '')
 })
 const LEVEL_NAME: Record<number, string> = { 1: '大类', 2: '中类', 3: '细分类' }
@@ -89,9 +109,31 @@ const catEditing = ref<CatNode | null>(null)
 const catParent = ref<CatNode | null>(null)   // 新增时的上级(null=新增大类)
 const catForm = ref({ seg_code: '', name: '', sort_order: 0, enabled: true })
 const catFormLevel = computed(() => catEditing.value ? catEditing.value.level : (catParent.value ? catParent.value.level + 1 : 1))
+const SEG_LEN: Record<number, number> = { 1: 1, 2: 2, 3: 2 }   // 与后端 _SEG_LEN 一致
+
+/** 同级里顺延出下一个可用段码（#341）。留空让人自己猜下一个是几，
+ *  猜错了后端还要甩个 409「同级下该段码已存在」。填好默认值，照样能改。 */
+function nextSeg(parentId: number | null, level: number): string {
+  const w = SEG_LEN[level]
+  const used = new Set(catFlat.value.filter(c => (c.parent_id ?? null) === parentId)
+                                    .map(c => Number(c.seg_code)))
+  const max = 10 ** w - 1              // 1位→9，2位→99
+  for (let n = 1; n <= max; n++) {     // 从 1 起找第一个空位：删掉中间某个后能补回去
+    if (!used.has(n)) return String(n).padStart(w, '0')
+  }
+  return ''                            // 排满了就别乱填，让人自己处理
+}
+
 function openCatAdd(parent: CatNode | null) {
   catEditing.value = null; catParent.value = parent
-  catForm.value = { seg_code: '', name: '', sort_order: 0, enabled: true }
+  const lv = parent ? parent.level + 1 : 1
+  const sibs = catFlat.value.filter(c => (c.parent_id ?? null) === (parent?.id ?? null))
+  catForm.value = {
+    seg_code: nextSeg(parent?.id ?? null, lv),
+    name: '',
+    sort_order: sibs.length ? Math.max(...sibs.map(c => c.sort_order)) + 1 : 0,
+    enabled: true,
+  }
   catDlg.value = true
 }
 function openCatEdit(n: CatNode) {
@@ -111,6 +153,9 @@ async function saveCat() {
     }
     ElMessage.success('已保存')
     catDlg.value = false
+    // 存完要能看见刚加的那条：先把父节点标成展开，再重载（重载会按 expandedKeys 铺开）
+    const pid = catParent.value?.id
+    if (pid != null && !expandedKeys.value.includes(pid)) expandedKeys.value = [...expandedKeys.value, pid]
     await loadCats()
   } catch { /* handled */ } finally { catSaving.value = false }
 }
@@ -142,7 +187,8 @@ async function removeCat(n: CatNode) {
           <span class="spacer" />
           <el-button type="primary" :icon="Plus" @click="openCatAdd(null)">新增大类</el-button>
         </div>
-        <el-tree v-loading="catLoading" :data="catTree" node-key="id" default-expand-all
+        <el-tree v-loading="catLoading" :data="catTree" node-key="id"
+                 :default-expanded-keys="expandedKeys" @node-expand="onNodeExpand" @node-collapse="onNodeCollapse"
                  :props="{ label: 'name', children: 'children' }" class="cat-tree">
           <template #default="{ data }">
             <div class="cat-node">
@@ -215,6 +261,7 @@ async function removeCat(n: CatNode) {
       <el-form label-position="top">
         <el-form-item :label="`段码（${SEG_HINT[catFormLevel]}）`" required>
           <el-input v-model="catForm.seg_code" :maxlength="catFormLevel === 1 ? 1 : 2" placeholder="数字" />
+          <div v-if="!catEditing" class="seg-tip">已按同级顺延填好，可以改</div>
         </el-form-item>
         <el-form-item label="名称" required>
           <el-input v-model="catForm.name" maxlength="64" placeholder="如 原材料 / 配件类 / 硅胶件" />
@@ -235,6 +282,7 @@ async function removeCat(n: CatNode) {
 </template>
 
 <style scoped>
+.seg-tip { font-size: 12px; color: var(--el-text-color-placeholder); line-height: 1.6; margin-top: 2px }
 .cat-tree { margin-top: 4px; }
 .cat-tree :deep(.el-tree-node__content) { height: 34px; border-radius: 6px; }
 .cat-node { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding-right: 8px; }

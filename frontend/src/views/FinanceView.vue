@@ -800,11 +800,11 @@ async function revokeInvoice(row: ViewRow) {
             <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先) + 物料运输费(物流录入·我方承担)。材料领用是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「📈 项目毛利」tab。</span>
           </div>
           <div v-if="expData" class="kpi-grid" style="margin-bottom:12px">
-            <div class="kpi is-primary"><div class="kpi-v">¥{{ fmtMoney(expData.totals.grand) }}</div><div class="kpi-l">{{ expData.year }} 年总支出</div></div>
-            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.purchase) }}</div><div class="kpi-l">采购付款</div></div>
-            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.aftersales) }}</div><div class="kpi-l">安装/售后费用</div></div>
-            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.oa) }}</div><div class="kpi-l">OA 业务/报销</div></div>
-            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(expData.totals.freight) }}</div><div class="kpi-l">物料运输费</div></div>
+            <div class="kpi is-primary"><div class="kpi-v">{{ fmtMoney(expData.totals.grand) }}</div><div class="kpi-l">{{ expData.year }} 年总支出</div></div>
+            <div class="kpi"><div class="kpi-v">{{ fmtMoney(expData.totals.purchase) }}</div><div class="kpi-l">采购付款</div></div>
+            <div class="kpi"><div class="kpi-v">{{ fmtMoney(expData.totals.aftersales) }}</div><div class="kpi-l">安装/售后费用</div></div>
+            <div class="kpi"><div class="kpi-v">{{ fmtMoney(expData.totals.oa) }}</div><div class="kpi-l">OA 业务/报销</div></div>
+            <div class="kpi"><div class="kpi-v">{{ fmtMoney(expData.totals.freight) }}</div><div class="kpi-l">物料运输费</div></div>
           </div>
           <el-table show-overflow-tooltip v-loading="expLoading" :data="expData?.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
             <el-table-column prop="month" label="月份" width="110"><template #default="{ row }"><b>{{ row.month }}</b></template></el-table-column>
@@ -815,7 +815,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column label="合计" min-width="140" align="right"><template #default="{ row }"><b class="amt">{{ row.total ? fmtMoney(row.total) : '—' }}</b></template></el-table-column>
           </el-table>
           <el-alert v-if="expData && expData.undated.total > 0" type="warning" :closable="false" style="margin-top:10px"
-            :title="`另有 ¥${fmtMoney(expData.undated.total)} 已付款但未记付款日期（采购 ¥${fmtMoney(expData.undated.purchase)}），未计入上表月份——请在采购明细补付款日期。`" />
+            :title="`另有 ${fmtMoney(expData.undated.total)} 已付款但未记付款日期（采购 ${fmtMoney(expData.undated.purchase)}），未计入上表月份——请在采购明细补付款日期。`" />
         </el-tab-pane>
 
         <!-- 🆕 盈利改善1a：项目毛利红黑榜——哪个项目赚钱、哪个项目亏钱 -->
@@ -833,9 +833,9 @@ async function revokeInvoice(row: ViewRow) {
             <span class="muted small">默认亏得最多的排最前（红榜在上）；点列头可重新排序。带「领料缺价」标签的行成本被低估，先去成本审计页清黑洞。</span>
           </div>
           <div v-if="pnlData" class="kpi-grid" style="margin-bottom:12px">
-            <div class="kpi is-primary"><div class="kpi-v">¥{{ fmtMoney(pnlData.summary.profit) }}</div><div class="kpi-l">总毛利（材料边际贡献）</div></div>
-            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(pnlData.summary.amount) }}</div><div class="kpi-l">合同额合计</div></div>
-            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(pnlData.summary.cost) }}</div><div class="kpi-l">成本合计</div></div>
+            <div class="kpi is-primary"><div class="kpi-v">{{ fmtMoney(pnlData.summary.profit) }}</div><div class="kpi-l">总毛利（材料边际贡献）</div></div>
+            <div class="kpi"><div class="kpi-v">{{ fmtMoney(pnlData.summary.amount) }}</div><div class="kpi-l">合同额合计</div></div>
+            <div class="kpi"><div class="kpi-v">{{ fmtMoney(pnlData.summary.cost) }}</div><div class="kpi-l">成本合计</div></div>
             <div class="kpi"><div class="kpi-v" :class="pnlData.summary.loss_count ? 'danger' : ''">{{ pnlData.summary.loss_count }} / {{ pnlData.summary.projects }}</div><div class="kpi-l">亏损项目数 / 上榜项目</div></div>
           </div>
           <el-table v-if="!pnlGroup" show-overflow-tooltip v-loading="pnlLoading" :data="pnlRows" stripe size="small"
@@ -920,8 +920,8 @@ async function revokeInvoice(row: ViewRow) {
         <!-- 🆕 盈利改善1b：成本黑洞审计——清单不清零，毛利榜就系统性虚高 -->
         <el-tab-pane v-if="tv('audit')" label="🕳️ 成本审计" name="audit">
           <div class="summary-bar" style="margin-bottom:10px" v-if="auditData">
-            <span>本月未归集到项目的成本 <b class="danger">¥{{ fmtMoney(auditData.month_unallocated) }}</b></span>
-            <span>累计未归集 <b class="danger">¥{{ fmtMoney(auditData.total_unallocated) }}</b></span>
+            <span>本月未归集到项目的成本 <b class="danger">{{ fmtMoney(auditData.month_unallocated) }}</b></span>
+            <span>累计未归集 <b class="danger">{{ fmtMoney(auditData.total_unallocated) }}</b></span>
             <el-button v-if="auditData.fillable_count" size="small" type="primary" @click="backfillPrices">
               ⚡ 一键回填 {{ auditData.fillable_count }} 条已补价的无价流水
             </el-button>
@@ -999,16 +999,16 @@ async function revokeInvoice(row: ViewRow) {
         <!-- 🆕 盈利改善2：资金面板——现金断裂比利润难看死得更快 -->
         <el-tab-pane v-if="tv('fund')" label="💰 资金面板" name="fund">
           <div v-if="fundData" class="kpi-grid" style="margin-bottom:12px">
-            <div class="kpi"><div class="kpi-v danger">¥{{ fmtMoney(fundData.receivables.total) }}</div><div class="kpi-l">逾期应收（尾款+发货款）</div></div>
-            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(fundData.prepay.total) }}</div><div class="kpi-l">预付敞口（已付未到货）</div></div>
-            <div class="kpi"><div class="kpi-v danger">¥{{ fmtMoney(fundData.payables.overdue_total) }}</div><div class="kpi-l">逾期应付（断供风险）</div></div>
-            <div class="kpi"><div class="kpi-v">¥{{ fmtMoney(fundData.dead_stock.total_value) }}</div><div class="kpi-l">呆滞库存（≥90天无动销）</div></div>
+            <div class="kpi"><div class="kpi-v danger">{{ fmtMoney(fundData.receivables.total) }}</div><div class="kpi-l">逾期应收（尾款+发货款）</div></div>
+            <div class="kpi"><div class="kpi-v">{{ fmtMoney(fundData.prepay.total) }}</div><div class="kpi-l">预付敞口（已付未到货）</div></div>
+            <div class="kpi"><div class="kpi-v danger">{{ fmtMoney(fundData.payables.overdue_total) }}</div><div class="kpi-l">逾期应付（断供风险）</div></div>
+            <div class="kpi"><div class="kpi-v">{{ fmtMoney(fundData.dead_stock.total_value) }}</div><div class="kpi-l">呆滞库存（≥90天无动销）</div></div>
           </div>
           <el-tabs v-model="fundTab" type="card" v-loading="fundLoading">
             <el-tab-pane :label="`⏰ 逾期应收 (${recvRows.length})`" name="recv">
               <div class="summary-bar" style="margin-bottom:10px" v-if="fundData">
                 <span v-for="b in fundData.receivables.buckets" :key="b.bucket">
-                  {{ b.bucket }} <b :class="b.bucket === '90天以上' ? 'danger' : ''">¥{{ fmtMoney(b.amount) }}</b>
+                  {{ b.bucket }} <b :class="b.bucket === '90天以上' ? 'danger' : ''">{{ fmtMoney(b.amount) }}</b>
                 </span>
                 <span class="muted small">尾款按约定日、发货款按发货日计龄；逾期后系统每周自动催办（销售→第2周+主管→第3周+管理层）</span>
               </div>
@@ -1054,9 +1054,9 @@ async function revokeInvoice(row: ViewRow) {
             </el-tab-pane>
             <el-tab-pane label="📆 应付账期" name="payterm">
               <div class="summary-bar" style="margin-bottom:10px" v-if="fundData">
-                <span>逾期未付 <b class="danger">¥{{ fmtMoney(fundData.payables.overdue_total) }}</b></span>
-                <span>14天内到期 <b>¥{{ fmtMoney(fundData.payables.due_soon_total) }}</b></span>
-                <span>历史提前付 <b>¥{{ fmtMoney(fundData.payables.early_paid.total) }}</b>（平均白放弃 {{ fundData.payables.early_paid.avg_wasted_days }} 天免息）</span>
+                <span>逾期未付 <b class="danger">{{ fmtMoney(fundData.payables.overdue_total) }}</b></span>
+                <span>14天内到期 <b>{{ fmtMoney(fundData.payables.due_soon_total) }}</b></span>
+                <span>历史提前付 <b>{{ fmtMoney(fundData.payables.early_paid.total) }}</b>（平均白放弃 {{ fundData.payables.early_paid.avg_wasted_days }} 天免息）</span>
                 <span class="muted small">到期日=到货日+供应商账期；请款审批/付款页每张单都有「距到期」标签，按到期排程付款</span>
               </div>
               <el-row :gutter="16">
@@ -1080,12 +1080,12 @@ async function revokeInvoice(row: ViewRow) {
                 </el-col>
               </el-row>
               <el-alert v-if="fundData?.payables.missing_credit.length" type="warning" :closable="false" style="margin-top:10px"
-                :title="`有 ${fundData.payables.missing_credit.length} 家供应商未维护账期天数（合计应付 ¥${fmtMoney(fundData.payables.missing_credit.reduce((s, x) => s + x.outstanding, 0))}），无法算到期日——请在供应商档案补 credit_days：${fundData.payables.missing_credit.slice(0, 5).map(x => x.supplier).join('、')}${fundData.payables.missing_credit.length > 5 ? ' 等' : ''}`" />
+                :title="`有 ${fundData.payables.missing_credit.length} 家供应商未维护账期天数（合计应付 ${fmtMoney(fundData.payables.missing_credit.reduce((s, x) => s + x.outstanding, 0))}），无法算到期日——请在供应商档案补 credit_days：${fundData.payables.missing_credit.slice(0, 5).map(x => x.supplier).join('、')}${fundData.payables.missing_credit.length > 5 ? ' 等' : ''}`" />
             </el-tab-pane>
             <el-tab-pane :label="`🧊 呆滞库存 (${fundData?.dead_stock.rows.length ?? 0})`" name="dead">
               <div class="summary-bar" style="margin-bottom:10px" v-if="fundData">
-                <span>锁死现金合计 <b class="danger">¥{{ fmtMoney(fundData.dead_stock.total_value) }}</b></span>
-                <span v-for="b in fundData.dead_stock.buckets" :key="b.bucket">{{ b.bucket }} <b>¥{{ fmtMoney(b.value) }}</b></span>
+                <span>锁死现金合计 <b class="danger">{{ fmtMoney(fundData.dead_stock.total_value) }}</b></span>
+                <span v-for="b in fundData.dead_stock.buckets" :key="b.bucket">{{ b.bucket }} <b>{{ fmtMoney(b.value) }}</b></span>
                 <span class="muted small">≥90 天无出库动销的 现存×加权均价；可回溯谁为哪个项目买的</span>
               </div>
               <el-table show-overflow-tooltip :data="fundData?.dead_stock.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 470px)">
@@ -1121,8 +1121,8 @@ async function revokeInvoice(row: ViewRow) {
                 <el-table-column label="累计净额" width="140" align="right"><template #default="{ row }"><b :class="row.cum < 0 ? 'danger' : 'profit-pos'">{{ fmtMoney(row.cum) }}</b><el-tag v-if="row.cum < 0" size="small" type="danger" style="margin-left:6px">缺口</el-tag></template></el-table-column>
               </el-table>
               <div class="muted small" style="margin-top:8px" v-if="fundData">
-                另有：无约定日的已发货应收 ¥{{ fmtMoney(fundData.cashgap.undated_inflow) }}（催回即是流入）；
-                13周以后的流入 ¥{{ fmtMoney(fundData.cashgap.inflow_later) }} / 流出 ¥{{ fmtMoney(fundData.cashgap.outflow_later) }}。
+                另有：无约定日的已发货应收 {{ fmtMoney(fundData.cashgap.undated_inflow) }}（催回即是流入）；
+                13周以后的流入 {{ fmtMoney(fundData.cashgap.inflow_later) }} / 流出 {{ fmtMoney(fundData.cashgap.outflow_later) }}。
               </div>
             </el-tab-pane>
           </el-tabs>

@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld('pmsDesktop', {
   //   有新版本则静默下载，下完由主进程弹「立即重启更新」原生框）----
   checkUpdateSilent: () => ipcRenderer.send('pms-desktop:check-update-silent'),
 
+  // 🆕 登录前强制版本检查：返回 true 表示版本过低、主进程已切到强制更新页，登录别再往下走。
+  //    客户端可能连开好几天不重启（还有 30 天免登录），只靠启动时那一次查不到新版。
+  enforceVersion: () => ipcRenderer.invoke('pms-desktop:enforce-version'),
+
   // ---- 强制更新页专用最小 IPC ----
   forceUpdateNotes: info.forceNotes || '',
   onProgress: (cb) => ipcRenderer.on('force-update:progress', (_e, p) => cb(p)),

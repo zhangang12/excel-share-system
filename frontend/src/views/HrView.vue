@@ -389,7 +389,7 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
             title="只填每部门的月度工资总额（不到个人），用于经营分析里的人工成本与项目毛利「含人工」口径。部门在 OA审批-部门 里维护。" />
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
             <el-date-picker v-model="pMonth" type="month" value-format="YYYY-MM" :clearable="false" style="width:130px" @change="loadPayroll" />
-            <span>本月合计 <b class="amt">¥{{ fmtMoney(pTotal) }}</b></span>
+            <span>本月合计 <b class="amt">{{ fmtMoney(pTotal) }}</b></span>
             <el-button type="primary" :loading="pSaving" @click="savePayroll">保存本月</el-button>
           </div>
           <el-row :gutter="16">
@@ -413,7 +413,7 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
                 <el-select v-model="sumYear" style="width:100px" @change="loadSummary">
                   <el-option v-for="y in [sumYear + 1, sumYear, sumYear - 1, sumYear - 2].filter((v, i, a) => a.indexOf(v) === i)" :key="y" :label="y + ' 年'" :value="y" />
                 </el-select>
-                <span class="muted small">年合计 ¥{{ fmtMoney(sumTotal) }}</span>
+                <span class="muted small">年合计 {{ fmtMoney(sumTotal) }}</span>
               </div>
               <el-table show-overflow-tooltip :data="sumRows" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
                 <el-table-column prop="month" label="月份" width="100" />
@@ -472,7 +472,7 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
             title="个人工资明细，敏感数据——本页仅人事 / 管理层可见。实发 = 基本 + 绩效 + 加班费 + 补贴 − 社保公积金 − 个税 − 其他扣款（自动计算）。" />
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
             <el-date-picker v-model="sMonth" type="month" value-format="YYYY-MM" :clearable="false" style="width:130px" @change="loadSalary" />
-            <span>本月实发合计 <b class="amt">¥{{ fmtMoney(sTotalNet) }}</b></span>
+            <span>本月实发合计 <b class="amt">{{ fmtMoney(sTotalNet) }}</b></span>
             <el-button type="primary" :loading="sSaving" @click="saveSalary">保存本月</el-button>
             <!-- 🆕 #249 批量导入 -->
             <el-button :icon="Upload" :loading="sImporting" @click="pickSalaryFile">批量导入</el-button>

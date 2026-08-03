@@ -331,6 +331,31 @@ function openDownload(row: PurchaseRow) {
 function toggleAllSheets(v: any) { dlSelSheets.value = v ? dlSheets.value.map(s => s.id) : [] }
 function toggleAllAtts(v: any) { dlSelAtts.value = v ? dlAtts.value.map(a => a.id) : [] }
 
+// 🆕 #340 单个下载：勾选打 zip 之外，每行给个直接下载。
+// 走同一个 /purchase/package（single=true），权限口径跟打包完全一致；
+// 不用 /attachments/{id}/download —— 那个是「登录即可」，比打包松。
+const dlOne = ref<number | null>(null)
+async function downloadSingle(kind: 'sheet' | 'att', id: number, name: string) {
+  if (!dlRow.value || dlOne.value) return
+  dlOne.value = id
+  try {
+    const res = await http.post('/purchase/package', {
+      project_id: dlRow.value.project_id,
+      sheet_ids: kind === 'sheet' ? [id] : [],
+      attachment_ids: kind === 'att' ? [id] : [],
+      single: true,
+    }, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = kind === 'sheet' ? `${dlRow.value.code}_${name}.xlsx` : name
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch {
+    ElMessage.error('下载失败')
+  } finally { dlOne.value = null }
+}
+
 async function packDownload() {
   if (!dlRow.value) return
   if (!dlSelCount.value) { ElMessage.info('请至少勾选一项'); return }
@@ -1647,7 +1672,7 @@ async function submitBatchInvoiceNo() {
   if (invoiceNoForm.invoice_amount == null) { ElMessage.warning('请填写合并开票金额'); return }
   const recvTotal = Number(selRecvTotal.value.toFixed(2))
   if (!invoiceAmtMatch.value) {
-    ElMessage.error(`合并开票金额 ¥${fmtMoney(invoiceNoForm.invoice_amount)} 与勾选零件收货金额合计 ¥${fmtMoney(recvTotal)} 不一致，无法开票`)
+    ElMessage.error(`合并开票金额 ${fmtMoney(invoiceNoForm.invoice_amount)} 与勾选零件收货金额合计 ${fmtMoney(recvTotal)} 不一致，无法开票`)
     return
   }
   const ids = selLeaves.value.map(i => i.id)
@@ -3295,7 +3320,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         :title="`将对已勾选的 ${selLeaves.length} 条零件统一维护同一开票号；每条零件的开票金额取其各自收货金额，并标记为「已开票」。`" />
       <div class="inv-recv-bar">
         <span>勾选零件收货金额合计</span>
-        <b class="amt">¥{{ fmtMoney(selRecvTotal) }}</b>
+        <b class="amt">{{ fmtMoney(selRecvTotal) }}</b>
       </div>
       <el-form label-position="top">
         <el-form-item label="开票号" required>
@@ -3306,7 +3331,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <div class="inv-match" :class="invoiceAmtMatch ? 'ok' : 'bad'">
             <template v-if="invoiceNoForm.invoice_amount == null">请填写发票总额；须与上方收货金额合计一致方可开票</template>
             <template v-else-if="invoiceAmtMatch">✓ 与收货金额合计一致，可开票</template>
-            <template v-else>✗ 与收货金额合计不一致（差 ¥{{ fmtMoney(Math.abs((invoiceNoForm.invoice_amount || 0) - selRecvTotal)) }}），无法开票</template>
+            <template v-else>✗ 与收货金额合计不一致（差 {{ fmtMoney(Math.abs((invoiceNoForm.invoice_amount || 0) - selRecvTotal)) }}），无法开票</template>
           </div>
         </el-form-item>
         <el-form-item label="开票日期" required>
@@ -3627,7 +3652,11 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                          @change="toggleAllSheets">全选</el-checkbox>
           </div>
           <el-checkbox-group v-model="dlSelSheets" class="dl-list">
-            <el-checkbox v-for="s in dlSheets" :key="s.id" :value="s.id" class="dl-item">{{ s.label }}</el-checkbox>
+            <div v-for="s in dlSheets" :key="s.id" class="dl-row">
+              <el-checkbox :value="s.id" class="dl-item">{{ s.label }}</el-checkbox>
+              <el-button size="small" link type="primary" :icon="Download" :loading="dlOne === s.id"
+                         title="单独下载这一张" @click.stop="downloadSingle('sheet', s.id, s.label)" />
+            </div>
           </el-checkbox-group>
           <div v-if="!dlSheets.length" class="muted dl-empty">该项目暂无采购数据表</div>
         </div>
@@ -3641,9 +3670,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                          @change="toggleAllAtts">全选</el-checkbox>
           </div>
           <el-checkbox-group v-model="dlSelAtts" class="dl-list">
-            <el-checkbox v-for="a in dlAtts" :key="a.id" :value="a.id" class="dl-item">
-              <span class="dl-kind">{{ a.kind }}</span>{{ a.name }}
-            </el-checkbox>
+            <div v-for="a in dlAtts" :key="a.id" class="dl-row">
+              <el-checkbox :value="a.id" class="dl-item">
+                <span class="dl-kind">{{ a.kind }}</span>{{ a.name }}
+              </el-checkbox>
+              <el-button size="small" link type="primary" :icon="Download" :loading="dlOne === a.id"
+                         title="单独下载这一个" @click.stop="downloadSingle('att', a.id, a.name)" />
+            </div>
           </el-checkbox-group>
           <div v-if="!dlAtts.length" class="muted dl-empty">暂无设计推送附件</div>
         </div>
@@ -3839,6 +3872,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .dl-sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--el-border-color-lighter); }
 .dl-sec-title { font-weight: 600; color: var(--el-text-color-primary); font-size: 13px; }
 .dl-list { display: flex; flex-direction: column; gap: 6px; }
+.dl-row { display: flex; align-items: center; gap: 6px }
+.dl-row .dl-item { flex: 1; min-width: 0 }
+/* el-checkbox 默认 nowrap，长文件名会被顶出去 */
+.dl-row .dl-item :deep(.el-checkbox__label) { white-space: normal; word-break: break-all; line-height: 1.5 }
 .dl-item { width: 100%; margin-right: 0; height: auto; }
 .dl-item :deep(.el-checkbox__label) { white-space: normal; word-break: break-all; line-height: 1.5; }
 .dl-kind { display: inline-block; margin-right: 6px; padding: 0 6px; font-size: 11px; color: var(--primary-dark); background: var(--el-color-primary-light-9); border-radius: 8px; }

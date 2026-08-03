@@ -72,6 +72,10 @@ async function onSubmit() {
   }
   loading.value = true
   try {
+    // 🆕 桌面端：版本低于要求就不让登录，主进程直接切到强制更新页。
+    //    浏览器端 pmsDesktop 为 undefined，这里整个跳过。
+    //    网络不通时主进程一律放行（宁可漏拦，不能因为服务器抖一下把人锁在门外）。
+    if (await window.pmsDesktop?.enforceVersion?.()) return
     const resp = await authApi.login(form.username, form.password)
     if (resp.gate_required && resp.pre_token) {
       preToken.value = resp.pre_token

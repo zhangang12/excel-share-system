@@ -233,22 +233,65 @@ process.on('unhandledRejection', (reason) => {
   logCrash('unhandledRejection', (reason && reason.stack) || String(reason));
 });
 
-// ---- 强制最低版本检查：拉服务器 version.json，失败（还没这文件）视为不强制 ----
+// ---- 通道上的最新版本号：从 latest.yml 抠 version（不为一行引个 yaml 依赖）----
+async function latestChannelVersion() {
+  try {
+    const res = await fetch(UPDATE_BASE_URL + 'latest.yml',
+      { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return '';
+    const m = /^version:\s*([\w.\-+]+)\s*$/m.exec(await res.text());
+    return m ? m[1] : '';
+  } catch (err) {
+    log('latest.yml 拉取失败：', err.message);
+    return '';
+  }
+}
+
+// ---- 强制版本检查：拉服务器 version.json，失败（网络不通/还没这文件）一律视为不强制 ----
+// 两种口径：
+//   min_version   —— 手工设的地板，老客户端只认这个
+//   force_latest  —— 「必须是通道上的最新版」，省得每次发版都要记得改 min_version
+// 判定用两者里更高的那个。网络不通时**放行**：宁可漏拦，也不能因为服务器抖一下就把人锁在门外。
 async function checkForceUpdate() {
   try {
-    // 5s 超时：服务器不可达时别让启动页一直转
     const res = await fetch(VERSION_JSON_URL, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
     if (!res.ok) { log('version.json 不可用（', res.status, '），跳过强制检查'); return null; }
-    const j = await res.json();
-    if (j && j.min_version && compareVersions(app.getVersion(), j.min_version) < 0) {
-      log(`当前版本 ${app.getVersion()} 低于最低要求 ${j.min_version}，进入强制更新`);
-      return j;
+    const j = (await res.json()) || {};
+    let need = j.min_version || '';
+    if (j.force_latest) {
+      const latest = await latestChannelVersion();
+      if (latest && (!need || compareVersions(latest, need) > 0)) need = latest;
+    }
+    if (need && compareVersions(app.getVersion(), need) < 0) {
+      log(`当前版本 ${app.getVersion()} 低于要求 ${need}，进入强制更新`);
+      return { ...j, need };
     }
   } catch (err) {
     log('version.json 拉取失败，视为不强制：', err.message);
   }
   return null;
 }
+
+// ---- 登录前再拦一次 ----
+// 启动时查过一遍，但客户端可能连着开好几天不重启（现在还有 30 天免登录），
+// 期间发了新版就一直查不到。前端登录按钮按下前调这里，过期的直接切到强制更新页。
+let enforcing = false;
+async function enforceVersionBeforeLogin() {
+  if (forceMode || enforcing) return forceMode;
+  enforcing = true;
+  try {
+    const forced = await checkForceUpdate();
+    if (!forced) return false;
+    forceMode = true;
+    forceNotes = forced.notes || '';
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadFile(path.join(__dirname, 'renderer', 'force-update.html'));
+      setupForceUpdateIpc();
+    }
+    return true;
+  } finally { enforcing = false; }
+}
+ipcMain.handle('pms-desktop:enforce-version', () => enforceVersionBeforeLogin());
 
 // ---- 精简中文菜单 ----
 function buildMenu() {
@@ -265,23 +308,89 @@ function buildMenu() {
       { type: 'separator' },
       { role: 'togglefullscreen', label: '全屏' },
       { type: 'separator' },
+      {
+        label: `下载位置…（当前：${dlBaseDir()}）`,
+        click: () => { if (pickDownloadDir()) buildMenu(); },   // 标题带着路径，改完要重建菜单
+      },
+      {
+        label: '每次下载都询问位置',
+        type: 'checkbox',
+        checked: dlPrefs.alwaysAsk,
+        click: (mi) => { dlPrefs.alwaysAsk = mi.checked; saveDlPrefs(); },
+      },
+      { type: 'separator' },
       { role: 'quit', label: '退出' },
     ],
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-// ---- 下载处理：落系统「下载」目录，完成后通知 + 打开所在文件夹 ----
+// ---- 下载偏好：目录 + 是否每次询问，存 userData/download-prefs.json ----
+// 默认保持原样（系统「下载」目录、不询问），只有用户主动改过才不一样，装了新版的人不会突然被弹窗。
+const DL_PREFS_FILE = () => path.join(app.getPath('userData'), 'download-prefs.json');
+let dlPrefs = { dir: '', alwaysAsk: false };
+function loadDlPrefs() {
+  try {
+    const j = JSON.parse(fs.readFileSync(DL_PREFS_FILE(), 'utf8'));
+    if (j && typeof j === 'object') {
+      dlPrefs = { dir: String(j.dir || ''), alwaysAsk: !!j.alwaysAsk };
+    }
+  } catch { /* 没有就用默认 */ }
+  // 目录被删/换盘/U盘拔了 → 退回系统下载目录，不能让下载直接失败
+  if (dlPrefs.dir && !fs.existsSync(dlPrefs.dir)) {
+    log('下载目录不存在，退回系统下载目录：', dlPrefs.dir);
+    dlPrefs.dir = '';
+  }
+}
+function saveDlPrefs() {
+  try { fs.writeFileSync(DL_PREFS_FILE(), JSON.stringify(dlPrefs, null, 2)); }
+  catch (err) { log('下载偏好写入失败：', err.message); }
+}
+function dlBaseDir() { return dlPrefs.dir || app.getPath('downloads'); }
+
+/** 同名自动加 (1)(2)… 防覆盖 */
+function uniquePath(dir, filename) {
+  let out = path.join(dir, filename);
+  let i = 1;
+  while (fs.existsSync(out)) {
+    const ext = path.extname(out);
+    out = path.join(dir, `${path.basename(out, ext)}(${i})${ext}`);
+    i++;
+  }
+  return out;
+}
+
+/** 选下载目录（菜单「下载位置…」）。返回是否改了。 */
+function pickDownloadDir() {
+  const r = dialog.showOpenDialogSync(mainWindow, {
+    title: '选择下载保存位置',
+    defaultPath: dlBaseDir(),
+    properties: ['openDirectory', 'createDirectory'],
+    buttonLabel: '就存这里',
+  });
+  if (!r || !r.length) return false;
+  dlPrefs.dir = r[0];
+  saveDlPrefs();
+  log('下载目录已设为：', dlPrefs.dir);
+  return true;
+}
+
+// ---- 下载处理：落指定目录（默认系统「下载」），完成后通知 + 打开所在文件夹 ----
 function setupDownloadHandler() {
   session.defaultSession.on('will-download', (_event, item) => {
-    const dir = app.getPath('downloads');
-    let savePath = path.join(dir, item.getFilename());
-    // 同名文件自动加 (1)(2)… 防覆盖
-    let i = 1;
-    while (fs.existsSync(savePath)) {
-      const ext = path.extname(savePath);
-      savePath = path.join(dir, `${path.basename(savePath, ext)}(${i})${ext}`);
-      i++;
+    // setSavePath 必须在本回调里同步调用，异步版对话框会被 Electron 抢先接管，所以用 Sync 版
+    let savePath;
+    if (dlPrefs.alwaysAsk) {
+      savePath = dialog.showSaveDialogSync(mainWindow, {
+        title: '保存到',
+        defaultPath: path.join(dlBaseDir(), item.getFilename()),
+        buttonLabel: '保存',
+      });
+      if (!savePath) { item.cancel(); return; }   // 用户点了取消就别偷偷存一份
+      dlPrefs.dir = path.dirname(savePath);       // 记住这次选的，下次从这里开始
+      saveDlPrefs();
+    } else {
+      savePath = uniquePath(dlBaseDir(), item.getFilename());
     }
     item.setSavePath(savePath);
     item.once('done', (_e, state) => {
@@ -426,6 +535,7 @@ ipcMain.on('pms-desktop:check-update-silent', () => {
   autoUpdater.checkForUpdates().catch((err) => log('登录触发检查失败（已忽略）：', err && err.message));
 });
 
+let autoUpdateTimer = null;
 function setupAutoUpdate() {
   autoUpdater.autoDownload = true;
   autoUpdater.logger = updaterLogger;   // 🆕 落 crash.log，否则打包后全丢
@@ -469,11 +579,17 @@ function setupAutoUpdate() {
 
   const check = () => autoUpdater.checkForUpdates().catch((err) => log('检查更新失败：', err && err.message));
   check();
-  setInterval(check, UPDATE_INTERVAL_MS);
+  autoUpdateTimer = setInterval(check, UPDATE_INTERVAL_MS);
 }
 
 // ---- 强制更新模式：进度推给 force-update.html，下完自动重启安装 ----
+let forceIpcBound = false;
 function setupForceUpdateIpc() {
+  // 登录前复检可能在常规更新流程已经跑起来之后才切进强制模式：
+  // 那时 autoUpdater 上挂着 setupAutoUpdate 注册的监听，不摘掉会两套逻辑同时跑
+  // （用户会先看到常规的「立即重启更新」原生对话框，点了取消就卡在强制页上不动）。
+  if (autoUpdateTimer) { clearInterval(autoUpdateTimer); autoUpdateTimer = null; }
+  autoUpdater.removeAllListeners();
   autoUpdater.autoDownload = true;
   autoUpdater.logger = updaterLogger;   // 🆕 落 crash.log，否则打包后全丢
 
@@ -495,6 +611,8 @@ function setupForceUpdateIpc() {
     send('force-update:error', '更新下载失败，请检查网络后重试。');
   });
 
+  if (forceIpcBound) return;    // ipcMain.on 重复注册会让一次点击触发两遍
+  forceIpcBound = true;
   ipcMain.on('force-update:trigger', () => {
     autoUpdater.checkForUpdates().catch((err) => {
       send('force-update:error', `检查更新失败：${err && err.message}`);
@@ -518,6 +636,7 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     // 任务栏图标分组 ID（与 appId 一致，通知/任务栏归属正确）
     app.setAppUserModelId('com.tonghui.pms');
+    loadDlPrefs();          // 菜单标题要显示当前下载目录，必须在 buildMenu 之前
     buildMenu();
     setupDownloadHandler();
     // 启动页立刻亮（强制版本检查要走网络，不能让用户干等黑屏）
