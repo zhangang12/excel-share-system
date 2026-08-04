@@ -111,9 +111,17 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # 手机 APP 的来源。Capacitor 把前端包放在本地，页面 origin 是 localhost，
+    # 而 API 在服务器上 —— 对浏览器来说这是跨域，不放行的话 APP 里每个接口都失败，
+    # 而手机上你还看不到控制台里那行 CORS 报错，排查起来极慢。
+    #   http://localhost   Android（capacitor.config.ts 里 androidScheme=http）
+    #   https://localhost  服务器上了 HTTPS 后切回 Capacitor 默认 scheme 时用
+    #   capacitor://localhost  iOS 默认 scheme，先放着，做 iOS 时不用再改后端
+    _app_origins = ["http://localhost", "https://localhost", "capacitor://localhost"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", *_app_origins],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -30,15 +30,36 @@ const serveH5Entry = () => ({
   },
 })
 
+/**
+ * 两个消费者，同一份源码，只有两处不同：
+ *
+ *   网页版  H5_TARGET 不设   base '/h5/'   API '/api'（同源）        → dist-h5/
+ *   APP     H5_TARGET=app   base './'     API 绝对地址（跨域）      → dist-h5-app/
+ *
+ * APP 那份是**热更新包**的内容：资源从包根加载，所以 base 必须是相对的；
+ * 页面在 http://localhost 而 API 在服务器上，所以 API 必须是绝对地址。
+ *
+ * ⚠️ 不为 APP 单开一份配置文件。这个仓库已经栽过一次
+ *   「vite.config.js 与 .ts 两份并存、只改了没被读的那份」——
+ *   两份配置早晚会漂移，用一个开关比多一个文件安全。
+ */
+const IS_APP = process.env.H5_TARGET === 'app'
+// 打 APP 包时必须给绝对地址；给不出就直接失败，别产出一个每个接口都 404 的包
+const APP_API_BASE = process.env.VITE_API_BASE || 'http://8.141.123.141/api'
+
 export default defineConfig({
   plugins: [vue(), serveH5Entry()],
   root: __dirname,
-  base: '/h5/',
+  base: IS_APP ? './' : '/h5/',
+  define: {
+    // 用 define 而不是靠 .env 文件：构建产物里 API 地址是什么，一眼可查、不依赖环境
+    'import.meta.env.VITE_API_BASE': JSON.stringify(IS_APP ? APP_API_BASE : '/api'),
+  },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   build: {
-    outDir: 'dist-h5',
+    outDir: IS_APP ? 'dist-h5-app' : 'dist-h5',
     emptyOutDir: true,
     rollupOptions: {
       input: fileURLToPath(new URL('./h5.html', import.meta.url)),

@@ -8,6 +8,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { http, errText } from './http'
+import { api } from './apiBase'
 import { clearSession, displayName } from './session'
 import { renderMd } from './markdown'
 import { useSpeech } from './useSpeech'
@@ -163,7 +164,8 @@ async function streamChat(q: string, history: { role: string; content: string }[
   const draft: Extract<Msg, { kind: 'ai' }> = { kind: 'ai', text: '' }
   let bubble = draft
   let opened = false
-  const res = await fetch('/api/agent/chat/stream', {
+  // 走 api()：APP 里是绝对地址（页面在 localhost，API 在服务器）
+  const res = await fetch(api('/agent/chat/stream'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

@@ -8,8 +8,11 @@
  * 错误提示交给各页面自己按设计稿渲染，不弹全局 toast。
  */
 import axios from 'axios'
+import { API_BASE } from './apiBase'
 
-export const http = axios.create({ baseURL: '/api', timeout: 60000 })
+// baseURL 不写死 '/api'：APP 里页面在 http://localhost，API 在服务器上，
+// 相对路径会打到本地包里去（404）。见 apiBase.ts。
+export const http = axios.create({ baseURL: API_BASE, timeout: 60000 })
 
 http.interceptors.request.use((config) => {
   const token = localStorage.getItem('pms_token')

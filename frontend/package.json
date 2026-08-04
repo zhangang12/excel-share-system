@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "audit:render": "node scripts/render-audit.pw.mjs",
     "build:h5": "vite build --config vite.config.h5.js",
-    "dev:h5": "vite --config vite.config.h5.js"
+    "dev:h5": "vite --config vite.config.h5.js",
+    "build:h5:app": "H5_TARGET=app vite build --config vite.config.h5.js"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

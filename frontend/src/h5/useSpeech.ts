@@ -1,18 +1,27 @@
 /**
- * 语音输入（Web Speech API）。
+ * 语音输入。**两套后端**，能力探测决定用哪个：
  *
- * 老实说清楚它的边界，别让人以为哪都能用：
- *   Android Chrome / 鸿蒙浏览器  可用
+ *   ① 原生（APP 内）—— 壳把系统 SpeechRecognizer 桥出来
+ *   ② Web Speech API（浏览器内）—— webkitSpeechRecognition
+ *
+ * ⚠️ 为什么必须有 ①：**Android WebView 里根本没有 Web Speech API**。
+ *   `webkitSpeechRecognition` 是 Chrome 浏览器的功能，WebView 不带语音识别服务绑定，
+ *   一律取不到构造函数。所以旧版 APP（纯 WebView 壳）里麦克风按钮**永远是隐藏的** ——
+ *   网页上能用、APP 里没有，用户看到的就是「不兼容」。走原生桥接才补得上。
+ *
+ * 各端边界（说清楚，别让人以为哪都能用）：
+ *   同辉 APP（原生桥接）        可用
+ *   Android Chrome / 鸿蒙浏览器  可用（Web Speech）
  *   iOS Safari 14.5+            可用，但必须由用户手势触发，且识别在苹果服务器上做
  *   企业微信 / 微信内置浏览器     多半不可用（内核裁剪掉了这个 API）
  *
- * 所以这里做能力探测：拿不到 API 就把麦克风按钮整个隐藏，
- * 而不是显示一个点了没反应的按钮——那比没有更糟。
+ * 拿不到任何一种就把麦克风按钮整个隐藏，而不是显示一个点了没反应的按钮——那比没有更糟。
  *
- * 隐私：识别由浏览器/系统完成，音频不经过我们的服务器，也不落库。
+ * 隐私：识别由系统/浏览器完成，音频不经过我们的服务器，也不落库。
  * 若将来要在企微里用，得换企微 JS-SDK 的 translateVoice，那是另一套鉴权，不在本期。
  */
 import { ref, onUnmounted } from 'vue'
+import { nativeSpeechAvailable, startNativeSpeech, type NativeSpeechHandle } from './native'
 
 type SR = any
 
@@ -22,17 +31,44 @@ function getCtor(): SR | null {
 }
 
 export function useSpeech(onText: (text: string, final: boolean) => void) {
-  const supported = !!getCtor()
+  const useNative = nativeSpeechAvailable()
+  const supported = useNative || !!getCtor()
   const listening = ref(false)
   const error = ref('')
   let rec: SR = null
+  let native: NativeSpeechHandle | null = null
+  /** 防重入：原生 start 要往返一次，连点两下会起两路识别 */
+  let starting = false
 
   function stop() {
-    try { rec?.stop() } catch { /* 已经停了 */ }
+    if (useNative) {
+      native?.stop()
+      native = null
+    } else {
+      try { rec?.stop() } catch { /* 已经停了 */ }
+    }
     listening.value = false
   }
 
-  function start() {
+  async function startNative() {
+    if (starting || listening.value) return
+    starting = true
+    error.value = ''
+    // 先亮起来：起原生会话要往返一次，不先置 true 会有一段「点了没反应」
+    listening.value = true
+    try {
+      native = await startNativeSpeech(
+        onText,
+        (msg) => { error.value = msg; listening.value = false; native = null },
+        () => { listening.value = false; native = null },
+      )
+      if (!native) listening.value = false
+    } finally {
+      starting = false
+    }
+  }
+
+  function startWeb() {
     const Ctor = getCtor()
     if (!Ctor || listening.value) return
     error.value = ''
@@ -68,6 +104,7 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
     }
   }
 
+  function start() { useNative ? void startNative() : startWeb() }
   function toggle() { listening.value ? stop() : start() }
 
   onUnmounted(stop)

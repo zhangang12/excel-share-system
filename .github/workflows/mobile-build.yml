@@ -1,19 +1,24 @@
-name: 手机 APP 打包（Android APK）
+name: 手机 APP 打包（Android APK · Capacitor）
 
-# 这个 APP 就是把服务器上的 H5（/h5/）包进一个 WebView —— **页面资源全部走服务器**，
-# 改一行前端不用重新发 APP，手机上看到的和网页端永远一致。
+# 这个 APP 用 Capacitor 打包：**前端资源打进 APK、从本地加载**（页面在 http://localhost），
+# 不再每次开 APP 都去服务器取页面。改前端走热更新（mobile/ship.sh），不用重发 APK。
+#
+# 什么时候需要重新发 APK：
+#   · 改了原生侧（MainActivity / 插件 / 清单 / 依赖）
+#   · 换了热更新验签公钥
+#   · 想把内置前端包刷新到当前版本（省得新装的人开机先热更一次）
+# 只改前端 → 跑 mobile/ship.sh 就够了，**不用**跑这个工作流。
 #
 # 产物**不自动上传服务器**：本仓库是公开仓库，不把生产 SSH 私钥放进 Actions Secrets。
-# 打完包下载 artifact，再在本机跑：bash mobile/ship.sh --upload-only <解压目录>
+# 打完包下载 artifact，用企微/微信发给同事直接装。
 #
-# ⚠️ release 包用 debug 签名，只供内部分发（微信/企微发 APK 直接装）。
-#    要上应用商店得换正式签名，keystore 绝不能进仓库。
+# ⚠️ release 包用 debug 签名，只供内部分发。要上应用商店得换正式签名，keystore 绝不进仓库。
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号（留空 = 用 app/build.gradle.kts 里的当前版本）'
+        description: '壳版本号（留空 = 用 android/app/build.gradle 里的当前值）'
         required: false
         default: ''
 
@@ -26,36 +31,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Capacitor 7 要求 Node ≥ 20
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - uses: android-actions/setup-android@v3
 
-      # ⚠️ 必经关卡：APP 的三个死条件，缺一个装上去就是白屏或每次都要重登。
-      #    与 Windows 客户端那次「打包缺文件却一路绿灯」同一个教训 ——
-      #    构建成功不等于装上能用，得单独检查。
-      - name: 配置自检（明文放行 / DOM storage / URL）
+      # ① 先构建 APP 版 H5。**必须是 build:h5:app 不是 build:h5** ——
+      #    网页版产物用相对 API 路径，打进 APP 里每个接口都会 404 在本地包上。
+      - name: 构建 APP 版前端
+        shell: bash
+        run: |
+          cd frontend
+          npm ci
+          npm run build:h5:app
+
+      # ② 放到 Capacitor 的 webDir。Capacitor 只认 index.html，产物叫 h5.html，必须改名。
+      - name: 组装 webDir
+        shell: bash
+        run: |
+          rm -rf mobile/www && mkdir -p mobile/www
+          cp -R frontend/dist-h5-app/. mobile/www/
+          mv mobile/www/h5.html mobile/www/index.html
+          ls -la mobile/www
+
+      - name: 安装 Capacitor 并同步到 android
+        shell: bash
+        working-directory: mobile
+        run: |
+          npm ci
+          npx cap sync android
+
+      # ③ 必经关卡：死条件自检。构建成功 ≠ 装上能用 ——
+      #    与 Windows 客户端那次「打包缺文件却一路绿灯」同一个教训。
+      - name: 配置自检
         shell: bash
         run: bash mobile/check.sh
 
       - name: 版本号（仅当显式传入时覆盖）
         shell: bash
         run: |
+          GRADLE=mobile/android/app/build.gradle
           if [ -n "${{ inputs.version }}" ]; then
-            sed -i "s/versionName = \".*\"/versionName = \"${{ inputs.version }}\"/" \
-              mobile/app/build.gradle.kts
-            CODE=$(echo "${{ inputs.version }}" | tr -d '.')
-            sed -i "s/versionCode = .*/versionCode = ${CODE}/" mobile/app/build.gradle.kts
+            sed -i "s/versionName \".*\"/versionName \"${{ inputs.version }}\"/" "$GRADLE"
+            # versionCode 必须单调递增，否则装不上（系统当成降级）。
+            # 主.次.修 → 主*10000 + 次*100 + 修，例：2.1.3 → 20103
+            CODE=$(echo "${{ inputs.version }}" | awk -F. '{printf "%d", $1*10000+$2*100+$3}')
+            sed -i "s/versionCode .*/versionCode ${CODE}/" "$GRADLE"
           fi
-          echo "VERSION=$(grep -oP 'versionName = "\K[^"]+' mobile/app/build.gradle.kts)" >> "$GITHUB_ENV"
+          echo "VERSION=$(grep -oP 'versionName "\K[^"]+' "$GRADLE")" >> "$GITHUB_ENV"
 
-      # ⚠️ CI 机器上没有 ~/.android/debug.keystore，而 release 用的是 debug 签名 ——
-      #    不生成的话 APK 出来是**没签名的**，手机直接拒绝安装。
-      #    上一轮就是栽在这：编译全绿、包也有 2.5M，校验一开包才发现没签名。
-      #    固定口令 android/androiddebugkey 是 Android 官方 debug 签名的约定值，
-      #    只用于内部分发；上应用商店必须换正式签名（keystore 不入仓库）。
+      # ⚠️ CI 机器上没有 ~/.android/debug.keystore，而 release 用的正是 debug 签名 ——
+      #    不生成的话产出的是**没签名的 APK，手机直接拒绝安装**。
+      #    上一代工作流就栽在这：编译全绿、包也有 2.5M，开包才发现没签名。
       - name: 准备 debug 签名（内部分发用）
         shell: bash
         run: |
@@ -69,21 +103,20 @@ jobs:
 
       - name: 打 APK
         shell: bash
-        working-directory: mobile
+        working-directory: mobile/android
         run: |
-          chmod +x gradlew 2>/dev/null || true
-          gradle wrapper --gradle-version 8.7 --no-daemon
+          chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
       - name: 校验产物真的能装（不是「构建成功」就算数）
         shell: bash
-        run: bash mobile/check-apk.sh mobile/app/build/outputs/apk/release/app-release.apk
+        run: bash mobile/check-apk.sh mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - name: 收集待上传文件
         shell: bash
         run: |
           mkdir -p out
-          cp mobile/app/build/outputs/apk/release/app-release.apk \
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk \
              "out/同辉项目管理-${VERSION}.apk"
           ls -la out
 

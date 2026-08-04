@@ -12,6 +12,7 @@ import { createApp } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import App from './H5App.vue'
 import { isLoggedIn } from './session'
+import { notifyReady, notifyFailed } from './native'
 import '../styles/h5-tokens.css'
 
 const router = createRouter({
@@ -30,4 +31,31 @@ router.beforeEach((to) => {
   return isLoggedIn.value ? true : { name: 'login' }
 })
 
-createApp(App).use(router).mount('#app')
+const app = createApp(App)
+
+/**
+ * 启动失败上报。**只在报平安之前有效**（判断在 native.ts 里）——
+ * 起来之后某个组件抛异常是业务 bug，不该把整个前端包回滚掉。
+ */
+app.config.errorHandler = (err) => {
+  notifyFailed(String((err as any)?.message || err))
+  console.error(err)
+}
+
+// mount 保持原样立即执行：这条路径是线上跑通过的，不为了加回执去改启动时序。
+app.use(router)
+app.mount('#app')
+
+/**
+ * 热更新回执：**等路由真的解析完**再报平安。
+ *
+ * mount 返回不代表页面可用 —— 异步路由组件还没加载。一个 chunk 缺失的坏包
+ * 照样能 mount 成功然后白屏。isReady 兑现才说明 JS 解析了、Vue 起来了、
+ * 首个路由组件也拿到了。
+ *
+ * 收不到这一声，壳会在下次启动**自动退回上一个好包**（见 native.ts / PmsUpdater）。
+ */
+router.isReady().then(
+  () => notifyReady(),
+  (err) => notifyFailed(String(err?.message || err)),
+)

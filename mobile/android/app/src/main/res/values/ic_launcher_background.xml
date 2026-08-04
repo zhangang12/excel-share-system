@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 品牌蓝，与 H5 的 --h5-blue 同值 -->
+    <color name="ic_launcher_background">#2B6EF6</color>
+</resources>

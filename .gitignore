@@ -65,3 +65,13 @@ nginx/wecom-verify/*
 nginx/conf.d/*.bak
 nginx/conf.d/default.conf.pre-https.bak.*
 frontend/dist-h5/
+
+# ===== 手机 APP（Capacitor）=====
+mobile/node_modules/
+# www/ 是每次构建从 frontend/dist-h5-app 拷进来的产物，不入库
+mobile/www/
+mobile/android/app/src/main/assets/public/
+frontend/dist-h5-app/
+# 热更新签名私钥：只在发版机器上，永不入库
+.deploy.local.ota.pem
+ops/ota-out/

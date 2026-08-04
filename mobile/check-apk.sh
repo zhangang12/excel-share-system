@@ -28,15 +28,40 @@ else
 fi
 
 if command -v unzip >/dev/null 2>&1; then
-  unzip -l "$APK" | grep -q "classes.dex" \
+  # ⚠️ 先把清单落成文件再 grep。写成 `unzip -l ... | grep -q` 的话，
+  #    grep 命中即退出会让 unzip 收到 SIGPIPE，在 set -o pipefail 下整条管道判失败 ——
+  #    **包是好的，检查却把它拦下来**（打热更新包时实测栽过一次）。
+  LIST=$(mktemp)
+  unzip -l "$APK" > "$LIST"
+
+  grep -q "classes.dex" "$LIST" \
     && ok "有 classes.dex（代码真的编进去了）" || no "没有 classes.dex"
-  unzip -l "$APK" | grep -q "resources.arsc" \
+  grep -q "resources.arsc" "$LIST" \
     && ok "有 resources.arsc（布局/明文放行配置在里面）" || no "没有资源表"
-  # ⚠️ **不能**用 META-INF/*.RSA 判有没有签名。
-  #    那是 v1(JAR) 签名的痕迹；minSdk≥24 的包 AGP 只做 v2/v3 签名，
-  #    签名块在 APK 尾部、不是文件条目，一 grep 就误判成「没签名」。
-  #    实测栽过一次：包其实签好了，检查却把它拦下来。用 apksigner 才准。
-  :
+
+  # 🆕 Capacitor 版的关键：前端包**在 APK 里**。少了它装上就是白屏，
+  #    而这恰恰是「编译成功」完全看不出来的一类错。
+  grep -q "assets/public/index.html" "$LIST" \
+    && ok "内置前端包在（assets/public/index.html）" \
+    || no "APK 里没有内置前端包 —— 装上必定白屏（漏了 npx cap sync？）"
+  grep -q "assets/public/assets/" "$LIST" \
+    && ok "前端资源目录在" || no "前端只有入口没有资源，装上还是白屏"
+
+  # 热更新验签公钥：没有它 APP 会拒绝一切热更新（有意的失败即拒绝），
+  # 但那意味着这个包发出去之后**再也推不动前端**，只能重发 APK。
+  grep -q "assets/ota_public_key.pem" "$LIST" \
+    && ok "热更新验签公钥在（没有它这个包将永远收不到热更新）" \
+    || no "缺 assets/ota_public_key.pem —— 这个包发出去就再也推不了前端"
+
+  # 打成网页版产物的话 API 是相对路径，APP 里每个接口都 404 在本地包上
+  if command -v unzip >/dev/null 2>&1; then
+    if unzip -p "$APK" 'assets/public/assets/*.js' 2>/dev/null | grep -q "http://8.141.123.141/api"; then
+      ok "内置前端是 APP 版（API 为绝对地址）"
+    else
+      no "内置前端像是网页版（API 是相对路径）—— APP 里所有接口会 404"
+    fi
+  fi
+  rm -f "$LIST"
 fi
 
 # 签名：用 apksigner 验，这是唯一准确的判据
