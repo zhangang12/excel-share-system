@@ -17,8 +17,8 @@ const { autoUpdater } = require('electron-updater');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { shouldRecoverPaint, paintAction, compareVersions,
-        requiredVersion } = require('./lib/health');
+const { shouldRecoverPaint, paintAction, reloadAction, RECOVER_WINDOW_MS,
+        compareVersions, requiredVersion } = require('./lib/health');
 
 const UPDATE_BASE_URL = 'http://8.141.123.141/desktop/';
 const VERSION_JSON_URL = UPDATE_BASE_URL + 'version.json';
@@ -89,21 +89,27 @@ ipcMain.on('pms-desktop:paint-beat', () => { lastPaintBeat = Date.now(); });
 // token 在 localStorage 里，重启回来不用重新登录。
 const APP_START = Date.now();
 let paintRelaunching = false;
+/** 重启整个应用 —— 就是用户手工「任务管理器杀进程重开」那一下，自动化版本。
+ *  token 在 localStorage，重启回来不用重新登录。 */
+function relaunchApp(title, body) {
+  paintRelaunching = true;
+  try {
+    new Notification({ title, body }).show();
+  } catch { /* 通知失败不影响重启 */ }
+  setTimeout(() => { app.relaunch(); app.exit(0); }, 1500);
+}
+
 function recoverPaint(why, stalledMs) {
   const act = paintAction({ uptimeMs: Date.now() - APP_START,
                             alreadyRelaunching: paintRelaunching });
   if (act === 'noop') return;
   if (act === 'log-only') { logCrash('paint-stall', `${why}（启动未满宽限期，只记录不重启）`); return; }
-  paintRelaunching = true;
   const detail = `${why}：${Math.round(stalledMs / 1000)}s 没有画面心跳`;
   logCrash('paint-stall', detail);
   sendReport('crash', crashLogTail(), { where: 'paint-stall', why });
+  // 画面卡死多半是 GPU/合成器的事，打标记让下次启动降级为软件渲染
   try { fs.writeFileSync(GPU_FLAG(), new Date().toISOString()); } catch { /* ignore */ }
-  try {
-    new Notification({ title: '画面无响应，正在自动重启',
-                       body: '重启后仍是登录状态，无需重新输入密码。' }).show();
-  } catch { /* 通知失败不影响重启 */ }
-  setTimeout(() => { app.relaunch(); app.exit(0); }, 1500);
+  relaunchApp('画面无响应，正在自动重启', '重启后仍是登录状态，无需重新输入密码。');
 }
 
 function checkPaint(why) {
@@ -507,6 +513,10 @@ function createWindow() {
   // 那个管的是"页面没加载成功"，管不了"加载成功之后进程死掉"）。
   // 这里把死亡事件接住并自动重载页面；登录 token 存在 localStorage，重载后不用重新登录。
   let reloadingAfterCrash = false;
+  // 本轮故障已经重载了几次。⚠️ 生产实测（2026-08-04）：重载完 0.5 秒又卡，
+  // 循环了 4 分钟——reload 对那类卡死无效，得能升级成重启整个应用。
+  let recoverAttempts = 0;
+  let lastRecoverAt = 0;
   const recover = (tag, detail) => {
     logCrash(tag, detail);
     if (reloadingAfterCrash) return;          // 防止崩溃风暴里反复重载
@@ -516,6 +526,26 @@ function createWindow() {
     //    而那**不代表没崩过**，只代表我们看不见。现在补上，否则下次还是两眼一抹黑。
     sendReport('crash', crashLogTail(), { where: 'renderer-recover', tag });
     lastPaintBeat = Date.now();               // 重载后 rAF 要重开，先给个宽限期
+
+    // 距上次故障够久 = 上一轮已经过去，计数从头开始
+    const now = Date.now();
+    if (now - lastRecoverAt > RECOVER_WINDOW_MS) recoverAttempts = 0;
+    lastRecoverAt = now;
+
+    const act = reloadAction({ attempts: recoverAttempts,
+                               uptimeMs: now - APP_START,
+                               alreadyRelaunching: paintRelaunching });
+    if (act === 'noop') return;
+    if (act === 'relaunch') {
+      logCrash('reload-exhausted',
+               `连续 ${recoverAttempts} 次重载仍未恢复，升级为重启应用（tag=${tag}）`);
+      sendReport('crash', crashLogTail(), { where: 'reload-exhausted', tag,
+                                            attempts: recoverAttempts });
+      relaunchApp('程序反复无响应，正在自动重启', '重启后仍是登录状态，无需重新输入密码。');
+      return;
+    }
+
+    recoverAttempts += 1;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     try {
       mainWindow.webContents.reload();

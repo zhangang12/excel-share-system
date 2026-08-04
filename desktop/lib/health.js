@@ -67,5 +67,36 @@ function paintAction({ uptimeMs, alreadyRelaunching }) {
   return 'relaunch';
 }
 
+/** 同一轮故障里最多重载几次；再不行就别在原地打转了 */
+const RELOAD_MAX_ATTEMPTS = 3;
+/** 多久没再出故障，就认为上一轮过去了，重载计数清零 */
+const RECOVER_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * 渲染进程卡死/崩溃时该怎么救。
+ *
+ * ⚠️ 生产实测（2026-08-04，李新新那台）：
+ *     01:10:16 无响应 → 01:10:31 重载 → **01:10:32 又无响应**
+ *     01:10:47 重载 → 01:10:58 无响应 → 01:11:16 重载 → 01:11:17 又无响应
+ *     …一直循环到 01:14:31
+ *   **重载完 0.5 秒又卡** —— 说明对这类卡死，reload 根本不解决问题，
+ *   自恢复反而制造了一个循环，那 4 分钟里他一条业务都没做成。
+ *
+ * 所以：连着重载 RELOAD_MAX_ATTEMPTS 次仍不恢复 → 升级成**重启整个应用**
+ * （就是用户手工「杀进程重开」那一下，token 在 localStorage，重启不用重登）。
+ *
+ * @param attempts  本轮窗口内已经重载过几次
+ * @param uptimeMs  应用已经跑了多久 —— 刚起来就重启会变成开机循环
+ */
+function reloadAction({ attempts, uptimeMs, alreadyRelaunching }) {
+  if (alreadyRelaunching) return 'noop';
+  if (attempts < RELOAD_MAX_ATTEMPTS) return 'reload';
+  // 刚启动就判到上限，多半是启动本身有问题；重启也救不了，反而循环
+  if (uptimeMs < RELAUNCH_GRACE_MS) return 'reload';
+  return 'relaunch';
+}
+
 module.exports = { PAINT_STALL_MS, RELAUNCH_GRACE_MS,
-                   shouldRecoverPaint, paintAction, compareVersions, requiredVersion };
+                   RELOAD_MAX_ATTEMPTS, RECOVER_WINDOW_MS,
+                   shouldRecoverPaint, paintAction, reloadAction,
+                   compareVersions, requiredVersion };

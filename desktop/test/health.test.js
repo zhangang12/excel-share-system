@@ -9,8 +9,9 @@
 // 而 GPU/合成器死掉时渲染进程还活着、还响应，render-process-gone 和 unresponsive
 // 一个都不触发 —— 老逻辑在这种情况下完全失效。所以加了 rAF 画面心跳。
 const assert = require('assert');
-const { shouldRecoverPaint, paintAction, compareVersions, requiredVersion,
-        PAINT_STALL_MS, RELAUNCH_GRACE_MS } = require('../lib/health');
+const { shouldRecoverPaint, paintAction, reloadAction, compareVersions, requiredVersion,
+        PAINT_STALL_MS, RELAUNCH_GRACE_MS, RELOAD_MAX_ATTEMPTS,
+        RECOVER_WINDOW_MS } = require('../lib/health');
 
 let n = 0, bad = [];
 function t(name, fn) {
@@ -58,6 +59,54 @@ t('刚启动就判卡死 → 只记录不重启（防重启循环）', () => {
 });
 t('已经在重启了 → 不重复触发', () => {
   assert.strictEqual(paintAction({ uptimeMs: 86400000, alreadyRelaunching: true }), 'noop');
+});
+
+console.log('\n===== 重载救不回来时要升级成重启 =====');
+const UP = 10 * 60 * 1000;   // 已经跑了 10 分钟，过了宽限期
+t('前几次故障先重载（轻量，多数情况够了）', () => {
+  for (let a = 0; a < RELOAD_MAX_ATTEMPTS; a++) {
+    assert.strictEqual(reloadAction({ attempts: a, uptimeMs: UP, alreadyRelaunching: false }), 'reload');
+  }
+});
+t(`连续 ${RELOAD_MAX_ATTEMPTS} 次仍不恢复 → 重启整个应用`, () => {
+  assert.strictEqual(
+    reloadAction({ attempts: RELOAD_MAX_ATTEMPTS, uptimeMs: UP, alreadyRelaunching: false }),
+    'relaunch');
+  assert.strictEqual(
+    reloadAction({ attempts: 99, uptimeMs: UP, alreadyRelaunching: false }), 'relaunch');
+});
+t('刚启动就到上限 → 仍然只重载，别变成开机重启循环', () => {
+  assert.strictEqual(
+    reloadAction({ attempts: 99, uptimeMs: 30 * 1000, alreadyRelaunching: false }), 'reload');
+});
+t('已经在重启了就别重复触发', () => {
+  assert.strictEqual(
+    reloadAction({ attempts: 99, uptimeMs: UP, alreadyRelaunching: true }), 'noop');
+});
+t('计数窗口是 5 分钟（隔久了算新一轮，不累计）', () => {
+  assert.strictEqual(RECOVER_WINDOW_MS, 5 * 60 * 1000);
+});
+
+t('回放生产那次循环：能在第 4 次故障时终止，而不是干转 4 分钟', () => {
+  // 2026-08-04 李新新那台的真实时间线（crash.log 原文）
+  const events = ['01:10:31', '01:10:47', '01:11:16', '01:11:41',
+                  '01:13:14', '01:14:31'].map((hm) => {
+    const [h, m, s2] = hm.split(':').map(Number);
+    return ((h * 60 + m) * 60 + s2) * 1000;
+  });
+  const t0 = events[0] - 60 * 1000;      // 假设崩溃前应用已经跑了一会儿
+  let attempts = 0, lastAt = 0, relaunchedAt = null;
+  for (const at of events) {
+    if (at - lastAt > RECOVER_WINDOW_MS) attempts = 0;
+    lastAt = at;
+    const act = reloadAction({ attempts, uptimeMs: at - t0, alreadyRelaunching: !!relaunchedAt });
+    if (act === 'relaunch') { relaunchedAt = at; break; }
+    if (act === 'reload') attempts += 1;
+  }
+  assert.ok(relaunchedAt !== null, '应该升级成重启');
+  // 第 4 次故障 = 01:11:41，比实际干转到 01:14:31 早了近 3 分钟
+  assert.strictEqual(relaunchedAt, events[3],
+    `应在第 4 次故障（01:11:41）终止，实际在 index ${events.indexOf(relaunchedAt)}`);
 });
 
 console.log('\n===== 强制更新门槛 =====');
