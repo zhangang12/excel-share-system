@@ -105,6 +105,27 @@ grep -q "RECORD_AUDIO" "$MANIFEST" \
   && ok "声明了麦克风权限（WebView 没有 Web Speech API，语音走原生桥）" \
   || no "没声明 RECORD_AUDIO，APP 里语音用不了"
 
+# ── ③.5 资源 XML 必须合法 ─────────────────────────────────────────────
+# ⚠️ **XML 注释里不能出现 `--`**。写了照样过 IDE、也过 git，但 mergeReleaseResources
+#    会以一堆 SAXParseException 栈直接失败，而错误信息埋在几十行栈里很难一眼看到。
+#    实测栽过一次：注释里写了「与 --h5-blue 同值」，CI 打包整个挂掉。
+if python3 - <<'PY'
+import xml.dom.minidom, glob, sys
+bad = []
+for f in glob.glob('android/app/src/main/res/**/*.xml', recursive=True) + \
+         ['android/app/src/main/AndroidManifest.xml']:
+    try:
+        xml.dom.minidom.parse(f)
+    except Exception as e:
+        bad.append(f"{f}: {e}")
+if bad:
+    print("\n".join("    " + b for b in bad))
+sys.exit(1 if bad else 0)
+PY
+then ok "资源 XML 全部合法（注释里不能有 -- ，否则资源合并直接失败）"
+else no "有非法 XML（见上），资源合并会失败"
+fi
+
 # ── ④ 热更新：验不了签就等于谁都能往 APP 里推 JS ──────────────────────
 if [ -f "$KEYASSET" ] && grep -q "BEGIN PUBLIC KEY" "$KEYASSET"; then
   ok "APK 里有热更新验签公钥"
