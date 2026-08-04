@@ -68,6 +68,19 @@ async def main():
             for _ in range(4):
                 db.add(models.PaymentRequest(supplier_id=sup.id, requested_amount=1000,
                                              requester_id=uid["other"], status="paid"))
+            await db.flush()
+            # 🆕 关联采购明细，卡片的「项目/采购内容」就是从这来的。
+            #    ⚠️ 关联字段是 PaymentRequestItem.item_id（不是 purchase_item_id），
+            #    口径与网页端 purchase_mgmt_router._pr_out 同源。
+            #    故意造两条不同项目编号 + 一条空编号，验去重、排序、空值不进结果。
+            for code, item in (("2026-072", "蒸汽发生器"),
+                               ("2026-059B", "脚轮"),
+                               ("", "无编号的杂项")):
+                pi = models.PurchaseItem(supplier_id=sup.id, item_name=item,
+                                         project_code=code or None)
+                db.add(pi); await db.flush()
+                db.add(models.PaymentRequestItem(request_id=pr_ok.id, item_id=pi.id,
+                                                 allocated_amount=100))
             await db.commit()
             ok_id, self_id = pr_ok.id, pr_self.id
 
@@ -85,6 +98,21 @@ async def main():
         chk("6228480199998127" not in str(card), "完整银行账号不出现在卡片任何角落")
         chk(any(f.get("sensitive") for f in card["facts"]), "账号标了 sensitive")
         chk(data["amount_total"] == 54240.0, f"合计 = 48000+6240: {data['amount_total']}")
+
+        # 🆕 用户反馈：审批时看不见「这笔钱花在哪个项目上」，没法判断该不该批。
+        #    口径与网页端财务请款审批列表的「项目编号」列同源
+        #    （purchase_mgmt_router._pr_out：关联采购明细的 project_code，去重排序）。
+        #    ⚠️ 关联字段是 PaymentRequestItem.item_id，不是 purchase_item_id。
+        chk("项目" in facts, f"卡片要有「项目」这一项：{sorted(facts)}")
+        chk(card["facts"][0]["k"] == "项目",
+            f"**项目摆第一**——审批人第一眼要知道钱花在哪：{card['facts'][0]['k']}")
+        chk("采购内容" in facts, "还要说清买的是什么，光有金额判断不了")
+        chk(facts["项目"] == "2026-059B、2026-072",
+            f"多个项目编号去重排序拼接：{facts['项目']!r}")
+        chk("无编号" not in facts["项目"] and "None" not in facts["项目"],
+            f"空编号的明细不产生空值/None：{facts['项目']!r}")
+        chk("蒸汽发生器" in facts["采购内容"] and "脚轮" in facts["采购内容"],
+            f"采购内容列出买的什么：{facts['采购内容']!r}")
 
         print("\n===== 2. 职责分离：自己提交的单按钮置灰且给原因 =====")
         mine = by_ref[self_id]

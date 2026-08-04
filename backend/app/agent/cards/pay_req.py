@@ -30,6 +30,14 @@ def _mask_account(acct: str | None) -> str:
     return f"…{a[-4:]}"
 
 
+def _brief(items: list[str], limit: int = 3) -> str:
+    """采购明细名称摘要。手机上放不下十几条，取前几个 + 「等 N 项」。"""
+    if not items:
+        return "—"
+    head = "、".join(items[:limit])
+    return head if len(items) <= limit else f"{head} 等 {len(items)} 项"
+
+
 def _money(x) -> str:
     return f"¥{float(x or 0):,.2f}"
 
@@ -114,6 +122,34 @@ async def assemble_pay_req_cards(db: AsyncSession, current: models.User,
         want = set(refs)
         prs = [p for p in prs if p.id in want]
 
+    # 🆕 反馈：请款审批要能看见**这笔钱花在哪个项目上** —— 卡片原来只有
+    #    供应商/金额/账号/提交人，审批人没法判断该不该批。
+    #    口径与网页端财务请款审批列表的「项目编号」列同源
+    #    （purchase_mgmt_router._pr_out：请款单关联采购明细的 project_code，去重排序）。
+    #    ⚠️ 关联字段是 PaymentRequestItem.item_id，不是 purchase_item_id。
+    codes: dict[int, list[str]] = {}
+    names: dict[int, list[str]] = {}
+    if prs:
+        rows = (await db.execute(
+            select(models.PaymentRequestItem.request_id,
+                   models.PurchaseItem.project_code,
+                   models.PurchaseItem.item_name)
+            .join(models.PurchaseItem,
+                  models.PurchaseItem.id == models.PaymentRequestItem.item_id)
+            .where(models.PaymentRequestItem.request_id.in_([p.id for p in prs])))).all()
+        for rid, code, item in rows:
+            if code:
+                codes.setdefault(rid, [])
+                if code not in codes[rid]:
+                    codes[rid].append(code)
+            if item:
+                names.setdefault(rid, [])
+                if item not in names[rid]:
+                    names[rid].append(item)
+        for d in (codes, names):
+            for k in d:
+                d[k].sort()
+
     cards = []
     for pr in prs:
         sup = pr.supplier
@@ -139,8 +175,12 @@ async def assemble_pay_req_cards(db: AsyncSession, current: models.User,
             "token": card_token.issue(current.id, "pay_req_approve", pr.id),
             # facts 一律后端重查后回填；模型拿不到这里任何一个值的写权
             "facts": [
+                # 项目编号摆在最前：审批人第一眼要知道「这笔钱花在哪个项目上」。
+                # 多个编号逗号拼接；一条都没有时明说，别留空让人以为漏了
+                {"k": "项目", "v": "、".join(codes.get(pr.id) or []) or "（未关联项目）"},
                 {"k": "供应商", "v": sup.name if sup else f"#{pr.supplier_id}"},
                 {"k": "请款金额", "v": _money(pr.requested_amount), "emphasis": True},
+                {"k": "采购内容", "v": _brief(names.get(pr.id) or [])},
                 {"k": "收款账号",
                  "v": f"{(sup.bank_name or '') if sup else ''} {_mask_account(sup.bank_account if sup else None)}".strip(),
                  "sensitive": True},

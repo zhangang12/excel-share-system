@@ -1112,8 +1112,12 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                     </div>
                     <div class="up-b">
                       <div v-if="cardOutputFiles(o,'circuit').length" class="tc-files">
+                        <!-- 反馈#344（宋朴）：电路图会改，要能删了重传。
+                             接单资料那一块（上面 startFilesOf）早就有删除，电路图这块漏了。
+                             删除走 removeCardOutput，与「资料管理」弹窗里同一个端点。 -->
                         <el-tag v-for="f in cardOutputFiles(o,'circuit')" :key="f.id" size="small" effect="plain" class="file-chip">
                           <span @click="downloadAttachment(f)" style="cursor:pointer">{{ f.name }}</span>
+                          <el-icon class="rm" title="删除后可重新上传" @click.stop="removeCardOutput(o, f.id)"><Close /></el-icon>
                         </el-tag>
                       </div>
                       <div style="display:flex; gap:8px">
