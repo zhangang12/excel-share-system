@@ -59,6 +59,52 @@ def _live(q):
                   ).where(models.Project.is_deleted == False)  # noqa: E712
 
 
+# ══════════════════════════ 交期口径（只此一处）══════════════════════════
+# 交货日期存在 `Project.extra["__o__交货日期"]` —— 那是「项目一览」表里的列，
+# 前缀 `__o__` 见 projects_router._extract_overview_meta。
+# ⚠️ 别去 sales_ledger 找交货日期：那里只有 ship_date（物流回传的**实际**发货日）
+#    和 balance_date（尾款到期日），都不是「答应客户哪天交货」。
+DELIVER_KEY = "__o__交货日期"
+
+
+def deliver_date(p: models.Project) -> str:
+    return str(((p.extra or {}).get(DELIVER_KEY) or "")).strip()
+
+
+def _days_left(d: str | None) -> int | None:
+    """离交货日还有几天（负数=已过期）。日期坏就返回 None，不猜。"""
+    s = (d or "").strip()
+    if not s:
+        return None
+    try:
+        return (date.fromisoformat(s) - date.today()).days
+    except ValueError:
+        return None
+
+
+async def _match_projects(db: AsyncSession, code: str,
+                          limit: int = _FIND_MAX) -> list[models.Project]:
+    """按编号/名称找项目。**精确编号优先，否则返回全部模糊命中**。
+
+    ⚠️ 这里绝不能「模糊匹配完取第一条」。生产上项目编号大量带字母后缀
+    （2026-071A / 071B、043B~043E、045A/045B…），用户口语说「071」时
+    `%071%` 会同时命中 A 和 B —— 取一条就等于**悄悄把另一个项目从答案里删掉**，
+    而用户看到的是一份看起来完整的分析。实测就是这么漏掉 2026-071A 的。
+    """
+    c = (code or "").strip()
+    if not c:
+        return []
+    base = select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
+    exact = (await db.execute(base.where(func.lower(models.Project.code) == c.lower())
+                              )).scalars().all()
+    if exact:
+        return list(exact)
+    return list((await db.execute(
+        base.where(or_(models.Project.code.ilike(f"%{c}%"),
+                       models.Project.name.ilike(f"%{c}%")))
+        .order_by(models.Project.code).limit(limit))).scalars().all())
+
+
 # ══════════════════════════════ find ══════════════════════════════
 
 async def find_entity(db: AsyncSession, current: models.User, q: str,
@@ -180,25 +226,15 @@ async def get_customer(db: AsyncSession, current: models.User, name: str) -> dic
     }
 
 
-async def get_project(db: AsyncSession, current: models.User, code: str) -> dict:
-    """项目全景：台账 + 各部门任务 + 采购在途 + 发货 + 附件，一次给全。
-
-    比 v1 的 project_status 多给：台账收款分解、发货状态、采购未到货明细。
-    """
-    c = (code or "").strip()
-    if not c:
-        return {"error": "要查哪个项目？给编号"}
-    p = (await db.execute(select(models.Project).where(
-        models.Project.is_deleted == False,  # noqa: E712
-        or_(models.Project.code.ilike(f"%{c}%"), models.Project.name.ilike(f"%{c}%")))
-        .order_by(models.Project.id.desc()).limit(1))).scalar_one_or_none()
-    if not p:
-        return {"project": c, "found": False, "hint": "查无此项目，先用 find_entity 找"}
-
+async def _project_snapshot(db: AsyncSession, p: models.Project) -> dict:
+    """单个项目的全链路快照。get_project 与交期看板共用，**口径只有这一份**。"""
     led = (await db.execute(select(models.SalesLedger).where(
-        models.SalesLedger.project_id == p.id))).scalar_one_or_none()
+        models.SalesLedger.project_id == p.id)
+        .order_by(models.SalesLedger.id).limit(1))).scalars().first()
     orders = list((await db.execute(select(models.DeptOrder).where(
         models.DeptOrder.project_id == p.id))).scalars().all())
+    groups = list((await db.execute(select(models.ProduceGroupTask).where(
+        models.ProduceGroupTask.project_id == p.id))).scalars().all())
     # ⚠️ PurchaseItem 上没有 project_id，关联字段是 **project_code**（字符串）。
     #    「未到货」的口径照抄 agent_router._po_arrival_overdue_rows：
     #    有预计到货日 且 arrival_date 为空 = 还没收货。别自创第二套口径。
@@ -209,8 +245,16 @@ async def get_project(db: AsyncSession, current: models.User, code: str) -> dict
         .order_by(models.Shipment.id.desc()).limit(1))).scalar_one_or_none()
 
     today = date.today().isoformat()
+    deliver = deliver_date(p)
+    left = _days_left(deliver)
+    # 作废的部门单不算在进度里 —— 2026-008 整个项目九张单全是 voided，
+    # 不排掉的话它会以「全都没做完」的样子挂在最紧急的位置上
+    live_orders = [o for o in orders if o.status != "voided"]
+    po_pending = [i for i in pos if not (i.arrival_date or "").strip()]
+
     return {
-        "project": p.code, "name": p.name, "found": True,
+        "project": p.code, "name": p.name, "found": True, "status": p.status,
+        "deliver_date": deliver, "days_left": left,
         "ledger": None if not led else {
             "customer": led.customer, "contract": float(led.amount or 0),
             "prepay": float(led.prepay or 0), "before_ship": float(led.before_ship or 0),
@@ -221,19 +265,205 @@ async def get_project(db: AsyncSession, current: models.User, code: str) -> dict
         "dept_orders": [{"dept": o.dept, "status": o.status, "due_date": o.due_date,
                          "overdue": bool(o.status == "in_progress" and o.due_date
                                          and o.due_date < today)}
-                        for o in orders],
-        "dept_overdue_count": sum(1 for o in orders if o.status == "in_progress"
+                        for o in live_orders],
+        "dept_overdue_count": sum(1 for o in live_orders if o.status == "in_progress"
                                   and o.due_date and o.due_date < today),
+        "produce_groups": [{"group": g.group, "status": g.status,
+                            "due_date": g.due_date} for g in groups],
+        "produce_open_count": sum(1 for g in groups if g.status != "done"),
         "purchase_pending": [{"name": i.item_name, "spec": i.spec,
                               "supplier_id": i.supplier_id, "po_no": i.po_no,
                               "expected_arrival": i.expected_arrival,
                               "over_days": _over_days(i.expected_arrival)}
-                             for i in pos if not (i.arrival_date or "").strip()][:_DETAIL_MAX],
-        "purchase_overdue_count": sum(1 for i in pos
-                                      if not (i.arrival_date or "").strip()
-                                      and (_over_days(i.expected_arrival) or -1) >= 0),
+                             for i in po_pending][:_DETAIL_MAX],
+        "purchase_pending_count": len(po_pending),
+        "purchase_overdue_count": sum(1 for i in po_pending
+                                      if (_over_days(i.expected_arrival) or -1) >= 0),
         "shipment_status": sh.status if sh else None,
         "shipment_receiver": (sh.receiver_name or "") if sh else None,
+        **_diagnose(deliver, left, live_orders, orders, groups, po_pending, sh),
+    }
+
+
+def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
+              groups: list, po_pending: list, sh) -> dict:
+    """卡在哪 + 交期风险。**这是这个功能的全部价值** —— 光列数据管理层自己也能看。
+
+    ⚠️ 「生产截止日期没跟交货日期匹配上」在生产数据里的真实形态不是
+       「两个日期对不上」，而是**生产侧压根没有截止日期**：
+       46 个在建项目里，produce 部门单填了 due_date 的是 0 个，
+       130 条生产组任务里只有 9 条有。所以第一条要报的是「无从判断」，
+       而不是假装算出了一个匹配结论。
+    """
+    blockers: list[str] = []
+    risks: list[str] = []
+    by_dept = {o.dept: o for o in orders}
+    voided_depts = {o.dept for o in all_orders if o.status == "voided"}
+
+    # 货已经发出去了：这个项目实际已经走完，剩下的只是状态没收尾。
+    # ⚠️ 不先判这一条的话，2026-008 这种「九张部门单全作废 + 已发货」的项目
+    #    会被报成「设计还没下单」，然后以 -181 天挂在最紧急的位置 —— 纯噪音，
+    #    而且会把真正要盯的项目挤下去。
+    if sh is not None and sh.status == "shipped":
+        return {
+            "blockers": ["已发货完毕，但项目状态还挂在「进行中」，该收尾了"],
+            "blocked_at": "已发货，待收尾",
+            "risks": ["项目已发货却仍是「进行中」，会一直占着在建列表和交期看板"],
+            # 已发货的不是交期风险，是台账没收尾。看板要把它跟「真的赶不上」分开算，
+            # 否则 2026-008 这种拖了 181 天的会一直占着「最急」第一位，
+            # 把真正要盯的项目挤下去 —— 排第一的那条没人管，整张看板就没人看了。
+            "shipped_not_closed": True,
+        }
+
+    for dept, label in (("design", "设计"), ("electric", "电工"), ("produce", "生产")):
+        o = by_dept.get(dept)
+        if o is None:
+            blockers.append(f"{label}单已作废、没有重下" if dept in voided_depts
+                            else f"{label}还没下单")
+        elif o.status != "done":
+            due = f"（截止 {o.due_date}）" if o.due_date else "（**没有截止日期**）"
+            blockers.append(f"{label}未完成{due}")
+
+    open_groups = [g for g in groups if g.status != "done"]
+    if open_groups:
+        names = {"sheetmetal": "钣金", "assembly": "装配", "sealing": "打胶"}
+        blockers.append("生产组未完工：" + "、".join(
+            f"{names.get(g.group, g.group)}({g.status})" for g in open_groups))
+
+    if po_pending:
+        overdue = sum(1 for i in po_pending if (_over_days(i.expected_arrival) or -1) >= 0)
+        blockers.append(f"采购未到货 {len(po_pending)} 项"
+                        + (f"（其中 {overdue} 项已超期）" if overdue else ""))
+
+    if sh is not None and sh.status == "pending":
+        blockers.append("发货单还停在待发货")
+
+    # ── 交期风险 ──
+    if not deliver:
+        risks.append("**没填交货日期**，算不出还剩多少天")
+    elif left is None:
+        risks.append(f"交货日期「{deliver}」不是合法日期，算不出剩余天数")
+    elif left < 0:
+        risks.append(f"**交货日期已过 {-left} 天**")
+    elif left <= 7:
+        risks.append(f"**只剩 {left} 天**")
+
+    prod = by_dept.get("produce")
+    if prod is not None and prod.status != "done":
+        prod_due = (prod.due_date or "").strip()
+        group_dues = [g.due_date for g in open_groups if (g.due_date or "").strip()]
+        if not prod_due and not group_dues:
+            # 这条是本次发现的系统性缺口，必须说出来，别让人以为「没报风险=没问题」
+            risks.append("**生产没有截止日期**（部门单和生产组都没填）——"
+                         "无法判断生产能不能赶上交货日，这一项是盲区")
+        else:
+            latest = max([d for d in ([prod_due] if prod_due else []) + group_dues if d])
+            if deliver and latest > deliver:
+                risks.append(f"**生产截止 {latest} 晚于交货日 {deliver}**，按计划就交不了")
+
+    return {"blockers": blockers, "risks": risks,
+            "blocked_at": blockers[0] if blockers else None,
+            "shipped_not_closed": False}
+
+
+async def get_project(db: AsyncSession, current: models.User, code: str) -> dict:
+    """项目全景：交期 + 台账 + 各部门任务 + 生产组 + 采购在途 + 发货 + 卡点判定。
+
+    ⚠️ **多个项目命中时全部返回，绝不静默取一条**。项目编号大量带字母后缀
+       （071A/071B、043B~043E…），说「071」时两个都该出现在答案里。
+    """
+    c = (code or "").strip()
+    if not c:
+        return {"error": "要查哪个项目？给编号"}
+    ps = await _match_projects(db, c)
+    if not ps:
+        return {"project": c, "found": False, "hint": "查无此项目，先用 find_entity 找"}
+
+    snaps = [await _project_snapshot(db, p) for p in ps]
+    if len(snaps) == 1:
+        return snaps[0]
+    return {
+        "query": c, "found": True, "matched_count": len(snaps),
+        # 这句是给模型看的硬约束：多命中时**每一个都要讲到**，不许只挑一个说
+        "note": f"「{c}」命中 {len(snaps)} 个项目（"
+                + "、".join(s["project"] for s in snaps)
+                + "），下面逐个给出，回答时每个都要讲到，不要只说其中一个。",
+        "projects": snaps,
+    }
+
+
+async def project_progress(db: AsyncSession, current: models.User,
+                           within_days: int | None = None,
+                           include_overdue: bool = True,
+                           limit: int = 200) -> dict:
+    """在建项目交期看板：还剩多少天 + 卡在哪一环 + 交期风险。
+
+    管理层要的那句话是「交货日期快到的项目到底卡在哪里」，所以这里**不只列日期**，
+    每一行都带 blockers（卡点）和 risks（风险判定）。
+
+    within_days=None 给全部在建；给 7 就是「7 天内要交的」。
+    include_overdue=True 时已过期的一律带上 —— 已经过期的比「还剩 7 天」的更急，
+    按天数过滤时把它们漏掉是最容易犯的错。
+    """
+    ps = list((await db.execute(select(models.Project).where(
+        models.Project.is_deleted == False,  # noqa: E712
+        models.Project.status == "进行中"))).scalars().all())
+
+    rows: list[dict] = []
+    for p in ps:
+        s = await _project_snapshot(db, p)
+        left = s["days_left"]
+        if within_days is not None:
+            if left is None:
+                continue                      # 没交货日期的不进「N 天内」这类过滤
+            if left > within_days:
+                continue
+            if left < 0 and not include_overdue:
+                continue
+        rows.append(s)
+
+    # 排序三档：真正在做的按剩余天数升序（已过期最前）→ 没填交货日期的 →
+    # 已发货只差收尾的排最后。**都不丢掉**，只是不让收尾类占住最急的位置。
+    rows.sort(key=lambda r: (r["shipped_not_closed"],
+                             r["days_left"] is None,
+                             r["days_left"] if r["days_left"] is not None else 0))
+
+    live = [r for r in rows if not r["shipped_not_closed"]]
+    total = len(rows)
+    shown = rows[:max(1, min(limit, 200))]
+    return {
+        "count": total, "shown": len(shown),
+        "truncated": total > len(shown),
+        "today": date.today().isoformat(),
+        "summary": {
+            "in_progress_total": len(ps),
+            # ⚠️ overdue 只统计**还在做**的。已发货待收尾的单独一档 ——
+            #    混在一起会让「已过期 N 个」这个数字虚高，而虚高的告警没人信。
+            "overdue": sum(1 for r in live if r["days_left"] is not None
+                           and r["days_left"] < 0),
+            "due_7d": sum(1 for r in live if r["days_left"] is not None
+                          and 0 <= r["days_left"] <= 7),
+            "no_deliver_date": sum(1 for r in live if not r["deliver_date"]),
+            # 本次发现的系统性缺口：生产侧没有截止日期 → 交期能不能保根本判断不了
+            "no_produce_due": sum(1 for r in live if any(
+                "生产没有截止日期" in x for x in r["risks"])),
+            "blocked_by_purchase": sum(1 for r in live if r["purchase_pending_count"]),
+            "shipped_not_closed": sum(1 for r in rows if r["shipped_not_closed"]),
+        },
+        "items": [{
+            "project": r["project"], "name": r["name"],
+            "customer": (r["ledger"] or {}).get("customer") or "",
+            "contract": float((r["ledger"] or {}).get("contract") or 0),
+            "deliver_date": r["deliver_date"], "days_left": r["days_left"],
+            "blocked_at": r["blocked_at"],
+            "blockers": r["blockers"], "risks": r["risks"],
+            "purchase_pending": r["purchase_pending_count"],
+            "purchase_overdue": r["purchase_overdue_count"],
+            "dept_overdue": r["dept_overdue_count"],
+            "produce_open": r["produce_open_count"],
+            "shipment_status": r["shipment_status"],
+            "shipped_not_closed": r["shipped_not_closed"],
+        } for r in shown],
     }
 
 

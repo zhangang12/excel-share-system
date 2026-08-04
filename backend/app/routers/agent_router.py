@@ -367,6 +367,7 @@ TOOL_LABELS = {
     "find_entity": "找实体",
     "get_customer": "客户全景",
     "get_project": "项目全景",
+    "project_progress": "项目交期看板",
     "get_supplier": "供应商画像",
     "get_material": "物料全景",
 }
@@ -375,7 +376,8 @@ TOOL_LABELS = {
 TOOL_DESC = {
     "find_entity": "说个大概的名字就能找到项目/客户/供应商/物料，不用记编号",
     "get_customer": "这家客户一共几单、收了多少、还欠多少、卡在哪一步",
-    "get_project": "一个项目从台账到发货全看完：收款、各部门任务、采购在途、发货状态",
+    "get_project": "一个项目从台账到发货全看完：交期、收款、各部门任务、生产组、采购在途、卡在哪",
+    "project_progress": "在建项目还剩几天交货、哪些已过期、每个卡在哪一环",
     "get_supplier": "这家供应商准时率多少、平均拖几天、现在还欠几批货",
     "get_material": "这个物料还有多少库存、低不低于安全线、最近进出了多少",
     "morning_report": "把今天要盯的事聚成一条：采购超期、尾款到期、部门逾期、人事到期",
@@ -513,6 +515,17 @@ TOOL_SCHEMAS += [
             _LIM_PROP, code={"type": "string", "description": "项目编号或名称"}),
             "required": ["code"]}}},
     {"type": "function", "function": {
+        "name": "project_progress",
+        "description": "在建项目交期看板：每个项目还剩几天交货、已过期几天、**卡在哪一环**"
+                       "（设计/电工/生产/采购未到货/待发货）以及交期风险。"
+                       "回答「哪些项目快到期了」「交期有没有风险」「项目卡在哪」用它。"
+                       "不传 within_days 就是全部在建项目",
+        "parameters": {"type": "object", "properties": dict(
+            _LIM_PROP,
+            within_days={"type": "integer",
+                         "description": "只看未来几天内要交货的；已过期的一律带上。不传=全部在建"}),
+            "required": []}}},
+    {"type": "function", "function": {
         "name": "get_supplier",
         "description": "供应商画像：准时率、平均超期天数、最大超期、当前未到货明细。"
                        "回答「哪家供应商靠不住」「要不要换供应商」用它",
@@ -559,6 +572,7 @@ def _allowed_tools(user: models.User) -> set[str]:
     if "list" in keys:
         out.add("project_status")
         out.add("get_project")
+        out.add("project_progress")
     # 🆕 v2：找实体是所有纵深查询的入口，任何能查数的人都该有
     if out:
         out.add("find_entity")
@@ -643,6 +657,9 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
         "find_entity":  lambda: _te.find_entity(db, current, args.get("q", ""), args.get("kind")),
         "get_customer": lambda: _te.get_customer(db, current, args.get("name", "")),
         "get_project":  lambda: _te.get_project(db, current, args.get("code", "")),
+        "project_progress": lambda: _te.project_progress(
+            db, current, within_days=args.get("within_days"),
+            limit=int(args.get("limit") or 200)),
         "get_supplier": lambda: _te.get_supplier(db, current, args.get("name", "")),
         "get_material": lambda: _te.get_material(db, current, args.get("q", "")),
     }
@@ -782,7 +799,18 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
 
 # 数字口径
 - 比例/合计一律用 `count` 这个总数算，**不要拿截断后的 shown 去算**。
-- 同一事实在多个工具里出现时以更专门的那个为准，并说明来源差异。"""
+- 同一事实在多个工具里出现时以更专门的那个为准，并说明来源差异。
+
+# 项目与交期口径
+- **一个编号可能对应多个项目**。编号后缀带字母是常态（2026-071A、2026-071B、
+  043B~043E）。`get_project` 返回 `projects` 数组时，**每一个都要讲到**，
+  不许只挑一个说、也不许合并成一条。少讲一个 = 用户以为那个项目不存在。
+- 「还剩多少天」一律用 `days_left`：负数是**已过交货日**，别说成「还剩 -5 天」。
+- **`risks` 里说「生产没有截止日期」时，不要改写成「生产进度正常」或「暂无风险」。**
+  那是**算不出来**，不是没问题 —— 生产侧没填截止日，交期能不能保根本无从判断。
+  这一条要原样告诉用户，并指出该去补生产截止日期。
+- `shipped_not_closed` 为真的项目是**货已发完、只差把状态收尾**，
+  不要把它算进「交期告急」，也不要因为它过期天数最多就说它最紧急。"""
 
 
 async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[dict],

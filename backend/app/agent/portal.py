@@ -65,6 +65,13 @@ CATALOG: list[dict] = [
     {"key": "leads_followup", "label": "线索待跟进",
      "desc": "既没成交也没丢单、还挂着的销售线索",
      "glyph": "索", "tone": "good", "q": "线索待跟进", "tool": "leads_followup"},
+
+    # ── 🆕 第三批：项目交期 ──
+    # 生产数据说话：46 个在建项目里 20 个已过交货日、18 个卡在采购未到货，
+    # 而生产侧有截止日期的是 0 个 —— 交期是当前最看不见的一块。
+    {"key": "delivery_watch", "label": "交期看板",
+     "desc": "在建项目还剩几天交货、哪些已过期、每个卡在哪一环",
+     "glyph": "期", "tone": "danger", "q": "项目进度跟进", "tool": "project_progress"},
 ]
 _BY_KEY = {c["key"]: c for c in CATALOG}
 
@@ -86,12 +93,12 @@ _DEFAULTS: dict[str, list[str]] = {
     # admin 与 manager 同一套：`_all_view` 里 `_is_mgr` 本来就把 admin 和 manager
     # 一起放行，工具与卡片都是全量可见。但 _ROLE_ORDER 早先漏了 admin，
     # 导致 admin 落到 _FALLBACK 那组采购向的通用配置——跟他实际能看到的东西对不上。
-    "admin": ["approvals", "receivable_blind", "shipment_receiver",
+    "admin": ["approvals", "delivery_watch", "receivable_blind", "shipment_receiver",
               "morning_report", "ledger_incomplete", "overdue_orders"],
     # 杨坛(manager)：按「他做过多少 × 此刻还有多少在等」排——
     #   请款审批 40 次/2 笔在等、盯不住的应收 36 次/63 笔在等、收货人 34 次/49 单在等、
     #   晨报他 3 次会话每次都调。采购三件套一张不进（两个月 0 次操作）。
-    "manager": ["approvals", "receivable_blind", "shipment_receiver",
+    "manager": ["approvals", "delivery_watch", "receivable_blind", "shipment_receiver",
                 "morning_report", "ledger_incomplete", "overdue_orders"],
     "finance_lead": ["approvals", "receivable_blind", "balance_due",
                      "invoice_pending", "morning_report"],
