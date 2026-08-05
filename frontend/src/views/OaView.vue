@@ -225,6 +225,33 @@ const ccCandidates = ref<{ id: number; name: string }[]>([])
 async function loadCcCandidates() {
   try { ccCandidates.value = await oaApi.ccCandidates() } catch { ccCandidates.value = [] }
 }
+
+// 🆕 审批链「指定审批人」的候选名单。
+// ⚠️ 不能复用 ccCandidates：那个只在打开「提交申请」弹窗时才加载，
+//    直接进「审批流程配置」页时是空的——下拉就是一片「无数据」。
+//    这里要的还是带角色的用户，好按当前选的审批角色分组，所以走 admin 的用户接口。
+const approverCandidates = ref<{ id: number; name: string; roles: string[] }[]>([])
+async function loadApproverCandidates() {
+  try {
+    const us = await adminApi.listUsers()
+    approverCandidates.value = us
+      .filter(u => u.is_active)
+      .map(u => ({
+        id: u.id,
+        name: u.full_name || u.username,
+        roles: (u.role_codes && u.role_codes.length) ? u.role_codes : (u.role_code ? [u.role_code] : []),
+      }))
+  } catch { approverCandidates.value = [] }
+}
+// 选了审批角色就把该角色的人排在前面单独一组——几十号人平铺着找太费劲
+const approverInRole = computed(() =>
+  stepForm.approver_role
+    ? approverCandidates.value.filter(u => u.roles.includes(stepForm.approver_role))
+    : [])
+const approverOthers = computed(() => {
+  const inRole = new Set(approverInRole.value.map(u => u.id))
+  return approverCandidates.value.filter(u => !inRole.has(u.id))
+})
 function resetSubForm() {
   Object.assign(subForm, {
     doc_type: '', department_id: '', title: '', amount: null, related_request_id: null,
@@ -582,6 +609,8 @@ function onMainTabChange(name: string | number) {
 onMounted(async () => {
   await Promise.all([loadDepartments(), loadDocTypes()])
   await loadList()
+  // 管理层才配得了审批链；非管理层调 listUsers 会 403，所以只对管理层拉
+  if (auth.hasRole('admin', 'manager')) loadApproverCandidates()
 })
 </script>
 
@@ -915,8 +944,14 @@ onMounted(async () => {
               <el-col :xs="24" :sm="8">
                 <el-form-item label="指定审批人（选填）">
                   <el-select v-model="stepForm.approver_user_id" filterable clearable style="width:100%"
-                             placeholder="留空 = 该角色谁在岗谁批">
-                    <el-option v-for="u in ccCandidates" :key="u.id" :label="u.name" :value="u.id" />
+                             :placeholder="approverCandidates.length ? '留空 = 该角色谁在岗谁批' : '正在加载用户…'"
+                             no-data-text="没有可选的在职用户">
+                    <el-option-group v-if="approverInRole.length" :label="`${roleName(stepForm.approver_role)}（${approverInRole.length}人）`">
+                      <el-option v-for="u in approverInRole" :key="u.id" :label="u.name" :value="u.id" />
+                    </el-option-group>
+                    <el-option-group v-if="approverOthers.length" :label="approverInRole.length ? '其他人员' : '全部在职人员'">
+                      <el-option v-for="u in approverOthers" :key="u.id" :label="u.name" :value="u.id" />
+                    </el-option-group>
                   </el-select>
                 </el-form-item>
               </el-col>
