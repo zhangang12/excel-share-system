@@ -321,7 +321,7 @@ def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
             blockers.append(f"{label}单已作废、没有重下" if dept in voided_depts
                             else f"{label}还没下单")
         elif o.status != "done":
-            due = f"（截止 {o.due_date}）" if o.due_date else "（**没有截止日期**）"
+            due = f"（截止 {o.due_date}）" if o.due_date else "（未设截止日期）"
             blockers.append(f"{label}未完成{due}")
 
     open_groups = [g for g in groups if g.status != "done"]
@@ -340,13 +340,13 @@ def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
 
     # ── 交期风险 ──
     if not deliver:
-        risks.append("**没填交货日期**，算不出还剩多少天")
+        risks.append("没填交货日期，算不出还剩多少天")
     elif left is None:
         risks.append(f"交货日期「{deliver}」不是合法日期，算不出剩余天数")
     elif left < 0:
-        risks.append(f"**交货日期已过 {-left} 天**")
+        risks.append(f"交货日期已过 {-left} 天")
     elif left <= 7:
-        risks.append(f"**只剩 {left} 天**")
+        risks.append(f"只剩 {left} 天")
 
     prod = by_dept.get("produce")
     if prod is not None and prod.status != "done":
@@ -354,12 +354,12 @@ def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
         group_dues = [g.due_date for g in open_groups if (g.due_date or "").strip()]
         if not prod_due and not group_dues:
             # 这条是本次发现的系统性缺口，必须说出来，别让人以为「没报风险=没问题」
-            risks.append("**生产没有截止日期**（部门单和生产组都没填）——"
+            risks.append("生产没有截止日期（部门单和生产组都没填）——"
                          "无法判断生产能不能赶上交货日，这一项是盲区")
         else:
             latest = max([d for d in ([prod_due] if prod_due else []) + group_dues if d])
             if deliver and latest > deliver:
-                risks.append(f"**生产截止 {latest} 晚于交货日 {deliver}**，按计划就交不了")
+                risks.append(f"生产截止 {latest} 晚于交货日 {deliver}，按计划就交不了")
 
     return {"blockers": blockers, "risks": risks,
             "blocked_at": blockers[0] if blockers else None,
@@ -390,6 +390,22 @@ async def get_project(db: AsyncSession, current: models.User, code: str) -> dict
                 + "），下面逐个给出，回答时每个都要讲到，不要只说其中一个。",
         "projects": snaps,
     }
+
+
+def _urgency(r: dict) -> str:
+    """交期档位。顺序即紧急程度，渲染时按这个分段加小标题。"""
+    if r["shipped_not_closed"]:
+        return "已发货 · 只差收尾"
+    left = r["days_left"]
+    if left is None:
+        return "没填交货日期"
+    if left < 0:
+        return "已过交货日"
+    if left <= 7:
+        return "7 天内交货"
+    if left <= 30:
+        return "30 天内交货"
+    return "30 天以上"
 
 
 async def project_progress(db: AsyncSession, current: models.User,
@@ -455,6 +471,9 @@ async def project_progress(db: AsyncSession, current: models.User,
             "customer": (r["ledger"] or {}).get("customer") or "",
             "contract": float((r["ledger"] or {}).get("contract") or 0),
             "deliver_date": r["deliver_date"], "days_left": r["days_left"],
+            # 分组用的档位。46 个项目拉平成一串等长的行，人得一行行数才知道哪些真急；
+            # 分了档才扫得动。档名由代码给死，模型不参与命名，各次回答才一致。
+            "urgency": _urgency(r),
             "blocked_at": r["blocked_at"],
             "blockers": r["blockers"], "risks": r["risks"],
             "purchase_pending": r["purchase_pending_count"],

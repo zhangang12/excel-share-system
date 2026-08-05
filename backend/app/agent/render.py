@@ -41,12 +41,17 @@ _FIELD_ORDER = [
     ("over_days", "超 ", False), ("age_days", "挂 ", False), ("ledger_age_days", "建档 ", False),
     ("expected_arrival", "预计 ", False), ("due_date", "到期 ", False),
     ("balance_date", "尾款到期 ", False),
+    # 🆕 项目交期：deliver_date/days_left/blocked_at 三件套
+    ("deliver_date", "交货 ", False), ("days_left", "", False),
+    ("blocked_at", "卡在 ", False),
+    ("purchase_pending", "待到货 ", False),
     ("status", "", False), ("ship_status", "", False), ("order_state", "", False),
     ("po_no", "", False), ("buyer", "", False), ("worker", "", False),
     ("dept_name", "", False), ("location", "库位 ", False),
 ]
 
 _DAY_FIELDS = {"over_days", "age_days", "ledger_age_days"}
+_COUNT_FIELDS = {"purchase_pending": "项"}
 _MONEY_MIN = 10000
 
 
@@ -77,6 +82,20 @@ def _cell(key: str, val: Any, prefix: str, is_money: bool) -> str | None:
         if n <= 0 and key == "over_days":
             return "今日到期"
         return f"{prefix}{n} 天"
+    # 🆕 交期倒计时：**不能直接把 -55 甩给人看**。负数是已过交货日，
+    #    写成「剩 -55 天」既费解又容易被读反。
+    if key == "days_left":
+        try:
+            n = int(val)
+        except (TypeError, ValueError):
+            return None
+        return "今天交货" if n == 0 else (f"已过 {-n} 天" if n < 0 else f"剩 {n} 天")
+    if key in _COUNT_FIELDS:
+        try:
+            n = int(val)
+        except (TypeError, ValueError):
+            return None
+        return None if n <= 0 else f"{prefix}{n} {_COUNT_FIELDS[key]}"
     return f"{prefix}{val}"
 
 
@@ -138,7 +157,25 @@ def table(result: dict, *, plan: dict | None = None) -> str:
     def _is_hi(it: dict) -> bool:
         return bool(hi) and any(str(v) in hi for v in it.values())
 
-    lines = [row(it, fields, emphasis=_is_hi(it)) for it in items]
+    # 🆕 分组：plan 里给一个字段名，就按它分段并加小标题。
+    # 这个能力在本文件开头的注释里写了很久，但一直没实现 —— 46 个项目拉平成
+    # 一串等长的行，人得一行行数才知道哪些是真急的。分了组才扫得动。
+    # ⚠️ **保持工具给的原始顺序**：工具已经排好了（在做的按剩余天数 → 没交货日
+    #    → 已发货待收尾），这里按出现次序建组，不重排。
+    group_key = plan.get("group")
+    if isinstance(group_key, str) and group_key and all(isinstance(i, dict) for i in items):
+        buckets: dict[str, list[dict]] = {}
+        for it in items:
+            buckets.setdefault(str(it.get(group_key) or "其他"), []).append(it)
+        lines = []
+        for name, rows in buckets.items():
+            lines.append(f"**{name}**（{len(rows)}）")
+            lines += [row(it, fields, emphasis=_is_hi(it)) for it in rows]
+            lines.append("")
+        while lines and not lines[-1]:
+            lines.pop()
+    else:
+        lines = [row(it, fields, emphasis=_is_hi(it)) for it in items]
 
     # ⚠️ 截断声明由代码写，不交给模型 —— 代码知道真实总数，模型只知道它收到了几条。
     total = result.get("count")

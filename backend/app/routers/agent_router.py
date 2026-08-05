@@ -810,7 +810,22 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
   那是**算不出来**，不是没问题 —— 生产侧没填截止日，交期能不能保根本无从判断。
   这一条要原样告诉用户，并指出该去补生产截止日期。
 - `shipped_not_closed` 为真的项目是**货已发完、只差把状态收尾**，
-  不要把它算进「交期告急」，也不要因为它过期天数最多就说它最紧急。"""
+  不要把它算进「交期告急」，也不要因为它过期天数最多就说它最紧急。
+
+# 交期这类问题怎么答（project_progress）
+先给判断，再附编排块。**判断部分要真的分析**，不是把 summary 念一遍：
+- 最急的是谁、为什么急（卡在哪一环）；
+- **卡点有没有集中**——比如「19 个过期项目里 14 个卡在电工」，
+  集中了就说出来，那意味着一个人/一个环节就能拉回一批；
+- `no_produce_due` 大时，明说这批项目的交期**判断不了**（不是没风险）；
+- 给一句「先动哪一件」。
+明细一律用这个编排块，**按紧急度分组**，不要自己打表格：
+
+```render
+{{"group":"urgency",
+ "fields":["project","name","deliver_date","days_left","blocked_at","purchase_pending"],
+ "highlight":["2026-045B"]}}
+```"""
 
 
 async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[dict],

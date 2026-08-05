@@ -132,116 +132,17 @@ async def _project_check(db: AsyncSession, user: models.User, message: str) -> d
     return {"text": "\n".join(lines)}
 
 
-# 项目编号形态：生产上 99/104 个是 `2026-071` / `2026-071A`，后缀恒为 3 位补零。
-# 用户口语常只说后三位（「071 卡在哪」），所以两种都认。
-_CODE_RE = re.compile(r"\d{4}-\d{3}[A-Za-z]?|(?<!\d)\d{3}[A-Za-z]?(?!\d)")
-
-
-def _mentions_project(message: str) -> bool:
-    """这句话里有没有具体项目编号。**两个交期技能互斥的判据就是它**。
-
-    ⚠️ 不加这道判据的话两边会互相劫持：
-      「2026-071 还剩多少天」→ 命中「还剩多少天」→ 被整盘看板吃掉，答非所问；
-      「哪些项目卡在采购」  → 命中「卡在哪」→ 去查一个叫「哪些采购」的项目。
-    """
-    m = _CODE_RE.search(message or "")
-    if not m:
-        return False
-    # 「7 天内」「3 个」这类数字不算项目编号
-    tail = (message or "")[m.end():m.end() + 1]
-    return tail not in "天个家条月日年%％元"
-
-
-@skill("delivery_watch", "项目交期盘点",
-       ["交期盘点", "交期风险", "哪些项目快到期", "项目进度跟进",
-        "还剩多少天", "哪些项目要交货", "交货日期快到"], ["list"])
-async def _delivery_watch(db: AsyncSession, user: models.User, message: str) -> dict:
-    """在建项目按交期排队，每行说清卡在哪。管理层问得最多的就是这一句。
-
-    ⚠️ 结论段必须先说**盲区**：生产侧大面积没有截止日期时，
-       「没报风险」不等于「没风险」，只是算不出来。不讲这一条等于给了个假安心。
-    """
-    # 指名道姓问某个项目的，交给单项目那条，别甩一整盘看板给人
-    if _mentions_project(message):
-        return await _project_blocked(db, user, message)
-
-    d = await _te.project_progress(db, user, limit=200)
-    s = d["summary"]
-    if not d["count"]:
-        return {"text": "**当前没有在建项目** ✅"}
-
-    head = (f"**{s['in_progress_total']} 个在建项目**："
-            f"已过交货日 **{s['overdue']}** 个，7 天内要交 {s['due_7d']} 个。")
-    lines = [head, ""]
-
-    judge = []
-    if s["overdue"]:
-        # 只在**还在做**的里面挑最急的：已发货待收尾的拖再久也不是交期风险，
-        # 让它占住第一位会把真正要盯的挤下去
-        worst = next(i for i in d["items"] if not i["shipped_not_closed"])
-        judge.append(f"⚠️ 最急的是 **{worst['project']}**（{worst['name']}），"
-                     f"交货日 {worst['deliver_date']} 已过 {-worst['days_left']} 天，"
-                     f"卡在**{worst['blocked_at']}**。")
-    if s["no_produce_due"]:
-        judge.append(f"⚠️ **{s['no_produce_due']} 个项目的生产没有截止日期**"
-                     f"（部门单和生产组都没填）—— 这些项目「生产赶不赶得上」"
-                     f"**根本算不出来**，不是没风险，是看不见。"
-                     f"要让交期真正可控，这一项得先补上。")
-    if s["blocked_by_purchase"]:
-        judge.append(f"⚠️ {s['blocked_by_purchase']} 个项目有采购未到货 —— "
-                     f"这是最常见的卡点，催料比催生产更能拉回交期。")
-    if s["no_deliver_date"]:
-        judge.append(f"· {s['no_deliver_date']} 个项目没填交货日期，不参与倒计时。")
-    if s["shipped_not_closed"]:
-        judge.append(f"· 另有 {s['shipped_not_closed']} 个**货已发完、状态还挂着「进行中」**，"
-                     f"不算交期风险，但会一直占着在建列表，顺手收掉。")
-    lines += judge or ["✅ 没有过期项目，交期口径也齐全。"]
-
-    # ⚠️ plan 里**不给 sort**：工具已经排好三档（在做的按剩余天数 → 没交货日 →
-    #    已发货待收尾）。再给一个 sort 会被渲染层重排，把 2026-008 这种
-    #    「已发货但拖了 181 天」的又顶回第一行 —— 前面刚把它挪走，这里又放回去。
-    return {"text": "\n".join(lines), "result": d,
-            "plan": {"fields": ["project", "deliver_date", "days_left",
-                                "blocked_at", "purchase_pending"]}}
-
-
-@skill("project_blocked", "项目卡在哪", ["卡在哪", "卡在哪里", "为什么还没交"], ["list"])
-async def _project_blocked(db: AsyncSession, user: models.User, message: str) -> dict:
-    """单个项目：把交期、各环节、采购、发货串起来说清「到底卡在哪」。
-
-    ⚠️ 编号带字母后缀的项目（071A/071B）说「071」时会命中多个，
-       **必须每个都讲到** —— 只讲一个正是这次要修的那个 bug。
-    """
-    # 没点名具体项目就是在问全局（「哪些项目卡在采购」），走看板
-    if not _mentions_project(message):
-        return await _delivery_watch(db, user, "交期盘点")
-    code = _CODE_RE.search(message).group(0)
-    r = await _te.get_project(db, user, code)
-    if not r.get("found"):
-        return {"text": f"没找到项目「{code}」。"}
-    snaps = r.get("projects") or [r]
-
-    lines = []
-    if len(snaps) > 1:
-        lines.append(f"**「{code}」对应 {len(snaps)} 个项目**："
-                     + "、".join(s["project"] for s in snaps) + "，逐个说：")
-        lines.append("")
-    for s in snaps:
-        led = s.get("ledger") or {}
-        left = s["days_left"]
-        when = (f"交货 {s['deliver_date']}，"
-                + (f"**已过 {-left} 天**" if left is not None and left < 0
-                   else f"还剩 **{left} 天**" if left is not None else "剩余天数算不出")) \
-            if s["deliver_date"] else "**没填交货日期**"
-        lines.append(f"**{s['project']}「{s['name']}」** · {led.get('customer') or '—'}"
-                     f" · 合同 {_rd.money(led.get('contract'))}")
-        lines.append(f"- {when}")
-        lines.append("- 卡点：" + ("；".join(s["blockers"]) if s["blockers"] else "无，各环节都完成了"))
-        if s["risks"]:
-            lines.append("- ⚠️ " + "；".join(s["risks"]))
-        lines.append("")
-    return {"text": "\n".join(lines).rstrip()}
-
+# ⚠️ **项目交期这条刻意不做成技能。**
+#
+# 技能的语义是「命中就不进 ReAct」——固定编排、固定模板、模型完全不参与。
+# 那对「库存低于安全线」这种一句话说得完的事合适，对交期**不合适**：
+# 管理层要的是「把项目所有数据串起来分析」，而技能只会甩一段套话加一张表，
+# 既没有跨项目的归因，也没有「这批为什么都卡在电工」这类判断。
+#
+# 所以「项目进度跟进 / 哪些项目快到期 / XX 卡在哪」一律**走 ReAct**：
+# 模型调 project_progress 拿到已经算好的卡点与风险，自己写结论，
+# 明细仍由 render.py 代码渲染（数字不经模型的手）。
+# 这正是 v2 的分工：**判断归模型，数字归代码。**
 
 # ══════════════════════════ 赵仁辉：仓库/采购 ══════════════════════════
 

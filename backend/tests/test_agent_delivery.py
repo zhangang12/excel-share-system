@@ -13,8 +13,11 @@
  4. **已发货待收尾的不算交期风险**——2026-008 这种「货发完了、状态还挂进行中」
     的项目已过期 181 天，混进 overdue 会把真正要盯的挤下去。
 
-另外锁技能路由：两个交期技能互斥（有编号→单项目，没编号→看板），
-且不劫持无关问题。
+5. **交期问题必须走 ReAct，不能被技能劫持**——技能是「命中就不进 ReAct」，
+    做成技能等于把 AI 分析绕开，只剩一段套话加一张表。管理层要的是
+    「把项目所有数据串起来分析」，判断得归模型。
+ 6. **明细格式**——days_left 不能把 -55 直接甩给人看；数据字段里不许带 markdown
+    （外层再包一层就成了 `卡在**xx（**yy**）**`，markdown 直接裂开）。
 """
 import asyncio, os, sys, tempfile
 from datetime import date, timedelta
@@ -94,6 +97,17 @@ async def main():
             db.add(models.DeptOrder(project_id=pc.id, dept=dept, status="voided"))
         db.add(models.Shipment(project_id=pc.id, status="shipped"))
 
+        # 2026-092：**还在做**且已过交货日 —— 交期看板最核心的一档。
+        # 生产单填了截止日，所以它不进 no_produce_due；也没有采购，不影响卡采购的计数。
+        pf = models.Project(code="2026-092", name="已过交货日还在做的项目",
+                            status="进行中", extra={te.DELIVER_KEY: d(-12)})
+        db.add(pf); await db.flush()
+        db.add(models.DeptOrder(project_id=pf.id, dept="design", status="done"))
+        db.add(models.DeptOrder(project_id=pf.id, dept="electric",
+                                status="in_progress", due_date=d(-3)))
+        db.add(models.DeptOrder(project_id=pf.id, dept="produce",
+                                status="in_progress", due_date=d(-1)))
+
         # 2026-090：生产截止晚于交货日
         db.add(models.DeptOrder(project_id=pd_.id, dept="design", status="done"))
         db.add(models.DeptOrder(project_id=pd_.id, dept="electric", status="done"))
@@ -142,15 +156,18 @@ async def main():
         board = await te.project_progress(db, admin)
         s = board["summary"]
         chk(s["shipped_not_closed"] == 1, "已发货待收尾单独一档")
-        chk(s["overdue"] == 0,
-            f"overdue 不含已发货待收尾的（实际 {s['overdue']}）—— 虚高的告警没人信")
+        chk(s["overdue"] == 1,
+            f"overdue 只数还在做的那 1 个，不含已发货待收尾的（实际 {s['overdue']}）"
+            f" —— 虚高的告警没人信")
         chk(s["no_produce_due"] == 2, f"2 个项目生产无截止日期（实际 {s['no_produce_due']}）")
         chk(s["no_deliver_date"] == 1, "没填交货日期的单独计数")
         chk(s["blocked_by_purchase"] == 2, "2 个项目卡在采购")
+        chk(board["items"][0]["project"] == "2026-092",
+            f"最急的是还在做且已过期的那个（实际 {board['items'][0]['project']}）")
         chk(board["items"][-1]["project"] == "2026-008",
             "已发货待收尾排最后，不占「最急」的位置")
         chk({i["project"] for i in board["items"]} ==
-            {"2026-071A", "2026-071B", "2026-008", "2026-090", "2026-091"},
+            {"2026-071A", "2026-071B", "2026-008", "2026-090", "2026-091", "2026-092"},
             "**一个都没丢**（含没填交货日期的）")
 
         print("\n===== 7. within_days 过滤：已过期一律带上 =====")
@@ -160,29 +177,39 @@ async def main():
         chk("2026-071A" not in got, "25 天后交货的不进 7 天内")
         chk("2026-008" in got, "已过期的即使超出 within_days 也要带上（最急的就是它们）")
 
-        print("\n===== 8. 技能路由：两条交期技能互斥，且不劫持无关问题 =====")
-        cases = [
-            ("项目进度跟进", "delivery_watch"),
-            ("哪些项目快到期了", "delivery_watch"),
-            ("交期风险", "delivery_watch"),
-            ("2026-071 卡在哪", "project_blocked"),
-            ("071 卡在哪里", "project_blocked"),
-            # 绝不能被劫持的（沿用 v1 那个贪婪正则的教训）
-            ("查询一下所有的待审批的待办", None),
-            ("这个月开了多少票", None),
-            ("帮我看看仓库还有多少不锈钢", None),
-        ]
-        for q, want in cases:
-            hit = sk.match(q)
-            got_key = hit["key"] if hit else None
-            chk(got_key == want, f"「{q}」→ {got_key}（期望 {want}）")
+        print("\n===== 8. 交期问题必须走 ReAct（不能被技能劫持）=====")
+        # 技能命中就不进 ReAct。交期这类要的是分析，不是套话模板，
+        # 所以这些问法**都必须 match 不到技能**，交给模型带着 project_progress 去答。
+        for q in ("项目进度跟进", "哪些项目快到期了", "交期风险",
+                  "2026-071 卡在哪", "071 还剩多少天", "生产进度监控"):
+            chk(sk.match(q) is None, f"「{q}」不被技能劫持，走 ReAct")
+        # 别的技能不能被误伤
+        chk((sk.match("库存预警") or {}).get("key") == "stock_alert", "库存预警仍走技能")
+        chk(sk.match("查询一下所有的待审批的待办") is None, "老的防劫持用例仍成立")
 
-        print("\n===== 9. 指名道姓问某个项目时不能甩一整盘看板 =====")
-        out = await sk.run(db, admin, sk.match("2026-071 还剩多少天"), "2026-071 还剩多少天")
-        chk("2026-071A" in out and "2026-071B" in out,
-            "「2026-071 还剩多少天」→ 两个项目都讲到，而不是整盘看板")
-        chk("46 个在建项目" not in out and "个在建项目" not in out,
-            "确实没退化成看板")
+        print("\n===== 9. 明细格式 =====")
+        from app.agent import render as rd
+        board = await te.project_progress(db, admin)
+        out = rd.table(board, plan={"group": "urgency",
+                                    "fields": ["project", "name", "deliver_date",
+                                               "days_left", "blocked_at",
+                                               "purchase_pending"]})
+        chk("已过 " in out and "剩 " in out,
+            "days_left 渲染成「已过 N 天」/「剩 N 天」，不是裸的 -55")
+        chk("-55" not in out and "· -" not in out, "没有裸负数漏出去")
+        chk("**已过交货日**（1）" in out, "按紧急度分组并带条数")
+        chk(out.index("已过交货日") < out.index("已发货 · 只差收尾"),
+            "已过交货日排在已发货待收尾之前（分组不能打乱工具排好的优先级）")
+        chit = [l for l in out.split("\n") if l.startswith("**")]
+        chk(len(chit) >= 2, f"至少分出两档（实际 {len(chit)} 档：{chit}）")
+        # 数据里带 markdown 会把行拆坏：`卡在**生产未完成（**没有截止日期**）**`
+        for it in board["items"]:
+            for f in ("blocked_at", "name"):
+                chk("**" not in str(it.get(f) or ""), f"{it['project']} 的 {f} 不带 markdown")
+            for x in it["blockers"] + it["risks"]:
+                chk("**" not in x, f"{it['project']} 的卡点/风险文案不带 markdown")
+        chk(all(l.count("·") <= 6 for l in out.split("\n") if l.startswith("- ")),
+            "单行字段数受控，手机上一行放得下")
 
     await engine.dispose()
     print("\nPASSED" if not FAIL else f"\n{len(FAIL)} FAILURES")
