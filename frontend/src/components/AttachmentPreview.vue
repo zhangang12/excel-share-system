@@ -129,7 +129,12 @@ defineExpose({ open })
       <div v-if="mode === 'image'" style="text-align:center">
         <img v-if="imgUrl" :src="imgUrl" :alt="title" style="max-width:100%;max-height:82vh" />
       </div>
-      <iframe v-else-if="mode === 'pdf'" :src="pdfUrl" style="width:100%;height:82vh;border:none"></iframe>
+      <!-- 反馈#345（周瑞）：「技术文档打开后，无法下载」。
+           PDF 是用 blob URL 内嵌的，Chrome 内置阅读器工具栏上那个下载按钮
+           下的是 blob，文件名会变成一串 UUID，桌面客户端里干脆没反应。
+           `#toolbar=0` 把内置工具栏隐掉，只留下面我们自己那个能正确命名的下载。 -->
+      <iframe v-else-if="mode === 'pdf'" :src="pdfUrl + '#toolbar=0&navpanes=0'"
+              style="width:100%;height:82vh;border:none"></iframe>
       <div v-else-if="mode === 'xlsx'">
         <div v-if="xlsxSheets.length > 1" style="margin-bottom:8px">
           <el-radio-group v-model="xlsxActive" size="small" @change="selectSheet">
@@ -141,13 +146,17 @@ defineExpose({ open })
       <div v-else-if="mode === 'docx'" ref="docxHost" class="docx-host"></div>
     </div>
     <template #footer>
+      <span class="dl-tip">要保存到本地就点右边「下载」</span>
       <el-button @click="visible = false">关闭</el-button>
-      <el-button type="primary" :icon="Download" @click="doDownload">下载</el-button>
+      <el-button type="primary" size="large" :icon="Download" @click="doDownload">
+        下载{{ curAtt?.name ? `「${curAtt.name}」` : '' }}
+      </el-button>
     </template>
   </el-dialog>
 </template>
 
 <style scoped>
+.dl-tip { float: left; line-height: 40px; font-size: 12.5px; color: var(--el-text-color-secondary); }
 .xlsx-host { overflow: auto; max-height: 80vh; }
 .xlsx-host :deep(table) { border-collapse: collapse; font-size: 13px; }
 .xlsx-host :deep(td), .xlsx-host :deep(th) { border: 1px solid #dcdfe6; padding: 4px 9px; white-space: nowrap; }

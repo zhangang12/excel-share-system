@@ -62,15 +62,15 @@ async def main():
         r = await c.get("/api/wh/materials", headers=Hw)
         chk(r.json()["materials"][0]["stock"]==30, f"入库后库存30: {r.json()['materials'][0]['stock']}")
         # 出库超量拦截
-        r = await c.post("/api/wh/txns", headers=Hw, json={"material_id":mid,"biz_date":"2026-06-06","direction":"out","qty":999})
+        r = await c.post("/api/wh/txns", headers=Hw, json={"material_id":mid,"biz_date":"2026-06-06","direction":"out","qty":999,"non_project":True,"non_project_reason":"用例:非项目领用"})
         chk(r.status_code==400 and "超过现存" in r.text, "超量出库拦截")
         # 出库 25 → 库存 5（=安全库存,不低于）
-        r = await c.post("/api/wh/txns", headers=Hw, json={"material_id":mid,"biz_date":"2026-06-06","direction":"out","qty":25,"party":"生产领用"})
+        r = await c.post("/api/wh/txns", headers=Hw, json={"material_id":mid,"biz_date":"2026-06-06","direction":"out","qty":25,"party":"生产领用","non_project":True,"non_project_reason":"用例:非项目领用"})
         chk(r.status_code==200 and "CK" in r.json()["message"], "出库单号CK")
         r = await c.get("/api/wh/materials", headers=Hw)
         chk(r.json()["materials"][0]["stock"]==5, "出库后库存5")
         # 再出 1 → 库存 4 < 安全库存 5 → 预警推仓库主管
-        await c.post("/api/wh/txns", headers=Hw, json={"material_id":mid,"biz_date":"2026-06-07","direction":"out","qty":1})
+        await c.post("/api/wh/txns", headers=Hw, json={"material_id":mid,"biz_date":"2026-06-07","direction":"out","qty":1,"non_project":True,"non_project_reason":"用例:非项目领用"})
         r = await c.get("/api/wh/materials", headers=Hw)
         chk(r.json()["materials"][0]["stock"]==4 and r.json()["materials"][0]["low"], "低于安全库存标记")
         msgs = (await c.get("/api/messages", headers=Hwl)).json()
@@ -96,7 +96,7 @@ async def main():
         # ===== 🆕 #83 冲红入库单的负库存校验：入10出8后冲红入库会致负库存,应拒 =====
         m2 = (await c.post("/api/wh/materials", headers=Hw, json={"name":"密封圈","spec":"DN50","unit":"个","init_stock":0})).json()["id"]
         await c.post("/api/wh/txns", headers=Hw, json={"material_id":m2,"biz_date":"2026-06-05","direction":"in","qty":10,"source":"采购入库"})
-        await c.post("/api/wh/txns", headers=Hw, json={"material_id":m2,"biz_date":"2026-06-06","direction":"out","qty":8,"party":"领用"})
+        await c.post("/api/wh/txns", headers=Hw, json={"material_id":m2,"biz_date":"2026-06-06","direction":"out","qty":8,"party":"领用","non_project":True,"non_project_reason":"用例:非项目领用"})
         in10 = [t for t in (await c.get("/api/wh/txns?direction=in", headers=Hw)).json() if t["material_id"]==m2 and t["qty"]==10][0]
         r = await c.post(f"/api/wh/txns/{in10['id']}/reverse", headers=Hw)
         chk(r.status_code==400 and "不足冲红" in r.text, f"#83 冲红入库致负库存被拒: {r.status_code} {r.text[:80]}")
@@ -106,12 +106,26 @@ async def main():
         chk(r.status_code==200, f"#83 先冲出库后入库单可冲红: {r.text[:80]}")
 
         # ===== 收发存汇总勾稽（2026-06）=====
+        # ⚠️ 冲红单的 biz_date 是**冲红当天**(warehouse_router.reverse_txn: bd=date.today())，
+        #    不是原单月份——不能倒记进已经结账的月份。所以「冲红反向入 25」落在跑用例的
+        #    那个月，只有在 6 月跑时才会计进 2026-06。原来这里写死 29，出了 6 月就必红，
+        #    是**用例依赖当前日期**，不是产品问题。改成按冲红实际落在哪个月算期望值。
+        from datetime import date as _date
+        rev_in_june = _date.today().strftime("%Y-%m") == "2026-06"
         r = await c.get("/api/wh/summary?period=2026-06", headers=Hw)
         row = [x for x in r.json() if x["material_id"]==mid][0]
-        # 期初(6月前)=init10; 本期入=20+25(冲红反向in); 本期出=25+1; 期末=10+45-26=29
+        # 期初(6月前)=init10; 本期入=20(+25 仅当冲红也落在 6 月); 本期出=25+1
+        expect_close = 10 + 20 - 26 + (25 if rev_in_june else 0)
         chk(row["opening"]==10, f"期初=10: {row['opening']}")
         chk(row["closing"]==row["opening"]+row["in_qty"]-row["out_qty"], "期初+入-出=期末勾稽")
-        chk(row["closing"]==29, f"期末=29: {row['closing']}")
+        chk(row["closing"]==expect_close, f"期末={expect_close}: {row['closing']}")
+        # 冲红那个月的汇总要把 +25 收进来，且实时库存 = 各期期末推到最后
+        rev_period = _date.today().strftime("%Y-%m")
+        if not rev_in_june:
+            rr = [x for x in (await c.get(f"/api/wh/summary?period={rev_period}", headers=Hw)).json()
+                  if x["material_id"]==mid][0]
+            chk(rr["in_qty"]==25, f"冲红入 25 计进 {rev_period}: {rr['in_qty']}")
+            chk(rr["closing"]==29, f"冲红月期末=实时库存29: {rr['closing']}")
 
         # ===== 发货清单上传推物流 =====
         r = await c.post("/api/projects", headers=H, json={"code":"WH-1","name":"仓库测试项目"})

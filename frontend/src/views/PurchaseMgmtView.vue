@@ -2927,7 +2927,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-table-column>
         <el-table-column v-if="listOrderMode !== 'kit'" label="单价(选填)" width="104">
           <template #default="{ row }">
-            <el-input-number v-model="row._price" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="后填留空" @change="row._checked = true" />
+            <el-input-number v-model="row._price" :precision="4" :controls="false" style="width:100%" placeholder="后填留空；折扣填负数" @change="row._checked = true" />
           </template>
         </el-table-column>
         <el-table-column v-if="listOrderMode !== 'kit'" label="供应商 *" width="150">
@@ -3070,13 +3070,15 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-table-column>
           <el-table-column label="单价（选填）" width="120">
             <template #default="{ row }">
-              <el-input-number v-model="row.unit_price" :min="0" :precision="4" :controls="false" style="width:100%"
-                               placeholder="后填留空" @change="onLineCalc(row)" />
+              <!-- 反馈#346（李新新）：采购会用优惠券/折扣，需要单独开一行填负数。
+                   数量仍保持 ≥0（负数量没有业务含义），只放开单价与合计。 -->
+              <el-input-number v-model="row.unit_price" :precision="4" :controls="false" style="width:100%"
+                               placeholder="后填留空；折扣/优惠券填负数" @change="onLineCalc(row)" />
             </template>
           </el-table-column>
           <el-table-column label="合计金额" width="128">
             <template #default="{ row }">
-              <el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" />
+              <el-input-number v-model="row.received_amount" :precision="2" :controls="false" style="width:100%" />
             </template>
           </el-table-column>
           <!-- 🆕 逐行预计到货（留空用表头「整单默认」值） -->
@@ -3189,14 +3191,15 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </el-col>
           <el-col :xs="24" :sm="12" :md="8">
             <el-form-item label="单价">
-              <el-input-number v-model="itemForm.unit_price" :precision="4" :min="0" style="width:100%" @change="onItemCalc" />
+              <!-- 反馈#346：单价允许负数(优惠券/折扣行)。数量仍 ≥0——负数量没有业务含义。 -->
+              <el-input-number v-model="itemForm.unit_price" :precision="4" style="width:100%" @change="onItemCalc" />
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12" :md="8">
             <!-- 🆕 #329 原标签叫「合计金额」，而列表列叫「收货金额」，同一字段两个名字，
                  仓库价格填错时采购找不到该改哪个；统一成列表口径。 -->
             <el-form-item label="收货金额">
-              <el-input-number v-model="itemForm.received_amount" :precision="2" :min="0" style="width:100%" />
+              <el-input-number v-model="itemForm.received_amount" :precision="2" style="width:100%" />
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -3385,13 +3388,14 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-table-column>
         <el-table-column label="单价" width="120">
           <template #default="{ row }">
-            <el-input-number v-model="row.unit_price" :min="0" :precision="4" :controls="false"
+            <!-- 反馈#346：整单维护里逐条改价也要能填负数（优惠券行事后补录/改额） -->
+            <el-input-number v-model="row.unit_price" :precision="4" :controls="false"
                              size="small" style="width:100%" @change="onGroupLinePrice(row)" />
           </template>
         </el-table-column>
         <el-table-column label="收货金额" width="120">
           <template #default="{ row }">
-            <el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false"
+            <el-input-number v-model="row.received_amount" :precision="2" :controls="false"
                              size="small" style="width:100%" @change="onGroupLineAmount(row)" />
           </template>
         </el-table-column>

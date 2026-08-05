@@ -4,6 +4,7 @@
 //  - admin/manager：额外可「新建待办」下发 + 监控每人进展 + 审批顺延申请
 //  图标：清单打勾（方案 A）。角标 = 需我处理的条数（待回复 + 已逾期未完成）。
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useDraggableFab } from '@/composables/useDraggableFab'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { adminApi } from '@/api/admin'
@@ -13,6 +14,16 @@ import { fmtRelative } from '@/utils/format'
 import AttachmentPreview from './AttachmentPreview.vue'   // 🆕 #311 待办附图在线预览
 
 // 🆕 #311 附件预览（图片内嵌，其它格式按类型预览/下载）
+// 反馈#347：悬浮球压住表格最右边的「编辑/删除」列，且表格横向滚动躲不开。
+// 改成可拖动 + 位置记 localStorage，挪一次就一劳永逸。
+const { el: fabEl, style: fabStyle, onPointerDown: fabDown, wasDrag: fabDragged } =
+  useDraggableFab('pms_fab_todo', { right: 22, bottom: 84 })
+function onFabClick() {
+  // 拖完松手不该顺带打开弹窗
+  if (fabDragged.value) return
+  open()
+}
+
 const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
 function previewAtt(a: TodoAttachment) { previewRef.value?.open({ id: a.id, name: a.name }) }
 
@@ -208,7 +219,8 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 
 <template>
   <!-- 右下角浮动挂件（在「反馈」按钮上方，避免重叠） -->
-  <button class="mt-fab" title="管理层待办" @click="open">
+  <button ref="fabEl" class="mt-fab" :style="fabStyle" title="管理层待办"
+          @pointerdown="fabDown" @click="onFabClick">
     <svg class="mt-ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
          stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <rect x="4" y="3.5" width="16" height="17" rx="2.2" />
@@ -411,7 +423,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 <style scoped>
 /* 浮动挂件：置于「反馈」按钮上方 */
 .mt-fab {
-  position: fixed; right: 22px; bottom: 84px; z-index: 2000;
+  position: fixed; z-index: 2000;
   display: flex; align-items: center; gap: 6px;
   background: #0f766e; color: #fff;
   border: none; border-radius: 999px; padding: 11px 18px;

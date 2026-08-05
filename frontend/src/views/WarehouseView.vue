@@ -1615,11 +1615,12 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
           </el-select>
         </el-form-item>
         <div class="frow">
+          <!-- 反馈#346（李新新）：采购用优惠券会单开一行负金额，收货补价时也得能填负数。 -->
           <el-form-item label="单价（后填价格在此补）">
-            <el-input-number v-model="recvForm.unit_price" :min="0" :precision="2" :controls="false" style="width:100%" @change="onRecvCalc" />
+            <el-input-number v-model="recvForm.unit_price" :precision="2" :controls="false" style="width:100%" @change="onRecvCalc" />
           </el-form-item>
           <el-form-item label="收货金额（总价，填此按数量算单价）">
-            <el-input-number v-model="recvForm.received_amount" :min="0" :precision="2" :controls="false" style="width:100%" @change="onRecvAmountCalc" />
+            <el-input-number v-model="recvForm.received_amount" :precision="2" :controls="false" style="width:100%" @change="onRecvAmountCalc" />
           </el-form-item>
         </div>
         <!-- 🆕 需求十四：上传收货单（图片/PDF） -->
@@ -1666,10 +1667,10 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         </el-table-column>
         <el-table-column label="数量" width="80" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
         <el-table-column label="单价" width="130" align="right">
-          <template #default="{ row }"><el-input-number v-model="row.unit_price" :min="0" :precision="2" :controls="false" style="width:110px" @change="onBatchLinePriceCalc(row)" /></template>
+          <template #default="{ row }"><el-input-number v-model="row.unit_price" :precision="2" :controls="false" style="width:110px" @change="onBatchLinePriceCalc(row)" /></template>
         </el-table-column>
         <el-table-column label="收货金额" width="140" align="right">
-          <template #default="{ row }"><el-input-number v-model="row.received_amount" :min="0" :precision="2" :controls="false" style="width:120px" /></template>
+          <template #default="{ row }"><el-input-number v-model="row.received_amount" :precision="2" :controls="false" style="width:120px" /></template>
         </el-table-column>
       </el-table>
       <el-form label-position="top" style="margin-top:12px">

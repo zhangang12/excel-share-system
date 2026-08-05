@@ -1,11 +1,22 @@
 <script setup lang="ts">
 // 🆕 用户反馈小助手：右下角悬浮按钮 + 提交弹窗 +「我的反馈」(查看系统回信)
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useDraggableFab } from '@/composables/useDraggableFab'
 import { ElMessage } from 'element-plus'
 import { ChatLineRound, Picture, Close } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { userFeedbackApi, type UserFeedbackRow } from '@/api/userFeedback'
 import { fmtRelative } from '@/utils/format'
+
+// 反馈#347：悬浮球压住表格最右边的「编辑/删除」列，且表格横向滚动躲不开。
+// 改成可拖动 + 位置记 localStorage，挪一次就一劳永逸。
+const { el: fabEl, style: fabStyle, onPointerDown: fabDown, wasDrag: fabDragged } =
+  useDraggableFab('pms_fab_feedback', { right: 22, bottom: 28 })
+function onFabClick() {
+  // 拖完松手不该顺带打开弹窗
+  if (fabDragged.value) return
+  open()
+}
 
 const route = useRoute()
 
@@ -109,7 +120,8 @@ const tip = computed(() => `当前页面：${route.fullPath || '/'}（提交时�
 
 <template>
   <!-- 右下角悬浮按钮 -->
-  <button class="helper-fab" :title="'问题反馈/意见建议·我的反馈'" @click="open">
+  <button ref="fabEl" class="helper-fab" :style="fabStyle" :title="'问题反馈/意见建议·我的反馈'"
+          @pointerdown="fabDown" @click="onFabClick">
     <el-icon class="ico"><ChatLineRound /></el-icon>
     <span class="lbl">反馈</span>
   </button>
@@ -183,7 +195,7 @@ const tip = computed(() => `当前页面：${route.fullPath || '/'}（提交时�
 
 <style scoped>
 .helper-fab {
-  position: fixed; right: 22px; bottom: 28px; z-index: 2000;
+  position: fixed; z-index: 2000;
   display: flex; align-items: center; gap: 6px;
   background: var(--primary, #2563eb); color: #fff;
   border: none; border-radius: 999px; padding: 11px 18px;

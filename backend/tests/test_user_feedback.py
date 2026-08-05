@@ -70,24 +70,24 @@ async def main():
         chk(r.status_code == 400, f"空内容被拒: {r.status_code}")
 
         # ===== 2) 列表权限：管理层看全部, 普通用户只看自己 =====
-        all_admin = (await c.get("/api/user-feedback", headers=H)).json()
+        all_admin = (await c.get("/api/user-feedback", headers=H)).json()["items"]
         chk(len(all_admin) == 2 and {x["id"] for x in all_admin} == {fb1["id"], fb2["id"]},
             f"admin 看到全部 2 条: {len(all_admin)}")
-        all_mg = (await c.get("/api/user-feedback", headers=Hmg)).json()
+        all_mg = (await c.get("/api/user-feedback", headers=Hmg)).json()["items"]
         chk(len(all_mg) == 2, f"manager 也看到全部: {len(all_mg)}")
 
-        s_mine = (await c.get("/api/user-feedback", headers=Hs)).json()
+        s_mine = (await c.get("/api/user-feedback", headers=Hs)).json()["items"]
         chk(len(s_mine) == 1 and s_mine[0]["id"] == fb1["id"],
             f"销售员只看到自己 1 条: {len(s_mine)}")
-        d_mine = (await c.get("/api/user-feedback", headers=Hd)).json()
+        d_mine = (await c.get("/api/user-feedback", headers=Hd)).json()["items"]
         chk(len(d_mine) == 1 and d_mine[0]["id"] == fb2["id"], "设计师只看到自己")
 
         # 管理层加 mine=true 仅看自己提交的(0条)
-        my_admin = (await c.get("/api/user-feedback?mine=true", headers=H)).json()
+        my_admin = (await c.get("/api/user-feedback?mine=true", headers=H)).json()["items"]
         chk(len(my_admin) == 0, f"admin mine=true 自己未提交则空: {len(my_admin)}")
 
         # 类型筛选
-        bugs = (await c.get("/api/user-feedback?kind=bug", headers=H)).json()
+        bugs = (await c.get("/api/user-feedback?kind=bug", headers=H)).json()["items"]
         chk(len(bugs) == 1 and bugs[0]["kind"] == "bug", "按 kind=bug 筛选")
 
         # ===== 3) 标记已处理：仅管理层可调 =====
@@ -95,10 +95,10 @@ async def main():
         chk(r.status_code == 403, f"销售员调标记已处理被拒: {r.status_code}")
         r = await c.post(f"/api/user-feedback/{fb1['id']}/done", headers=Hmg)
         chk(r.status_code == 200, f"manager 标记已处理: {r.text[:80]}")
-        fb1_now = [x for x in (await c.get("/api/user-feedback", headers=H)).json() if x["id"] == fb1["id"]][0]
+        fb1_now = [x for x in (await c.get("/api/user-feedback", headers=H)).json()["items"] if x["id"] == fb1["id"]][0]
         chk(fb1_now["status"] == "done", "状态变为 done")
         # 状态筛选
-        open_only = (await c.get("/api/user-feedback?status=open", headers=H)).json()
+        open_only = (await c.get("/api/user-feedback?status=open", headers=H)).json()["items"]
         chk(len(open_only) == 1 and open_only[0]["id"] == fb2["id"], "按 status=open 筛选")
 
         # ===== 4) 导出 HTML（仅管理层）+ 截图 data URI 内嵌 =====

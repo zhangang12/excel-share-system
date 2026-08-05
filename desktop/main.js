@@ -483,6 +483,11 @@ function createWindow() {
       webSecurity: false,
       // 🆕 窗口切后台时别把定时器降频——心跳/自动刷新被掐，回来会看到一屏死数据
       backgroundThrottling: false,
+      // 🆕 反馈#345（周瑞）：「技术文档打开后，无法下载」。
+      //    Chrome 内置 PDF 阅读器在 Electron 里算 plugin，而 plugins **默认 false**，
+      //    所以客户端里 <iframe src="blob:…pdf"> 压根渲染不出来。开了才能预览；
+      //    下载走前端自己那个按钮(XHR→blob→<a download>)，会命中下面的 will-download。
+      plugins: true,
     },
   });
 
