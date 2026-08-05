@@ -764,7 +764,10 @@ _MAX_TOKENS_DEFAULT = 700
 _MAX_TOKENS_FULL = 3000
 
 
-_MAX_TOKENS_THINK = 1600   # 要动脑子的问题：给思维链留出余量
+_MAX_TOKENS_THINK = 1600   # 要动脑子的问题：多给些余量
+# 超过这个秒数就不再为「模型没产出正文」重试 —— 重试要多等一整轮，
+# 拖过客户端的耐心就是 network error（上线第一版实测栽过）。
+_RETRY_DEADLINE_S = 12.0
 
 
 def _max_tokens_for(message: str) -> int:
@@ -868,6 +871,8 @@ async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[
                        max_tokens: int = _MAX_TOKENS_DEFAULT) -> dict:
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
     payload: dict = {
+        # 关思考（默认）。见 _thinking_params：开着时正文经常是空的
+        **_thinking_params(cfg),
         "model": model,
         "messages": messages,
         "temperature": 0.2,
@@ -909,6 +914,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
     last_result: dict | None = None   # v2：明细交给代码渲染，需要留住原始工具结果
     seen: set = set()                 # v2：同工具同参数不得重复调用（硬拦，不靠提示词）
     budget_retried = False            # 与流式同一套：预算被思维链吃光时加码重试一次
+    t_start = time.perf_counter()
     for _ in range(4):  # 工具轮次上限，防死循环
         data = await _llm_request(messages, model, cfg, schemas, max_tokens)
         choice = data["choices"][0]
@@ -920,8 +926,8 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
                 # ⚠️ 推理型模型把 max_tokens 花在思维链上时，正文就是空的。
                 #    直接判死会把整条请求降级成功能菜单（见 _max_tokens_for 的说明）。
                 reasoning = len(msg.get("reasoning_content") or "")
-                if not budget_retried and (choice.get("finish_reason") == "length"
-                                           or reasoning > 0):
+                if not budget_retried and (time.perf_counter() - t_start) <= _RETRY_DEADLINE_S \
+                        and (choice.get("finish_reason") == "length" or reasoning > 0):
                     budget_retried = True
                     log.warning("[agent] 非流式：模型未产出正文（finish=%s，思维链 %d 字，"
                                 "预算 %d），提高预算到 %d 重试",
@@ -1165,7 +1171,8 @@ async def _rule_chat(message: str, db: AsyncSession, current: models.User):
 
 # ==================== 接口 ====================
 
-_AGENT_CFG_FIELDS = ("base_url", "api_key", "model", "models")
+# thinking: "off"（默认）/"on"。见 _thinking_params 里的实测数据。
+_AGENT_CFG_FIELDS = ("base_url", "api_key", "model", "models", "thinking")
 _CLEAR_MARK = "-"   # PUT /config 字段传 "-" = 清除库中覆盖值，回退 .env 默认
 
 
@@ -1193,7 +1200,37 @@ async def _effective_llm_config(db: AsyncSession) -> dict:
         "api_key":   stored.get("api_key")   or settings.agent_llm_api_key,
         "model":     stored.get("model")     or settings.agent_llm_model,
         "models":    stored.get("models")    or settings.agent_llm_models,
+        # ⚠️ 默认**关**思考。理由见 _thinking_params —— 开着的时候连
+        #   「用一句话说今天天气不错」都答不出来（预算全被思维链吃光）。
+        "thinking":  (stored.get("thinking") or "off").lower(),
     }
+
+
+def _thinking_params(cfg: dict) -> dict:
+    """要不要让模型「想一想」。**默认关**。
+
+    ⚠️⚠️ 拿生产这把 key 对 deepseek 实测（2026-08-06）：
+
+        deepseek-v4-pro 默认（开思考）  7487ms  思维链 542 字  **正文 0 字**
+        deepseek-v4-pro + none         2831ms  思维链   0 字    正文 95 字
+        deepseek-v4-flash 默认         2046ms  思维链  27 字    正文  7 字
+
+    问的只是「用一句话说：今天天气不错」，`max_tokens=300` 却被推理吃掉 300 ——
+    **开着思考时它连这种琐事都给不出正文**。线上「项目进度跟进」那次更夸张：
+    思维链 3718 字，正文 0 字，然后重试把等待翻倍，客户端直接 network error。
+
+    带工具的实测（问「项目进度跟进」）：
+        开思考   3280ms  思维链 104 字  工具调用正常
+        关思考   2290ms  思维链   0 字  工具调用正常   ← 更快，而且能力没丢
+
+    所以默认关：**这个场景里模型不需要自己想**，卡点、风险、截断都是工具算好的，
+    它只负责把结论组织成人话。要开回去改 app_settings 的 `agent_llm.thinking=on`。
+
+    ⚠️ 用 `reasoning_effort`（OpenAI 兼容字段）。同批实测里
+       `enable_thinking` / `chat_template_kwargs` 这个网关**不认也不报错**，
+       静默无效 —— 看着像配了，其实一点用没有。
+    """
+    return {} if (cfg or {}).get("thinking") == "on" else {"reasoning_effort": "none"}
 
 
 def _mask_key(key: str) -> str:
@@ -1243,6 +1280,10 @@ class AgentConfigIn(BaseModel):
     api_key: str | None = None
     model: str | None = None
     models: str | None = None
+    # "off"（默认，快）/ "on"（让模型先想一想，慢很多，见 _thinking_params 的实测）
+    # ⚠️ 字段名必须与 _AGENT_CFG_FIELDS 对齐 —— PUT /config 是按那个元组
+    #    getattr(body, f) 取值的，漏一个就 AttributeError（加 thinking 时踩过）。
+    thinking: str | None = None
 
 
 @router.put("/config")
@@ -1746,7 +1787,8 @@ async def _llm_stream(messages: list[dict], model: str, cfg: dict, tools: list[d
        很容易被误读成「变快了」。
     """
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
-    payload: dict = {"model": model, "messages": messages,
+    payload: dict = {**_thinking_params(cfg),      # 关思考（默认）
+                     "model": model, "messages": messages,
                      "temperature": 0.2, "max_tokens": max_tokens, "stream": True}
     if tools:
         payload["tools"] = tools
@@ -1814,6 +1856,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
     last_result: dict | None = None   # v2 阶段二：留住工具原始结果，收尾时代码渲染明细
     seen: set = set()                 # v2：同工具同参数不得重复调用（硬拦，不靠提示词）
     budget_retried = False            # 预算被思维链吃光时只加码重试一次，防死循环
+    t_start = time.perf_counter()     # 重试要看还剩多少时间，见 _RETRY_DEADLINE_S
     for rnd in range(4):              # rnd 只为审计记「跑了几轮」，循环本身不用它
         content_parts: list[str] = []
         tc_acc: dict = {}
@@ -1868,14 +1911,23 @@ async def _chat_stream(message: str, history: list[dict], model: str,
             #   700 tokens 对需要想一想的问题根本不够，思维链先把它吃光。
             #   所以这里不再直接判死，而是**加码重试一次**（只一次，防死循环）。
             #   这时还没往前端推过任何字（正文为空），重试不会出现重复文字。
+            # ⚠️ 重试**要看还剩多少时间**。上线第一版没设这道闸，结果是：
+            #   思维链 3718 字吃光 1600 预算 → 抬到 3000 重试 → 总等待翻倍 →
+            #   客户端等不及断开，用户看到的是 **network error**。
+            #   救回一次正确性、赔掉整个请求，不划算。超过预算就带着现状收尾。
+            elapsed = time.perf_counter() - t_start
             if not text and not streamed and not budget_retried and \
                     (finish == "length" or reasoning_chars > 0):
-                budget_retried = True
-                log.warning("[agent] 模型未产出正文（finish=%s，思维链 %d 字，预算 %d）"
-                            "，提高预算到 %d 重试", finish, reasoning_chars,
-                            max_tokens, _MAX_TOKENS_FULL)
-                max_tokens = _MAX_TOKENS_FULL
-                continue
+                if elapsed > _RETRY_DEADLINE_S:
+                    log.warning("[agent] 模型未产出正文（思维链 %d 字），但已耗时 %.1fs，"
+                                "不再重试（重试会拖到客户端断开）", reasoning_chars, elapsed)
+                else:
+                    budget_retried = True
+                    log.warning("[agent] 模型未产出正文（finish=%s，思维链 %d 字，预算 %d，"
+                                "已耗时 %.1fs），提高预算到 %d 重试", finish, reasoning_chars,
+                                max_tokens, elapsed, _MAX_TOKENS_FULL)
+                    max_tokens = _MAX_TOKENS_FULL
+                    continue
             if not text and stream_err:
                 # 把流里夹带的错误带出来，别再报成含糊的「返回空内容」
                 raise RuntimeError(f"LLM 流内错误：{stream_err}")

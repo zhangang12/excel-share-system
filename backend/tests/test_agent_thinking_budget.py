@@ -138,6 +138,70 @@ async def main():
     finally:
         ar._llm_stream = orig
 
+
+    print("\n===== 5. 默认关思考：请求体里必须带 reasoning_effort=none =====")
+    # ⚠️⚠️ 这是本次提速的核心开关。生产实测（2026-08-06）：
+    #   pro 开思考 7487ms / 思维链 542 字 / **正文 0 字**（预算全被推理吃光）
+    #   pro 关思考 2831ms / 思维链   0 字 /   正文 95 字
+    #   带工具时：开 3280ms、关 2290ms，**工具调用两者都正常**。
+    chk(ar._thinking_params({}) == {"reasoning_effort": "none"}, "缺省就是关思考")
+    chk(ar._thinking_params({"thinking": "off"}) == {"reasoning_effort": "none"}, "off 关")
+    chk(ar._thinking_params({"thinking": "on"}) == {}, "显式 on 时不注入（想开回去也能开）")
+
+    seen_payload = {}
+
+    async def spy_stream(messages, model, cfg, tools, max_tokens=700):
+        seen_payload.update(ar._thinking_params(cfg))
+        yield {"choices": [{"delta": {"content": "好"}}]}
+        yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+
+    ar._llm_stream = spy_stream
+    try:
+        async with SessionLocal() as db:
+            u = (await db.execute(select(models.User).where(
+                models.User.username == "admin"))).scalars().first()
+        async for _ in ar._chat_stream("今日晨报", [], "m",
+                                       {"api_key": "k", "base_url": "http://x",
+                                        "model": "m", "thinking": "off"}, u):
+            pass
+        chk(seen_payload.get("reasoning_effort") == "none", "流式路径确实带上了关思考参数")
+    finally:
+        ar._llm_stream = orig
+
+    print("\n===== 6. 重试要有时间闸：等太久就别再重试（否则拖成 network error）=====")
+    chk(ar._RETRY_DEADLINE_S <= 20, f"重试闸门 {ar._RETRY_DEADLINE_S}s，不能太宽松")
+
+    async def slow_thinking(messages, model, cfg, tools, max_tokens=700):
+        # 模拟「想了很久还没正文」：超过闸门后不该再重试
+        await asyncio.sleep(ar._RETRY_DEADLINE_S + 0.3)
+        yield {"choices": [{"delta": {"reasoning_content": "唔" * 100}}]}
+        yield {"choices": [{"delta": {}, "finish_reason": "length"}]}
+
+    calls = {"n": 0}
+
+    async def counting(messages, model, cfg, tools, max_tokens=700):
+        calls["n"] += 1
+        async for x in slow_thinking(messages, model, cfg, tools, max_tokens):
+            yield x
+
+    ar._llm_stream = counting
+    try:
+        async with SessionLocal() as db:
+            u = (await db.execute(select(models.User).where(
+                models.User.username == "admin"))).scalars().first()
+        err = None
+        try:
+            async for _ in ar._chat_stream("今日晨报", [], "m",
+                                           {"api_key": "k", "base_url": "http://x",
+                                            "model": "m"}, u):
+                pass
+        except RuntimeError as e:
+            err = str(e)
+        chk(calls["n"] == 1, f"超时后不再重试（实际请求 {calls['n']} 次）")
+        chk(err is not None, "带着现状收尾（抛给上层降级），而不是继续拖")
+    finally:
+        ar._llm_stream = orig
+
     await engine.dispose()
     print("\nPASSED" if not FAIL else f"\n{len(FAIL)} FAILURES")
     sys.exit(1 if FAIL else 0)
