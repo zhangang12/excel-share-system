@@ -1,0 +1,478 @@
+<title>四项改动设计稿 · 审批到人 / 成本归集 / 发货齐套 / 售后报销</title>
+<style>
+  :root {
+    --paper:   #f5f6f8;
+    --card:    #ffffff;
+    --ink:     #141a23;
+    --muted:   #5b6676;
+    --hair:    #d8dce3;
+    --navy:    #1e2a41;
+    --brass:   #9d7c26;
+    --brass-w: #f3eddc;
+    --ok:      #1a6b51;
+    --warn:    #8a6a15;
+    --stop:    #a32b22;
+    --stop-w:  #fbeceb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0e131b; --card: #151c26; --ink: #e4e8ee; --muted: #97a2b2;
+      --hair: #2a3442; --navy: #b9c8e2; --brass: #d3ad4d; --brass-w: #2a2415;
+      --ok: #5cbf9b; --warn: #d9ad46; --stop: #e8756a; --stop-w: #2e1a18;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0e131b; --card: #151c26; --ink: #e4e8ee; --muted: #97a2b2;
+    --hair: #2a3442; --navy: #b9c8e2; --brass: #d3ad4d; --brass-w: #2a2415;
+    --ok: #5cbf9b; --warn: #d9ad46; --stop: #e8756a; --stop-w: #2e1a18;
+  }
+  :root[data-theme="light"] {
+    --paper: #f5f6f8; --card: #ffffff; --ink: #141a23; --muted: #5b6676;
+    --hair: #d8dce3; --navy: #1e2a41; --brass: #9d7c26; --brass-w: #f3eddc;
+    --ok: #1a6b51; --warn: #8a6a15; --stop: #a32b22; --stop-w: #fbeceb;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                 "Source Han Sans SC", "Noto Sans CJK SC", system-ui, sans-serif;
+    font-size: 15.5px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: .87em; background: color-mix(in srgb, var(--navy) 8%, transparent);
+    padding: .08em .38em; border-radius: 3px; word-break: break-all;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 22px 96px; }
+
+  /* ── 页眉 ── */
+  header { padding: 52px 0 26px; border-bottom: 2px solid var(--navy); }
+  .eyebrow {
+    font-size: 12px; letter-spacing: .16em; color: var(--brass);
+    font-weight: 700; margin-bottom: 12px;
+  }
+  h1 {
+    font-size: clamp(26px, 4.2vw, 38px); line-height: 1.25; margin: 0 0 14px;
+    letter-spacing: -.02em; font-weight: 800; text-wrap: balance;
+  }
+  .lede { color: var(--muted); max-width: 62ch; margin: 0; }
+
+  /* ── 导航 ── */
+  nav {
+    position: sticky; top: 0; z-index: 5; background: var(--paper);
+    border-bottom: 1px solid var(--hair); padding: 11px 0; margin-bottom: 34px;
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  nav a {
+    font-size: 13px; text-decoration: none; color: var(--muted);
+    border: 1px solid var(--hair); border-radius: 999px; padding: 4px 13px;
+    white-space: nowrap;
+  }
+  nav a:hover, nav a:focus-visible { color: var(--brass); border-color: var(--brass); }
+  nav a:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  /* ── 区块 ── */
+  section { margin: 0 0 54px; scroll-margin-top: 64px; }
+  .tag {
+    display: inline-block; font-size: 11.5px; font-weight: 700; letter-spacing: .1em;
+    color: var(--brass); background: var(--brass-w); border-radius: 3px;
+    padding: 3px 9px; margin-bottom: 10px;
+  }
+  h2 {
+    font-size: clamp(20px, 2.6vw, 25px); margin: 0 0 6px; font-weight: 800;
+    letter-spacing: -.015em; text-wrap: balance;
+  }
+  .said {
+    color: var(--muted); font-size: 14.5px; border-left: 3px solid var(--hair);
+    padding: 2px 0 2px 14px; margin: 0 0 22px;
+  }
+  h3 {
+    font-size: 14px; font-weight: 700; letter-spacing: .06em; color: var(--navy);
+    margin: 0 0 9px; text-transform: none;
+  }
+
+  /* ── 现状 / 改后 对照 ── */
+  .vs { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 720px) { .vs { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--card); border: 1px solid var(--hair); border-radius: 8px;
+    padding: 17px 19px;
+  }
+  .panel.now  { border-top: 3px solid var(--muted); }
+  .panel.next { border-top: 3px solid var(--brass); }
+  .panel p:last-child, .panel ul:last-child { margin-bottom: 0; }
+  .panel p { margin: 0 0 9px; }
+  ul { margin: 0 0 9px; padding-left: 1.15em; }
+  li { margin-bottom: 5px; }
+  li::marker { color: var(--brass); }
+
+  /* ── 审批链 chip（照搬系统里现有的样式语言）── */
+  .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 4px 0 12px; }
+  .chip {
+    border: 1px solid var(--brass); color: var(--brass); border-radius: 5px;
+    padding: 3px 11px; font-size: 13.5px; white-space: nowrap;
+  }
+  .chip.person { background: var(--brass); color: var(--card); font-weight: 600; }
+  .arrow { color: var(--muted); }
+
+  /* ── 表 ── */
+  .scroll { overflow-x: auto; margin-bottom: 18px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 480px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  th {
+    background: var(--navy); color: var(--paper); font-weight: 600;
+    font-size: 12.5px; letter-spacing: .04em; white-space: nowrap;
+  }
+  @media (prefers-color-scheme: dark) { th { color: #0e131b; } }
+  :root[data-theme="dark"] th { color: #0e131b; }
+  :root[data-theme="light"] th { color: #f5f6f8; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* ── 要拍板的问题 ── */
+  .decide {
+    background: var(--card); border: 1px solid var(--brass);
+    border-radius: 8px; padding: 16px 19px 8px;
+  }
+  .decide h3 { color: var(--brass); }
+  .q { display: flex; gap: 11px; align-items: flex-start; margin-bottom: 13px; }
+  .q input { margin-top: .45em; accent-color: var(--brass); flex: none; width: 15px; height: 15px; }
+  .q input:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+  .q b { font-weight: 700; }
+  .q .hint { color: var(--muted); font-size: 13.5px; display: block; margin-top: 2px; }
+  .rec { color: var(--ok); font-weight: 700; }
+
+  /* ── 警示 ── */
+  .flag {
+    background: var(--stop-w); border-left: 3px solid var(--stop);
+    padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 18px;
+  }
+  .flag b { color: var(--stop); }
+  .flag p { margin: 0; }
+
+  footer {
+    border-top: 2px solid var(--navy); padding-top: 22px; color: var(--muted); font-size: 14px;
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">同辉智能项目管理系统 · 需求设计稿 · 2026-08-06</div>
+  <h1>审批配到人、费用归到成本、发货看客户、售后自带报销</h1>
+  <p class="lede">
+    这四条是你今天提的。先把改法写清楚给业务确认，确认完再写代码——
+    其中<b>「OA 费用按部门归集」和「售后登记内置报销」必须一起定</b>，
+    单独做任何一条都会让同一笔售后费用被算两遍。
+    每节最后是<b>需要你拍板的问题</b>，定了我就开工。
+  </p>
+</header>
+
+<nav>
+  <a href="#a">① 审批链指定到人</a>
+  <a href="#b">② 费用按部门归成本</a>
+  <a href="#c">③ 发货资料看客户分类</a>
+  <a href="#d">④ 售后登记自带报销</a>
+  <a href="#plan">上线顺序</a>
+</nav>
+
+<!-- ══════════════ A ══════════════ -->
+<section id="a">
+  <div class="tag">OA 审批</div>
+  <h2>审批链能指定到具体某个人</h2>
+  <p class="said">
+    「能不能具体到某个人，不要按照部门配置审批流程。比如我挂的部门比较多，
+    有销售部、财务部、采购部，不能具体到某个人审批。」
+  </p>
+
+  <div class="vs">
+    <div class="panel now">
+      <h3>现在</h3>
+      <p>一条审批链的每一步存的是<b>角色</b>，不是人：</p>
+      <p><span class="mono">oa_approval_steps (department_id, doc_type, step_order) → approver_role</span></p>
+      <div class="chain">
+        <span class="chip">1. 售后部主管</span><span class="arrow">→</span>
+        <span class="chip">2. 财务主管</span><span class="arrow">→</span>
+        <span class="chip">3. 财务部</span>
+      </div>
+      <p>轮到某一步时，<b>凡是挂着这个角色的人都能批</b>。你挂了销售部＋财务部＋采购部，
+        于是很多本该别人批的单子也会落到你待办里。</p>
+    </div>
+    <div class="panel next">
+      <h3>改成</h3>
+      <p>每一步二选一：<b>按角色</b>（保留，适合"谁在岗谁批"）或<b>指定到人</b>。</p>
+      <p><span class="mono">approver_role</span> 旁边加一个 <span class="mono">approver_user_id</span>，
+        配置界面那一行从「选角色」变成「选角色 / 选人」两个下拉。</p>
+      <div class="chain">
+        <span class="chip">1. 售后部主管</span><span class="arrow">→</span>
+        <span class="chip person">2. 张三（指定）</span><span class="arrow">→</span>
+        <span class="chip">3. 财务部</span>
+      </div>
+      <p>在途的单子不受影响——现在的设计就是提交那一刻把审批链<b>快照</b>下来，
+        改配置只影响新提交的单，这条不用动。</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <p><b>指定到人，就必须先想好这个人不在的时候怎么办。</b>
+      配成角色时谁在岗谁批，天然不会卡；配成具体的人，一旦他休假、出差、离职，
+      单子就停在那一步不动了。这是这条改动<b>唯一真正的风险</b>，不解决会变成新的堵点。</p>
+  </div>
+
+  <div class="decide">
+    <h3>需要你拍板</h3>
+    <div class="q"><input type="checkbox" id="a1"><label for="a1">
+      <b>指定的人不在时怎么走？</b>
+      <span class="hint">建议：给每个人设一个<b>代理人</b>，本人 3 天没处理就自动同时进代理人的待办（本人仍可批）。
+        比"自动跳过"安全，比"死等"顺畅。<span class="rec">推荐这个</span></span>
+    </label></div>
+    <div class="q"><input type="checkbox" id="a2"><label for="a2">
+      <b>一步能不能配多个人？</b>
+      <span class="hint">两种含义要分清：<b>任一人批即可</b>（提速）还是<b>所有人都要批</b>（会签，更慢但更严）。
+        建议先只做「任一人批即可」，会签等真有需要再加。</span>
+    </label></div>
+    <div class="q"><input type="checkbox" id="a3"><label for="a3">
+      <b>你挂多个部门，提交申请时按哪个部门取审批链？</b>
+      <span class="hint">建议：提交时多一个「以哪个部门的名义申请」下拉，默认主部门。
+        这一步不做的话，指定到人也救不了走错链的问题。</span>
+    </label></div>
+  </div>
+</section>
+
+<!-- ══════════════ B ══════════════ -->
+<section id="b">
+  <div class="tag">成本归集</div>
+  <h2>OA 里的费用按部门统计到对应成本</h2>
+  <p class="said">
+    「0A 审批里面的费用能不能根据部门做统计，售后部提交的报销统计到售后成本里面，
+    销售部提交的统计到销售成本里面。」
+  </p>
+
+  <div class="vs">
+    <div class="panel now">
+      <h3>现在</h3>
+      <p>OA 申请单 <span class="mono">oa_requests</span> 上已经有<b>部门</b>、<b>申请金额</b>、
+        <b>财务核定金额</b>，但这些钱<b>不进任何成本口径</b>——审批完就停在 OA 里，
+        财务想看某个部门花了多少，只能自己翻单子。</p>
+    </div>
+    <div class="panel next">
+      <h3>改成</h3>
+      <p>建一张「部门 → 成本科目」的对照表，报销类单据审批通过后自动落到对应成本：</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>提交部门</th><th>计入</th></tr></thead>
+          <tbody>
+            <tr><td>销售部</td><td>销售成本</td></tr>
+            <tr><td>售后部</td><td>售后成本 <b>（见第 ④ 节，会重复）</b></td></tr>
+            <tr><td>生产部 / 电工部 / 设计部</td><td>制造费用</td></tr>
+            <tr><td>人事行政 / 财务部</td><td>管理费用</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>对照表做成<b>可维护的</b>，以后加部门不用改代码。</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <p><b>金额要用财务核定的那个数，不是申请的数。</b>
+      单据上申请金额和 <span class="mono">settle_amount</span>（财务核定）是两个字段，
+      经常对不上。成本必须按核定金额算，否则报出来的部门成本天然虚高，
+      老板看到的数跟财务账对不上。</p>
+  </div>
+
+  <div class="decide">
+    <h3>需要你拍板</h3>
+    <div class="q"><input type="checkbox" id="b1"><label for="b1">
+      <b>什么时候算进成本：审批通过，还是实际付款？</b>
+      <span class="hint">审批通过就算——看得早，但可能有批了没付的；实际付款才算——跟银行流水对得上，但滞后。
+        <span class="rec">建议按"审批通过"计入，另给财务一列"是否已付"</span>，两头都能看。</span>
+    </label></div>
+    <div class="q"><input type="checkbox" id="b2"><label for="b2">
+      <b>采购申请要不要计成本？</b>
+      <span class="hint">注意：走 OA 的采购申请如果最后又在采购管理里开了采购单，
+        这笔钱会<b>被算两次</b>。建议 OA 采购申请<b>只当审批用、不计成本</b>，成本一律以采购单为准。</span>
+    </label></div>
+    <div class="q"><input type="checkbox" id="b3"><label for="b3">
+      <b>差旅报销算哪个部门的成本？</b>
+      <span class="hint">按提交人所在部门算，还是按出差服务的那个项目算？
+        如果销售出差是为了某个项目，你希望它落在"销售成本"还是那个项目上？</span>
+    </label></div>
+  </div>
+</section>
+
+<!-- ══════════════ C ══════════════ -->
+<section id="c">
+  <div class="tag">发货闸门</div>
+  <h2>发货资料按客户分类判定，经销商不卡铭牌说明书</h2>
+  <p class="said">
+    「铭牌、说明书、电路图、送货单必须齐了后才能确认发货，但有些经销商的单子没有铭牌说明书，
+    那就没办法确认发货了。能不能根据销售下单的客户分类，经销商只需要电路图、送货单，
+    终端客户就正常。」
+  </p>
+
+  <div class="vs">
+    <div class="panel now">
+      <h3>现在（我查过代码，口径跟你描述的不完全一样）</h3>
+      <p>发货闸门实际判的是：<b>这个项目所有已下单、未作废的部门任务，必须全部完成</b>
+        （<span class="mono">logistics_router._d5_gate</span>）。</p>
+      <p>铭牌和说明书是<b>设计部</b>那张任务单的产出，电路图是<b>电工部</b>的产出。
+        资料没传齐→部门任务不敢点完成→整个项目卡在"待齐"，发不了货。</p>
+      <p>所以卡住经销商单子的不是一张"资料清单"，是<b>部门任务完不成</b>。这决定了改法。</p>
+    </div>
+    <div class="panel next">
+      <h3>改成</h3>
+      <p>销售下单时给单子标<b>客户类型</b>，闸门按类型取不同的必需资料：</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>客户类型</th><th>发货前必须齐</th><th>不卡</th></tr></thead>
+          <tbody>
+            <tr><td><b>终端客户</b></td><td>铭牌 · 说明书 · 电路图 · 送货单</td><td>—</td></tr>
+            <tr><td><b>经销商</b></td><td>电路图 · 送货单</td><td>铭牌 · 说明书</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>被免掉的资料<b>仍然可以传</b>，只是不再拦着发货；设计部那张单也能正常点完成。</p>
+    </div>
+  </div>
+
+  <div class="decide">
+    <h3>需要你拍板</h3>
+    <div class="q"><input type="checkbox" id="c1"><label for="c1">
+      <b>客户类型记在哪一层？</b>
+      <span class="hint">记在<b>客户档案</b>上，这家客户所有单子都一样，省事但偶尔的例外改不了；
+        记在<b>每张销售单</b>上，逐单可改。<span class="rec">建议：客户档案上设默认值，下单时可以改</span>——
+        你原话是"根据销售下单的客户分类"，这样既省事又留了口子。</span>
+    </label></div>
+    <div class="q"><input type="checkbox" id="c2"><label for="c2">
+      <b>存量的几百个项目默认算哪一类？</b>
+      <span class="hint">建议一律默认<b>终端客户</b>（要求更严）。默认成经销商的话，
+        等于<b>把一批本该卡住的单子悄悄放行了</b>，风险大。经销商的单让销售逐个改过来。</span>
+    </label></div>
+    <div class="q"><input type="checkbox" id="c3"><label for="c3">
+      <b>除了经销商和终端客户，还有第三类吗？</b>
+      <span class="hint">比如返修件、样机、内部试制——这些往往连电路图都不需要。
+        现在定下来比以后加便宜。</span>
+    </label></div>
+  </div>
+</section>
+
+<!-- ══════════════ D ══════════════ -->
+<section id="d">
+  <div class="tag">售后 · 与第 ② 节绑定</div>
+  <h2>售后／安装登记时直接报销，不再走 OA</h2>
+  <p class="said">
+    「他们售后报销都是选择售后部走 0A 申请。如果 0A 里的售后报销统计到售后成本，
+    那跟售后部登记售后的费用就重复了。我的想法是登记的时候直接可以申请走报销了……
+    描述售后问题解决办法以后，下面就是费用清单报销模块，可以添加行、插入对应的发票，
+    然后提交申请，最终到财务部。售后主管审批之后直接到财务出纳，
+    出纳核对报销明细发票无误后安排报销。」
+  </p>
+
+  <div class="flag">
+    <p><b>你说的重复是真的，而且现在就已经在发生。</b>
+      售后登记表 <span class="mono">aftersales</span> 上有一个 <span class="mono">cost</span> 字段，
+      售后主管审批后同步财务；同一笔钱，售后的人<b>又在 OA 里按"售后部 / 费用报销"报了一遍</b>。
+      第 ② 节一旦把 OA 按部门归集，这笔钱就会在"售后成本"里出现两次。
+      所以 ② 和 ④ 必须一起上线。</p>
+  </div>
+
+  <div class="vs">
+    <div class="panel now">
+      <h3>现在：两条路，都通向售后成本</h3>
+      <div class="chain"><span class="chip">售后登记</span><span class="arrow">→</span>
+        <span class="chip">售后主管审批</span><span class="arrow">→</span>
+        <span class="chip">同步财务部</span></div>
+      <div class="chain"><span class="chip">OA · 售后部 · 费用报销</span><span class="arrow">→</span>
+        <span class="chip">售后部主管</span><span class="arrow">→</span>
+        <span class="chip">财务主管</span><span class="arrow">→</span>
+        <span class="chip">财务部</span></div>
+      <p>登记时只能填一个<b>总额</b>加一份物料清单附件，发票没地方放，
+        出纳核对时还得回去找人要。</p>
+    </div>
+    <div class="panel next">
+      <h3>改成：只剩一条路</h3>
+      <div class="chain"><span class="chip">售后／安装登记（含费用清单＋发票）</span><span class="arrow">→</span>
+        <span class="chip">售后主管审批</span><span class="arrow">→</span>
+        <span class="chip person">财务出纳 · 核对发票</span><span class="arrow">→</span>
+        <span class="chip">安排报销</span></div>
+      <p>登记表单从「选项目 → 填问题 → 填费用 → 传清单」变成：</p>
+      <ul>
+        <li>选项目 · 描述问题<b>与解决办法</b></li>
+        <li><b>费用清单（可加行）</b>：每行 费用项 · 金额 · <b>发票附件</b> · 备注</li>
+        <li>总额由明细<b>自动合计</b>，不再手填——手填就会跟发票对不上</li>
+      </ul>
+      <p>数据上新增 <span class="mono">aftersales_items</span> 明细表，
+        原来的 <span class="mono">cost</span> 单值字段改为明细合计。</p>
+    </div>
+  </div>
+
+  <p><b>配套动作（不做这条，重复就消不掉）：</b>
+    OA 的「部门＝售后部」下把<b>费用报销 / 差旅费用报销</b>这两个单据类型停掉，
+    入口处直接提示「售后和安装的费用请在售后部登记里提交」。</p>
+
+  <div class="decide">
+    <h3>需要你拍板</h3>
+    <div class="q"><input type="checkbox" id="d1"><label for="d1">
+      <b>售后人员的差旅费（路费、住宿）走哪条路？</b>
+      <span class="hint">跟着这单售后一起报（能算进这个项目的售后成本，最准），
+        还是仍走 OA 差旅（跟其他部门一致，但又回到重复问题）。
+        <span class="rec">建议跟着售后单一起报</span>，费用清单里加一行"差旅"就行。</span>
+    </label></div>
+    <div class="q"><input type="checkbox" id="d2"><label for="d2">
+      <b>「财务出纳」是新角色还是用现有的财务角色？</b>
+      <span class="hint">现在系统里财务只有"财务主管"和"财务部"。
+        要单独区分出纳，得新建角色并指定人——请告诉我出纳是谁。</span>
+    </label></div>
+    <div class="q"><input type="checkbox" id="d3"><label for="d3">
+      <b>已经在 OA 里在途的售后报销单怎么办？</b>
+      <span class="hint">建议：<b>让它们照原路走完</b>，新单一律走新路。
+        中途搬家容易把单子搞丢，也会让当事人不知道该去哪看。</span>
+    </label></div>
+    <div class="q"><input type="checkbox" id="d4"><label for="d4">
+      <b>出纳核对发现发票对不上，退给谁？</b>
+      <span class="hint">退回给登记人重新传（推荐），还是退回给售后主管重审？
+        这决定了驳回按钮怎么做。</span>
+    </label></div>
+  </div>
+</section>
+
+<!-- ══════════════ 上线顺序 ══════════════ -->
+<section id="plan">
+  <div class="tag">安排</div>
+  <h2>上线顺序与依赖</h2>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>批次</th><th>内容</th><th>为什么这么排</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>第一批</b></td>
+          <td>③ 发货资料按客户分类</td>
+          <td>跟别的都不相干，改动最小，而且经销商的单子<b>现在就卡着发不了货</b>，最急。</td>
+        </tr>
+        <tr>
+          <td><b>第二批</b></td>
+          <td>① 审批链指定到人<br>（含代理人）</td>
+          <td>独立改动。代理人必须同批做，否则指定到人会制造新堵点。</td>
+        </tr>
+        <tr>
+          <td><b>第三批</b></td>
+          <td>④ 售后登记自带报销<br><b>＋</b> ② 费用按部门归成本</td>
+          <td><b>必须捆在一起发</b>。先发 ② 会让售后费用重复计算；
+              先发 ④ 而不发 ②，OA 里的老报销又统计不到。</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p>每一批都会先在测试环境跑通、拿真实数据核对金额，再上生产。</p>
+</section>
+
+<footer>
+  <p>把上面每节「需要你拍板」的问题回一下——不用逐条写，
+    说「都按你建议的来，除了第几条」也行。定了我就开始做第一批。</p>
+</footer>
+
+</div>
