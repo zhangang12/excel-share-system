@@ -121,8 +121,14 @@ async def main():
         chk(j.get("total") == 4 and len(j.get("items", [])) == 4, f"total/items: {j.get('total')}/{len(j.get('items', []))}")
         if j.get("items"):
             it = j["items"][0]
+            # 🆕 后面那批是「为了能拿日志做优化」加的分析维度（会话/轮次/是否被放弃/
+            #    工具轮数/查了多少给了多少/明细有没有渲染/回答字数），见
+            #    tests/test_agent_chat_log_coverage.py。加字段要同步改这条契约。
             chk(set(it.keys()) == {"id", "username", "question", "answer", "tools_used",
-                                   "via", "model", "duration_ms", "created_at"},
+                                   "via", "model", "duration_ms", "created_at",
+                                   "session_id", "turn", "outcome", "tool_rounds",
+                                   "result_count", "result_shown", "rendered",
+                                   "answer_chars"},
                 f"items 字段契约: {sorted(it.keys())}")
             ids = [x["id"] for x in j["items"]]
             chk(ids == sorted(ids, reverse=True), f"按时间倒序(最新在前): {ids}")

@@ -156,6 +156,20 @@ const speech = useSpeech((text, final) => {
  * 总时长压不下去（模型出字就那么快），但第一个字通常 1-2s 内就到，
  * 人不再对着白屏干等 17 秒。
  */
+/**
+ * 本次会话 id。进这一页时生成一次，整段对话共用。
+ *
+ * ⚠️ 用 `crypto.randomUUID` 要**留兜底**：它需要安全上下文，
+ *   在 http 的网页版（非 localhost）里根本取不到，直接调会抛异常把发消息整条带崩。
+ */
+const sessionId = (() => {
+  try {
+    const c = (window as any).crypto
+    if (c?.randomUUID) return c.randomUUID()
+  } catch { /* 取不到就用下面的兜底 */ }
+  return `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+})()
+
 async function streamChat(q: string, history: { role: string; content: string }[]) {
   // ⚠️ 关键：push 进去之后必须用**数组里的那个引用**（Vue 的响应式代理）来累加文字。
   //   直接改 push 之前的原始对象，改的是 raw target，不走代理的 set 陷阱，
@@ -171,7 +185,9 @@ async function streamChat(q: string, history: { role: string; content: string }[
       'Content-Type': 'application/json',
       Authorization: `Bearer ${localStorage.getItem('pms_token') || ''}`,
     },
-    body: JSON.stringify({ message: q, history }),
+    // session_id 只用于把日志里的多轮串起来分析（问了几遍才问明白），
+    // 不参与鉴权、不影响任何数据可见性
+    body: JSON.stringify({ message: q, history, session_id: sessionId }),
   })
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
 

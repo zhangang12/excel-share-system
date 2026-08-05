@@ -1163,4 +1163,14 @@ class AgentChatLog(Base):
     via: Mapped[str] = mapped_column(String(8))                               # "llm"=大模型 / "rule"=规则降级
     model: Mapped[str] = mapped_column(String(64))                            # 实际模型名；"rule-fallback" 或 "rule-fallback:<失败原因>"
     duration_ms: Mapped[Optional[int]] = mapped_column()                      # 从进来到出去的毫秒数
+    # 🆕 下面这些是**为了能拿日志做优化**才加的。原来只有「谁问了什么、答了什么」，
+    #    能查责但分析不动 —— 看不出多轮里问了几遍、有没有被中途放弃、明细是不是被截断了。
+    session_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # 一次会话（同一串对话共享），用来把多轮串起来
+    turn: Mapped[Optional[int]] = mapped_column()                             # 本次是这段会话的第几轮（从 1 开始）
+    outcome: Mapped[Optional[str]] = mapped_column(String(16), index=True)     # ok / aborted（用户中途离开）/ error
+    tool_rounds: Mapped[Optional[int]] = mapped_column()                       # ReAct 实际跑了几轮工具
+    result_count: Mapped[Optional[int]] = mapped_column()                      # 工具查出的总条数
+    result_shown: Mapped[Optional[int]] = mapped_column()                      # 实际给用户看了几条（< count 即被截断）
+    rendered: Mapped[Optional[bool]] = mapped_column()                         # 明细是不是由代码渲染出来了
+    answer_chars: Mapped[Optional[int]] = mapped_column()                      # 回答字数（未截断前的真实长度）
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

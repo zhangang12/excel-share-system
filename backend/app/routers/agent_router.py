@@ -1258,6 +1258,10 @@ class ChatIn(BaseModel):
     message: str
     history: list[ChatMsg] = []
     model: str | None = None   # 🆕 可选：指定 LLM 模型（须在白名单内）；规则降级路径忽略
+    # 🆕 会话 id：前端每开一段新对话生成一个，多轮共用。**只用于把日志串起来分析**，
+    #    不参与鉴权、不决定任何数据可见性（用户伪造它也只能弄脏自己的日志分组）。
+    #    没有它就分析不了「同一件事问了几遍才问明白」，而那正是最该优化的信号。
+    session_id: str | None = None
 
 
 # ==================== 🆕 审计日志（问答全量落 agent_chat_logs，失败不影响聊天） ====================
@@ -1328,8 +1332,20 @@ def _fallback_reason(e: Exception) -> str:
 
 
 async def _log_chat(db: AsyncSession, user: models.User, question: str, answer: str,
-                    tool_names: list[str], via: str, model: str, duration_ms: int | None):
-    """写一条对话审计日志。独立小函数 + try/except 全包裹：日志失败只记 log，绝不影响聊天主流程。"""
+                    tool_names: list[str], via: str, model: str, duration_ms: int | None,
+                    *, session_id: str | None = None, turn: int | None = None,
+                    outcome: str = "ok", tool_rounds: int | None = None,
+                    last_result: dict | None = None, rendered: bool | None = None):
+    """写一条对话审计日志。独立小函数 + try/except 全包裹：日志失败只记 log，绝不影响聊天主流程。
+
+    ⚠️ 后面那几个参数是**为了能拿日志做优化**才加的，全部可选、全部有默认值 ——
+       调用点漏传只会少一个分析维度，不会让日志写不进去。
+    """
+    count = shown = None
+    if isinstance(last_result, dict):
+        c, s = last_result.get("count"), last_result.get("shown")
+        count = c if isinstance(c, int) else None
+        shown = s if isinstance(s, int) else None
     try:
         db.add(models.AgentChatLog(
             user_id=user.id, username=user.username,
@@ -1340,6 +1356,12 @@ async def _log_chat(db: AsyncSession, user: models.User, question: str, answer: 
             #    StringDataRightTruncationError → 日志写不进去。真正的降级原因
             #    本来就记在 model 字段（rule-fallback:<原因>），via 只需要粗分类。
             via=(via or "")[:8], model=(model or "")[:64], duration_ms=duration_ms,
+            session_id=(session_id or None), turn=turn, outcome=(outcome or "ok")[:16],
+            tool_rounds=tool_rounds, result_count=count, result_shown=shown,
+            rendered=rendered,
+            # ⚠️ 记的是**截断前**的真实长度：answer 列本身截到 5000，
+            #    拿它算长度会把「模型答了 8000 字」这件事永远藏起来。
+            answer_chars=len(answer or ""),
         ))
         await db.commit()
     except Exception as e:  # noqa: BLE001 —— 审计是旁路，任何失败都不能炸掉聊天
@@ -1360,6 +1382,8 @@ async def chat(
     text = (body.message or "").strip()
     if not text:
         raise HTTPException(400, "请输入问题")
+    _sid = (body.session_id or "").strip()[:36] or None
+    _turn = 1 + sum(1 for h in body.history if h.role == "user")
     cfg = await _effective_llm_config(db)
     # 模型白名单校验（无论走 LLM 还是降级，非法模型都直接 400，与现有参数校验风格一致）
     model = (body.model or "").strip() or None
@@ -1374,7 +1398,8 @@ async def chat(
         try:
             reply, tool_names = await _chat_with_llm(text, history, db, llm_model, cfg, current)
             await _log_chat(db, current, text, reply, tool_names, via="llm",
-                            model=llm_model, duration_ms=int((time.perf_counter() - t0) * 1000))
+                            model=llm_model, duration_ms=int((time.perf_counter() - t0) * 1000),
+                            session_id=_sid, turn=_turn, outcome="ok")
             return {"reply": reply, "fallback": False,
                     "sources": [TOOL_LABELS[n] for n in tool_names],
                     "suggestions": _suggestions_for(tool_names, allowed)}
@@ -1385,7 +1410,8 @@ async def chat(
         fb_model = "rule-fallback"
     reply, tool_names = await _rule_chat(text, db, current)
     await _log_chat(db, current, text, reply, tool_names, via="rule",
-                    model=fb_model, duration_ms=int((time.perf_counter() - t0) * 1000))
+                    model=fb_model, duration_ms=int((time.perf_counter() - t0) * 1000),
+                    session_id=_sid, turn=_turn, outcome="ok")
     return {"reply": reply, "fallback": True,
             "sources": [TOOL_LABELS[n] for n in tool_names],
             "suggestions": _suggestions_for(tool_names, allowed)}
@@ -1396,6 +1422,7 @@ async def list_chat_logs(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     username: str | None = Query(None, description="按用户名模糊过滤"),
+    outcome: str | None = Query(None, description="ok / aborted / error"),
     current: models.User = Depends(require_admin_or_manager),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1404,6 +1431,8 @@ async def list_chat_logs(
     conds = []
     if username and username.strip():
         conds.append(L.username.like(f"%{username.strip()}%"))
+    if outcome and outcome.strip():
+        conds.append(L.outcome == outcome.strip())
     total = (await db.execute(select(func.count(L.id)).where(*conds))).scalar() or 0
     rows = list((await db.execute(
         select(L).where(*conds)
@@ -1415,6 +1444,10 @@ async def list_chat_logs(
             "id": r.id, "username": r.username, "question": r.question, "answer": r.answer,
             "tools_used": r.tools_used or [], "via": r.via, "model": r.model,
             "duration_ms": r.duration_ms,
+            "session_id": r.session_id, "turn": r.turn, "outcome": r.outcome,
+            "tool_rounds": r.tool_rounds,
+            "result_count": r.result_count, "result_shown": r.result_shown,
+            "rendered": r.rendered, "answer_chars": r.answer_chars,
             "created_at": r.created_at.isoformat() if r.created_at else None,
         } for r in rows],
     }
@@ -1639,7 +1672,8 @@ async def run_tool_direct(
 
     ms = int((time.perf_counter() - t0) * 1000)
     await _log_chat(db, current, f"[直答]{TOOL_LABELS.get(name, name)}", reply, tools,
-                    via="direct", model="direct", duration_ms=ms)
+                    via="direct", model="direct", duration_ms=ms,
+                    outcome="ok", last_result=d if isinstance(d, dict) else None)
     return {"reply": reply, "fallback": False, "direct": True, "duration_ms": ms,
             "sources": [TOOL_LABELS[n] for n in tools],
             "suggestions": _suggestions_for(tools, _allowed_tools(current))}
@@ -1729,7 +1763,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
 
     last_result: dict | None = None   # v2 阶段二：留住工具原始结果，收尾时代码渲染明细
     seen: set = set()                 # v2：同工具同参数不得重复调用（硬拦，不靠提示词）
-    for _ in range(4):
+    for rnd in range(4):              # rnd 只为审计记「跑了几轮」，循环本身不用它
         content_parts: list[str] = []
         tc_acc: dict = {}
         streamed = 0          # 已推给前端的字符数
@@ -1769,7 +1803,11 @@ async def _chat_stream(message: str, history: list[dict], model: str,
                 raise RuntimeError("LLM 返回空内容")
             if len(final) > streamed:
                 yield "delta", final[streamed:]
-            yield "done", {"text": final, "tools": tool_names}
+            # rounds / last_result / rendered 只给审计用（见 _log_chat）：
+            # 没有它们就看不出「跑了几轮」「查出 46 条只给了 20 条」「明细到底出没出」
+            yield "done", {"text": final, "tools": tool_names,
+                           "rounds": rnd + 1, "last_result": last_result,
+                           "rendered": final != text}
             return
 
         # 这一轮是工具调用：不推正文，只报状态，然后并发执行
@@ -1828,15 +1866,32 @@ async def chat_stream(
     history = [{"role": h.role, "content": h.content[:2000]}
                for h in body.history[-20:] if h.role in ("user", "assistant")]
 
+    turn = 1 + sum(1 for h in body.history if h.role == "user")
+    sid = (body.session_id or "").strip()[:36] or None
+
     async def gen():
         t0 = time.perf_counter()
         def sse(ev: str, data) -> str:
             return f"event: {ev}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+        # ⚠️⚠️ **被中途放弃的问答此前一条都没留下。**
+        #   `_log_chat` 原来写在生成器末尾，用户划走/关页面/网络断时，
+        #   Starlette 取消这个生成器 → 后面的代码永远不执行 → 日志丢失。
+        #   而生产上 llm 路径平均 14 秒、降级路径 20.8 秒，这个时长下「等不及走人」
+        #   很常见 —— **丢掉的恰恰是最该拿来优化的那批样本**。
+        #   所以状态先攒在闭包里，落库放进 finally，取消也照写，只是标成 aborted。
+        st = {"reply": "", "tools": [], "via": "llm", "model": "",
+              "outcome": "aborted", "rounds": None, "result": None, "rendered": None}
+
         async with SessionLocal() as db:
+          try:
             cfg = await _effective_llm_config(db)
             model = _route_model(text, cfg, (body.model or "").strip() or None)
+            st["model"] = model
             if model not in _model_whitelist(cfg):
+                st["outcome"] = "error"
+                st["via"] = "error"
+                st["reply"] = f"无效模型「{model}」"
                 yield sse("error", {"message": f"无效模型「{model}」"})
                 return
             allowed = _allowed_tools(current)
@@ -1854,11 +1909,11 @@ async def chat_stream(
                 try:
                     reply = await _sk.run(db, current, _hit, text)
                     via = "skill"
+                    st.update(reply=reply, via="skill", model=f"skill:{_hit['key']}",
+                              outcome="ok")
                     yield sse("tool", {"label": _hit["name"]})
                     yield sse("delta", {"text": reply})
                     ms = int((time.perf_counter() - t0) * 1000)
-                    await _log_chat(db, current, text, reply, [], via="skill",
-                                    model=f"skill:{_hit['key']}", duration_ms=ms)
                     yield sse("done", {"duration_ms": ms, "fallback": False,
                                        "sources": [_hit["name"]],
                                        "suggestions": _suggestions_for([], allowed)})
@@ -1876,20 +1931,41 @@ async def chat_stream(
                         yield sse("tool", {"label": payload})
                     else:
                         reply, tools = payload["text"], payload["tools"]
+                        st["rounds"] = payload.get("rounds")
+                        st["result"] = payload.get("last_result")
+                        st["rendered"] = payload.get("rendered")
             except Exception as e:  # noqa: BLE001 —— 任何异常都降级，保证可用
                 log.warning("[agent] 流式失败，转规则降级: %s", e)
                 via = "rule-stream-fallback"
                 reply, tools = await _rule_chat(text, db, current)
                 yield sse("delta", {"text": reply})
 
+            st.update(reply=reply, tools=tools, via=via, outcome="ok",
+                      model=model if via == "llm" else via)
             ms = int((time.perf_counter() - t0) * 1000)
-            await _log_chat(db, current, text, reply, tools, via=via,
-                            model=model if via == "llm" else via, duration_ms=ms)
             yield sse("done", {
                 "duration_ms": ms, "fallback": via != "llm",
                 "sources": [TOOL_LABELS[n] for n in tools],
                 "suggestions": _suggestions_for(tools, allowed),
             })
+          finally:
+            # ⚠️ **必须落在 finally 里**：用户划走 / 关页面 / 断网时，这个生成器会被
+            #   取消（GeneratorExit / CancelledError），写在末尾的日志永远不执行。
+            #   放这里 → 中途放弃的也留一条，outcome='aborted'。
+            #   这批样本是「答得太慢没人等」的唯一证据，丢了就没法针对性优化。
+            #   ⚠️ 日志本身用**独立 session**：被取消时 caller 的 db 可能已经不可用，
+            #      复用它会连这条 aborted 记录也一起丢掉。
+            try:
+                async with SessionLocal() as logdb:
+                    await _log_chat(
+                        logdb, current, text, st["reply"], st["tools"],
+                        via=st["via"], model=st["model"],
+                        duration_ms=int((time.perf_counter() - t0) * 1000),
+                        session_id=sid, turn=turn, outcome=st["outcome"],
+                        tool_rounds=st["rounds"], last_result=st["result"],
+                        rendered=st["rendered"])
+            except Exception as e:  # noqa: BLE001 —— 审计是旁路，绝不能反过来炸掉请求
+                log.warning("[agent] 流式审计日志写入失败: %s", e)
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache",

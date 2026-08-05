@@ -18,6 +18,13 @@ log = logging.getLogger("data_migration")
 # 表名 -> [(列名, DDL 类型片段)]；ADD COLUMN 在 SQLite 与 PostgreSQL 均支持，幂等：已存在跳过
 _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "roles": [("can_push", "BOOLEAN DEFAULT FALSE")],
+    # 🆕 助手问答日志的分析维度。原来只能查责（谁问了什么），分析不动 ——
+    #    看不出多轮里问了几遍、有没有被中途放弃、明细是不是被截断了。
+    #    存量行这些列为 NULL，统计时要按 NULL 排除，别当成 0。
+    "agent_chat_logs": [("session_id", "VARCHAR(36)"), ("turn", "INTEGER"),
+                        ("outcome", "VARCHAR(16)"), ("tool_rounds", "INTEGER"),
+                        ("result_count", "INTEGER"), ("result_shown", "INTEGER"),
+                        ("rendered", "BOOLEAN"), ("answer_chars", "INTEGER")],
     "employee_salary_monthly": [("personal_tax", "FLOAT DEFAULT 0")],  # 🆕 #248 个税扣款
     "management_todos": [("due_date", "VARCHAR(10)")],                 # 🆕 #251 管理层设定的截止日期
     "users": [("wxid", "VARCHAR(64)"), ("can_export", "BOOLEAN DEFAULT FALSE"),
