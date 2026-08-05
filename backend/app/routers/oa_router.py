@@ -52,6 +52,15 @@ def _deputy_ready_before() -> datetime:
     return datetime.now(timezone.utc) - timedelta(days=OA_DEPUTY_TAKEOVER_DAYS)
 
 
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """⚠️ 列声明的是 DateTime(timezone=True)，但**只有 Postgres 会还回带时区的值**；
+    开发和测试用的 SQLite 还回来是 naive 的，直接比较会 TypeError。
+    这里统一按 UTC 补上时区——存进去的本来就是 UTC。"""
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 async def _my_principal_ids(db: AsyncSession, current: models.User) -> list[int]:
     """我是谁的代理人 —— 返回把我设成 deputy 的那些人的 id。"""
     rows = (await db.execute(
@@ -77,9 +86,24 @@ def _can_act_on_step(step, current: models.User, principal_ids: list[int]) -> bo
     if current.id == step.approver_user_id or current.has_role("admin", "manager"):
         return True
     if step.approver_user_id in principal_ids:
-        act = getattr(step, "activated_at", None)
+        act = _as_utc(getattr(step, "activated_at", None))
         return bool(act and act <= _deputy_ready_before())
     return False
+
+
+def _no_right_msg(step, current: models.User) -> str:
+    """403 的话要说清楚为什么——「无权审批此步骤」会让人以为是权限配错了，
+    其实往往是"这一步指定了别人"或"代理人还没到接手时间"。"""
+    if not step.approver_user_id:
+        return "无权审批此步骤"
+    who = step.approver.full_name or step.approver.username if step.approver else "指定的审批人"
+    act = _as_utc(getattr(step, "activated_at", None))
+    if act:
+        left = OA_DEPUTY_TAKEOVER_DAYS - (datetime.now(timezone.utc) - act).days
+        if left > 0:
+            return (f"这一步指定由 {who} 审批。若 ta 不在，"
+                    f"{left} 天后其代理人可以接手")
+    return f"这一步指定由 {who} 审批，你不是本人也不是 ta 的代理人"
 
 
 async def _doc_types(db: AsyncSession, enabled_only: bool = False) -> list[models.OaDocTypeDict]:
@@ -239,12 +263,42 @@ async def list_chain_steps(
     q = (select(models.OaApprovalStep)
          .where(models.OaApprovalStep.department_id == department_id, models.OaApprovalStep.doc_type == doc_type)
          .order_by(models.OaApprovalStep.step_order))
-    return [schemas.OaApprovalStepOut.model_validate(s) for s in (await db.execute(q)).scalars().all()]
+    return [_chain_step_out(s) for s in (await db.execute(q)).scalars().all()]
 
 
 async def _role_name(db: AsyncSession, code: str) -> str:
     r = await db.execute(select(models.Role.name).where(models.Role.code == code))
     return r.scalar_one_or_none() or code
+
+
+def _chain_step_out(s) -> "schemas.OaApprovalStepOut":
+    """配置层步骤 → 出参。approver_name 从 relationship 取——
+    model_validate 只认同名属性，不会自己去 join 出人名。"""
+    o = schemas.OaApprovalStepOut.model_validate(s)
+    if s.approver_user_id and s.approver:
+        o.approver_name = s.approver.full_name or s.approver.username
+    return o
+
+
+async def _check_approver(db: AsyncSession, uid) -> "models.User | None":
+    """指定审批人必须是**在职**用户。配一个离职的人 = 单子直接卡死，
+    这种配置错误必须在配置那一刻就拦住，不能等到有人提交申请才发现。"""
+    if not uid:
+        return None
+    u = (await db.execute(select(models.User).where(models.User.id == uid))).scalar_one_or_none()
+    if not u:
+        raise HTTPException(400, "指定的审批人不存在")
+    if not u.is_active:
+        raise HTTPException(400, f"「{u.full_name or u.username}」已停用，不能指定为审批人")
+    return u
+
+
+def _step_label(body, role_label: str, approver) -> str:
+    """展示名：手填优先；指定到人就显示人名，否则显示角色名。"""
+    manual = (body.step_label or "").strip()
+    if manual:
+        return manual
+    return (approver.full_name or approver.username) if approver else role_label
 
 
 @router.post("/chains", response_model=schemas.OaApprovalStepOut)
@@ -261,14 +315,16 @@ async def create_chain_step(
         models.OaApprovalStep.step_order == body.step_order))
     if dup.scalar_one_or_none():
         raise HTTPException(409, "该部门/单据类型下已有相同顺序的步骤")
-    label = (body.step_label or "").strip() or await _role_name(db, body.approver_role)
+    approver = await _check_approver(db, body.approver_user_id)
+    label = _step_label(body, await _role_name(db, body.approver_role), approver)
     s = models.OaApprovalStep(department_id=body.department_id, doc_type=body.doc_type,
                               step_order=body.step_order, approver_role=body.approver_role,
+                              approver_user_id=body.approver_user_id or None,
                               step_label=label, enabled=body.enabled)
     db.add(s)
     await db.commit()
     await db.refresh(s)
-    return schemas.OaApprovalStepOut.model_validate(s)
+    return _chain_step_out(s)
 
 
 @router.put("/chains/{sid}", response_model=schemas.OaApprovalStepOut)
@@ -287,13 +343,15 @@ async def update_chain_step(
         models.OaApprovalStep.id != sid))
     if dup.scalar_one_or_none():
         raise HTTPException(409, "该部门/单据类型下已有相同顺序的步骤")
-    label = (body.step_label or "").strip() or await _role_name(db, body.approver_role)
+    approver = await _check_approver(db, body.approver_user_id)
+    label = _step_label(body, await _role_name(db, body.approver_role), approver)
     s.department_id = body.department_id; s.doc_type = body.doc_type
     s.step_order = body.step_order; s.approver_role = body.approver_role
+    s.approver_user_id = body.approver_user_id or None
     s.step_label = label; s.enabled = body.enabled
     await db.commit()
     await db.refresh(s)
-    return schemas.OaApprovalStepOut.model_validate(s)
+    return _chain_step_out(s)
 
 
 @router.delete("/chains/{sid}", response_model=schemas.Msg)
@@ -378,6 +436,10 @@ async def chains_overview(
         g["steps"].append({
             "step_order": s.step_order, "approver_role": s.approver_role,
             "role_name": roles.get(s.approver_role, s.approver_role),
+            # 🆕 指定到人时一览里要看得出是谁，否则一屏"售后部主管"根本分不清哪条配了人
+            "approver_user_id": s.approver_user_id,
+            "approver_name": ((s.approver.full_name or s.approver.username)
+                              if s.approver_user_id and s.approver else None),
             "step_label": s.step_label, "enabled": s.enabled,
         })
     # 按 部门排序→单据类型 输出
@@ -410,10 +472,12 @@ def _can_view(req: models.OaRequest, current: models.User) -> bool:
         return True
     if req.requester_id == current.id:
         return True
-    # 🆕 指定到人的步骤，按角色是看不到的——被指定的人必须能打开这张单
+    # 🆕 被指定的人必须能打开这张单——他不一定挂着 approver_role 那个角色。
+    #    这里**不收窄**原有的按角色可见：能看见不等于能批，看得宽一点没坏处，
+    #    真正要精确的是「谁能批」(_can_act_on_step) 和待办队列。
     if any(s.approver_user_id == current.id for s in req.steps):
         return True
-    if any(s.approver_role in current.role_codes and not s.approver_user_id for s in req.steps):
+    if any(s.approver_role in current.role_codes for s in req.steps):
         return True
     if req.department and req.department.lead_role and req.department.lead_role in current.role_codes:
         return True
@@ -425,9 +489,12 @@ def _can_view(req: models.OaRequest, current: models.User) -> bool:
 async def _req_out(db: AsyncSession, req: models.OaRequest, current: models.User) -> schemas.OaRequestOut:
     steps_sorted = sorted(req.steps, key=lambda s: s.step_order)
     cur_step = next((s for s in steps_sorted if s.step_order == req.current_step_order), None)
+    # 🆕 只有当前步骤真的指定到人时才去查"我是谁的代理人"，省掉绝大多数请求的这次查询
+    principals = (await _my_principal_ids(db, current)
+                  if cur_step is not None and cur_step.approver_user_id else [])
     can_approve = bool(
         req.status == "pending" and cur_step is not None and cur_step.status == "pending"
-        and current.has_role(cur_step.approver_role, "admin", "manager")
+        and _can_act_on_step(cur_step, current, principals)
     )
     can_withdraw = bool(
         req.status == "pending" and req.requester_id == current.id
@@ -450,7 +517,16 @@ async def _req_out(db: AsyncSession, req: models.OaRequest, current: models.User
         settle_amount=req.settle_amount, settle_note=req.settle_note, reject_reason=req.reject_reason,
         created_at=req.created_at, updated_at=req.updated_at,
         steps=[schemas.OaRequestStepOut(
-            id=s.id, step_order=s.step_order, approver_role=s.approver_role, step_label=s.step_label,
+            id=s.id, step_order=s.step_order, approver_role=s.approver_role,
+            approver_user_id=s.approver_user_id,
+            approver_name=((s.approver.full_name or s.approver.username)
+                           if s.approver_user_id and s.approver else None),
+            activated_at=s.activated_at,
+            # 代理人是否已经可以接手：只对「指定到人 + 已轮到 + 晾够天数」的步骤为真
+            deputy_ready=bool(s.approver_user_id and s.status == "pending"
+                              and _as_utc(s.activated_at)
+                              and _as_utc(s.activated_at) <= _deputy_ready_before()),
+            step_label=s.step_label,
             status=s.status, acted_by=s.acted_by,
             actor_name=(s.actor.full_name or s.actor.username) if s.actor else None,
             acted_at=s.acted_at, note=s.note,
@@ -534,9 +610,15 @@ async def create_request(
                            models.Attachment.biz_id.is_(None),
                            models.Attachment.uploaded_by == current.id)
                     .values(biz_id=req.id))
-    for s in steps_cfg:
+    # 🆕 指定审批人一起快照下来；第一步立刻 activated_at=now（代理人计时从这里起算，
+    #    后面几步要等真正轮到时才写，见 approve）。
+    _now = datetime.now(timezone.utc)
+    for i, s in enumerate(steps_cfg):
         db.add(models.OaRequestStep(request_id=req.id, step_order=s.step_order,
-                                    approver_role=s.approver_role, step_label=s.step_label, status="pending"))
+                                    approver_role=s.approver_role,
+                                    approver_user_id=s.approver_user_id,
+                                    activated_at=_now if i == 0 else None,
+                                    step_label=s.step_label, status="pending"))
     # 🆕 抄送人：去重、排除提交人自己（本来就能看）、只保留真实在职用户
     cc_ids: list[int] = []
     if body.cc_user_ids:
@@ -566,9 +648,15 @@ async def create_request(
                     db.add(models.OaRequestCc(request_id=req.id, user_id=uid))
     await db.commit()
     req = await _fetch_request(db, req.id)
-    await push_message(db, to_role=steps_cfg[0].approver_role, kind="info",
-                       text=f"【OA审批】{current.full_name or current.username} 提交了「{doc_label}」({req_no})待你审批",
-                       biz_type="oa_request", biz_id=req.id)
+    # 🆕 指定到人就只推给那个人，不再按角色群发——不然指定到人省下的打扰又回来了
+    _notify_text = (f"【OA审批】{current.full_name or current.username} "
+                    f"提交了「{doc_label}」({req_no})待你审批")
+    if steps_cfg[0].approver_user_id:
+        await push_message(db, to_user_id=steps_cfg[0].approver_user_id, kind="info",
+                           text=_notify_text, biz_type="oa_request", biz_id=req.id)
+    else:
+        await push_message(db, to_role=steps_cfg[0].approver_role, kind="info",
+                           text=_notify_text, biz_type="oa_request", biz_id=req.id)
     # 🆕 抄送通知：抄送人不参与审批，仅告知有一份申请抄送给ta
     for uid in cc_ids:
         await push_message(db, to_user_id=uid, kind="info",
@@ -626,10 +714,25 @@ async def list_requests(
         selectinload(models.OaRequest.steps), selectinload(models.OaRequest.cc_entries))
     StepT = models.OaRequestStep
     if scope == "pending_me":
+        # 🆕 三种情况都算"待我审批"：
+        #   ① 这一步没指定人、且我挂着它要求的角色（老行为）
+        #   ② 这一步指定的就是我
+        #   ③ 这一步指定的人把我设成了代理人，且已经晾了 OA_DEPUTY_TAKEOVER_DAYS 天
+        # ⚠️ ① 必须加 approver_user_id IS NULL：不加的话指定到人就白配了——
+        #    同角色的人照样会在待办里看到这张单，而这正是要解决的问题。
+        principals = await _my_principal_ids(db, current)
+        mine = or_(
+            StepT.approver_user_id == current.id,
+            (StepT.approver_user_id.is_(None)
+             & StepT.approver_role.in_(current.role_codes or [""])),
+        )
+        if principals:
+            mine = or_(mine, (StepT.approver_user_id.in_(principals)
+                              & StepT.activated_at.isnot(None)
+                              & (StepT.activated_at <= _deputy_ready_before())))
         cond = exists().where(StepT.request_id == models.OaRequest.id,
                               StepT.step_order == models.OaRequest.current_step_order,
-                              StepT.status == "pending",
-                              StepT.approver_role.in_(current.role_codes or [""]))
+                              StepT.status == "pending", mine)
         q = q.where(models.OaRequest.status == "pending", cond)
     elif scope == "pending_pay":
         # 🆕 反馈#238：末环节是财务审批的单据审完即转「待付款」且 current_step_order 置空，
@@ -697,8 +800,8 @@ async def approve_request(
     cur_step = next((s for s in steps_sorted if s.step_order == req.current_step_order), None)
     if not cur_step or cur_step.status != "pending":
         raise HTTPException(400, "当前没有待处理的步骤")
-    if not current.has_role(cur_step.approver_role, "admin", "manager"):
-        raise HTTPException(403, "无权审批此步骤")
+    if not _can_act_on_step(cur_step, current, await _my_principal_ids(db, current)):
+        raise HTTPException(403, _no_right_msg(cur_step, current))
     cur_step.status = "approved"; cur_step.acted_by = current.id
     cur_step.acted_at = datetime.now(timezone.utc); cur_step.note = (body.note or "").strip() or None
     if body.settle_amount is not None:
@@ -708,12 +811,19 @@ async def approve_request(
     # 不能审批通过=已付款——审批只代表"同意报销"，钱有没有真的付出去是另一件事，得分开记。
     if next_step:
         req.current_step_order = next_step.step_order
+        # 🆕 下一步现在才算"轮到"，代理人的 3 天从这一刻起算。
+        #    用建单时刻起算的话，一张在前面几步排了两周的单，一轮到就直接进代理人待办。
+        next_step.activated_at = datetime.now(timezone.utc)
     elif cur_step.approver_role == "finance":
         req.status = "pending_payment"; req.current_step_order = None
     else:
         req.status = "approved"; req.current_step_order = None
     await db.commit()
-    if next_step:
+    if next_step and next_step.approver_user_id:
+        # 🆕 指定到人就只推给那个人
+        await push_message(db, to_user_id=next_step.approver_user_id, kind="info",
+                           text=f"【OA审批】{req.request_no} 待你审批", biz_type="oa_request", biz_id=req.id)
+    elif next_step:
         await push_message(db, to_role=next_step.approver_role, kind="info",
                            text=f"【OA审批】{req.request_no} 待你审批", biz_type="oa_request", biz_id=req.id)
     elif req.status == "pending_payment":
@@ -761,8 +871,8 @@ async def reject_request(
     cur_step = next((s for s in steps_sorted if s.step_order == req.current_step_order), None)
     if not cur_step or cur_step.status != "pending":
         raise HTTPException(400, "当前没有待处理的步骤")
-    if not current.has_role(cur_step.approver_role, "admin", "manager"):
-        raise HTTPException(403, "无权审批此步骤")
+    if not _can_act_on_step(cur_step, current, await _my_principal_ids(db, current)):
+        raise HTTPException(403, _no_right_msg(cur_step, current))
     cur_step.status = "rejected"; cur_step.acted_by = current.id
     cur_step.acted_at = datetime.now(timezone.utc); cur_step.note = body.reason.strip()
     req.status = "rejected"; req.reject_reason = body.reason.strip(); req.current_step_order = None

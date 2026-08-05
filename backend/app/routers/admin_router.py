@@ -65,7 +65,9 @@ def _resolve_roles(u: models.User) -> list[models.Role]:
     return sorted(roles, key=lambda r: r.id)
 
 
-def _user_to_out(u: models.User) -> schemas.UserOut:
+def _user_to_out(u: models.User, names: dict[int, str] | None = None) -> schemas.UserOut:
+    """names 是 {user_id: 显示名}，只用来把 deputy_uid 翻成人名。
+    不传就只出 id——列表接口会传，单条接口没必要为一个名字再查一次库。"""
     from ..menus import ADMIN_MENU_DEFS
     roles = _resolve_roles(u)
     menus = list(u.menus or [])
@@ -82,6 +84,8 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         password_must_change=u.password_must_change,
         wxid=u.wxid,
         hidden_tabs=list(u.hidden_tabs or []),
+        deputy_uid=u.deputy_uid,
+        deputy_name=(names or {}).get(u.deputy_uid) if u.deputy_uid else None,
         menus=menus,
         # 派生值（兼容旧客户端/旧桌面端）：menus ∩ 管理组有效 key；不再读 grant_menus 列
         grant_menus=[k for k in admin_keys if k in set(menus)],
@@ -137,7 +141,11 @@ async def list_users(
 ):
     # 过滤掉拥有 admin 角色的用户（admin 对 UI 完全隐身；多角色：任一角色是 admin 即隐身）
     res = await db.execute(select(models.User).order_by(models.User.id))
-    return [_user_to_out(u) for u in res.scalars().all() if not u.has_role("admin")]
+    users = list(res.scalars().all())
+    # 代理人名字表：从**全量**用户里取，不能只从可见列表取——
+    # 代理人有可能是被过滤掉的 admin，那样名字会显示不出来。
+    names = {u.id: (u.full_name or u.username) for u in users}
+    return [_user_to_out(u, names) for u in users if not u.has_role("admin")]
 
 
 @router.post("/users", response_model=schemas.UserOut)
@@ -212,6 +220,21 @@ async def update_user(
         u.is_active = data.is_active
     if data.hidden_tabs is not None:   # 🆕 #7 设置该账号隐藏的二级菜单tab
         u.hidden_tabs = list(dict.fromkeys(data.hidden_tabs))
+    if data.deputy_uid is not None:    # 🆕 OA 审批代理人；传 <=0 表示清空
+        if data.deputy_uid <= 0:
+            u.deputy_uid = None
+        else:
+            if data.deputy_uid == u.id:
+                raise HTTPException(400, "不能把自己设为自己的代理人")
+            dep = (await db.execute(select(models.User).where(
+                models.User.id == data.deputy_uid))).scalar_one_or_none()
+            if not dep or not dep.is_active:
+                raise HTTPException(400, "代理人不存在或已停用")
+            # ⚠️ 只挡直接互设。A→B→A 这种两步环不挡：代理人只是"多一个人能批"，
+            #    不会像审批转交那样把单子在环里推来推去，成不了死循环。
+            if dep.deputy_uid == u.id:
+                raise HTTPException(400, f"「{dep.full_name or dep.username}」的代理人已经是本人，不能互设")
+            u.deputy_uid = data.deputy_uid
     if data.password:
         u.password_hash = hash_password(data.password)
         u.password_must_change = True

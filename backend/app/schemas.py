@@ -40,6 +40,8 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=6, max_length=128)
     hidden_tabs: Optional[list[str]] = None  # 🆕 #7 传则整体替换该账号隐藏的二级菜单tab
+    # 🆕 OA 审批代理人。传 0 或负数表示清空(用 None 无法区分"不改"和"清空")
+    deputy_uid: Optional[int] = None
 
 
 # 🆕 反馈#268 按账号开通管理组菜单（目前仅 dict-admin 字典设置）
@@ -72,6 +74,8 @@ class UserOut(BaseModel):
     password_must_change: bool = False
     wxid: Optional[str] = None  # 🆕 v3 企微绑定
     hidden_tabs: list[str] = []  # 🆕 #7 该账号隐藏的二级菜单tab
+    deputy_uid: Optional[int] = None    # 🆕 OA 审批代理人
+    deputy_name: Optional[str] = None
     menus: list[str] = []        # 🆕 该账号配置的一级菜单 key（业务+管理组混合，规范顺序）
     grant_menus: list[str] = []  # 派生值 = menus ∩ 管理组有效 key（兼容旧客户端，不再独立存储）
     created_at: datetime
@@ -1679,6 +1683,9 @@ class OaApprovalStepIn(BaseModel):
     doc_type: str
     step_order: int
     approver_role: str
+    # 🆕 指定到人：填了就只有这个人(及其代理人)能批。approver_role 仍然必填——
+    #    它是这一步的语义标签(比如"部门主管")，也是指定人被删号后的兜底。
+    approver_user_id: Optional[int] = None
     step_label: Optional[str] = None
     enabled: bool = True
 
@@ -1690,6 +1697,8 @@ class OaApprovalStepOut(BaseModel):
     doc_type: str
     step_order: int
     approver_role: str
+    approver_user_id: Optional[int] = None
+    approver_name: Optional[str] = None
     step_label: Optional[str] = None
     enabled: bool
 
@@ -1699,6 +1708,11 @@ class OaRequestStepOut(BaseModel):
     id: int
     step_order: int
     approver_role: str
+    approver_user_id: Optional[int] = None
+    approver_name: Optional[str] = None
+    # 这一步什么时候轮到的；前端据此显示「已等 N 天」和代理人是否已可接手
+    activated_at: Optional[datetime] = None
+    deputy_ready: bool = False
     step_label: Optional[str] = None
     status: str
     acted_by: Optional[int] = None

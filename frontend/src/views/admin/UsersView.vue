@@ -24,6 +24,7 @@ const form = reactive({
   email: '',
   role_ids: [] as number[],   // 🆕 多角色（平等，无主次）
   is_active: true,
+  deputy_uid: null as number | null,   // 🆕 OA 审批代理人
 })
 
 // 🆕 菜单权限弹窗：一级菜单按账号配置（角色矩阵已废除）+ 二级菜单(tab)按账号隐藏
@@ -108,6 +109,7 @@ function openCreate() {
   Object.assign(form, {
     id: 0, username: '', password: '', full_name: '', email: '',
     role_ids: roles.value[0]?.id ? [roles.value[0].id] : [], is_active: true,
+    deputy_uid: null,
   })
   dialogVisible.value = true
 }
@@ -120,6 +122,7 @@ function openEdit(u: User) {
     // 优先用全部角色；缺失则回退锚点角色
     role_ids: (u.role_ids && u.role_ids.length) ? [...u.role_ids] : (u.role_id ? [u.role_id] : []),
     is_active: u.is_active,
+    deputy_uid: u.deputy_uid ?? null,
   })
   dialogVisible.value = true
 }
@@ -142,6 +145,8 @@ async function submit() {
         full_name: form.full_name, email: form.email,
         role_ids: form.role_ids,
         is_active: form.is_active,
+        // 后端用 <=0 表示清空——传 null 无法区分"不改"和"清掉"
+        deputy_uid: form.deputy_uid ?? -1,
       }
       if (form.password) body.password = form.password
       await adminApi.updateUser(form.id, body as Partial<User> & { password?: string })
@@ -256,6 +261,17 @@ onMounted(load)
             <el-option v-for="r in roles" :key="r.id" :value="r.id" :label="r.name" />
           </el-select>
         </el-form-item>
+        <el-form-item label="审批代理人（选填）">
+          <el-select v-model="form.deputy_uid" filterable clearable size="large" style="width:100%"
+                     placeholder="留空 = 不设代理人">
+            <el-option v-for="u in users.filter(x => x.id !== form.id && x.is_active)"
+                       :key="u.id" :value="u.id" :label="u.full_name || u.username" />
+          </el-select>
+          <div class="hint-line">
+            OA 审批链里「指定到本人」的步骤，本人超过 3 天没处理时代理人也能批；本人始终能批。
+            按角色配的步骤谁在岗谁批，不受此设置影响。
+          </div>
+        </el-form-item>
         <el-form-item>
           <el-switch v-model="form.is_active" active-text="启用账号" />
         </el-form-item>
@@ -299,6 +315,10 @@ onMounted(load)
 </template>
 
 <style scoped>
+.hint-line {
+  font-size: 12.5px; line-height: 1.6; margin-top: 4px;
+  color: var(--el-text-color-secondary);
+}
 .user-avatar {
   width: 36px; height: 36px;
   border-radius: 50%;

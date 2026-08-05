@@ -25,6 +25,13 @@ async function loadDepartments() { departments.value = await oaApi.departments()
 async function loadDocTypes() { docTypes.value = await oaApi.docTypes() }
 async function loadRoles() { try { rolesList.value = await adminApi.listRoles() } catch { rolesList.value = [] } }
 const roleName = (code?: string | null) => rolesList.value.find(r => r.code === code)?.name || code || '—'
+// 这一步已经等了几天。轮到的时刻是 UTC，这里按本地时区算天数即可——差一天无所谓，
+// 真正决定代理人能不能接手的是后端的 deputy_ready，前端只负责显示。
+function waitedDays(activatedAt?: string | null): number {
+  if (!activatedAt) return 0
+  const ms = Date.now() - new Date(activatedAt).getTime()
+  return Math.max(0, Math.floor(ms / 86400000))
+}
 const CATEGORY_OPTIONS = [
   { value: 'business', label: '业务申请' },
   { value: 'reimbursement', label: '报销申请' },
@@ -503,14 +510,14 @@ function loadChainForEdit(row: OaChainOverviewRow) {
   chainDocType.value = row.doc_type
 }
 const stepEditId = ref<number | null>(null)
-const stepForm = reactive({ step_order: 1, approver_role: '', step_label: '', enabled: true })
+const stepForm = reactive({ step_order: 1, approver_role: '', approver_user_id: null as number | null, step_label: '', enabled: true })
 function stepResetForm() {
   stepEditId.value = null
-  Object.assign(stepForm, { step_order: (chainSteps.value[chainSteps.value.length - 1]?.step_order || 0) + 1, approver_role: '', step_label: '', enabled: true })
+  Object.assign(stepForm, { step_order: (chainSteps.value[chainSteps.value.length - 1]?.step_order || 0) + 1, approver_role: '', approver_user_id: null, step_label: '', enabled: true })
 }
 function stepEdit(s: OaApprovalStep) {
   stepEditId.value = s.id
-  Object.assign(stepForm, { step_order: s.step_order, approver_role: s.approver_role, step_label: s.step_label || '', enabled: s.enabled })
+  Object.assign(stepForm, { step_order: s.step_order, approver_role: s.approver_role, approver_user_id: s.approver_user_id ?? null, step_label: s.step_label || '', enabled: s.enabled })
 }
 const stepSaving = ref(false)
 async function stepSave() {
@@ -519,6 +526,8 @@ async function stepSave() {
   const payload = {
     department_id: chainDeptId.value as number, doc_type: chainDocType.value,
     step_order: stepForm.step_order, approver_role: stepForm.approver_role,
+    // 指定到人；不指定就是 null，后端据此退回"按角色，谁在岗谁批"
+    approver_user_id: stepForm.approver_user_id || null,
     step_label: stepForm.step_label || undefined, enabled: stepForm.enabled,
   }
   stepSaving.value = true
@@ -828,7 +837,11 @@ onMounted(async () => {
             <el-table-column label="审批链（按顺序）" min-width="280">
               <template #default="{ row }">
                 <span v-for="(s, i) in row.steps" :key="s.step_order" class="chain-step">
-                  <el-tag :type="s.enabled ? 'primary' : 'info'" size="small" effect="plain">{{ s.step_order }}. {{ s.step_label || s.role_name }}</el-tag>
+                  <el-tag :type="!s.enabled ? 'info' : (s.approver_user_id ? 'warning' : 'primary')" size="small"
+                          :effect="s.approver_user_id ? 'dark' : 'plain'"
+                          :title="s.approver_user_id ? `指定由 ${s.approver_name || '某人'} 审批` : `${s.role_name} 谁在岗谁批`">
+                    {{ s.step_order }}. {{ s.step_label || s.role_name }}
+                  </el-tag>
                   <span v-if="i < row.steps.length - 1" class="chain-arrow">→</span>
                 </span>
               </template>
@@ -859,6 +872,12 @@ onMounted(async () => {
           <el-table show-overflow-tooltip :data="chainSteps" v-loading="chainLoading" size="small" border stripe>
             <el-table-column prop="step_order" label="顺序" width="60" align="center" />
             <el-table-column label="审批角色" min-width="120"><template #default="{ row }">{{ roleName(row.approver_role) }}</template></el-table-column>
+            <el-table-column label="指定审批人" min-width="130">
+              <template #default="{ row }">
+                <el-tag v-if="row.approver_user_id" size="small" type="warning" effect="plain">{{ row.approver_name || `#${row.approver_user_id}` }}</el-tag>
+                <span v-else class="muted">该角色谁在岗谁批</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="step_label" label="展示名" min-width="120" />
             <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="110" fixed="right" :show-overflow-tooltip="false">
@@ -893,7 +912,15 @@ onMounted(async () => {
                   </el-select>
                 </el-form-item>
               </el-col>
-              <el-col :xs="16" :sm="8"><el-form-item label="展示名（留空用角色名）"><el-input v-model="stepForm.step_label" placeholder="如 部门主管审批" /></el-form-item></el-col>
+              <el-col :xs="24" :sm="8">
+                <el-form-item label="指定审批人（选填）">
+                  <el-select v-model="stepForm.approver_user_id" filterable clearable style="width:100%"
+                             placeholder="留空 = 该角色谁在岗谁批">
+                    <el-option v-for="u in ccCandidates" :key="u.id" :label="u.name" :value="u.id" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :xs="16" :sm="8"><el-form-item label="展示名（留空用角色名/人名）"><el-input v-model="stepForm.step_label" placeholder="如 部门主管审批" /></el-form-item></el-col>
               <el-col :xs="8" :sm="4"><el-form-item label="启用"><el-switch v-model="stepForm.enabled" /></el-form-item></el-col>
             </el-row>
           </el-form>
@@ -1173,7 +1200,17 @@ onMounted(async () => {
                 {{ s.actor_name }} · {{ fmtDateTime(s.acted_at) }}
                 <span v-if="s.note">：{{ s.note }}</span>
               </div>
-              <div v-else class="muted">待处理</div>
+              <!-- 🆕 待处理时说清楚在等谁：指定到人的步骤，光写"待处理"没人知道该催谁 -->
+              <div v-else class="muted">
+                <template v-if="s.approver_user_id">
+                  待 <b>{{ s.approver_name || '指定审批人' }}</b> 处理
+                  <el-tag v-if="s.deputy_ready" size="small" type="warning" effect="plain" style="margin-left:6px">
+                    已超 3 天，代理人可代批
+                  </el-tag>
+                  <span v-else-if="s.activated_at"> · 已等 {{ waitedDays(s.activated_at) }} 天</span>
+                </template>
+                <template v-else>待处理（{{ roleName(s.approver_role) }}，谁在岗谁批）</template>
+              </div>
             </template>
           </el-step>
         </el-steps>

@@ -9,10 +9,17 @@ export interface OaDocType {
 }
 export interface OaApprovalStep {
   id: number; department_id: number; doc_type: string; step_order: number
-  approver_role: string; step_label?: string | null; enabled: boolean
+  approver_role: string
+  // 🆕 指定到人：填了就只有这个人(及其代理人)能批
+  approver_user_id?: number | null; approver_name?: string | null
+  step_label?: string | null; enabled: boolean
 }
 export interface OaRequestStep {
-  id: number; step_order: number; approver_role: string; step_label?: string | null
+  id: number; step_order: number; approver_role: string
+  approver_user_id?: number | null; approver_name?: string | null
+  // 这一步什么时候轮到的；deputy_ready=代理人已经可以接手了
+  activated_at?: string | null; deputy_ready?: boolean
+  step_label?: string | null
   status: string; acted_by?: number | null; actor_name?: string | null
   acted_at?: string | null; note?: string | null
 }
@@ -40,7 +47,9 @@ export interface OaSummaryDetailRow {
 }
 // 🆕 已配置审批流程一览
 export interface OaChainOverviewStep {
-  step_order: number; approver_role: string; role_name: string; step_label?: string | null; enabled: boolean
+  step_order: number; approver_role: string; role_name: string
+  approver_user_id?: number | null; approver_name?: string | null
+  step_label?: string | null; enabled: boolean
 }
 export interface OaChainOverviewRow {
   department_id: number; department_name: string; doc_type: string; doc_label: string
