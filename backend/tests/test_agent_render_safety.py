@@ -54,7 +54,7 @@ out = rd.table(OVERDUE, plan=bad_plan)
 chk("{'dept'" not in out and "'project_code':" not in out,
     "**没有裸 dict 漏出去**（这是本测试最主要的目标）")
 chk("**其他**" not in out, "分组字段不存在时不分组（全落「其他」比不分组还糟）")
-chk("2026-050" in out and "超 44 天" in out, "退回按默认顺序自己挑字段，明细照样出得来")
+chk("2026-050" in out and "44 天" in out, "退回按默认顺序自己挑字段，明细照样出得来")
 chk("宋朴" in out, "人名等信息没丢")
 
 print("\n===== 2. 一个字段都渲染不出来的行：跳过，不是打印 dict =====")
@@ -76,7 +76,7 @@ many = {"count": 30, "shown": 30, "items": [
     {"project": f"2026-{i:03d}", "days_left": -i, "urgency": "已过交货日"}
     for i in range(1, 31)]}
 out4 = rd.table(many, plan={"group": "urgency"})
-body = [l for l in out4.split("\n") if l.startswith("- ") and "另有" not in l]
+body = [l for l in out4.split("\n") if l.startswith("| 2026-")]
 chk(len(body) <= rd._GROUP_MAX,
     f"单组最多 {rd._GROUP_MAX} 行（实际 {len(body)} 行）")
 chk("本组另有 24 条" in out4, "剩下的说清有多少，不是悄悄吞掉")
@@ -86,8 +86,9 @@ wide = {"count": 1, "shown": 1, "items": [{
     "supplier": "某供应商", "item_name": "件", "project_code": "2026-001",
     "spec": "规格", "amount": 12345, "over_days": 3, "due_date": "2026-01-01",
     "worker": "张三", "dept_name": "电工部", "po_no": "PO-1"}]}
-line = rd.table(wide, plan=None).split("\n")[0]
-chk(line.count("·") <= 4, f"一行最多 5 个字段（实际 {line.count('·')+1} 个）")
+hdr = rd.table(wide, plan=None).split("\n")[0]
+chk(hdr.count("|") - 1 <= rd._MAX_COLS,
+    f"表格最多 {rd._MAX_COLS} 列（实际 {hdr.count('|')-1} 列）—— 手机屏放不下更多")
 
 print("\n===== 6. 项目编号必须出现在明细里（人是按编号认单的）=====")
 out6 = rd.table(BOARD, plan={"group": "urgency"})
@@ -107,7 +108,42 @@ grouped = {"count": 4, "shown": 4, "items": [
     {"project": "B", "days_left": -50, "urgency": "已过交货日"},
     {"project": "C", "days_left": 3, "urgency": "7 天内交货"}]}
 out7b = rd.table(grouped, plan={"group": "urgency", "sort": "days_left", "desc": False})
-chk(out7b.index("- B") < out7b.index("- A"), "组内按 sort 排（-50 在 -5 前面）")
+chk(out7b.index("| B ") < out7b.index("| A "), "组内按 sort 排（-50 在 -5 前面）")
+
+
+print("\n===== 8. 明细必须是表格，不是文字列表 =====")
+# ⚠️ 用户原话：「这么一堆文字，用户肯定不愿看，要以用户体验为中心。」
+#    手机上 `- A · B · C` 一行会折成三行，十几条就是一屏文字墙。
+out8 = rd.table(BOARD, plan={"group": "urgency"})
+chk("|---|" in out8, "输出的是 markdown 表格")
+# ⚠️ 只看表体行：分组标题里的「已发货 · 只差收尾」本来就带 ·，不能一刀切
+body8 = [l for l in out8.split("\n") if l.startswith("| 2026-")]
+chk(body8 and all("·" not in l for l in body8),
+    "表体没有退回 `- A · B · C` 的文字列表")
+chk("| 项目 |" in out8 and "| 剩余 |" in out8 and "| 卡在哪 |" in out8,
+    "表头是人话列名（项目/剩余/卡在哪）")
+# ⚠️ 分组名「已过交货日」本身含这三个字，只能查表头那一行
+hdr8 = next(l for l in out8.split("\n") if l.startswith("| 项目"))
+chk("交货日" not in hdr8,
+    "「交货日」和「剩余」说的是同一件事，只留更直接的那个，把位置让给「卡在哪」")
+
+print("\n===== 9. 表格不能被内容撑坏 =====")
+evil = {"count": 1, "shown": 1, "items": [
+    {"project": "2026-001", "name": "带|竖线\n和换行的名字", "days_left": -3}]}
+out9 = rd.table(evil, plan=None)
+body9 = [l for l in out9.split("\n") if l.startswith("| 2026-001")]
+chk(len(body9) == 1, "含换行的内容没有把一行拆成两行")
+hdr9 = next(l for l in out9.split("\n") if l.startswith("| 项目"))
+chk(body9[0].count("|") == hdr9.count("|"),
+    f"竖线被转义，表体列数与表头一致（表头 {hdr9.count('|')-1} / 表体 {body9[0].count('|')-1}）")
+chk("／" in body9[0], "内容里的竖线被换成全角，不会把列冲散")
+
+print("\n===== 10. 截断说明与表格之间要空行 =====")
+lines10 = rd.table({"count": 9, "shown": 1, "items": [
+    {"project": "2026-001", "days_left": -3}]}).split("\n")
+i = next(i for i, l in enumerate(lines10) if "另有" in l)
+chk(lines10[i - 1] == "", "截断说明前有空行（紧贴表格会被 markdown 吃进表格里）")
+chk(not lines10[i].startswith("- "), "截断说明不带列表前缀")
 
 print("\nPASSED" if not FAIL else f"\n{len(FAIL)} FAILURES")
 sys.exit(1 if FAIL else 0)

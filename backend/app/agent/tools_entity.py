@@ -285,6 +285,21 @@ async def _project_snapshot(db: AsyncSession, p: models.Project) -> dict:
     }
 
 
+def _short(text: str) -> str:
+    """表格列用的短标签：去掉括号里的补充说明。
+
+    手机上表格的第三列只有 ~34% 宽（375px 屏约 120px），一句
+    「电工未完成（截止 2026-08-10）」会折成 4 行、把行高撑到 60px 以上。
+    括号里的东西是补充，去掉不影响「卡在哪一环」这个判断。
+    """
+    t = (text or "").strip()
+    for l, r in (("（", "）"), ("(", ")")):
+        i = t.find(l)
+        if i > 0:
+            t = t[:i].strip()
+    return t
+
+
 def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
               groups: list, po_pending: list, sh) -> dict:
     """卡在哪 + 交期风险。**这是这个功能的全部价值** —— 光列数据管理层自己也能看。
@@ -362,7 +377,11 @@ def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
                 risks.append(f"生产截止 {latest} 晚于交货日 {deliver}，按计划就交不了")
 
     return {"blockers": blockers, "risks": risks,
-            "blocked_at": blockers[0] if blockers else None,
+            # ⚠️ **表格里的短标签**，不带括号补充。它会进一个 34% 宽的手机列，
+            #    「电工未完成（截止 2026-08-10）」在 375px 下会折成 4 行、
+            #    把行高撑到 60px 以上（实测）。完整描述留在 blockers 里，
+            #    模型分析时照样看得到，不丢信息。
+            "blocked_at": _short(blockers[0]) if blockers else None,
             "shipped_not_closed": False}
 
 
@@ -523,6 +542,9 @@ async def project_progress(db: AsyncSession, current: models.User,
         "count": total, "shown": len(shown),
         "truncated": total > len(shown),
         "today": date.today().isoformat(),
+        # ⚠️ 明确声明表格该显示哪三列。不声明的话渲染层按全局优先级挑，
+        #    会挑到「客户 / 合同额」——这个场景要看的是**还剩多久、卡在哪**。
+        "columns": ["project", "days_left", "blocked_at"],
         "summary": {
             "in_progress_total": len(ps),
             # ⚠️ overdue 只统计**还在做**的。已发货待收尾的单独一档 ——

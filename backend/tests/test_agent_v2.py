@@ -199,9 +199,16 @@ async def main():
             "fields": ["supplier", "item_name", "over_days", "expected_arrival"]}
     body = rd.table(result, plan=plan)
     lines = body.split("\n")
-    chk(lines[0].startswith("- **甲公司"), f"按 over_days 降序，最狠那条加粗：{lines[0]}")
-    chk("超 9 天" in lines[0], "天数带单位")
-    chk("今日到期" in lines[2], f"over_days=0 说「今日到期」不说「超 0 天」：{lines[2]}")
+    # 🆕 明细现在渲染成 **markdown 表格**（手机上文字墙没人看，见 render.py 顶部说明）
+    body_rows = [l for l in lines if l.startswith("| ") and "---" not in l][1:]
+    chk(lines[0].startswith("| ") and "|---|" in lines[1],
+        f"明细是表格不是文字列表：{lines[0]}")
+    chk(body_rows and body_rows[0].startswith("| **"),
+        f"按 over_days 降序，最狠那条（模型 highlight 点名的）加粗：{body_rows[0] if body_rows else lines}")
+    chk(body_rows and "甲公司" in body_rows[0], "高亮的那一行确实是甲公司那条")
+    chk("9 天" in body_rows[0], "天数带单位")
+    chk(any("今日到期" in l for l in body_rows),
+        f"over_days=0 说「今日到期」不说「超 0 天」：{body_rows}")
     chk("另有 43 条未列（共 46 条）" in lines[-1],
         f"**截断声明由代码写**——代码知道真实总数，模型只知道它收到几条：{lines[-1]}")
 
@@ -228,8 +235,8 @@ async def main():
     auto = apply_render("**共 46 条。**", result, want_list=True)
     chk("甲公司" in auto and auto.startswith("**共 46 条。**"),
         f"用户要清单 + 模型只写结论 → 代码补明细：{auto[:50]}")
-    chk(auto.split(chr(10))[2].startswith("- **") is False
-        and "超 9 天" in auto, "默认按 over_days 降序（default_plan 挑的）")
+    chk("9 天" in auto and "|---|" in auto,
+        "默认按 over_days 降序（default_plan 挑的），且渲染成表格")
     chk(apply_render("**共 46 条。**", result, want_list=False) == "**共 46 条。**",
         "用户没要清单就别硬塞明细")
     chk(apply_render("结论\n- 甲\n- 乙", result, want_list=True) == "结论\n- 甲\n- 乙",

@@ -506,10 +506,29 @@ onMounted(() => {
   padding: 1px 5px; font-size: 12px;
 }
 .md :deep(pre) { overflow-x: auto; background: rgba(24,32,50,.05); padding: 10px 12px; border-radius: 10px }
-.md :deep(table) { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0 }
+/* 明细表。助手回答里的明细一律走表格（见 backend/app/agent/render.py 顶部说明）——
+   手机上 `- A · B · C` 会折成多行，十几条就是一屏文字墙，人只会划过去。 */
+.md :deep(table) {
+  width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 8px 0;
+  /* ⚠️ fixed 布局 + 下面的 word-break：内容再长也在格子里换行，
+     **不撑出横向滚动**。横向滚动的表格在手机上等于没有表格（没人去滑）。 */
+  table-layout: fixed;
+}
 .md :deep(th), .md :deep(td) {
   border-bottom: 1px solid rgba(24, 32, 50, .08); padding: 6px 8px; text-align: left;
+  word-break: break-word; line-height: 1.45;
 }
+/* 表头压暗一档：它是标签，值才是主角（与设计稿「标签一律比值小」一致） */
+.md :deep(th) {
+  font-weight: 600; font-size: 12px; color: var(--h5-ink-3);
+  border-bottom: 1px solid rgba(24, 32, 50, .14); white-space: nowrap;
+}
+/* 列宽按内容长度分：第一列「是哪一单」最长，第二列是「已过 55 天」这种定长短值，
+   第三列「卡在哪」是句子。⚠️ 三列均分时第三列会折成四行、把行高撑到 60px 以上
+   （375px 宽实测），所以把宽度从第二列匀给第三列。 */
+.md :deep(th:first-child), .md :deep(td:first-child) { width: 42% }
+.md :deep(th:nth-child(2)), .md :deep(td:nth-child(2)) { width: 22%; white-space: nowrap }
+.md :deep(tbody tr:last-child td) { border-bottom: none }
 .md :deep(blockquote) {
   margin: 6px 0; padding-left: 10px; border-left: 3px solid rgba(43,110,246,.3);
   color: var(--h5-ink-3);
