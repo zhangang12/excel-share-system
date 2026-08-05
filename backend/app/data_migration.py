@@ -38,6 +38,11 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     #   在途单的 activated_at 为 NULL 时按「无限久以前」处理会让代理人立刻接手，
     #   所以判定处必须把 NULL 当成"还没开始计时"，见 oa_router._deputy_can_act。
     "oa_approval_steps": [("approver_user_id", "INTEGER")],
+    # 🆕 售后登记自带报销：审批通过后的报销支腿（刻意不并进 status，见 models.AfterSales）
+    "aftersales": [("pay_status", "VARCHAR(16)"), ("pay_note", "TEXT"),
+                   ("pay_by", "INTEGER"), ("pay_at", "TIMESTAMPTZ")],
+    # 🆕 部门 → 成本科目（销售成本/售后成本/制造费用/管理费用）
+    "departments": [("cost_center", "VARCHAR(16)")],
     # ⚠️ activated_at 必须是 **TIMESTAMPTZ**：模型声明的是 DateTime(timezone=True)，
     #    写进去的是带时区的 UTC 值。建成不带时区的 TIMESTAMP 的话，Postgres 会按
     #    会话时区做一次转换，代理人那 3 天的门槛就会整体偏掉时区差（Asia/Shanghai 差 8 小时）。

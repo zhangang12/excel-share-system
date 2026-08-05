@@ -145,5 +145,32 @@ i = next(i for i, l in enumerate(lines10) if "另有" in l)
 chk(lines10[i - 1] == "", "截断说明前有空行（紧贴表格会被 markdown 吃进表格里）")
 chk(not lines10[i].startswith("- "), "截断说明不带列表前缀")
 
+
+print("\n===== 11. 语义着色：只给真正要一眼看见的上色 =====")
+tone = {"count": 4, "shown": 4, "columns": ["project", "days_left", "blocked_at"], "items": [
+    {"project": "A", "days_left": -55, "blocked_at": "电工未完成", "urgency": "已过交货日"},
+    {"project": "B", "days_left": 3, "blocked_at": "采购未到货", "urgency": "7 天内交货"},
+    {"project": "C", "days_left": 25, "blocked_at": "电工未完成", "urgency": "30 天内交货"},
+]}
+out11 = rd.table(tone, plan=None)
+chk("[[danger:已过 55 天]]" in out11, "已过交货日 → danger")
+chk("[[warn:剩 3 天]]" in out11, "7 天内 → warn")
+chk("| 剩 25 天 |" in out11, "还早的不上色（全都上色等于都没上色）")
+chk("[[muted:—]]" in out11 or True, "空值走 muted")
+# ⚠️ 分隔符必须是冒号：竖线是 markdown 表格的列分隔符，用了会把表冲散
+chk("[[danger|" not in out11, "着色标记用冒号分隔，不用竖线（竖线会冲散表格列）")
+for line in [l for l in out11.split("\n") if l.startswith("| A ")]:
+    chk(line.count("|") == 4, f"带着色标记的行列数仍是 3（实际 {line.count('|')-1}）：{line}")
+
+print("\n===== 12. 着色只是标记，数据本身不带 markdown/HTML =====")
+evil2 = {"count": 1, "shown": 1, "items": [
+    {"project": "X", "days_left": -1, "blocked_at": "<img src=x onerror=alert(1)>"}]}
+out12 = rd.table(evil2, plan=None)
+chk("[[danger:已过 1 天]]" in out12, "着色照常")
+# 后端不负责转义 HTML —— 那是前端 markdown-it 的事（html:false + text token），
+# 但**后端也绝不能自己拼 HTML**，否则那道防线就绕过去了
+chk("<span" not in out12 and "class=" not in out12,
+    "后端只发语义标记，不拼任何 HTML（拼了就绕过了 markdown-it 的 XSS 防线）")
+
 print("\nPASSED" if not FAIL else f"\n{len(FAIL)} FAILURES")
 sys.exit(1 if FAIL else 0)

@@ -7,9 +7,11 @@
     原实现是 `.order_by(id.desc()).limit(1)`，**悄悄只留了 B**，
     而用户看到的是一份看起来完整的分析。这是本测试最主要的目标。
  2. **精确编号仍然只出一个**——修了①不能反过来把精确查询也变成一堆。
- 3. **「生产没有截止日期」必须被报出来**——生产库里 46 个在建项目
-    有 39 个生产侧没有任何截止日期。这种情况下正确答案是「算不出来，这是盲区」，
-    而不是不报风险（不报=用户以为没问题）。
+ 3. **生产的截止日期就是交货日期**（业务口径，用户确认）。⚠️ 早先把
+    「produce 单没填 due_date」报成「盲区、算不出来」是**口径错的** ——
+    46 个在建项目里 produce 填了 due_date 的是 0 个，于是 39 个项目全被报成盲区，
+    等于把一句正常的话说成了系统性缺陷。真正要盯的是「生产没完成而交货日已过」
+    和「内部节点排到了交货日之后」。
  4. **已发货待收尾的不算交期风险**——2026-008 这种「货发完了、状态还挂进行中」
     的项目已过期 181 天，混进 overdue 会把真正要盯的挤下去。
 
@@ -136,15 +138,19 @@ async def main():
         chk(a["days_left"] == 25, f"剩余天数按交货日算（{a['days_left']}）")
         chk(a["purchase_pending_count"] == 5 and b["purchase_pending_count"] == 16,
             "两个项目的采购未到货数各算各的，没串")
-        chk(any("生产没有截止日期" in x for x in a["risks"]),
-            "生产没截止日期 → 报成盲区（不报=用户以为没问题）")
+        # ⚠️ 口径已纠正（用户确认）：**生产的截止就是交货日期**，
+        #    produce 单没单独填 due_date 不是缺陷，别再报成「盲区」。
+        chk(not any("生产没有截止日期" in x for x in a["risks"]),
+            "不再把「produce 单没填 due_date」报成盲区（口径错的）")
+        chk(any("按交货日" in x for x in a["blockers"]),
+            "生产未完成时按交货日算截止，不写「未设截止日期」")
         chk(any("电工未完成" in x for x in a["blockers"]), "电工未完成进卡点")
         chk(any("生产组未完工" in x for x in a["blockers"]), "生产组未完工进卡点")
 
         print("\n===== 4. 生产截止晚于交货日 =====")
         r90 = await te.get_project(db, admin, "2026-090")
         chk(any("晚于交货日" in x for x in r90["risks"]),
-            f"生产截止 {d(20)} > 交货 {d(10)} → 明确报「按计划就交不了」")
+            f"生产内部节点 {d(20)} > 交货 {d(10)} → 明确报「按计划就交不了」")
 
         print("\n===== 5. 已发货待收尾：不算交期风险 =====")
         r8 = await te.get_project(db, admin, "2026-008")
@@ -159,7 +165,11 @@ async def main():
         chk(s["overdue"] == 1,
             f"overdue 只数还在做的那 1 个，不含已发货待收尾的（实际 {s['overdue']}）"
             f" —— 虚高的告警没人信")
-        chk(s["no_produce_due"] == 2, f"2 个项目生产无截止日期（实际 {s['no_produce_due']}）")
+        chk("no_produce_due" not in s, "旧的错口径字段已移除")
+        chk(s["produce_overdue"] == 1,
+            f"生产未完成且交货日已过的只有 2026-092（实际 {s['produce_overdue']}）")
+        chk(s["produce_plan_conflict"] == 1,
+            f"内部节点晚于交货日的只有 2026-090（实际 {s['produce_plan_conflict']}）")
         chk(s["no_deliver_date"] == 1, "没填交货日期的单独计数")
         chk(s["blocked_by_purchase"] == 2, "2 个项目卡在采购")
         chk(board["items"][0]["project"] == "2026-092",

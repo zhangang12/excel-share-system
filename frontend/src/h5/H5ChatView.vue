@@ -509,26 +509,46 @@ onMounted(() => {
 /* 明细表。助手回答里的明细一律走表格（见 backend/app/agent/render.py 顶部说明）——
    手机上 `- A · B · C` 会折成多行，十几条就是一屏文字墙，人只会划过去。 */
 .md :deep(table) {
-  width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 8px 0;
+  width: 100%; border-collapse: separate; border-spacing: 0;
+  font-size: 12.5px; margin: 8px 0 10px;
   /* ⚠️ fixed 布局 + 下面的 word-break：内容再长也在格子里换行，
      **不撑出横向滚动**。横向滚动的表格在手机上等于没有表格（没人去滑）。 */
   table-layout: fixed;
+  background: #fff; border-radius: 10px; overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(24, 32, 50, .07);
 }
 .md :deep(th), .md :deep(td) {
-  border-bottom: 1px solid rgba(24, 32, 50, .08); padding: 6px 8px; text-align: left;
-  word-break: break-word; line-height: 1.45;
+  padding: 7px 9px; text-align: left; word-break: break-word; line-height: 1.45;
+  /* ⚠️ 表格单元格默认是 content-box，百分比宽度**不含 padding** —— 写 42% 实际占
+     42%+18px，三列一挤第三列就被压到放不下「电工未完成」（实测 80px）。
+     改成 border-box，百分比才名副其实。 */
+  box-sizing: border-box;
 }
 /* 表头压暗一档：它是标签，值才是主角（与设计稿「标签一律比值小」一致） */
 .md :deep(th) {
-  font-weight: 600; font-size: 12px; color: var(--h5-ink-3);
-  border-bottom: 1px solid rgba(24, 32, 50, .14); white-space: nowrap;
+  font-weight: 600; font-size: 11.5px; color: var(--h5-ink-3);
+  background: rgba(24, 32, 50, .035); white-space: nowrap;
+  border-bottom: 1px solid rgba(24, 32, 50, .08);
 }
+.md :deep(td) { border-top: 1px solid rgba(24, 32, 50, .05) }
+.md :deep(tbody tr:first-child td) { border-top: none }
+/* 斑马纹：行多时靠它对齐视线，比加边框轻 */
+.md :deep(tbody tr:nth-child(even)) { background: rgba(24, 32, 50, .018) }
 /* 列宽按内容长度分：第一列「是哪一单」最长，第二列是「已过 55 天」这种定长短值，
    第三列「卡在哪」是句子。⚠️ 三列均分时第三列会折成四行、把行高撑到 60px 以上
    （375px 宽实测），所以把宽度从第二列匀给第三列。 */
-.md :deep(th:first-child), .md :deep(td:first-child) { width: 42% }
-.md :deep(th:nth-child(2)), .md :deep(td:nth-child(2)) { width: 22%; white-space: nowrap }
-.md :deep(tbody tr:last-child td) { border-bottom: none }
+.md :deep(th:first-child), .md :deep(td:first-child) { width: 38% }
+.md :deep(th:nth-child(2)), .md :deep(td:nth-child(2)) { width: 26%; white-space: nowrap }
+.md :deep(td:first-child) { color: var(--h5-ink) }
+
+/* 语义着色。后端只发档位（[[danger:…]]），颜色在这里定 —— 见 markdown.ts。
+   ⚠️ **只给真正要一眼看见的上色**：全都上色等于都没上色。
+   色值用既有语义 token，不另造一套。 */
+.md :deep(.h5-tone) { font-weight: 600 }
+.md :deep(.h5-tone--danger) { color: var(--h5-danger) }
+.md :deep(.h5-tone--warn)   { color: var(--h5-warn) }
+.md :deep(.h5-tone--good)   { color: var(--h5-good) }
+.md :deep(.h5-tone--muted)  { color: var(--h5-ink-4); font-weight: 400 }
 .md :deep(blockquote) {
   margin: 6px 0; padding-left: 10px; border-left: 3px solid rgba(43,110,246,.3);
   color: var(--h5-ink-3);

@@ -304,11 +304,12 @@ def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
               groups: list, po_pending: list, sh) -> dict:
     """卡在哪 + 交期风险。**这是这个功能的全部价值** —— 光列数据管理层自己也能看。
 
-    ⚠️ 「生产截止日期没跟交货日期匹配上」在生产数据里的真实形态不是
-       「两个日期对不上」，而是**生产侧压根没有截止日期**：
-       46 个在建项目里，produce 部门单填了 due_date 的是 0 个，
-       130 条生产组任务里只有 9 条有。所以第一条要报的是「无从判断」，
-       而不是假装算出了一个匹配结论。
+    ⚠️⚠️ **生产的截止日期就是项目一览里的交货日期**（业务口径，用户确认）。
+       生产部门单的 `due_date` 只是「有人另外填了个更早的内部节点」，
+       **没填不等于没有截止** —— 默认就按交货日倒推。
+       早先把「produce 单没填 due_date」报成「盲区、算不出来」是**口径错的**：
+       46 个在建项目里 produce 填了 due_date 的是 0 个，于是 39 个项目
+       全被报成盲区，等于把一句正常的话说成了系统性缺陷。
     """
     blockers: list[str] = []
     risks: list[str] = []
@@ -336,7 +337,14 @@ def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
             blockers.append(f"{label}单已作废、没有重下" if dept in voided_depts
                             else f"{label}还没下单")
         elif o.status != "done":
-            due = f"（截止 {o.due_date}）" if o.due_date else "（未设截止日期）"
+            if o.due_date:
+                due = f"（截止 {o.due_date}）"
+            elif dept == "produce" and deliver:
+                # 生产没单独填节点是常态，截止就是交货日 —— 别再写成「未设截止日期」，
+                # 那会让人以为漏填了什么
+                due = f"（按交货日 {deliver}）"
+            else:
+                due = ""
             blockers.append(f"{label}未完成{due}")
 
     open_groups = [g for g in groups if g.status != "done"]
@@ -363,18 +371,25 @@ def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
     elif left <= 7:
         risks.append(f"只剩 {left} 天")
 
+    # ── 生产赶不赶得上：**基准是交货日期**，不是「有没有单独填 due_date」──
     prod = by_dept.get("produce")
     if prod is not None and prod.status != "done":
         prod_due = (prod.due_date or "").strip()
         group_dues = [g.due_date for g in open_groups if (g.due_date or "").strip()]
-        if not prod_due and not group_dues:
-            # 这条是本次发现的系统性缺口，必须说出来，别让人以为「没报风险=没问题」
-            risks.append("生产没有截止日期（部门单和生产组都没填）——"
-                         "无法判断生产能不能赶上交货日，这一项是盲区")
-        else:
-            latest = max([d for d in ([prod_due] if prod_due else []) + group_dues if d])
-            if deliver and latest > deliver:
-                risks.append(f"生产截止 {latest} 晚于交货日 {deliver}，按计划就交不了")
+        inner = [d for d in ([prod_due] if prod_due else []) + group_dues if d]
+        if left is not None and left < 0:
+            risks.append(f"生产还没完成，而交货日已过 {-left} 天")
+        elif left is not None and left <= 7:
+            risks.append(f"生产还没完成，只剩 {left} 天到交货日")
+        # 另外填了内部节点、而那个节点还晚于交货日 → 计划本身就交不了。
+        # 这才是用户最初说的「生产截止日期没跟交货日期匹配上」的真实形态。
+        # ⚠️ **只对还没到期的项目报**：已经过了交货日的，主风险就是「已经延期了」，
+        #    再补一句「按计划也交不了」是废话，只会稀释真正的告警。
+        #    这条信号的价值在**预警**，不在事后复述。
+        if inner and deliver and left is not None and left >= 0:
+            latest = max(inner)
+            if latest > deliver:
+                risks.append(f"生产内部节点 {latest} 晚于交货日 {deliver}，按计划就交不了")
 
     return {"blockers": blockers, "risks": risks,
             # ⚠️ **表格里的短标签**，不带括号补充。它会进一个 34% 宽的手机列，
@@ -554,9 +569,13 @@ async def project_progress(db: AsyncSession, current: models.User,
             "due_7d": sum(1 for r in live if r["days_left"] is not None
                           and 0 <= r["days_left"] <= 7),
             "no_deliver_date": sum(1 for r in live if not r["deliver_date"]),
-            # 本次发现的系统性缺口：生产侧没有截止日期 → 交期能不能保根本判断不了
-            "no_produce_due": sum(1 for r in live if any(
-                "生产没有截止日期" in x for x in r["risks"])),
+            # ⚠️ 早先这里是 `no_produce_due`（生产没填截止日期），**口径是错的** ——
+            #    生产的截止本来就是交货日期，没单独填不是缺陷。换成真正要盯的两个数：
+            #    生产还没完成而交货日已过 / 内部节点排到了交货日之后。
+            "produce_overdue": sum(1 for r in live if any(
+                "生产还没完成，而交货日已过" in x for x in r["risks"])),
+            "produce_plan_conflict": sum(1 for r in live if any(
+                "晚于交货日" in x for x in r["risks"])),
             "blocked_by_purchase": sum(1 for r in live if r["purchase_pending_count"]),
             "shipped_not_closed": sum(1 for r in rows if r["shipped_not_closed"]),
         },

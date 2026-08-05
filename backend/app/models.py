@@ -435,8 +435,19 @@ class AfterSales(Base):
     # 🆕 需求一：登记类型 aftersales 售后 / install 安装（同一流程、同一台账，费用口径「安装/售后费用」）
     kind: Mapped[str] = mapped_column(String(16), default="aftersales", index=True)
     problem: Mapped[str] = mapped_column(Text)
+    # 费用总额。🆕 有明细(AfterSalesItem)时**由明细自动合计**写回这里——
+    # 保持这一列是唯一的成本口径，售后侵蚀预警/成本报表/历史查询都不用改。
     cost: Mapped[float] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/approved/rejected
+    # 🆕 报销支腿：售后主管审批通过(status=approved)之后，钱还要财务核对发票再安排报销。
+    #   ⚠️ 刻意**不**并进 status：status=approved 是"费用已确认发生"的成本口径，
+    #      现有的成本统计和售后侵蚀预警都按它算，动它会连带改一堆地方。
+    #   checking 待财务核对发票 / invoice_fix 发票有问题退回登记人重传 / reimbursed 已安排报销
+    #   NULL = 旧流程登记的记录（没有报销支腿）
+    pay_status: Mapped[Optional[str]] = mapped_column(String(16), index=True)
+    pay_note: Mapped[Optional[str]] = mapped_column(Text)      # 财务核对备注 / 退回原因
+    pay_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    pay_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     mat_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))  # 售后物料清单（登记必传）
     created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -445,6 +456,32 @@ class AfterSales(Base):
     reject_reason: Mapped[Optional[str]] = mapped_column(Text)  # 🆕 #98 售后驳回原因
 
     project: Mapped[Optional["Project"]] = relationship(lazy="joined")
+    items: Mapped[list["AfterSalesItem"]] = relationship(
+        back_populates="parent", order_by="AfterSalesItem.sort_order, AfterSalesItem.id",
+        cascade="all, delete-orphan")
+
+
+class AfterSalesItem(Base):
+    """🆕 售后/安装的费用清单一行：费用项 + 金额 + 对应发票。
+
+    为什么要有：原来登记只能填一个**总额**加一份物料清单附件，发票没地方放，
+    财务核对时还得回头找人要。而且售后的人只好再去 OA 里按"售后部/费用报销"报一遍，
+    同一笔钱两边都算——生产上就抓到过：售后登记里 2025-120 记了 ¥216，
+    OA 里又有一张「2025-120行星搅拌机售后维修」¥1,136。
+    """
+    __tablename__ = "aftersales_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    aftersales_id: Mapped[int] = mapped_column(
+        ForeignKey("aftersales.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(64))                 # 费用项，如 配件费/差旅/住宿
+    amount: Mapped[float] = mapped_column(default=0)
+    # 发票附件。选填——有些费用当场拿不到发票，不能因此卡住登记；财务核对时再催。
+    invoice_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
+    note: Mapped[Optional[str]] = mapped_column(String(200))
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+    parent: Mapped["AfterSales"] = relationship(back_populates="items")
+    invoice: Mapped[Optional["Attachment"]] = relationship(lazy="joined")
 
 
 # ---------- 🆕 生产问题反馈流（装配组→生产主管→设计师；§十四） ----------
@@ -913,6 +950,10 @@ class Department(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True)
     lead_role: Mapped[Optional[str]] = mapped_column(String(32))
+    # 🆕 这个部门的报销费用计入哪个成本科目（销售成本/售后成本/制造费用/管理费用）。
+    #   做成部门上的一个字段而不是单独一张对照表：部门管理页已经在维护部门，
+    #   加一列就能改，不用再多一个要同步的地方。空 = 不计入任何成本科目。
+    cost_center: Mapped[Optional[str]] = mapped_column(String(16), index=True)
     sort_order: Mapped[int] = mapped_column(default=0)
     enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

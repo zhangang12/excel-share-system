@@ -176,6 +176,29 @@ def row(item: dict, fields: list[str] | None = None, emphasis: bool = False) -> 
 #    人只会划过去。表格有对齐的列，能横向扫、能比较，同样的信息量省一半眼力。
 
 
+# 语义着色：后端只给**档位**，颜色由前端翻（后端不许吐 HTML，见 markdown.ts 的红线）。
+# 标记形如 `[[danger:已过 55 天]]`，前端老包遇到会原样显示 —— 刻意的取舍。
+# ⚠️ 分隔符是**冒号不是竖线**：这些标记要放进表格单元格，竖线是列分隔符。
+_TONE_MARK = "[[{tone}:{text}]]"
+
+
+def _tone_of(key: str, val: Any) -> str | None:
+    """这一格该是什么颜色。**只给真正需要一眼看见的**，全都上色等于都没上色。"""
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return None
+    if key == "days_left":
+        return "danger" if n < 0 else ("warn" if n <= 7 else None)
+    if key in ("over_days", "age_days"):
+        return "danger" if n > 0 else ("warn" if n == 0 else None)
+    if key == "shortfall":
+        return "danger" if n > 0 else None
+    if key in ("purchase_pending", "dept_overdue", "produce_open"):
+        return "warn" if n > 0 else None
+    return None
+
+
 def _esc(v: str) -> str:
     """竖线会把表格列冲散，换行会把一行拆成两行 —— 都得先处理掉。"""
     return str(v).replace("|", "／").replace("\n", " ").strip()
@@ -251,7 +274,10 @@ def _table_rows(items: list[dict], cols: list[tuple], is_hi) -> list[str]:
                 v = " ".join(bits)
             else:
                 v = _esc(_cell_of(it, key) or "")
-            cells.append(v or "—")
+                tone = _tone_of(key, it.get(key)) if v else None
+                if tone:
+                    v = _TONE_MARK.format(tone=tone, text=v)
+            cells.append(v or _TONE_MARK.format(tone="muted", text="—"))
         if hit and cells:
             cells[0] = f"**{cells[0]}**"
         out.append("| " + " | ".join(cells) + " |")
