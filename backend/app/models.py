@@ -59,6 +59,10 @@ class User(Base):
     #   ADMIN_MENU_DEFS 混合）；NULL=未配置（运行时兜底 DEFAULT_ACCOUNT_MENUS）。
     #   角色菜单矩阵已废除；admin/manager 天然全可见、不读本列。
     menus: Mapped[Optional[list]] = mapped_column(PortableJSON())
+    # 🆕 审批代理人：OA 审批链「指定到人」后，本人休假/出差就会把单子卡死。
+    #   本人超过 OA_DEPUTY_TAKEOVER_DAYS 天没处理，这个人也能批（本人仍然能批，不是转移）。
+    #   只对「指定到人」的步骤生效；按角色配的步骤谁在岗谁批，本来就不会卡。
+    deputy_uid: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
@@ -937,10 +941,15 @@ class OaApprovalStep(Base):
     doc_type: Mapped[str] = mapped_column(String(24), index=True)
     step_order: Mapped[int] = mapped_column()
     approver_role: Mapped[str] = mapped_column(String(32))
+    # 🆕 指定到人：填了就只有这个人（及其代理人）能批，approver_role 退化成展示用的兜底。
+    #    为什么要有：一个人挂了销售部+财务部+采购部，按角色配的话，凡是挂着这个角色的人
+    #    都会收到单子，很多本该别人批的也落到他待办里。
+    approver_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
     step_label: Mapped[Optional[str]] = mapped_column(String(32))  # 展示名，如"部门主管审批"；空则显示角色名
     enabled: Mapped[bool] = mapped_column(default=True)
 
     department: Mapped["Department"] = relationship(lazy="joined")
+    approver: Mapped[Optional["User"]] = relationship(lazy="joined")
 
 
 class OaFlowCc(Base):
@@ -995,6 +1004,11 @@ class OaRequestStep(Base):
     request_id: Mapped[int] = mapped_column(ForeignKey("oa_requests.id", ondelete="CASCADE"), index=True)
     step_order: Mapped[int] = mapped_column()
     approver_role: Mapped[str] = mapped_column(String(32))
+    # 🆕 提交那一刻从配置快照下来的「指定审批人」。改配置不影响在途单，跟 approver_role 同理。
+    approver_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
+    # 🆕 这一步是什么时候轮到的。代理人要"本人 N 天没处理才接手"，就得知道从哪天起算。
+    #    只在这一步真正变成待办时才写（建单时的第一步 / 上一步批完时的下一步）。
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     step_label: Mapped[Optional[str]] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending/approved/rejected/skipped
     acted_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
@@ -1002,7 +1016,8 @@ class OaRequestStep(Base):
     note: Mapped[Optional[str]] = mapped_column(Text)
 
     request: Mapped["OaRequest"] = relationship(back_populates="steps")
-    actor: Mapped[Optional["User"]] = relationship(lazy="joined")
+    actor: Mapped[Optional["User"]] = relationship(foreign_keys=[acted_by], lazy="joined")
+    approver: Mapped[Optional["User"]] = relationship(foreign_keys=[approver_user_id], lazy="joined")
 
 
 class OaRequestCc(Base):

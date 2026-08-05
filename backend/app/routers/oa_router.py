@@ -7,8 +7,22 @@
   （业务/报销/采购）本身是固定分类口径，字典项是这三类下具体的单据类型。
 - 审批链(OaApprovalStep)按 部门+单据类型 配置，管理层可动态增删改（Δ第4条"由管理层动态配置"）。
 - 提交申请时把当时配置的链路"快照"进 OaRequestStep——之后改配置不影响在途申请，避免审批中途改规则。
+
+🆕 指定到人 + 代理人（2026-08-06）
+--------------------------------
+一步可以配「角色」也可以配「具体某个人」（`approver_user_id`）。为什么要有：
+一个人挂了销售部+财务部+采购部，按角色配的话凡是挂着这个角色的人都能收到单，
+很多本该别人批的也落到他待办里。
+
+指定到人的代价是**人不在单子就卡死**，所以必须配套代理人（`User.deputy_uid`）：
+本人超过 `OA_DEPUTY_TAKEOVER_DAYS` 天没处理，代理人也能批——**本人仍然能批**，
+是"多一个人能批"而不是"转移给别人"。按角色配的步骤谁在岗谁批，天然不会卡，
+所以代理人只对指定到人的步骤生效。
+
+计时从 `OaRequestStep.activated_at`（这一步真正轮到的时刻）起算，不是建单时刻——
+一张单在前面几步排了两周，不该一轮到就直接进代理人待办。
 """
-from datetime import datetime, timezone, date as _date
+from datetime import datetime, timedelta, timezone, date as _date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -28,6 +42,44 @@ from .attachments_router import delete_attachment_file
 router = APIRouter(prefix="/api/oa", tags=["OA审批"])
 
 _OA_CATEGORY_LABELS = {"business": "业务申请", "reimbursement": "报销申请", "purchase": "采购申请"}
+
+# 指定审批人多少天没处理，代理人可以接手。业务定的口径是 3 天。
+OA_DEPUTY_TAKEOVER_DAYS = 3
+
+
+def _deputy_ready_before() -> datetime:
+    """代理人可接手的门槛时刻：activated_at 早于这个时刻的步骤才轮得到代理人。"""
+    return datetime.now(timezone.utc) - timedelta(days=OA_DEPUTY_TAKEOVER_DAYS)
+
+
+async def _my_principal_ids(db: AsyncSession, current: models.User) -> list[int]:
+    """我是谁的代理人 —— 返回把我设成 deputy 的那些人的 id。"""
+    rows = (await db.execute(
+        select(models.User.id).where(models.User.deputy_uid == current.id,
+                                     models.User.is_active == True)  # noqa: E712
+    )).scalars().all()
+    return list(rows)
+
+
+def _can_act_on_step(step, current: models.User, principal_ids: list[int]) -> bool:
+    """这一步当前登录人能不能批。
+
+    ⚠️ 三条路径，顺序不能乱：
+      1. 没指定人 → 老逻辑，按角色（谁在岗谁批）
+      2. 指定了人 → 本人可以；admin/manager 保留兜底（跟改动前一致，别把老板挡在外面）
+      3. 指定了人 → 我是他的代理人，且这一步已经晾了 OA_DEPUTY_TAKEOVER_DAYS 天
+
+    第 3 条里 `activated_at` 为 NULL 的按「还没开始计时」处理——**不能当成很久以前**，
+    否则存量在途单一升级就全部立刻落进代理人待办。
+    """
+    if not step.approver_user_id:
+        return current.has_role(step.approver_role, "admin", "manager")
+    if current.id == step.approver_user_id or current.has_role("admin", "manager"):
+        return True
+    if step.approver_user_id in principal_ids:
+        act = getattr(step, "activated_at", None)
+        return bool(act and act <= _deputy_ready_before())
+    return False
 
 
 async def _doc_types(db: AsyncSession, enabled_only: bool = False) -> list[models.OaDocTypeDict]:
@@ -358,7 +410,10 @@ def _can_view(req: models.OaRequest, current: models.User) -> bool:
         return True
     if req.requester_id == current.id:
         return True
-    if any(s.approver_role in current.role_codes for s in req.steps):
+    # 🆕 指定到人的步骤，按角色是看不到的——被指定的人必须能打开这张单
+    if any(s.approver_user_id == current.id for s in req.steps):
+        return True
+    if any(s.approver_role in current.role_codes and not s.approver_user_id for s in req.steps):
         return True
     if req.department and req.department.lead_role and req.department.lead_role in current.role_codes:
         return True

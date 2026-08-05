@@ -31,9 +31,11 @@ from typing import Any
 # 与提示词里的「主体 · 关键量 · 时间/状态 · (补充)」保持一致。
 _FIELD_ORDER = [
     # (字段名, 显示前缀, 是否金额)
+    # ⚠️ 编号排在名字前面：人是按「2026-045B」认单的，
+    #    只给「300L平台式中转罐」对不上号（实测漏过 project 这个键）。
+    ("project", "", False), ("project_code", "", False), ("code", "", False),
     ("supplier", "", False), ("customer", "", False), ("name", "", False),
     ("item_name", "", False), ("material", "", False),
-    ("project_code", "", False), ("code", "", False),
     ("spec", "", False),
     ("amount", "", True), ("contract", "合同 ", True),
     ("ship_receivable", "发货款 ", True), ("balance", "尾款 ", True),
@@ -51,6 +53,8 @@ _FIELD_ORDER = [
 ]
 
 _DAY_FIELDS = {"over_days", "age_days", "ledger_age_days"}
+# 分组后每组最多铺几行。手机上一屏放不下十几行，剩下的写成「另有 N 条」。
+_GROUP_MAX = 6
 _COUNT_FIELDS = {"purchase_pending": "项"}
 _MONEY_MIN = 10000
 
@@ -99,10 +103,21 @@ def _cell(key: str, val: Any, prefix: str, is_money: bool) -> str | None:
     return f"{prefix}{val}"
 
 
-def row(item: dict, fields: list[str] | None = None, emphasis: bool = False) -> str:
+def _auto_parts(item: dict) -> list[str]:
+    parts: list[str] = []
+    for key, prefix, is_money in _FIELD_ORDER:
+        if key in item:
+            c = _cell(key, item[key], prefix, is_money)
+            if c:
+                parts.append(c)
+    return parts
+
+
+def row(item: dict, fields: list[str] | None = None, emphasis: bool = False) -> str | None:
     """一条明细渲染成一行：`主体 · 关键量 · 时间/状态 · (补充)`。
 
     fields 给定就按它的顺序，否则按 _FIELD_ORDER 挑存在的前几个。
+    渲染不出任何字段时返回 None —— 调用方负责跳过这一行。
     """
     parts: list[str] = []
     if fields:
@@ -111,15 +126,22 @@ def row(item: dict, fields: list[str] | None = None, emphasis: bool = False) -> 
             c = _cell(f, item.get(f), spec[1], spec[2])
             if c:
                 parts.append(c)
+        # ⚠️ 模型给的 fields 可能**跟这批数据根本对不上**：它调了两个工具，
+        #   编排块写的是前一个工具的字段名，而 last_result 是后一个的。
+        #   生产实测就这么翻车过 —— 一个字段都没命中，于是走到
+        #   `str(item)` 兜底，把**裸 Python dict 直接甩给了用户**：
+        #     - {'dept': 'electric', 'project_code': '2026-057', ...}
+        #   这时正确做法是**忽略 fields、按默认顺序自己挑**，而不是硬按它的错清单来。
+        if not parts:
+            parts = _auto_parts(item)
     else:
-        for key, prefix, is_money in _FIELD_ORDER:
-            if key in item:
-                c = _cell(key, item[key], prefix, is_money)
-                if c:
-                    parts.append(c)
-            if len(parts) >= 5:      # 手机上一行放不下更多
-                break
-    line = " · ".join(parts) if parts else str(item)
+        parts = _auto_parts(item)
+    if not parts:
+        # ⚠️ **绝不能 `str(item)`**。这条兜底以前就在这，生产上真的把裸 dict
+        #    漏给了用户。宁可少一行明细，也不能把内部结构甩出去 ——
+        #    与 apply_render 里「模型给坏 JSON 就只删块不渲染」是同一条纪律。
+        return None
+    line = " · ".join(parts[:5])      # 手机上一行放不下更多
     return f"- **{line}**" if emphasis else f"- {line}"
 
 
@@ -141,15 +163,18 @@ def table(result: dict, *, plan: dict | None = None) -> str:
         return ""
 
     sort_key = plan.get("sort")
-    if sort_key and all(isinstance(i, dict) for i in items):
-        rev = bool(plan.get("desc", True))
+    rev = bool(plan.get("desc", True))
+
+    def _sorted(rows: list) -> list:
+        if not sort_key or not all(isinstance(i, dict) for i in rows):
+            return rows
         def _k(x):
             v = x.get(sort_key)
             return (v is None, v if isinstance(v, (int, float)) else str(v or ""))
         try:
-            items = sorted(items, key=_k, reverse=rev)
+            return sorted(rows, key=_k, reverse=rev)
         except TypeError:
-            pass
+            return rows
 
     hi = set(str(h) for h in (plan.get("highlight") or []))
     fields = plan.get("fields") or None
@@ -163,19 +188,36 @@ def table(result: dict, *, plan: dict | None = None) -> str:
     # ⚠️ **保持工具给的原始顺序**：工具已经排好了（在做的按剩余天数 → 没交货日
     #    → 已发货待收尾），这里按出现次序建组，不重排。
     group_key = plan.get("group")
-    if isinstance(group_key, str) and group_key and all(isinstance(i, dict) for i in items):
+    # ⚠️ 分组字段必须**真的在数据上**。模型给的 group 可能是另一个工具的字段名
+    #   （它这一轮调了两个工具），那时每一行 `it.get(group_key)` 都是 None，
+    #   全部落进「其他」——一个信息量为零的大标题，比不分组还糟。实测栽过。
+    can_group = (isinstance(group_key, str) and group_key
+                 and all(isinstance(i, dict) for i in items)
+                 and any(i.get(group_key) for i in items))
+    if can_group:
+        # ⚠️ **分组时 sort 只在组内生效**。跨组重排会把工具排好的优先级推翻 ——
+        #   实测模型给 `sort:days_left,desc:false`，结果「已发货·只差收尾」
+        #   （过期 181 天）被顶到第一组，而那恰恰是最不该占首位的一类。
+        #   组的先后由工具决定（它知道哪一档更急），组内怎么排才轮到模型说了算。
         buckets: dict[str, list[dict]] = {}
         for it in items:
             buckets.setdefault(str(it.get(group_key) or "其他"), []).append(it)
         lines = []
-        for name, rows in buckets.items():
+        for name, rows in ((k, _sorted(v)) for k, v in buckets.items()):
             lines.append(f"**{name}**（{len(rows)}）")
-            lines += [row(it, fields, emphasis=_is_hi(it)) for it in rows]
+            # 每组只铺前几条。手机上 26 行一屏翻不完，人只会划过去 ——
+            # 「最急的看得见」比「全都列出来」有用得多；剩下的说清有多少。
+            shown_rows = [r for r in (row(it, fields, emphasis=_is_hi(it))
+                                      for it in rows[:_GROUP_MAX]) if r]
+            lines += shown_rows
+            if len(rows) > _GROUP_MAX:
+                lines.append(f"- …本组另有 {len(rows) - _GROUP_MAX} 条")
             lines.append("")
         while lines and not lines[-1]:
             lines.pop()
     else:
-        lines = [row(it, fields, emphasis=_is_hi(it)) for it in items]
+        items = _sorted(items)
+        lines = [r for r in (row(it, fields, emphasis=_is_hi(it)) for it in items) if r]
 
     # ⚠️ 截断声明由代码写，不交给模型 —— 代码知道真实总数，模型只知道它收到了几条。
     total = result.get("count")

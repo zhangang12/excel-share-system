@@ -30,7 +30,15 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "users": [("wxid", "VARCHAR(64)"), ("can_export", "BOOLEAN DEFAULT FALSE"),
               ("hidden_tabs", "JSON"),   # 🆕 #7 按账号隐藏的二级菜单tab
               ("grant_menus", "JSON"),   # 🆕 反馈#268 按账号额外开通的管理组菜单(字典设置)
-              ("menus", "JSON")],        # 🆕 一级菜单按账号配置(角色矩阵废除,存量由 backfill_user_menus 回填)
+              ("menus", "JSON"),         # 🆕 一级菜单按账号配置(角色矩阵废除,存量由 backfill_user_menus 回填)
+              ("deputy_uid", "INTEGER")],  # 🆕 审批代理人(OA 审批链指定到人后，本人不在时的兜底)
+    # 🆕 OA 审批链「指定到人」：配置层 + 在途单快照。
+    #   activated_at 记这一步是什么时候轮到的——代理人要"本人 N 天没处理才接手"，得从这天起算。
+    #   存量行为 NULL：配置层 NULL = 仍按角色审批（老行为不变）；
+    #   在途单的 activated_at 为 NULL 时按「无限久以前」处理会让代理人立刻接手，
+    #   所以判定处必须把 NULL 当成"还没开始计时"，见 oa_router._deputy_can_act。
+    "oa_approval_steps": [("approver_user_id", "INTEGER")],
+    "oa_request_steps": [("approver_user_id", "INTEGER"), ("activated_at", "TIMESTAMP")],
     "datasheets": [
         ("imported_at", "TIMESTAMP"),       # P-16 四表导入标记
         ("done_flag", "BOOLEAN DEFAULT FALSE"),  # §十七 装配前置完成标记
