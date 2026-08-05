@@ -38,9 +38,6 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     #   在途单的 activated_at 为 NULL 时按「无限久以前」处理会让代理人立刻接手，
     #   所以判定处必须把 NULL 当成"还没开始计时"，见 oa_router._deputy_can_act。
     "oa_approval_steps": [("approver_user_id", "INTEGER")],
-    # 🆕 售后登记自带报销：审批通过后的报销支腿（刻意不并进 status，见 models.AfterSales）
-    "aftersales": [("pay_status", "VARCHAR(16)"), ("pay_note", "TEXT"),
-                   ("pay_by", "INTEGER"), ("pay_at", "TIMESTAMPTZ")],
     # 🆕 部门 → 成本科目（销售成本/售后成本/制造费用/管理费用）
     "departments": [("cost_center", "VARCHAR(16)")],
     # ⚠️ activated_at 必须是 **TIMESTAMPTZ**：模型声明的是 DateTime(timezone=True)，
@@ -57,7 +54,9 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
                     ("pushed", "BOOLEAN DEFAULT TRUE"),   # 🆕 #303 上传与推送分离(存量=已推送,行为不变)
                     ("pushed_at", "TIMESTAMP")],  # 🆕 #338 推送时间(下游排序用)；存量见 backfill_attachment_pushed_at
     "wh_materials": [("material_grade", "VARCHAR(32)"), ("custom_values", "JSON"),
-                     ("unit_price", "FLOAT")],   # 🆕 材质（字典管理）+ 自定义字段值 + 需求三 参考单价
+                     ("unit_price", "FLOAT"),   # 🆕 材质（字典管理）+ 自定义字段值 + 需求三 参考单价
+                     # ⚠️ 同上：category_id 原来另起了一个 "wh_materials" 键，被覆盖掉了
+                     ("category_id", "INTEGER")],               # 🆕 物料编码分类(细分类叶子)
     "produce_group_tasks": [("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)")],  # 🆕 派给具体人 + 本组预计完成
     "dept_orders": [
         ("design_done_flag",   "BOOLEAN DEFAULT FALSE"),  # 🆕 设计完成第一步标记
@@ -66,7 +65,12 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "aftersales": [("reject_reason", "TEXT"),
                    ("kind", "VARCHAR(16) DEFAULT 'aftersales'"),
-                   ("project_name", "VARCHAR(128)")],  # 🆕 #98 驳回原因 + 需求一 登记类型 + #158 历史项目名
+                   ("project_name", "VARCHAR(128)"),  # 🆕 #98 驳回原因 + 需求一 登记类型 + #158 历史项目名
+                   # 🆕 售后登记自带报销：审批通过后的报销支腿(刻意不并进 status，见 models.AfterSales)
+                   # ⚠️ 必须并进这一条，不能另起一个 "aftersales" 键——
+                   #    dict 字面量里重复的键后者覆盖前者，另起的那条会被静默丢掉、列压根不会补。
+                   ("pay_status", "VARCHAR(16)"), ("pay_note", "TEXT"),
+                   ("pay_by", "INTEGER"), ("pay_at", "TIMESTAMPTZ")],
     "suppliers": [("created_by", "INTEGER")],      # 🆕 需求五 建档采购员（谁建谁看）
     "user_feedback": [                             # 🆕 系统回信（处理意见回复）
         ("reply", "TEXT"),
@@ -116,6 +120,13 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("brand", "VARCHAR(64)"),                  # 🆕 品牌（下单时逐行选/填）
         ("custom_values", "JSON"),                 # 🆕 R6 自定义字段值（存量行为空）
         ("invoice_no", "VARCHAR(64)"),             # 🆕 需求十三 开票号
+        # ⚠️ 下面三列原来另起了一个 "purchase_items" 键——dict 字面量里重复的键
+        #    后者覆盖前者，**上面这一整批列当时其实压根没被补过**。生产上它们碰巧
+        #    都在（是重复键出现之前补的），但拿旧备份恢复一次就会缺列炸掉。
+        #    已合并；`tests/test_schema_columns_no_dup.py` 会盯着不让再出现重复键。
+        ("is_stock", "BOOLEAN DEFAULT TRUE"),      # 🆕 备货标记(存量默认只入库,保持旧行为)
+        ("stock_location", "VARCHAR(64)"),         # 🆕 库位(采购下单填,收货按此入库)
+        ("expected_arrival", "VARCHAR(10)"),       # 🆕 预计到货日期(采购下单填,选填;到期未到货每日提醒)
         ("invoice_date", "VARCHAR(10)"),           # 🆕 开票日期（模型原始列，补登记防存量库缺列）
         ("is_kit", "BOOLEAN DEFAULT FALSE"),       # 🆕 成套采购：是否成套明细
         ("kit_parts", "JSON"),                     # 🆕 成套采购：套内零件清单(BOM,描述性)
@@ -128,14 +139,6 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "purchase_requests": [
         ("buyer_id", "INTEGER"),                   # 🆕 #2 采购申请指定采购员（存量表补列）
-    ],
-    "purchase_items": [
-        ("is_stock", "BOOLEAN DEFAULT TRUE"),      # 🆕 备货标记(存量默认只入库,保持旧行为)
-        ("stock_location", "VARCHAR(64)"),         # 🆕 库位(采购下单填,收货按此入库)
-        ("expected_arrival", "VARCHAR(10)"),       # 🆕 预计到货日期(采购下单填,选填;到期未到货每日提醒)
-    ],
-    "wh_materials": [
-        ("category_id", "INTEGER"),                # 🆕 物料编码分类(细分类叶子)
     ],
     "wh_txns": [                                   # 🆕 库存金额/成本 + 采购收货自动入库来源
         ("unit_price", "FLOAT"),

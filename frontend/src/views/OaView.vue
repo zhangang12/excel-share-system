@@ -4,7 +4,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Check, Close, Download, Upload, RefreshLeft, Delete } from '@element-plus/icons-vue'
 import { http } from '@/api'
-import { oaApi, type Department, type OaDocType, type OaApprovalStep, type OaRequest, type OaSummaryRow, type OaSummaryDetailRow, type OaChainOverviewRow } from '@/api/oa'
+import { oaApi, type CostSummary, type Department, type OaDocType, type OaApprovalStep, type OaRequest, type OaSummaryRow, type OaSummaryDetailRow, type OaChainOverviewRow } from '@/api/oa'
 import { adminApi } from '@/api/admin'
 import { downloadAttachment } from '@/api/orders'
 import { useAuthStore } from '@/stores/auth'
@@ -437,16 +437,17 @@ async function doMarkPaid() {
 // ===== 设置：部门字典 =====
 const settingsTab = ref<'dept' | 'doctype' | 'chain'>('dept')
 const deptEditId = ref<number | null>(null)
-const deptForm = reactive({ name: '', lead_role: '' as string | '', sort_order: 0, enabled: true })
-function deptResetForm() { deptEditId.value = null; Object.assign(deptForm, { name: '', lead_role: '', sort_order: 0, enabled: true }) }
+const COST_CENTERS = ['销售成本', '售后成本', '制造费用', '管理费用']
+const deptForm = reactive({ name: '', lead_role: '' as string | '', cost_center: '' as string | '', sort_order: 0, enabled: true })
+function deptResetForm() { deptEditId.value = null; Object.assign(deptForm, { name: '', lead_role: '', cost_center: '', sort_order: 0, enabled: true }) }
 function deptEdit(d: Department) {
   deptEditId.value = d.id
-  Object.assign(deptForm, { name: d.name, lead_role: d.lead_role || '', sort_order: d.sort_order, enabled: d.enabled })
+  Object.assign(deptForm, { name: d.name, lead_role: d.lead_role || '', cost_center: d.cost_center || '', sort_order: d.sort_order, enabled: d.enabled })
 }
 const deptSaving = ref(false)
 async function deptSave() {
   if (!deptForm.name.trim()) { ElMessage.warning('请填写部门名称'); return }
-  const payload = { name: deptForm.name.trim(), lead_role: deptForm.lead_role || null, sort_order: deptForm.sort_order, enabled: deptForm.enabled }
+  const payload = { name: deptForm.name.trim(), lead_role: deptForm.lead_role || null, cost_center: deptForm.cost_center || null, sort_order: deptForm.sort_order, enabled: deptForm.enabled }
   deptSaving.value = true
   try {
     if (deptEditId.value) { await oaApi.updateDepartment(deptEditId.value, payload); ElMessage.success('已更新') }
@@ -457,6 +458,19 @@ async function deptSave() {
 async function deptDelete(d: Department) {
   try { await ElMessageBox.confirm(`删除部门「${d.name}」？已有申请记录会拦截删除，可改为停用。`, '删除部门', { type: 'warning', confirmButtonText: '删除' }) } catch { return }
   try { await oaApi.deleteDepartment(d.id); ElMessage.success('已删除'); await loadDepartments() } catch { /* 全局拦截器已提示 */ }
+}
+
+// ===== 🆕 成本归集报表 =====
+// 口径说明由后端随数据一起下发（notes），前端只负责显示——
+// 省得两边各写一份，改口径时漏掉一边。
+const cost = ref<CostSummary | null>(null)
+const costPeriod = ref<string>('')
+const costLoading = ref(false)
+async function loadCost() {
+  if (!canViewSummary.value) return
+  costLoading.value = true
+  try { cost.value = await oaApi.costSummary(costPeriod.value || undefined) }
+  catch { cost.value = null } finally { costLoading.value = false }
 }
 
 // ===== 设置：单据类型字典 =====
@@ -602,7 +616,7 @@ const sumDetailTotal = computed(() => sumDetailRows.value.reduce((s, r) => s + r
 function onMainTabChange(name: string | number) {
   const n = String(name)
   if (n === 'settings' && canConfig.value) { loadDepartments(); loadRoles(); stepResetForm(); loadChainOverview() }
-  else if (n === 'summary' && canViewSummary.value) { loadSummary() }
+  else if (n === 'summary' && canViewSummary.value) { loadSummary(); loadCost() }
   else onTabChange(n)
 }
 
@@ -770,6 +784,31 @@ onMounted(async () => {
           <template #empty><EmptyHint text="暂无已批准的申请数据" /></template>
         </el-table>
         <div class="summary-bar" v-if="summaryRows.length">合计 <b>{{ fmtMoney(summaryTotal) }}</b></div>
+
+        <!-- 🆕 成本归集：按成本科目看钱花在哪 -->
+        <div class="form-section-title" style="margin-top:22px">按成本科目归集</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <el-date-picker v-model="costPeriod" type="month" value-format="YYYY-MM"
+                          placeholder="月份（留空=全部）" size="small" style="width:170px"
+                          clearable @change="loadCost" />
+          <el-button size="small" @click="loadCost">刷新</el-button>
+        </div>
+        <el-table :data="cost?.rows || []" v-loading="costLoading" stripe size="small">
+          <el-table-column prop="cost_center" label="成本科目" width="120" />
+          <el-table-column prop="source_label" label="来源" width="140" />
+          <el-table-column prop="count" label="笔数" width="80" align="right" />
+          <el-table-column label="金额" align="right">
+            <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
+          </el-table-column>
+          <template #empty><EmptyHint text="这个期间没有可归集的费用" /></template>
+        </el-table>
+        <div class="summary-bar" v-if="cost && cost.total">
+          <span v-for="(v, k) in cost.by_center" :key="k" style="margin-right:16px">{{ k }} <b>{{ fmtMoney(v) }}</b></span>
+          <span>总计 <b>{{ fmtMoney(cost.total) }}</b></span>
+        </div>
+        <ul v-if="cost?.notes?.length" class="cost-notes">
+          <li v-for="(n, i) in cost.notes" :key="i">{{ n }}</li>
+        </ul>
       </el-tab-pane>
 
       <el-tab-pane v-if="canConfig" label="部门与流程设置" name="settings">
@@ -784,6 +823,12 @@ onMounted(async () => {
             <el-table-column type="index" label="#" width="46" align="center" />
             <el-table-column prop="name" label="部门名称" min-width="120" />
             <el-table-column label="部门负责人角色" min-width="150"><template #default="{ row }">{{ roleName(row.lead_role) }}</template></el-table-column>
+            <el-table-column label="成本科目" min-width="110">
+              <template #default="{ row }">
+                <el-tag v-if="row.cost_center" size="small" effect="plain">{{ row.cost_center }}</el-tag>
+                <span v-else class="muted">不计入成本</span>
+              </template>
+            </el-table-column>
             <el-table-column label="排序" width="70" prop="sort_order" />
             <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="110" fixed="right" :show-overflow-tooltip="false">
@@ -801,6 +846,11 @@ onMounted(async () => {
                 <el-form-item label="部门负责人角色（可看本部门全部申请）">
                   <el-select v-model="deptForm.lead_role" clearable filterable style="width:100%" placeholder="不设置">
                     <el-option v-for="r in rolesList" :key="r.code" :label="r.name" :value="r.code" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="成本科目（这个部门的报销计入哪里）">
+                  <el-select v-model="deptForm.cost_center" clearable placeholder="留空 = 不计入成本" style="width:100%">
+                    <el-option v-for="cc in COST_CENTERS" :key="cc" :label="cc" :value="cc" />
                   </el-select>
                 </el-form-item>
               </el-col>
@@ -1309,6 +1359,11 @@ onMounted(async () => {
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .form-section-title { font-weight: 600; margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--el-border-color-lighter); }
 .summary-bar { margin-top: 12px; padding: 10px 14px; background: var(--el-fill-color-light); border-radius: 6px; text-align: right; }
+.cost-notes {
+  margin: 10px 0 0; padding-left: 1.2em;
+  font-size: 12.5px; line-height: 1.75; color: var(--el-text-color-secondary);
+}
+.cost-notes li { margin-bottom: 2px; }
 .clickable-rows :deep(.el-table__row) { cursor: pointer; }
 .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 16px; margin-bottom: 14px; }
 .detail-json { background: var(--el-fill-color-light); border-radius: 6px; padding: 10px 14px; font-size: 13px; line-height: 1.8; margin-bottom: 14px; }

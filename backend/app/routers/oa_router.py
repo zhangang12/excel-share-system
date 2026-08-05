@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone, date as _date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, exists, or_, update as sa_update
+from sqlalchemy import String, select, func, exists, or_, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -182,6 +182,29 @@ async def delete_doc_type(
     return schemas.Msg(message="已删除该单据类型")
 
 
+# ==================== 🆕 成本归集（部门 → 成本科目）====================
+#
+# 口径（业务已签字）：
+#   · 审批通过就计入成本，另标「是否已付」——看得早，也看得见哪些批了还没付
+#   · 金额一律按**财务核定金额**(settle_amount)，为空才回退用申请金额
+#     ⚠️ 生产上 6 笔单没有一笔填了核定金额，所以回退是常态不是例外
+#   · OA 的采购申请**不计**成本，一律以采购单为准（否则同一笔钱算两次）
+#   · 差旅按提交人所在部门归集；唯一例外是售后/安装的差旅——那部分跟着售后单走
+#   · 售后成本**只认售后登记**，不吃 OA。售后部的 OA 报销入口已经关掉，
+#     存量在途的旧单按签字口径原路走完，报表里单独标出来，不并进合计。
+
+COST_CENTERS = ["销售成本", "售后成本", "制造费用", "管理费用"]
+
+
+def _norm_cost_center(v) -> Optional[str]:
+    v = (v or "").strip()
+    if not v:
+        return None
+    if v not in COST_CENTERS:
+        raise HTTPException(400, f"成本科目只能是：{'、'.join(COST_CENTERS)}")
+    return v
+
+
 # ==================== 部门字典 ====================
 @router.get("/departments", response_model=list[schemas.DepartmentOut])
 async def list_departments(
@@ -207,6 +230,7 @@ async def create_department(
     if dup.scalar_one_or_none():
         raise HTTPException(409, "该部门已存在")
     d = models.Department(name=name, lead_role=body.lead_role or None,
+                          cost_center=_norm_cost_center(body.cost_center),
                           sort_order=body.sort_order, enabled=body.enabled)
     db.add(d)
     await db.commit()
@@ -228,6 +252,7 @@ async def update_department(
     if dup.scalar_one_or_none():
         raise HTTPException(409, "该部门已存在")
     d.name = name; d.lead_role = body.lead_role or None
+    d.cost_center = _norm_cost_center(body.cost_center)
     d.sort_order = body.sort_order; d.enabled = body.enabled
     await db.commit()
     await db.refresh(d)
@@ -570,6 +595,16 @@ async def create_request(
                models.OaApprovalStep.enabled == True)  # noqa: E712
         .order_by(models.OaApprovalStep.step_order)
     )).scalars().all()
+    # 🆕 售后/安装的费用改走「售后部登记」，OA 这条路关掉——否则同一笔钱两边都算。
+    #    生产上抓到过：售后登记里 2025-120 记了 ¥216，OA 里又有一张
+    #    「2025-120行星搅拌机售后维修」¥1,136。
+    #    ⚠️ 只挡**新提交**，已经在途的旧单按约定原路走完（这里不碰它们）。
+    if category == "reimbursement" and (dept.cost_center == "售后成本"
+                                        or "售后" in (dept.name or "")):
+        raise HTTPException(400,
+                            f"{dept.name}的费用报销请在【售后部 → 登记售后/登记安装】里提交，"
+                            f"在那里可以逐行填费用并上传对应发票，主管审批后直接到财务核对报销。"
+                            f"（走 OA 会和售后登记的费用重复计入售后成本）")
     if not steps_cfg:
         raise HTTPException(400, f"「{dept.name}」的「{doc_label}」尚未配置审批流程，请联系管理层在【审批流程设置】里配置")
     if body.related_request_id:
@@ -928,6 +963,96 @@ async def oa_summary(
     rows = (await db.execute(q)).all()
     return [schemas.OaSummaryRow(department_id=r[0], department_name=r[1], doc_type=r[2],
                                  count=r[3] or 0, amount=round(r[4] or 0, 2)) for r in rows]
+
+
+
+# ⚠️ 「审批通过」在数据上是**两个** status：approved 和 pending_payment。
+#    末环节是财务的报销类单据审完会转 pending_payment（等财务点已付款），
+#    只按 approved 过滤的话这些单会从成本里凭空消失。
+_OA_COST_STATUS = ("approved", "pending_payment")
+
+
+@router.get("/reports/cost", response_model=schemas.CostSummaryOut)
+async def cost_summary(
+    period: Optional[str] = Query(None, description="YYYY-MM，留空=全部"),
+    current: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """按成本科目归集费用：OA 报销 + 售后/安装登记。
+
+    两个来源分开列，因为它们的口径不一样，合在一起就说不清了：
+      · OA 报销  —— 部门的 cost_center 决定进哪个科目；采购申请不计
+      · 售后登记 —— 一律进「售后成本」，且**售后成本只认这一个来源**
+    """
+    def _in_period(col):
+        if not period:
+            return None
+        return func.substr(func.cast(col, String), 1, 7) == period
+
+    notes = [
+        "金额按财务核定金额算；没填核定金额的按申请金额算。",
+        "审批通过即计入（含已审完待付款的），不等实际付款。",
+        "OA 的采购申请不计入——成本一律以采购单为准，否则同一笔钱算两次。",
+        "售后成本只统计售后/安装登记，不吃 OA 报销，避免同一笔费用算两遍。",
+    ]
+
+    rows: list[schemas.CostRow] = []
+
+    # ---------- 来源一：OA 报销 ----------
+    depts = {d.id: d for d in (await db.execute(select(models.Department))).scalars().all()}
+    q = select(models.OaRequest).where(
+        models.OaRequest.status.in_(_OA_COST_STATUS),
+        models.OaRequest.category != "purchase")     # 采购申请不计
+    oa_all = list((await db.execute(q)).scalars().all())
+    if period:
+        oa_all = [r for r in oa_all
+                  if (r.updated_at or r.created_at) and
+                  (r.updated_at or r.created_at).strftime("%Y-%m") == period]
+
+    agg: dict[str, list] = {}
+    skipped_as = {"count": 0, "amount": 0.0}
+    for r in oa_all:
+        d = depts.get(r.department_id)
+        cc = d.cost_center if d else None
+        amt = float(r.settle_amount if r.settle_amount is not None else (r.amount or 0))
+        # 售后成本只认售后登记：售后部走 OA 的存量报销单单独拎出来，不并进合计
+        if cc == "售后成本":
+            skipped_as["count"] += 1
+            skipped_as["amount"] += amt
+            continue
+        if not cc:
+            continue                       # 部门没配成本科目 → 不归集
+        cur = agg.setdefault(cc, [0, 0.0])
+        cur[0] += 1
+        cur[1] += amt
+    for cc, (n, amt) in agg.items():
+        rows.append(schemas.CostRow(cost_center=cc, source="oa_reimbursement",
+                                    source_label="OA 报销", count=n, amount=round(amt, 2)))
+    if skipped_as["count"]:
+        notes.append(
+            f"另有 {skipped_as['count']} 笔售后部走 OA 的报销单（¥{skipped_as['amount']:,.0f}）"
+            f"**没有计入**：售后费用已改为在售后登记里提交，这些是旧流程的在途单，"
+            f"按约定原路走完，不并进售后成本以免重复。")
+
+    # ---------- 来源二：售后/安装登记 ----------
+    as_q = select(models.AfterSales).where(models.AfterSales.status == "approved")
+    as_all = list((await db.execute(as_q)).scalars().all())
+    if period:
+        as_all = [a for a in as_all
+                  if a.created_at and a.created_at.strftime("%Y-%m") == period]
+    if as_all:
+        rows.append(schemas.CostRow(
+            cost_center="售后成本", source="aftersales", source_label="售后/安装登记",
+            count=len(as_all), amount=round(sum(float(a.cost or 0) for a in as_all), 2)))
+
+    by_center: dict[str, float] = {}
+    for r in rows:
+        by_center[r.cost_center] = round(by_center.get(r.cost_center, 0) + r.amount, 2)
+    rows.sort(key=lambda x: (COST_CENTERS.index(x.cost_center)
+                             if x.cost_center in COST_CENTERS else 99, x.source))
+    return schemas.CostSummaryOut(
+        period=period or "全部", rows=rows, by_center=by_center,
+        total=round(sum(by_center.values()), 2), notes=notes)
 
 
 @router.get("/reports/summary/detail", response_model=list[schemas.OaSummaryDetailRow])

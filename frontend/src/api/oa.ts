@@ -1,7 +1,18 @@
 import { http } from './index'
 
 export interface Department {
-  id: number; name: string; lead_role?: string | null; sort_order: number; enabled: boolean
+  id: number; name: string; lead_role?: string | null
+  // 🆕 这个部门的报销费用计入哪个成本科目；空 = 不计入
+  cost_center?: string | null
+  sort_order: number; enabled: boolean
+}
+// 🆕 成本归集报表
+export interface CostRow {
+  cost_center: string; source: string; source_label: string; count: number; amount: number
+}
+export interface CostSummary {
+  period: string; rows: CostRow[]; by_center: Record<string, number>
+  total: number; notes: string[]
 }
 export interface OaDocType {
   id: number; key: string; category: string; category_label: string; label: string
@@ -73,6 +84,8 @@ export const oaApi = {
 
   chainSteps: (departmentId: number, docType: string) =>
     http.get<OaApprovalStep[]>('/oa/chains', { params: { department_id: departmentId, doc_type: docType } }).then(r => r.data),
+  costSummary: (period?: string) =>
+    http.get<CostSummary>('/oa/reports/cost', { params: period ? { period } : {} }).then(r => r.data),
   chainsOverview: () => http.get<OaChainOverviewRow[]>('/oa/chains/overview').then(r => r.data),
   // 🆕 #200 流程级固定抄送(角色)
   flowCc: (departmentId: number, docType: string) =>

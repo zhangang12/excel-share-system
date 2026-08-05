@@ -334,6 +334,23 @@ class NextCodeOut(BaseModel):
 
 
 # ---------- 🆕 售后部 ----------
+class AfterSalesItemIn(BaseModel):
+    """🆕 费用清单一行。invoice_file_id 由前端先上传附件拿到 id 再带过来。"""
+    name: str
+    amount: float
+    invoice_file_id: Optional[int] = None
+    note: Optional[str] = None
+
+
+class AfterSalesItemOut(BaseModel):
+    id: int
+    name: str
+    amount: float
+    invoice_file_id: Optional[int] = None
+    invoice_file_name: Optional[str] = None
+    note: Optional[str] = None
+
+
 class AfterSalesRow(BaseModel):
     id: int
     project_id: Optional[int] = None   # #158：以往项目只填名称时为空
@@ -343,6 +360,14 @@ class AfterSalesRow(BaseModel):
     problem: str
     cost: float
     status: str
+    # 🆕 报销支腿：审批通过后 checking→reimbursed，或 invoice_fix 退回登记人重传发票
+    pay_status: Optional[str] = None
+    pay_note: Optional[str] = None
+    pay_by_name: Optional[str] = None
+    pay_at: Optional[datetime] = None
+    items: list[AfterSalesItemOut] = []
+    # 明细里还有几行没传发票——财务核对时最先要看这个
+    missing_invoice: int = 0
     mat_file_id: Optional[int] = None
     mat_file_name: Optional[str] = None
     created_by_name: Optional[str] = None
@@ -1647,6 +1672,8 @@ class ShipListPendingRow(BaseModel):
 class DepartmentIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     lead_role: Optional[str] = None
+    # 🆕 这个部门的报销费用计入哪个成本科目；空 = 不计入
+    cost_center: Optional[str] = None
     sort_order: int = 0
     enabled: bool = True
 
@@ -1656,8 +1683,27 @@ class DepartmentOut(BaseModel):
     id: int
     name: str
     lead_role: Optional[str] = None
+    cost_center: Optional[str] = None
     sort_order: int
     enabled: bool
+
+
+class CostRow(BaseModel):
+    """成本报表一行：一个成本科目下的来源明细。"""
+    cost_center: str
+    source: str            # oa_reimbursement / aftersales
+    source_label: str
+    count: int = 0
+    amount: float = 0
+
+
+class CostSummaryOut(BaseModel):
+    period: str
+    rows: list[CostRow] = []
+    by_center: dict[str, float] = {}
+    total: float = 0
+    # 口径说明，直接显示给用户看——省得每次都来问"这个数怎么算的"
+    notes: list[str] = []
 
 
 class OaDocTypeIn(BaseModel):

@@ -40,6 +40,7 @@ ALLOWED_BIZ_TYPES = {
     "feedback",  # 🆕 #193 生产问题反馈现场照片
     "purchase_request",  # 🆕 #245/#246 请购单直接上传文件（电气清单等，替代逐行手填）
     "management_todo",  # 🆕 #311 管理层待办附图（图片）
+    "aftersales_invoice",  # 🆕 售后/安装费用清单逐行的发票（财务核对报销时看这个）
 }
 
 # 统一允许的扩展名（按业务需要可在端点层再细化）
