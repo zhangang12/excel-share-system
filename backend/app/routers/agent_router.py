@@ -368,6 +368,7 @@ TOOL_LABELS = {
     "get_customer": "客户全景",
     "get_project": "项目全景",
     "project_progress": "项目交期看板",
+    "sales_summary": "销售额统计",
     "get_supplier": "供应商画像",
     "get_material": "物料全景",
 }
@@ -378,6 +379,7 @@ TOOL_DESC = {
     "get_customer": "这家客户一共几单、收了多少、还欠多少、卡在哪一步",
     "get_project": "一个项目从台账到发货全看完：交期、收款、各部门任务、生产组、采购在途、卡在哪",
     "project_progress": "在建项目还剩几天交货、哪些已过期、每个卡在哪一环",
+    "sales_summary": "按月看销售额（合同额），本月/上月对比；按签订日期归月",
     "get_supplier": "这家供应商准时率多少、平均拖几天、现在还欠几批货",
     "get_material": "这个物料还有多少库存、低不低于安全线、最近进出了多少",
     "morning_report": "把今天要盯的事聚成一条：采购超期、尾款到期、部门逾期、人事到期",
@@ -526,6 +528,15 @@ TOOL_SCHEMAS += [
                          "description": "只看未来几天内要交货的；已过期的一律带上。不传=全部在建"}),
             "required": []}}},
     {"type": "function", "function": {
+        "name": "sales_summary",
+        "description": "销售额按月统计（合同额）与本月/上月对比。"
+                       "回答「这个月销售额多少」「今年卖了多少」「跟上月比怎么样」用它。"
+                       "⚠️ 口径是**按项目签订日期归月**，不是台账录入时间",
+        "parameters": {"type": "object", "properties": dict(
+            _LIM_PROP,
+            months={"type": "integer", "description": "看最近几个月，默认 6"}),
+            "required": []}}},
+    {"type": "function", "function": {
         "name": "get_supplier",
         "description": "供应商画像：准时率、平均超期天数、最大超期、当前未到货明细。"
                        "回答「哪家供应商靠不住」「要不要换供应商」用它",
@@ -578,6 +589,7 @@ def _allowed_tools(user: models.User) -> set[str]:
         out.add("find_entity")
     if keys & {"finance", "sales"}:
         out.add("get_customer")
+        out.add("sales_summary")
     if "purchase_mgmt" in keys:
         out.add("get_supplier")
     if "warehouse" in keys:
@@ -657,6 +669,8 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
         "find_entity":  lambda: _te.find_entity(db, current, args.get("q", ""), args.get("kind")),
         "get_customer": lambda: _te.get_customer(db, current, args.get("name", "")),
         "get_project":  lambda: _te.get_project(db, current, args.get("code", "")),
+        "sales_summary": lambda: _te.sales_summary(
+            db, current, months=int(args.get("months") or 6)),
         "project_progress": lambda: _te.project_progress(
             db, current, within_days=args.get("within_days"),
             limit=int(args.get("limit") or 200)),
@@ -728,6 +742,12 @@ _FULL_LIST_HINT = ("全部", "都列", "列全", "完整", "所有", "一个不�
 _HEAVY_HINT = ("为什么", "分析", "复盘", "怎么办", "建议", "对比", "趋势",
                "靠谱", "风险", "评估", "原因", "怎么样")
 
+# 不含 _HEAVY_HINT 那些词、但同样要跨表串数据再判断的问法。
+# 这些问题模型必须先想再答，预算按分析类给（见 _max_tokens_for）。
+# 来源是生产上真实挂掉的那几条：「项目进度跟进」「列举现在所有进行中的项目」。
+_THINK_HINT = ("进度", "跟进", "卡在", "交期", "还剩", "快到期", "监控", "盘点",
+               "汇总", "统计", "排查", "梳理")
+
 
 def _route_model(message: str, cfg: dict, explicit: str | None) -> str:
     """按任务挑模型。用户显式指定的优先，永远不覆盖他的选择。"""
@@ -744,9 +764,25 @@ _MAX_TOKENS_DEFAULT = 700
 _MAX_TOKENS_FULL = 3000
 
 
+_MAX_TOKENS_THINK = 1600   # 要动脑子的问题：给思维链留出余量
+
+
 def _max_tokens_for(message: str) -> int:
-    return _MAX_TOKENS_FULL if any(k in (message or "") for k in _FULL_LIST_HINT) \
-        else _MAX_TOKENS_DEFAULT
+    """给多少输出预算。
+
+    ⚠️⚠️ **这是推理型模型（deepseek）上最容易踩的一脚**：`max_tokens` 是被
+       思维链和正文**共用**的。问「项目进度跟进」这类要分析的问题时，
+       700 tokens 会被思维链先吃光 —— 模型跑了 15 秒，正文一个字没有、
+       工具一个没调，然后被判成「LLM 返回空内容」整条降级成功能菜单，
+       用户看到的就是「这功能直接不能用」。生产实测就是这么挂的。
+       所以分析类问题一开始就给足，别指望靠重试兜（重试要多等一整轮）。
+    """
+    t = message or ""
+    if any(k in t for k in _FULL_LIST_HINT):
+        return _MAX_TOKENS_FULL
+    if any(k in t for k in _HEAVY_HINT) or any(k in t for k in _THINK_HINT):
+        return _MAX_TOKENS_THINK
+    return _MAX_TOKENS_DEFAULT
 
 _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只读），当前服务对象：「{user_name}」（角色：{roles}）。今天：{today}（中国时区）。
 
@@ -872,13 +908,27 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
                 + history + [{"role": "user", "content": message}])
     last_result: dict | None = None   # v2：明细交给代码渲染，需要留住原始工具结果
     seen: set = set()                 # v2：同工具同参数不得重复调用（硬拦，不靠提示词）
+    budget_retried = False            # 与流式同一套：预算被思维链吃光时加码重试一次
     for _ in range(4):  # 工具轮次上限，防死循环
         data = await _llm_request(messages, model, cfg, schemas, max_tokens)
-        msg = data["choices"][0]["message"]
+        choice = data["choices"][0]
+        msg = choice["message"]
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
             content = (msg.get("content") or "").strip()
             if not content:
+                # ⚠️ 推理型模型把 max_tokens 花在思维链上时，正文就是空的。
+                #    直接判死会把整条请求降级成功能菜单（见 _max_tokens_for 的说明）。
+                reasoning = len(msg.get("reasoning_content") or "")
+                if not budget_retried and (choice.get("finish_reason") == "length"
+                                           or reasoning > 0):
+                    budget_retried = True
+                    log.warning("[agent] 非流式：模型未产出正文（finish=%s，思维链 %d 字，"
+                                "预算 %d），提高预算到 %d 重试",
+                                choice.get("finish_reason"), reasoning,
+                                max_tokens, _MAX_TOKENS_FULL)
+                    max_tokens = _MAX_TOKENS_FULL
+                    continue
                 raise RuntimeError("LLM 返回空内容")
             return apply_render(content, last_result, want_list), tool_names
         messages.append(msg)  # 含 tool_calls 的 assistant 消息原样回灌
@@ -1763,18 +1813,34 @@ async def _chat_stream(message: str, history: list[dict], model: str,
 
     last_result: dict | None = None   # v2 阶段二：留住工具原始结果，收尾时代码渲染明细
     seen: set = set()                 # v2：同工具同参数不得重复调用（硬拦，不靠提示词）
+    budget_retried = False            # 预算被思维链吃光时只加码重试一次，防死循环
     for rnd in range(4):              # rnd 只为审计记「跑了几轮」，循环本身不用它
         content_parts: list[str] = []
         tc_acc: dict = {}
         streamed = 0          # 已推给前端的字符数
         suppress = False      # 进入 ``` 之后不再推——render 块的裸 JSON 不能让用户看见
+        finish = None         # 最后一个 finish_reason；"length" = 被 max_tokens 截断
+        reasoning_chars = 0   # 思维链长度（只用于排障，绝不推给用户）
+        stream_err = None     # 流里夹带的错误负载（没有 choices 的那种）
         async for data in _llm_stream(messages, model, cfg, schemas, max_tokens):
             choices = data.get("choices") or []
             if not choices:
+                # ⚠️ 没有 choices 的块以前被直接丢掉 —— 而 LLM 把错误塞在流里时正是这个形状，
+                #    结果是「什么都没发生」，排障时只能看到一句「返回空内容」。
+                if isinstance(data.get("error"), (dict, str)):
+                    stream_err = str(data["error"])[:200]
                 continue
+            if choices[0].get("finish_reason"):
+                finish = choices[0]["finish_reason"]
             delta = choices[0].get("delta") or {}
             if delta.get("tool_calls"):
                 _merge_tool_call_deltas(tc_acc, delta["tool_calls"])
+            # ⚠️ 推理型模型（这里是 deepseek）把思维链放在 reasoning_content，
+            #    正文才在 content。只读 content 是对的（思维链不能给用户看），
+            #    但**必须知道它有多长**，否则「模型想了 15 秒、正文一个字没有」
+            #    这件事在日志里完全看不出来。
+            if delta.get("reasoning_content"):
+                reasoning_chars += len(delta["reasoning_content"])
             piece = delta.get("content")
             if not piece:
                 continue
@@ -1795,6 +1861,24 @@ async def _chat_stream(message: str, history: list[dict], model: str,
 
         if not tc_acc:
             text = "".join(content_parts).strip()
+            # ⚠️⚠️ **推理型模型会把 max_tokens 全花在思维链上，正文和工具调用一个都不出。**
+            #   生产实测：问「项目进度跟进」，模型跑了 15.6 秒、tools_used=[]、正文为空，
+            #   然后被判成「LLM 返回空内容」→ 整条降级成那段「我是 ERP 数据助手」的功能菜单。
+            #   用户看到的就是「这功能直接不能用」。问题**不在工具、不在提示词，在预算**：
+            #   700 tokens 对需要想一想的问题根本不够，思维链先把它吃光。
+            #   所以这里不再直接判死，而是**加码重试一次**（只一次，防死循环）。
+            #   这时还没往前端推过任何字（正文为空），重试不会出现重复文字。
+            if not text and not streamed and not budget_retried and \
+                    (finish == "length" or reasoning_chars > 0):
+                budget_retried = True
+                log.warning("[agent] 模型未产出正文（finish=%s，思维链 %d 字，预算 %d）"
+                            "，提高预算到 %d 重试", finish, reasoning_chars,
+                            max_tokens, _MAX_TOKENS_FULL)
+                max_tokens = _MAX_TOKENS_FULL
+                continue
+            if not text and stream_err:
+                # 把流里夹带的错误带出来，别再报成含糊的「返回空内容」
+                raise RuntimeError(f"LLM 流内错误：{stream_err}")
             # ⚠️ 判空必须在**渲染之后**。模型完全可以只回一句结论 + 一个编排块，
             #    而编排块整段被 suppress 吞掉了 —— 拿吞之前的文本判空会误判成
             #    「LLM 返回空内容」→ 抛异常 → 整条请求降级成功能菜单。踩过。

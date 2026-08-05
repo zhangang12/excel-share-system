@@ -22,7 +22,7 @@ v1 的 13 个工具里 12 个是同一个形状：「列一类」。后果是 `f
 行级隔离一律复用 `sales_router._all_view`，**不在这里重写任何权限谓词**。
 `Project.is_deleted == False` 每个查询都要带 —— 生产上有 28 行幽灵数据。
 """
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -389,6 +389,78 @@ async def get_project(db: AsyncSession, current: models.User, code: str) -> dict
                 + "、".join(s["project"] for s in snaps)
                 + "），下面逐个给出，回答时每个都要讲到，不要只说其中一个。",
         "projects": snaps,
+    }
+
+
+SIGN_KEY = "__o__签订日期"
+
+
+async def sales_summary(db: AsyncSession, current: models.User,
+                        months: int = 6, limit: int = 200) -> dict:
+    """按月统计销售额（合同额），并给出本月/上月对比。
+
+    ⚠️⚠️ **口径：按项目的「签订日期」归月，不是按台账录入时间。**
+       `sales_ledger.created_at` 是**谁什么时候把它敲进系统**，跟生意什么时候做成
+       没有关系 —— 生产上本月 created_at 是 0 行，照它算会得出「本月销售额 0」，
+       而实际 7 月签了 16 个项目 113 万。这种错最糟：它给的是个看起来正常的数字。
+       签订日期在 `Project.extra["__o__签订日期"]`（项目一览表的列）。
+
+    ⚠️ 合同额为 0 的行会被算进「笔数」但不进金额 —— 生产上 128 行台账里有 21 行
+       合同额是 0（毛利会被算成假亏损，见台账缺件）。这个数单独报出来，
+       否则「这个月只有 3 万」可能只是有几行还没填。
+    """
+    rows = list((await db.execute(
+        select(models.Project, models.SalesLedger)
+        .join(models.SalesLedger, models.SalesLedger.project_id == models.Project.id)
+        .where(models.Project.is_deleted == False)  # noqa: E712
+    )).all())
+    if not _all_view(current):
+        rows = [(p, l) for p, l in rows if l.sales_uid == current.id]
+
+    buckets: dict[str, dict] = {}
+    no_sign = 0
+    for p, l in rows:
+        sign = str(((p.extra or {}).get(SIGN_KEY) or "")).strip()
+        if len(sign) < 7:
+            no_sign += 1
+            continue
+        m = sign[:7]                       # YYYY-MM
+        b = buckets.setdefault(m, {"month": m, "count": 0, "amount": 0.0,
+                                   "zero_amount": 0, "projects": []})
+        b["count"] += 1
+        amt = float(l.amount or 0)
+        b["amount"] += amt
+        if amt <= 0:
+            b["zero_amount"] += 1
+        b["projects"].append({"project": p.code, "name": p.name,
+                              "customer": l.customer or "", "amount": amt,
+                              "sign_date": sign})
+
+    ms = sorted(buckets, reverse=True)[:max(1, months)]
+    items = [buckets[m] for m in ms]
+    for b in items:
+        b["projects"].sort(key=lambda x: -x["amount"])
+        b["projects"] = b["projects"][:_DETAIL_MAX]
+
+    today = date.today()
+    cur_m = today.strftime("%Y-%m")
+    prev = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    cur_b, prev_b = buckets.get(cur_m), buckets.get(prev)
+    return {
+        "count": len(items), "shown": len(items), "today": today.isoformat(),
+        "basis": "按项目签订日期归月（不是台账录入时间）",
+        "this_month": cur_m,
+        "this_month_amount": round((cur_b or {}).get("amount", 0.0), 2),
+        "this_month_count": (cur_b or {}).get("count", 0),
+        "last_month": prev,
+        "last_month_amount": round((prev_b or {}).get("amount", 0.0), 2),
+        "last_month_count": (prev_b or {}).get("count", 0),
+        # 没签订日期的进不了任何月份 —— 必须说出来，否则合计对不上没人知道为什么
+        "no_sign_date": no_sign,
+        "items": [{"month": b["month"], "count": b["count"],
+                   "amount": round(b["amount"], 2),
+                   "zero_amount": b["zero_amount"]} for b in items],
+        "months_detail": items,
     }
 
 
