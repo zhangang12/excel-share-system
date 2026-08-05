@@ -40,11 +40,21 @@ interface InvoiceRow {
 }
 // 视图行：在 InvoiceRow 基础上叠加合并组的展示字段
 type ViewRow = InvoiceRow & { _isBatch: boolean; _count: number; _codes: string }
+interface AsItem {
+  id: number; name: string; amount: number
+  invoice_file_id?: number | null; invoice_file_name?: string | null
+}
 interface AsRow {
   id: number; kind: string; code: string; name: string; problem: string; cost: number
+  // 🆕 报销支腿 + 逐行发票
+  pay_status?: string | null; pay_note?: string | null
+  items?: AsItem[]; missing_invoice?: number
   mat_file_id?: number | null; mat_file_name?: string | null
 }
 const KIND_TXT: Record<string, string> = { aftersales: '售后', install: '安装' }
+const AS_PAY_TXT: Record<string, string> = {
+  checking: '待核对', invoice_fix: '已退回', reimbursed: '已安排报销',
+}
 
 const tab = ref('pending')
 const loading = ref(false)
@@ -506,6 +516,45 @@ async function voidPendingInvoice(row: ViewRow) {
   }
 }
 
+// 🆕 售后报销：核对发票 → 安排报销 / 发票退回
+const asActing = ref<number | null>(null)
+
+async function asReimburse(row: AsRow) {
+  if (row.missing_invoice) {
+    ElMessage.warning(`还有 ${row.missing_invoice} 行没传发票，请先退回让登记人补齐`)
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认「${row.code}」的报销明细与发票核对无误，安排报销 ${fmtMoney(row.cost)}？`,
+      '安排报销', { confirmButtonText: '核对无误，安排报销' })
+  } catch { return }
+  asActing.value = row.id
+  try {
+    await http.post(`/aftersales/${row.id}/reimburse`, new FormData())
+    ElMessage.success('已安排报销')
+    await load()
+  } finally { asActing.value = null }
+}
+
+async function asPayReject(row: AsRow) {
+  let reason = ''
+  try {
+    const v = await ElMessageBox.prompt('发票哪里对不上？说清楚登记人才知道要改什么。', '发票退回', {
+      confirmButtonText: '退回登记人', inputPlaceholder: '如：差旅那行发票抬头不对',
+      inputValidator: (t: string) => (t || '').trim() ? true : '请填写退回原因',
+    })
+    reason = (v.value || '').trim()
+  } catch { return }
+  asActing.value = row.id
+  try {
+    const fd = new FormData(); fd.append('reason', reason)
+    await http.post(`/aftersales/${row.id}/pay-reject`, fd)
+    ElMessage.success('已退回登记人重传发票')
+    await load()
+  } finally { asActing.value = null }
+}
+
 // 财务管理层作废售后费用，退回售后部重审
 async function voidAfterSales(row: AsRow) {
   try {
@@ -616,7 +665,23 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <el-tab-pane v-if="tv('aftersales')" :label="`🛎️ 安装/售后费用 (${aftersales.length})`" name="aftersales">
-          <el-table show-overflow-tooltip :data="aftersales" stripe show-summary :summary-method="() => ['合计', '', '', '', '', fmtMoney(asTotal), '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="aftersales" stripe show-summary :summary-method="() => ['', '合计', '', '', '', '', fmtMoney(asTotal), '', '', '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+            <!-- 明细放展开行：一条售后动辄三五行费用，摊成列会把表挤到要横向滚动 -->
+            <el-table-column type="expand">
+              <template #default="{ row }">
+                <div class="as-detail">
+                  <div v-for="it in (row.items || [])" :key="it.id" class="as-item">
+                    <span class="as-nm">{{ it.name }}</span>
+                    <span class="as-amt">{{ fmtMoney(it.amount) }}</span>
+                    <el-button v-if="it.invoice_file_id" size="small" link type="primary"
+                               @click="downloadAttachment({ id: it.invoice_file_id, name: it.invoice_file_name || '发票' })">查看发票</el-button>
+                    <span v-else class="miss">缺发票</span>
+                  </div>
+                  <div v-if="!(row.items || []).length" class="muted small">旧流程登记的记录没有费用清单</div>
+                  <div v-if="row.pay_note" class="muted small">备注：{{ row.pay_note }}</div>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column type="index" label="#" width="50" />
             <el-table-column label="类型" width="70" align="center">
               <template #default="{ row }"><el-tag :type="row.kind === 'install' ? 'success' : 'warning'" size="small" effect="light">{{ KIND_TXT[row.kind] || '售后' }}</el-tag></template>
@@ -624,7 +689,13 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="140" />
             <el-table-column prop="problem" label="问题/说明" min-width="200" show-overflow-tooltip />
-            <el-table-column label="费用" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.cost) }}</template></el-table-column>
+            <el-table-column label="费用" width="130" align="right">
+              <template #default="{ row }">
+                <div>{{ fmtMoney(row.cost) }}</div>
+                <!-- 缺发票是财务最先要看的，直接标在金额下面，不用横向滚动去找 -->
+                <div v-if="row.missing_invoice" class="miss small">缺 {{ row.missing_invoice }} 张发票</div>
+              </template>
+            </el-table-column>
             <el-table-column label="清单" min-width="140">
               <template #default="{ row }">
                 <el-button v-if="row.mat_file_id" size="small" link type="primary"
@@ -634,9 +705,25 @@ async function revokeInvoice(row: ViewRow) {
                 <span v-else>—</span>
               </template>
             </el-table-column>
-            <el-table-column v-if="isManager" label="操作" width="80" fixed="right" :show-overflow-tooltip="false">
+            <!-- 🆕 报销核对：售后费用现在带逐行发票，财务在这里核对后安排报销。
+                 ⚠️ 必须放在**财务部**这个 tab——财务的菜单里根本没有「售后部」，
+                    按钮做在售后页他们走不到。 -->
+            <el-table-column label="报销状态" width="110" align="center">
               <template #default="{ row }">
-                <el-button size="small" link type="danger" @click="voidAfterSales(row)">作废</el-button>
+                <el-tag v-if="row.pay_status" size="small" effect="plain"
+                        :type="row.pay_status === 'reimbursed' ? 'success' : row.pay_status === 'invoice_fix' ? 'danger' : 'warning'">
+                  {{ AS_PAY_TXT[row.pay_status] }}
+                </el-tag>
+                <span v-else class="muted small">旧流程</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="210" fixed="right" :show-overflow-tooltip="false">
+              <template #default="{ row }">
+                <template v-if="row.pay_status === 'checking'">
+                  <el-button size="small" type="success" :loading="asActing === row.id" @click="asReimburse(row)">核对无误，安排报销</el-button>
+                  <el-button size="small" type="danger" plain :loading="asActing === row.id" @click="asPayReject(row)">发票退回</el-button>
+                </template>
+                <el-button v-if="isManager" size="small" link type="danger" @click="voidAfterSales(row)">作废</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -1246,6 +1333,11 @@ async function revokeInvoice(row: ViewRow) {
 </template>
 
 <style scoped>
+.as-detail { padding: 6px 18px 8px; }
+.as-item { display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 2; }
+.as-item .as-nm { min-width: 90px; }
+.as-item .as-amt { min-width: 90px; text-align: right; font-variant-numeric: tabular-nums; }
+.miss { color: var(--el-color-danger); }
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .small { font-size: 12px; }
