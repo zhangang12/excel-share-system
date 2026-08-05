@@ -757,7 +757,10 @@ def _route_model(message: str, cfg: dict, explicit: str | None) -> str:
     if not fast:
         return cfg["model"]
     t = message or ""
-    if any(k in t for k in _HEAVY_HINT) or any(k in t for k in _FULL_LIST_HINT):
+    if any(k in t for k in _HEAVY_HINT) or any(k in t for k in _FULL_LIST_HINT) \
+            or any(k in t for k in _THINK_HINT):
+        # 要跨表串数据再判断的（交期、进度、汇总…）也归这一档 ——
+        # 小模型答得出格式，答不出「为什么这批都卡在电工」
         return cfg["model"]          # 需要推理/长输出 → 大模型
     return fast                      # 单点查询 → 小模型
 _MAX_TOKENS_DEFAULT = 700
@@ -1172,7 +1175,7 @@ async def _rule_chat(message: str, db: AsyncSession, current: models.User):
 # ==================== 接口 ====================
 
 # thinking: "off"（默认）/"on"。见 _thinking_params 里的实测数据。
-_AGENT_CFG_FIELDS = ("base_url", "api_key", "model", "models", "thinking")
+_AGENT_CFG_FIELDS = ("base_url", "api_key", "model", "models", "model_fast", "thinking")
 _CLEAR_MARK = "-"   # PUT /config 字段传 "-" = 清除库中覆盖值，回退 .env 默认
 
 
@@ -1186,6 +1189,11 @@ def _model_whitelist(cfg: dict | None = None) -> list[str]:
     out = list(dict.fromkeys(ws))
     if cfg.get("model") and cfg["model"] not in out:
         out.append(cfg["model"])
+    # ⚠️ 小模型也必须在白名单里：_route_model 会路由到它，
+    #    而 chat_stream 入口有一道 `model not in _model_whitelist → 报无效模型`。
+    #    漏了这一步，配上 model_fast 反而让所有单点查询直接失败。
+    if cfg.get("model_fast") and cfg["model_fast"] not in out:
+        out.append(cfg["model_fast"])
     return out
 
 
@@ -1202,6 +1210,11 @@ async def _effective_llm_config(db: AsyncSession) -> dict:
         "models":    stored.get("models")    or settings.agent_llm_models,
         # ⚠️ 默认**关**思考。理由见 _thinking_params —— 开着的时候连
         #   「用一句话说今天天气不错」都答不出来（预算全被思维链吃光）。
+        # 单点查询走的小模型。⚠️ 这个键以前**根本没被读出来** ——
+        #   `_route_model` 里 cfg.get("model_fast") 永远是 None，模型路由等于死代码，
+        #   所有请求（包括「今日晨报」）都在用大模型。实测 flash 关思考后
+        #   1691ms vs pro 2318ms，白白多等 27%。
+        "model_fast": stored.get("model_fast") or "",
         "thinking":  (stored.get("thinking") or "off").lower(),
     }
 
@@ -1280,6 +1293,7 @@ class AgentConfigIn(BaseModel):
     api_key: str | None = None
     model: str | None = None
     models: str | None = None
+    model_fast: str | None = None
     # "off"（默认，快）/ "on"（让模型先想一想，慢很多，见 _thinking_params 的实测）
     # ⚠️ 字段名必须与 _AGENT_CFG_FIELDS 对齐 —— PUT /config 是按那个元组
     #    getattr(body, f) 取值的，漏一个就 AttributeError（加 thinking 时踩过）。

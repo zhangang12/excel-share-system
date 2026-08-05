@@ -202,6 +202,22 @@ async def main():
     finally:
         ar._llm_stream = orig
 
+
+    print("\n===== 7. 模型路由：单点查询走小模型，要分析的仍走大模型 =====")
+    # ⚠️ `model_fast` 以前**根本没被读出来**（_effective_llm_config 里没有这个键），
+    #    `_route_model` 里 cfg.get("model_fast") 永远 None → 模型路由是死代码，
+    #    所有请求都在用大模型。实测 flash 关思考 1691ms vs pro 2318ms，白等 27%。
+    cfg = {"model": "big", "model_fast": "small", "models": "big"}
+    chk("small" in ar._model_whitelist(cfg),
+        "小模型必须进白名单（否则路由过去会被「无效模型」挡下来，配了反而全挂）")
+    for q in ("今日晨报", "待填收货人", "这个月销售额"):
+        chk(ar._route_model(q, cfg, None) == "small", f"「{q}」→ 小模型")
+    for q in ("项目进度跟进", "为什么这批都卡在电工", "把所有项目全部列出来", "交期风险"):
+        chk(ar._route_model(q, cfg, None) == "big", f"「{q}」→ 大模型（要分析）")
+    chk(ar._route_model("今日晨报", cfg, "big") == "big", "用户显式指定时永远不覆盖他的选择")
+    chk(ar._route_model("今日晨报", {"model": "big", "models": "big"}, None) == "big",
+        "没配 model_fast 时退回默认模型，不报错")
+
     await engine.dispose()
     print("\nPASSED" if not FAIL else f"\n{len(FAIL)} FAILURES")
     sys.exit(1 if FAIL else 0)
