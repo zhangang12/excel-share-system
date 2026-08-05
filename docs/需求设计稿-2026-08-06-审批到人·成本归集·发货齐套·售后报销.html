@@ -130,18 +130,22 @@
   :root[data-theme="light"] th { color: #f5f6f8; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
-  /* ── 要拍板的问题 ── */
+  /* ── 已经定下来的口径 ── */
   .decide {
-    background: var(--card); border: 1px solid var(--brass);
+    background: var(--card); border: 1px solid var(--ok);
     border-radius: 8px; padding: 16px 19px 8px;
   }
-  .decide h3 { color: var(--brass); }
+  .decide h3 { color: var(--ok); }
   .q { display: flex; gap: 11px; align-items: flex-start; margin-bottom: 13px; }
-  .q input { margin-top: .45em; accent-color: var(--brass); flex: none; width: 15px; height: 15px; }
-  .q input:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+  .q .tick { color: var(--ok); font-weight: 800; flex: none; line-height: 1.75; }
   .q b { font-weight: 700; }
   .q .hint { color: var(--muted); font-size: 13.5px; display: block; margin-top: 2px; }
   .rec { color: var(--ok); font-weight: 700; }
+  .hold {
+    background: var(--brass-w); border: 1px solid var(--brass); color: var(--brass);
+    border-radius: 8px; padding: 13px 18px; font-weight: 700;
+  }
+  .hold span { color: var(--muted); font-weight: 400; display: block; margin-top: 3px; font-size: 14px; }
 
   /* ── 警示 ── */
   .flag {
@@ -160,13 +164,13 @@
 <div class="wrap">
 
 <header>
-  <div class="eyebrow">同辉智能项目管理系统 · 需求设计稿 · 2026-08-06</div>
+  <div class="eyebrow">同辉智能项目管理系统 · 需求设计稿 · 2026-08-06 · 口径已确认</div>
   <h1>审批配到人、费用归到成本、发货看客户、售后自带报销</h1>
   <p class="lede">
-    这四条是你今天提的。先把改法写清楚给业务确认，确认完再写代码——
-    其中<b>「OA 费用按部门归集」和「售后登记内置报销」必须一起定</b>，
-    单独做任何一条都会让同一笔售后费用被算两遍。
-    每节最后是<b>需要你拍板的问题</b>，定了我就开工。
+    这四条是你提的，逐条问过口径、已经定完，本稿转为<b>开发依据</b>。
+    每节最后一块绿框就是定下来的结论。<br>
+    做的顺序：<b>① 审批到人</b> → <b>④ 售后自带报销 ＋ ② 费用归成本（捆在一起）</b>；
+    <b>③ 发货资料暂缓</b>——查生产库发现光免掉铭牌说明书解决不了问题，见那一节。
   </p>
 </header>
 
@@ -222,22 +226,22 @@
   </div>
 
   <div class="decide">
-    <h3>需要你拍板</h3>
-    <div class="q"><input type="checkbox" id="a1"><label for="a1">
-      <b>指定的人不在时怎么走？</b>
-      <span class="hint">建议：给每个人设一个<b>代理人</b>，本人 3 天没处理就自动同时进代理人的待办（本人仍可批）。
-        比"自动跳过"安全，比"死等"顺畅。<span class="rec">推荐这个</span></span>
-    </label></div>
-    <div class="q"><input type="checkbox" id="a2"><label for="a2">
-      <b>一步能不能配多个人？</b>
-      <span class="hint">两种含义要分清：<b>任一人批即可</b>（提速）还是<b>所有人都要批</b>（会签，更慢但更严）。
-        建议先只做「任一人批即可」，会签等真有需要再加。</span>
-    </label></div>
-    <div class="q"><input type="checkbox" id="a3"><label for="a3">
-      <b>你挂多个部门，提交申请时按哪个部门取审批链？</b>
-      <span class="hint">建议：提交时多一个「以哪个部门的名义申请」下拉，默认主部门。
-        这一步不做的话，指定到人也救不了走错链的问题。</span>
-    </label></div>
+    <h3>已定</h3>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>指定的人不在时：设代理人，本人 3 天没处理就自动同时进代理人待办</b>
+      <span class="hint">本人仍然能批。比"自动跳过"安全，比"死等"顺畅。代理人跟指定到人<b>同批发布</b>，
+        不然指定到人就成了新堵点。</span>
+    </div></div>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>先只做「一步指定一个人」，会签以后再说</b>
+      <span class="hint">按角色配的老方式保留不动，两种配法共存：这一步要么选角色、要么选人。</span>
+    </div></div>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>挂多部门走错链的问题：不用改，现在就已经解决了</b>
+      <span class="hint">查过代码，提交申请时本来就要<b>选以哪个部门的名义提</b>
+        （<span class="mono">create_request</span> 从请求体取 <span class="mono">department_id</span>），
+        不是按人所在部门瞎猜。</span>
+    </div></div>
   </div>
 </section>
 
@@ -283,22 +287,25 @@
   </div>
 
   <div class="decide">
-    <h3>需要你拍板</h3>
-    <div class="q"><input type="checkbox" id="b1"><label for="b1">
-      <b>什么时候算进成本：审批通过，还是实际付款？</b>
-      <span class="hint">审批通过就算——看得早，但可能有批了没付的；实际付款才算——跟银行流水对得上，但滞后。
-        <span class="rec">建议按"审批通过"计入，另给财务一列"是否已付"</span>，两头都能看。</span>
-    </label></div>
-    <div class="q"><input type="checkbox" id="b2"><label for="b2">
-      <b>采购申请要不要计成本？</b>
-      <span class="hint">注意：走 OA 的采购申请如果最后又在采购管理里开了采购单，
-        这笔钱会<b>被算两次</b>。建议 OA 采购申请<b>只当审批用、不计成本</b>，成本一律以采购单为准。</span>
-    </label></div>
-    <div class="q"><input type="checkbox" id="b3"><label for="b3">
-      <b>差旅报销算哪个部门的成本？</b>
-      <span class="hint">按提交人所在部门算，还是按出差服务的那个项目算？
-        如果销售出差是为了某个项目，你希望它落在"销售成本"还是那个项目上？</span>
-    </label></div>
+    <h3>已定</h3>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>审批通过就计入成本，另给财务一列「是否已付」</b>
+      <span class="hint">成本看得早，同时看得见哪些批了还没付。两头都不耽误。</span>
+    </div></div>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>金额一律按「财务核定金额」算</b>
+      <span class="hint"><span class="mono">settle_amount</span> 为空时才回退用申请金额。
+        按申请金额算的话，财务扣过款的单子成本会虚高，老板看的数跟财务账对不上。</span>
+    </div></div>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>OA 的采购申请<u>不计</u>成本，成本一律以采购单为准</b>
+      <span class="hint">OA 采购申请只当审批用。否则同一笔钱在 OA 和采购单里各算一次，直接翻倍。</span>
+    </div></div>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>差旅按提交人所在部门归集</b>
+      <span class="hint">跟这一节"按部门统计"的口径一致。唯一例外是售后／安装的差旅——
+        那部分跟着售后单走，见第 ④ 节。</span>
+    </div></div>
   </div>
 </section>
 
@@ -338,23 +345,24 @@
   </div>
 
   <div class="decide">
-    <h3>需要你拍板</h3>
-    <div class="q"><input type="checkbox" id="c1"><label for="c1">
-      <b>客户类型记在哪一层？</b>
-      <span class="hint">记在<b>客户档案</b>上，这家客户所有单子都一样，省事但偶尔的例外改不了；
-        记在<b>每张销售单</b>上，逐单可改。<span class="rec">建议：客户档案上设默认值，下单时可以改</span>——
-        你原话是"根据销售下单的客户分类"，这样既省事又留了口子。</span>
-    </label></div>
-    <div class="q"><input type="checkbox" id="c2"><label for="c2">
-      <b>存量的几百个项目默认算哪一类？</b>
-      <span class="hint">建议一律默认<b>终端客户</b>（要求更严）。默认成经销商的话，
-        等于<b>把一批本该卡住的单子悄悄放行了</b>，风险大。经销商的单让销售逐个改过来。</span>
-    </label></div>
-    <div class="q"><input type="checkbox" id="c3"><label for="c3">
-      <b>除了经销商和终端客户，还有第三类吗？</b>
-      <span class="hint">比如返修件、样机、内部试制——这些往往连电路图都不需要。
-        现在定下来比以后加便宜。</span>
-    </label></div>
+    <h3>已定</h3>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>不新建字段——销售下单时的「客户分类」就是它</b>
+      <span class="hint">销售台账上早就有 <span class="mono">cust_type</span>，取值就是 经销商／终端客户，
+        而且只有这两类。生产上已经填得很整齐：<b>终端客户 67、经销商 59，只有 2 条空的</b>。
+        直接拿来用，不再造第二个字段。</span>
+    </div></div>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>存量数据不用刷，按现有的客户分类走</b>
+      <span class="hint">数据本来就是准的，没有"默认成哪一类"的问题。</span>
+    </div></div>
+  </div>
+
+  <div class="hold" style="margin-top:16px">
+    ⏸ 这一条暂缓
+    <span>查生产库时发现跟设想的不一样：97 个未发货项目里，卡住的是<b>生产部 53 单、电工部 37 单</b>，
+      设计部只卡了 1 单——而铭牌／说明书是设计部的产出。也就是说光免掉铭牌说明书，
+      现在这批经销商的单<b>还是发不了</b>。等你确认物流那边到底是被什么拦住的，再动这一条。</span>
   </div>
 </section>
 
@@ -413,28 +421,23 @@
     入口处直接提示「售后和安装的费用请在售后部登记里提交」。</p>
 
   <div class="decide">
-    <h3>需要你拍板</h3>
-    <div class="q"><input type="checkbox" id="d1"><label for="d1">
-      <b>售后人员的差旅费（路费、住宿）走哪条路？</b>
-      <span class="hint">跟着这单售后一起报（能算进这个项目的售后成本，最准），
-        还是仍走 OA 差旅（跟其他部门一致，但又回到重复问题）。
-        <span class="rec">建议跟着售后单一起报</span>，费用清单里加一行"差旅"就行。</span>
-    </label></div>
-    <div class="q"><input type="checkbox" id="d2"><label for="d2">
-      <b>「财务出纳」是新角色还是用现有的财务角色？</b>
-      <span class="hint">现在系统里财务只有"财务主管"和"财务部"。
-        要单独区分出纳，得新建角色并指定人——请告诉我出纳是谁。</span>
-    </label></div>
-    <div class="q"><input type="checkbox" id="d3"><label for="d3">
-      <b>已经在 OA 里在途的售后报销单怎么办？</b>
-      <span class="hint">建议：<b>让它们照原路走完</b>，新单一律走新路。
-        中途搬家容易把单子搞丢，也会让当事人不知道该去哪看。</span>
-    </label></div>
-    <div class="q"><input type="checkbox" id="d4"><label for="d4">
-      <b>出纳核对发现发票对不上，退给谁？</b>
-      <span class="hint">退回给登记人重新传（推荐），还是退回给售后主管重审？
-        这决定了驳回按钮怎么做。</span>
-    </label></div>
+    <h3>已定</h3>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>售后／安装的差旅费跟这单售后一起报</b>
+      <span class="hint">费用清单里加一行「差旅」即可。能算进这个项目的售后成本，也不会跟 OA 重复。</span>
+    </div></div>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>核对发票这一步用现有的「财务部」角色，不新建出纳角色</b>
+      <span class="hint">改动最小，财务部的人都能核对报销。</span>
+    </div></div>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>已经在 OA 里在途的售后报销单，照原路走完</b>
+      <span class="hint">新单一律走新路。中途搬家容易把单子搞丢，也会让当事人不知道该去哪看。</span>
+    </div></div>
+    <div class="q"><span class="tick">✓</span><div>
+      <b>发票对不上就退回登记人重传，改完直接回到财务部这一步</b>
+      <span class="hint">谁传错谁改，不用售后主管再批一遍。</span>
+    </div></div>
   </div>
 </section>
 
@@ -450,19 +453,19 @@
       <tbody>
         <tr>
           <td><b>第一批</b></td>
-          <td>③ 发货资料按客户分类</td>
-          <td>跟别的都不相干，改动最小，而且经销商的单子<b>现在就卡着发不了货</b>，最急。</td>
+          <td>① 审批链指定到人<br>（含代理人）</td>
+          <td>独立改动，不牵扯别的。代理人必须同批做，否则指定到人会制造新堵点。</td>
         </tr>
         <tr>
           <td><b>第二批</b></td>
-          <td>① 审批链指定到人<br>（含代理人）</td>
-          <td>独立改动。代理人必须同批做，否则指定到人会制造新堵点。</td>
-        </tr>
-        <tr>
-          <td><b>第三批</b></td>
           <td>④ 售后登记自带报销<br><b>＋</b> ② 费用按部门归成本</td>
           <td><b>必须捆在一起发</b>。先发 ② 会让售后费用重复计算；
               先发 ④ 而不发 ②，OA 里的老报销又统计不到。</td>
+        </tr>
+        <tr>
+          <td>暂缓</td>
+          <td>③ 发货资料按客户分类</td>
+          <td>等确认物流那边实际被什么拦住——现在的数据表明光免掉铭牌说明书解决不了问题。</td>
         </tr>
       </tbody>
     </table>
@@ -471,8 +474,7 @@
 </section>
 
 <footer>
-  <p>把上面每节「需要你拍板」的问题回一下——不用逐条写，
-    说「都按你建议的来，除了第几条」也行。定了我就开始做第一批。</p>
+  <p>口径已经确认完，本稿转为<b>开发依据</b>。有改动直接说，我改稿再动代码。</p>
 </footer>
 
 </div>
