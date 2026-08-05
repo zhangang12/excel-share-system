@@ -547,7 +547,11 @@ async function saveEdit(r: DataRecord, f: DataField) {
       else newValues[fid] = newVal
       records.value[idx] = { ...records.value[idx], values: newValues }
     }
-  } catch { /* */ }
+  } catch {
+    // 这里刻意不弹提示：api/index.ts 的全局响应拦截器已经对每一次失败弹过错误了
+    // （401 则清 token 跳登录）。在这里再弹一次，用户会连着看到两条内容重复的提示。
+    // 保存失败时 records 不更新，格子会立刻显示回原值——人看得见没写进去。
+  }
 }
 
 function cancelEdit() { editingCell.value = null }

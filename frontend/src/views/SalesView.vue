@@ -370,10 +370,17 @@ async function submitEdit() {
   if (!editRow.value) return
   await salesApi.updateLedger(editRow.value.id, { ...editForm })
   // 同步收件信息（已发货则后端会拒绝，这里跳过避免报错）
+  // ⚠️ 原来这里 catch 完就照样弹「已保存」——收件信息没存上却告诉人存上了。
+  //    台账本身已经存了，所以不当成整体失败，但必须说清哪部分没成。
+  // 具体原因由 api/index.ts 的全局拦截器弹，这里只负责纠正「已保存」这个结论。
+  let rcvFailed = false
   if (!editRcvShipped.value) {
-    try { await salesApi.updateReceiver(editRow.value.id, { ...editRcv }) } catch { /* 静默 */ }
+    try {
+      await salesApi.updateReceiver(editRow.value.id, { ...editRcv })
+    } catch { rcvFailed = true }
   }
-  ElMessage.success('已保存')
+  if (rcvFailed) ElMessage.warning('台账已保存，但收件信息没保存上')
+  else ElMessage.success('已保存')
   editVisible.value = false
   await load()
 }
