@@ -38,7 +38,11 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     #   在途单的 activated_at 为 NULL 时按「无限久以前」处理会让代理人立刻接手，
     #   所以判定处必须把 NULL 当成"还没开始计时"，见 oa_router._deputy_can_act。
     "oa_approval_steps": [("approver_user_id", "INTEGER")],
-    "oa_request_steps": [("approver_user_id", "INTEGER"), ("activated_at", "TIMESTAMP")],
+    # ⚠️ activated_at 必须是 **TIMESTAMPTZ**：模型声明的是 DateTime(timezone=True)，
+    #    写进去的是带时区的 UTC 值。建成不带时区的 TIMESTAMP 的话，Postgres 会按
+    #    会话时区做一次转换，代理人那 3 天的门槛就会整体偏掉时区差（Asia/Shanghai 差 8 小时）。
+    #    已经建成不带时区的库由下面 _WIDEN_COLUMNS 里那条 ALTER 修正。
+    "oa_request_steps": [("approver_user_id", "INTEGER"), ("activated_at", "TIMESTAMPTZ")],
     "datasheets": [
         ("imported_at", "TIMESTAMP"),       # P-16 四表导入标记
         ("done_flag", "BOOLEAN DEFAULT FALSE"),  # §十七 装配前置完成标记
@@ -191,6 +195,37 @@ async def ensure_schema_columns(engine: AsyncEngine) -> int:
                     await conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {col} DROP NOT NULL"))
                     log.info("[ensure_schema_columns] %s.%s 已去除 NOT NULL", table, col)
     return added
+
+
+
+async def fix_oa_activated_at_tz(db: AsyncSession) -> dict:
+    """把 oa_request_steps.activated_at 从「不带时区」改成 TIMESTAMPTZ（仅 Postgres）。
+
+    为什么要单独写而不塞进 _WIDEN_COLUMNS：那个字典**每次启动都无条件执行 ALTER**。
+    `USING activated_at AT TIME ZONE 'UTC'` 对已经是 timestamptz 的列再跑一次，
+    会先把它当本地时间摘成 naive、再按会话时区读回去——**每启动一次就整体挪一个时区差**。
+    所以这里必须先查当前类型，只有确实是 without time zone 才动。
+
+    背景：首版补列的 DDL 写的是 TIMESTAMP，而模型声明的是 DateTime(timezone=True)。
+    写进去的是带时区的 UTC 值，列不带时区的话代理人那 3 天门槛会整体偏一个时区差
+    （Asia/Shanghai 差 8 小时）。
+    """
+    if db.bind is None or db.bind.dialect.name != "postgresql":
+        return {"altered": 0, "reason": "非 Postgres，create_all 已按模型建对"}
+    r = await db.execute(text(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_name='oa_request_steps' AND column_name='activated_at'"))
+    row = r.first()
+    if not row:
+        return {"altered": 0, "reason": "列还不存在"}
+    if row[0] != "timestamp without time zone":
+        return {"altered": 0, "reason": f"已是 {row[0]}，不动"}
+    await db.execute(text(
+        "ALTER TABLE oa_request_steps ALTER COLUMN activated_at "
+        "TYPE TIMESTAMPTZ USING activated_at AT TIME ZONE 'UTC'"))
+    await db.commit()
+    log.info("[fix_oa_activated_at_tz] activated_at 已改为 TIMESTAMPTZ（存量值按 UTC 解释）")
+    return {"altered": 1}
 
 
 async def backfill_empty_project_members(db: AsyncSession) -> int:
@@ -2182,6 +2217,10 @@ async def split_mixed_supplier_po(db: AsyncSession) -> int:
 
 async def run_all(db: AsyncSession) -> None:
     """启动时调用：依次跑所有迁移；任一失败只 warn 不阻塞启动。"""
+    try:
+        await fix_oa_activated_at_tz(db)
+    except Exception as e:
+        log.warning("fix_oa_activated_at_tz failed: %s", e)
     try:
         await backfill_user_roles(db)
     except Exception as e:
