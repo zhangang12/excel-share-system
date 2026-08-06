@@ -15,6 +15,15 @@ FastAPI(async SQLAlchemy 2.0 + Pydantic v2)+ Vue3 + TypeScript + Element Plus;�
 - 涉及 SQL/schema/GROUP BY 的改动,必须在真 Postgres 上验证(沙箱:`service postgresql start`,
   测试用户 pms/pms),SQLite 通过不算数。
 - 新写/改动的后端接口必须实际调用验证,前端必须过 `npx vue-tsc --noEmit`。
+- **同时开多个会话时，各自开 worktree，不要挤在同一个工作区**:
+  `bash ops/worktree.sh new <名字>` → 去那个目录干活 → 回主检出
+  `bash ops/worktree.sh merge <名字>` 合回 main 并推送 → 再发版。
+  (两个会话共用一个工作区会互相把对方改到一半的文件卷进自己的 commit，
+   2026-08-06 发生过两次，并由此导致漏提交、线上少功能。)
+- **发版完必须验线上实物**:`bash ops/verify-shipped.sh <功能关键词>`。
+  「发版成功」只说明部署流程跑完了，不说明你的代码在里面。
+- **前端改动必须同时发客户端**:`bash desktop/ship.sh`。
+  桌面客户端加载的是**打进安装包的前端**，不是服务器上的，光发网页版客户端看不到。
 - 推送:main + 当前 claude/* 开发分支双推;PAT 放 `.env.local`(gitignored)变量名 `GITHUB_PAT`,
   推送命令模式见交接文档第二节;**密钥永不落仓库**。
 - 推完代码提醒用户在服务器 `git pull && docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build`

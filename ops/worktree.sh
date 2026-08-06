@@ -100,18 +100,27 @@ new)
 list)
   echo -e "${BOLD}── worktree ──${OFF}"
   git fetch origin main --quiet 2>/dev/null
-  git worktree list | while read -r dir sha br; do
-    br="${br//[\[\]]/}"
-    if [[ "$br" == "main" ]]; then
-      printf "  %-46s %s  %s\n" "$(basename "$dir")" "$sha" "main（主检出，发版在这儿做）"
-    else
-      cnt=$(git rev-list --left-right --count "origin/main...$br" 2>/dev/null || echo "? ?")
-      behind=$(echo "$cnt" | awk '{print $1}'); ahead=$(echo "$cnt" | awk '{print $2}')
-      dirty=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-      note=""
-      [[ "$dirty" != "0" ]] && note="${BAD}未提交 $dirty 个文件${OFF}"
-      printf "  %-46s %s  %-32s 领先 %s / 落后 %s  %b\n" "$(basename "$dir")" "$sha" "$br" "$ahead" "$behind" "$note"
+  # ⚠️ 不能 `read dir sha br` 拆 `git worktree list` 的输出——
+  #    仓库路径里有空格（.../excel share/...），按空白拆会把一个目录劈成两半。
+  #    用 --porcelain：一行一个字段，路径原样，不受空格影响。
+  git worktree list --porcelain | awk '
+    /^worktree /{ d=substr($0,10) }
+    /^HEAD /    { h=substr($0,6,7) }
+    /^branch /  { b=substr($0,8); sub("refs/heads/","",b); print d "\t" h "\t" b; d=h=b="" }
+    /^detached/ { print d "\t" h "\t(detached)"; d=h="" }
+  ' | while IFS=$'\t' read -r dir sha br; do
+    name=$(basename "$dir")
+    if [[ "$dir" == "$ROOT" ]]; then
+      printf "  %-24s %s  %-26s %s\n" "$name" "$sha" "$br" "← 主检出，发版在这儿做"
+      continue
     fi
+    cnt=$(git rev-list --left-right --count "origin/main...$br" 2>/dev/null || echo "0 0")
+    behind=$(echo "$cnt" | awk '{print $1}'); ahead=$(echo "$cnt" | awk '{print $2}')
+    tracked=$(git -C "$dir" status --porcelain 2>/dev/null | grep -vc '^??' || true)
+    note=""
+    [[ "${tracked:-0}" != "0" ]] && note="${BAD}有 $tracked 个改了没提交${OFF}"
+    [[ "$ahead" != "0" ]] && note="$note ${WARN}$ahead 个提交待合并${OFF}"
+    printf "  %-24s %s  %-26s 领先 %-3s 落后 %-3s %b\n" "$name" "$sha" "$br" "$ahead" "$behind" "$note"
   done
   ;;
 
