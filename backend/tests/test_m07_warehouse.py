@@ -78,14 +78,14 @@ async def main():
         chk(r.json()["low_count"]==1, "low_count统计")
 
         # ===== 冲红：把出库25冲掉 → 库存回滚 +25 =====
-        txns = (await c.get("/api/wh/txns?direction=out", headers=Hw)).json()
+        txns = (await c.get("/api/wh/txns?direction=out", headers=Hw)).json()["rows"]
         out25 = [t for t in txns if t["qty"]==25][0]
         r = await c.post(f"/api/wh/txns/{out25['id']}/reverse", headers=Hw)
         chk(r.status_code==200, f"冲红: {r.text[:120]}")
         r = await c.get("/api/wh/materials", headers=Hw)
         chk(r.json()["materials"][0]["stock"]==29, f"冲红回滚后库存29: {r.json()['materials'][0]['stock']}")
         # 原单标记 reversed + 生成反向单
-        txns = (await c.get("/api/wh/txns", headers=Hw)).json()
+        txns = (await c.get("/api/wh/txns", headers=Hw)).json()["rows"]
         chk(any(t["id"]==out25["id"] and t["reversed"] for t in txns), "原单标记reversed")
         chk(any(t["is_reversal"] and t["source"]=="冲红" for t in txns), "生成冲红反向单")
         # 冲红单不可再冲红
@@ -97,10 +97,10 @@ async def main():
         m2 = (await c.post("/api/wh/materials", headers=Hw, json={"name":"密封圈","spec":"DN50","unit":"个","init_stock":0})).json()["id"]
         await c.post("/api/wh/txns", headers=Hw, json={"material_id":m2,"biz_date":"2026-06-05","direction":"in","qty":10,"source":"采购入库"})
         await c.post("/api/wh/txns", headers=Hw, json={"material_id":m2,"biz_date":"2026-06-06","direction":"out","qty":8,"party":"领用","non_project":True,"non_project_reason":"用例:非项目领用"})
-        in10 = [t for t in (await c.get("/api/wh/txns?direction=in", headers=Hw)).json() if t["material_id"]==m2 and t["qty"]==10][0]
+        in10 = [t for t in (await c.get("/api/wh/txns?direction=in", headers=Hw)).json()["rows"] if t["material_id"]==m2 and t["qty"]==10][0]
         r = await c.post(f"/api/wh/txns/{in10['id']}/reverse", headers=Hw)
         chk(r.status_code==400 and "不足冲红" in r.text, f"#83 冲红入库致负库存被拒: {r.status_code} {r.text[:80]}")
-        out8 = [t for t in (await c.get("/api/wh/txns?direction=out", headers=Hw)).json() if t["material_id"]==m2 and t["qty"]==8][0]
+        out8 = [t for t in (await c.get("/api/wh/txns?direction=out", headers=Hw)).json()["rows"] if t["material_id"]==m2 and t["qty"]==8][0]
         await c.post(f"/api/wh/txns/{out8['id']}/reverse", headers=Hw)  # 先冲出库,库存回到10
         r = await c.post(f"/api/wh/txns/{in10['id']}/reverse", headers=Hw)
         chk(r.status_code==200, f"#83 先冲出库后入库单可冲红: {r.text[:80]}")

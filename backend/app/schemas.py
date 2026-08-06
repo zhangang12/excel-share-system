@@ -574,6 +574,15 @@ class WhTxnOut(BaseModel):
     reversed: bool = False
     created_at: datetime
 
+class WhTxnListOut(BaseModel):
+    """🆕 出入库流水列表。原来直接返回数组、前端在最近 200 条里过滤——
+    生产上流水 1083 条，能搜到的最早只到昨天。改成服务端搜索后必须回 total，
+    否则前端没法告诉用户"还有 N 条没显示"，人会以为搜完了。"""
+    rows: list[WhTxnOut] = []
+    total: int = 0      # 按当前条件命中的总数
+    shown: int = 0      # 本次真正返回了几条
+
+
 
 class WhSummaryRow(BaseModel):
     material_id: int

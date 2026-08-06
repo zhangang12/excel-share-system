@@ -24,6 +24,11 @@ export interface WhTxn {
   location?: string | null   // 🆕 库位(入=放到哪/出=从哪领)
   is_reversal: boolean; reversed: boolean; created_at: string
 }
+export interface WhTxnList {
+  rows: WhTxn[]
+  total: number   // 按当前条件命中的总数
+  shown: number   // 本次真正返回了几条（total>shown 说明被截断了，要提示用户）
+}
 // 🆕 库位主数据（仓库维护;采购下单/出入库共用取值）
 export interface WhLocation {
   id: number; name: string; note?: string | null
@@ -57,8 +62,12 @@ export const whApi = {
     http.get<ShipListPendingRow[]>('/wh/ship-list/pending', { params: { status } }).then((r) => r.data),
   shipListReady: (projectId: number) =>
     http.post<{ message: string }>(`/wh/ship-list/${projectId}/ready`).then((r) => r.data),
-  materials: (kw?: string) =>
-    http.get<{ materials: WhMaterial[]; total: number; low_count: number }>('/wh/materials', { params: { kw } }).then((r) => r.data),
+  // kw 现在搜 名称/规格/编码/单位/库位/材质；另可按库位精确筛、只看低于安全库存
+  materials: (params?: { kw?: string; location?: string; low_only?: boolean } | string) => {
+    const p = typeof params === 'string' ? { kw: params } : (params || {})
+    return http.get<{ materials: WhMaterial[]; total: number; low_count: number }>(
+      '/wh/materials', { params: p }).then((r) => r.data)
+  },
   createMaterial: (data: Partial<WhMaterial>) => http.post('/wh/materials', data).then((r) => r.data),
   updateMaterial: (id: number, data: Partial<WhMaterial>) => http.put(`/wh/materials/${id}`, data).then((r) => r.data),
   deleteMaterial: (id: number) => http.delete<{ message: string }>(`/wh/materials/${id}`).then((r) => r.data),
@@ -67,8 +76,12 @@ export const whApi = {
   createCustomField: (data: Partial<WhCustomField>) => http.post('/wh/material-custom-fields', data).then((r) => r.data),
   updateCustomField: (id: number, data: Partial<WhCustomField>) => http.put(`/wh/material-custom-fields/${id}`, data).then((r) => r.data),
   deleteCustomField: (id: number) => http.delete(`/wh/material-custom-fields/${id}`).then((r) => r.data),
-  txns: (params?: { direction?: string; material_id?: number }) =>
-    http.get<WhTxn[]>('/wh/txns', { params }).then((r) => r.data),
+  // 🆕 搜索改在服务端做：原来只拿最近 200 条、前端在这堆里过滤，
+  //    生产上流水 1083 条，能搜到的最早只到昨天——入完料第二天就搜不着了。
+  txns: (params?: {
+    direction?: string; material_id?: number
+    kw?: string; date_from?: string; date_to?: string; limit?: number
+  }) => http.get<WhTxnList>('/wh/txns', { params }).then((r) => r.data),
   // 🆕 库位管理
   locations: (enabledOnly = false) =>
     http.get<WhLocation[]>('/wh/locations', { params: { enabled_only: enabledOnly } }).then((r) => r.data),

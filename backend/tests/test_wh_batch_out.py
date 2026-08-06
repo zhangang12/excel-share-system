@@ -62,7 +62,8 @@ async def main():
 
         async def out_txns():
             r = await c.get("/api/wh/txns", headers=H, params={"direction": "out"})
-            return [t for t in r.json() if t["material_id"] in (A, B, C)]
+            # 🆕 接口改成 {rows,total,shown}（搜索下沉服务端），这里取 rows
+            return [t for t in r.json()["rows"] if t["material_id"] in (A, B, C)]
 
         # ===== 1. 未登录 401 / 无写权限 403 =====
         body_np = {"biz_date": "2026-07-29", "non_project": True, "non_project_reason": "车间耗材",

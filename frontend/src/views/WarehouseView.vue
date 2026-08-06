@@ -42,12 +42,30 @@ const loading = ref(false)
 const materials = ref<WhMaterial[]>([])
 const lowCount = ref(0)
 const kw = ref('')
+// 🆕 仓库反馈：551 个物料只能按名称/规格找。加库位筛选和"只看缺料"，
+//    kw 本身在后端也扩到了 单位/库位/材质。
+const matLoc = ref('')
+const matLowOnly = ref(false)
+const matTotal = ref(0)
+let matTimer: ReturnType<typeof setTimeout> | null = null
+function onMatSearch() {
+  if (matTimer) clearTimeout(matTimer)
+  matTimer = setTimeout(loadMaterials, 300)
+}
+function resetMatFilter() {
+  kw.value = ''; matLoc.value = ''; matLowOnly.value = false
+  loadMaterials()
+}
 
 async function loadMaterials() {
   loading.value = true
   try {
-    const j = await whApi.materials(kw.value || undefined)
-    materials.value = j.materials; lowCount.value = j.low_count
+    const j = await whApi.materials({
+      kw: kw.value.trim() || undefined,
+      location: matLoc.value || undefined,
+      low_only: matLowOnly.value || undefined,
+    })
+    materials.value = j.materials; lowCount.value = j.low_count; matTotal.value = j.total
   } finally { loading.value = false }
 }
 // ===== 🆕 库位管理（主数据;采购下单/物料/出入库共用取值） =====
@@ -156,22 +174,38 @@ function matLabel(m: WhMaterial) { return `${m.name}${m.spec ? '·' + m.spec : '
 // ===== 流水 =====
 const txns = ref<WhTxn[]>([])
 const txnDir = ref('')
-// 🆕 出入库流水搜索（单号/物料/库位/来源用途/供应商领用方/项目/日期，大小写不敏感）
+// 🆕 出入库流水搜索：**改成服务端搜**（单号/物料/规格/库位/来源/往来单位/项目编号）。
+// ⚠️ 原来是拿最近 200 条回来、在前端 filter——生产上流水已经 1083 条，
+//    前端能搜到的最早只到昨天，仓库入完料第二天就搜不着了。
 const txnSearch = ref('')
-const filteredTxns = computed(() => {
-  const kw = txnSearch.value.trim().toLowerCase()
-  if (!kw) return txns.value
-  return txns.value.filter(t =>
-    (t.ref_no || '').toLowerCase().includes(kw)
-    || `${t.material_name || ''}${t.spec ? '·' + t.spec : ''}`.toLowerCase().includes(kw)
-    || (t.location || '').toLowerCase().includes(kw)
-    || (t.source || '').toLowerCase().includes(kw)
-    || (t.party || '').toLowerCase().includes(kw)
-    || (t.project_code || '').toLowerCase().includes(kw)
-    || (t.biz_date || '').includes(kw))
-})
+const txnRange = ref<[string, string] | null>(null)
+const txnTotal = ref(0)     // 命中总数
+const txnShown = ref(0)     // 实际返回数；total>shown 说明被截断，要明确告诉用户
+const txnLoading = ref(false)
+let txnTimer: ReturnType<typeof setTimeout> | null = null
+// 搜索走后端，输入时防抖，别每敲一个字打一次接口
+function onTxnSearch() {
+  if (txnTimer) clearTimeout(txnTimer)
+  txnTimer = setTimeout(loadTxns, 300)
+}
 async function loadTxns() {
-  txns.value = await whApi.txns({ direction: txnDir.value || undefined })
+  txnLoading.value = true
+  try {
+    const d = await whApi.txns({
+      direction: txnDir.value || undefined,
+      kw: txnSearch.value.trim() || undefined,
+      date_from: txnRange.value?.[0] || undefined,
+      date_to: txnRange.value?.[1] || undefined,
+      limit: 500,
+    })
+    txns.value = d.rows
+    txnTotal.value = d.total
+    txnShown.value = d.shown
+  } finally { txnLoading.value = false }
+}
+function resetTxnFilter() {
+  txnSearch.value = ''; txnRange.value = null; txnDir.value = ''
+  loadTxns()
 }
 async function reverseTxn(t: WhTxn) {
   await ElMessageBox.confirm(`冲红单据 ${t.ref_no}？将生成反向单据回滚库存，原单保留。`, '冲红', { type: 'warning' })
@@ -862,6 +896,63 @@ async function deletePurchReq(row: PreqRow) {
 function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
   return s === 'done' ? 'success' : s === 'rejected' ? 'danger' : 'warn'
 }
+
+// ⚠️ 这一段必须放在文件末尾：下面引用的 summary / locations / demandOverview /
+//    demandRows / groupedRecv / shipPending 都在前面几百行才声明，
+//    computed 写在它们之前会踩 TDZ，页面一打开就白屏。
+// ===== 🆕 各 tab 的关键词搜索（仓库反馈：所有功能都要能搜） =====
+//
+// ⚠️ 这里是**客户端**过滤，跟出入库流水不一样——那边后端会截断，
+//    只在返回的那批里找等于搜不全（生产上 1083 条只回 200 条，搜到的最早只到昨天），
+//    所以流水改成了服务端搜。而下面这几张表的数据是**整份都在前端**的
+//    （库位 41、汇总/需求/收货/发货都是一次取完），客户端过滤就能搜全，不必改接口。
+function kwHit(row: any, kw: string, fields: string[]): boolean {
+  const k = kw.trim().toLowerCase()
+  if (!k) return true
+  return fields.some(f => String(row?.[f] ?? '').toLowerCase().includes(k))
+}
+
+const sumSearch = ref('')
+const filteredSummary = computed(() =>
+  summary.value.filter(r => kwHit(r, sumSearch.value, ['name', 'spec', 'unit'])))
+
+const locSearch = ref('')
+const filteredLocations = computed(() =>
+  locations.value.filter(r => kwHit(r, locSearch.value, ['name', 'note'])))
+
+const demandOvSearch = ref('')
+const filteredDemandOverview = computed(() =>
+  demandOverview.value.filter(r => kwHit(r, demandOvSearch.value, ['code', 'name'])))
+
+const demandSearch = ref('')
+const filteredDemandRows = computed(() =>
+  demandRows.value.filter(r => kwHit(r, demandSearch.value,
+    ['item_name', 'spec', 'location', 'source', 'purchase_status'])))
+
+// 采购收货**不在这里加**：它本来就有三个搜索框且已下沉到后端（见 #330 的 filteredRecv），
+// 能搜到上限之外的老单，比我再叠一层本地过滤强。重复造只会两套口径打架。
+
+const shipSearch = ref('')
+const filteredShipPending = computed(() =>
+  shipPending.value.filter((r: any) => kwHit(r, shipSearch.value, ['code', 'name'])))
+
+
+const preqSearch = ref('')
+const preqStatus = ref('')
+const filteredPreq = computed(() => {
+  const k = preqSearch.value.trim().toLowerCase()
+  return preqList.value.filter((r: any) => {
+    if (preqStatus.value && r.status !== preqStatus.value) return false
+    if (!k) return true
+    // ⚠️ 物料名在展开行的 lines 里，主行看不到——不搜 lines 的话
+    //    仓库按物料名找自己提过的申请就永远找不到。
+    const inLines = (r.lines || []).some((l: any) =>
+      String(l.item_name ?? '').toLowerCase().includes(k) ||
+      String(l.spec ?? '').toLowerCase().includes(k))
+    return kwHit(r, k, ['req_no', 'status', 'note', 'created_by_name']) || inLines
+  })
+})
+
 </script>
 
 <template>
@@ -919,9 +1010,11 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         <el-tab-pane v-if="tv('sum')" label="收发存汇总" name="sum">
           <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
             <el-date-picker v-model="period" type="month" value-format="YYYY-MM" @change="loadSummary" />
+            <el-input v-model="sumSearch" placeholder="搜物料/规格/单位" :prefix-icon="Search" clearable size="small" style="width:220px" />
+            <span class="muted" style="font-size:12.5px" v-if="sumSearch">命中 {{ filteredSummary.length }} / {{ summary.length }}</span>
             <span class="muted small">期初 + 本期入 − 本期出 = 期末</span>
           </div>
-          <el-table show-overflow-tooltip :data="summary" stripe size="small" show-summary
+          <el-table show-overflow-tooltip :data="filteredSummary" stripe size="small" show-summary
                     :summary-method="(p:any) => ['合计','','', summary.reduce((s,r)=>s+r.opening,0), summary.reduce((s,r)=>s+r.in_qty,0), summary.reduce((s,r)=>s+r.out_qty,0), summary.reduce((s,r)=>s+r.closing,0)]"
                     max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="name" label="物料" min-width="120" />
@@ -943,10 +1036,21 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               <el-radio-button value="in">入库</el-radio-button>
               <el-radio-button value="out">出库</el-radio-button>
             </el-radio-group>
-            <!-- 🆕 出入库流水搜索 -->
-            <el-input v-model="txnSearch" placeholder="搜索单号/物料/库位/供应商领用方/项目" clearable size="small" style="width:280px" />
+            <!-- 🆕 搜索走服务端：全库都能搜，不再只在最近 200 条里找 -->
+            <el-input v-model="txnSearch" placeholder="搜单号/物料/规格/库位/来源/往来单位/项目编号"
+                      :prefix-icon="Search" clearable size="small" style="width:300px"
+                      @input="onTxnSearch" @clear="loadTxns" />
+            <el-date-picker v-model="txnRange" type="daterange" size="small" style="width:230px"
+                            value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期"
+                            unlink-panels @change="loadTxns" />
+            <el-button v-if="txnSearch || txnRange || txnDir" size="small" @click="resetTxnFilter">清空条件</el-button>
+            <span class="muted" style="font-size:12.5px">
+              共 {{ txnTotal }} 条<template v-if="txnTotal > txnShown">，
+                <b style="color:var(--el-color-warning)">只显示了最近 {{ txnShown }} 条，请缩小范围</b>
+              </template>
+            </span>
           </div>
-          <el-table show-overflow-tooltip :data="filteredTxns" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table v-loading="txnLoading" show-overflow-tooltip :data="txns" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="ref_no" label="单号" width="140" />
             <el-table-column prop="biz_date" label="日期" width="110">
               <template #default="{ row }">{{ fmtDate(row.biz_date) }}</template>
@@ -970,14 +1074,26 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
               </template>
             </el-table-column>
           </el-table>
-          <EmptyHint v-if="!filteredTxns.length" :text="txnSearch ? '无匹配流水' : '暂无出入库流水'" size="sm" />
+          <EmptyHint v-if="!txns.length" :text="(txnSearch || txnRange) ? '没搜到，换个词或放宽日期试试' : '暂无出入库流水'" size="sm" />
         </el-tab-pane>
 
         <!-- 物料主数据 -->
         <el-tab-pane v-if="tv('mat')" label="物料主数据" name="mat">
-          <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openMat()" style="margin-bottom:10px">新增物料</el-button>
-          <el-button v-if="canConfigFields" :icon="Setting" @click="openFieldManager" style="margin-bottom:10px;margin-left:8px">字段设置</el-button>
-          <el-button v-if="canClear" type="danger" plain :icon="Delete" @click="clearAll" style="margin-bottom:10px;margin-left:8px">一键清空</el-button>
+          <!-- 🆕 仓库反馈：物料主数据没搜索框，551 条只能一页页翻 -->
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <el-input v-model="kw" placeholder="搜名称/规格/编码/单位/库位/材质" :prefix-icon="Search"
+                      clearable size="small" style="width:280px" @input="onMatSearch" @clear="loadMaterials" />
+            <el-select v-model="matLoc" placeholder="库位(全部)" clearable size="small" style="width:150px" @change="loadMaterials">
+              <el-option v-for="l in enabledLocations" :key="l.id" :label="l.name" :value="l.name" />
+            </el-select>
+            <el-checkbox v-model="matLowOnly" size="small" @change="loadMaterials">只看低于安全库存</el-checkbox>
+            <el-button v-if="kw || matLoc || matLowOnly" size="small" @click="resetMatFilter">清空条件</el-button>
+            <span class="muted" style="font-size:12.5px">共 {{ matTotal }} 条<template v-if="lowCount">，其中 {{ lowCount }} 条低于安全库存</template></span>
+            <div style="flex:1"></div>
+            <el-button v-if="canWrite" type="primary" :icon="Plus" size="small" @click="openMat()">新增物料</el-button>
+            <el-button v-if="canConfigFields" :icon="Setting" size="small" @click="openFieldManager">字段设置</el-button>
+            <el-button v-if="canClear" type="danger" plain :icon="Delete" size="small" @click="clearAll">一键清空</el-button>
+          </div>
           <el-table show-overflow-tooltip :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column prop="code" label="编码" width="120"><template #header><span>编码</span><el-tooltip placement="top" effect="dark"><template #content>物料编码 = 大类(1位) - 中类+细分(4位) - 流水号(4位)<br/>选「编码分类」到细分类时自动生成,如 1-0101-0001</template><el-icon style="vertical-align:-2px;margin-left:3px;color:var(--text-3);cursor:help;font-size:13px"><QuestionFilled /></el-icon></el-tooltip></template><template #default="{ row }"><span v-if="row.code" class="code">{{ fmtMatCode(row.code) }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="category_path" label="编码说明" min-width="150" show-overflow-tooltip><template #default="{ row }"><span v-if="row.category_path">{{ row.category_path }}</span><span v-else class="muted">—</span></template></el-table-column>
@@ -995,7 +1111,7 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             </el-table-column>
             <el-table-column v-if="canWrite" label="操作" width="110" fixed="right" :show-overflow-tooltip="false"><template #default="{ row }"><el-button size="small" link type="primary" @click="openMat(row)">编辑</el-button><el-button size="small" link type="danger" @click="deleteMat(row)">删除</el-button></template></el-table-column>
           </el-table>
-          <EmptyHint v-if="!materials.length" text="暂无物料主数据，点「新增物料」开始" size="sm" />
+          <EmptyHint v-if="!materials.length" :text="(kw || matLoc || matLowOnly) ? '没搜到，换个词或清空条件试试' : '暂无物料主数据，点「新增物料」开始'" size="sm" />
         </el-tab-pane>
 
         <!-- 🆕 项目物料需求（清单→仓库）-->
@@ -1003,9 +1119,11 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
         <el-tab-pane v-if="tv('loc')" label="库位管理" name="loc">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
             <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openLoc()">新增库位</el-button>
+            <el-input v-model="locSearch" placeholder="搜库位/备注" :prefix-icon="Search" clearable size="small" style="width:200px" />
+            <span class="muted" style="font-size:12.5px" v-if="locSearch">命中 {{ filteredLocations.length }} / {{ locations.length }}</span>
             <span class="muted small">采购下单选库位、物料库位、出入库登记都从这里取值；「占用/空闲」跟着出入库走——有货入=占用，出库腾空=空闲；在用的库位删不掉，可停用。</span>
           </div>
-          <el-table show-overflow-tooltip :data="locations" stripe size="small" class="compact-tbl" max-height="calc(100vh - 260px)">
+          <el-table show-overflow-tooltip :data="filteredLocations" stripe size="small" class="compact-tbl" max-height="calc(100vh - 260px)">
             <el-table-column prop="name" label="库位" min-width="140"><template #default="{ row }"><b style="color:var(--el-color-primary)">{{ row.name }}</b></template></el-table-column>
             <!-- 🆕 #204 占用/空闲:由库存(出入库流水)驱动;占用时悬停看里面放了什么 -->
             <el-table-column label="占用状态" width="140">
@@ -1052,9 +1170,11 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
               <b>项目物料需求总览</b>
               <el-button :icon="Search" size="small" @click="loadDemandOverview">刷新</el-button>
+              <el-input v-model="demandOvSearch" placeholder="搜项目编号/名称" :prefix-icon="Search" clearable size="small" style="width:220px" />
+              <span class="muted" style="font-size:12.5px" v-if="demandOvSearch">命中 {{ filteredDemandOverview.length }} / {{ demandOverview.length }}</span>
               <span class="muted small">列出有物料需求的项目（材料清单：标准件清单/电工采购单/不锈钢原料下料单，+ 采购单入库关联了项目号的）；点「查看」进入逐行需求并领用出库。待出库=有货且未领完的物料行数，已出库=已领用过的行数。</span>
             </div>
-            <el-table show-overflow-tooltip :data="demandOverview" v-loading="demandOverviewLoading" stripe size="small"
+            <el-table show-overflow-tooltip :data="filteredDemandOverview" v-loading="demandOverviewLoading" stripe size="small"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl" :fit="false">
               <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
               <el-table-column prop="name" label="项目名称" min-width="200" show-overflow-tooltip />
@@ -1080,9 +1200,11 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <!-- 🆕 反馈#244：勾选多行只领用勾选的 -->
             <el-button v-if="canWrite" type="warning" plain size="small" :disabled="!demandSel.length"
                        @click="issueSelected">批量领用出库{{ demandSel.length ? `（已选 ${demandSel.length}）` : '' }}</el-button>
+            <el-input v-model="demandSearch" placeholder="搜名称/规格/库位/来源" :prefix-icon="Search" clearable size="small" style="width:240px" />
+            <span class="muted" style="font-size:12.5px" v-if="demandSearch">命中 {{ filteredDemandRows.length }} / {{ demandRows.length }}</span>
             <span class="muted small">合并「材料清单需求(标准件清单/电工采购单/不锈钢原料下料单)」与「采购单入库到本项目的物料」(来源列区分),逐行看 需求量 / 现有库存 / 建议采购量。有货的可勾选后批量领用、或单行领用、或一键全部,缺的走采购。</span>
           </div>
-          <el-table show-overflow-tooltip :data="demandRows" v-loading="demandLoading" stripe size="small"
+          <el-table show-overflow-tooltip :data="filteredDemandRows" v-loading="demandLoading" stripe size="small"
                     max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl"
                     @selection-change="onDemandSelChange">
             <el-table-column v-if="canWrite" type="selection" width="42" :selectable="demandRowSelectable" fixed="left" />
@@ -1239,12 +1361,14 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
                 <el-radio-button label="ready">已备齐</el-radio-button>
                 <el-radio-button label="all">全部</el-radio-button>
               </el-radio-group>
+              <el-input v-model="shipSearch" placeholder="搜项目编号/名称" :prefix-icon="Search" clearable size="small" style="width:210px" />
+              <span class="muted" style="font-size:12.5px" v-if="shipSearch">命中 {{ filteredShipPending.length }} / {{ shipPending.length }}</span>
             </div>
             <div class="muted small" style="margin:4px 0 12px">
               发货清单由设计部下发（同时直推发货部与仓库）。仓库只需按清单核对、备好货物后点「已备齐」，物流发货部即可安排发货——无需在此上传。
             </div>
 
-            <el-table show-overflow-tooltip :data="shipPending" v-loading="shipPendingLoading" stripe size="small"
+            <el-table show-overflow-tooltip :data="filteredShipPending" v-loading="shipPendingLoading" stripe size="small"
                       max-height="calc(100vh - 320px)" :scrollbar-always-on="true">
               <el-table-column label="项目编号" width="118"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
               <el-table-column prop="name" label="项目名称" min-width="150" show-overflow-tooltip />
@@ -1296,9 +1420,18 @@ function preqStatusVariant(s: string): 'warn' | 'success' | 'danger' {
             <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
               <el-button type="primary" :icon="Plus" @click="openPurchReq">提采购申请</el-button>
               <el-button :icon="Search" size="small" @click="loadPurchReqs">刷新</el-button>
+              <!-- 🆕 仓库反馈：这个 tab 也没搜索框，提过几十条之后翻不动 -->
+              <el-input v-model="preqSearch" placeholder="搜申请单号/物料/规格/备注" :prefix-icon="Search"
+                        clearable size="small" style="width:250px" />
+              <el-select v-model="preqStatus" placeholder="状态(全部)" clearable size="small" style="width:130px">
+                <el-option label="待处理" value="pending" />
+                <el-option label="已处理" value="done" />
+                <el-option label="已驳回" value="rejected" />
+              </el-select>
+              <span class="muted" style="font-size:12.5px" v-if="preqSearch || preqStatus">命中 {{ filteredPreq.length }} / {{ preqList.length }}</span>
               <span class="muted small">仓库发现要买的东西（缺料/耗材/工具等）在这里提申请，采购部会收到通知并处理。</span>
             </div>
-            <el-table show-overflow-tooltip :data="preqList" v-loading="preqLoading" stripe size="small" max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
+            <el-table show-overflow-tooltip :data="filteredPreq" v-loading="preqLoading" stripe size="small" max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column type="expand" width="36">
                 <template #default="{ row }">
                   <!-- 🆕 #245/#246 直传文件（可下载） -->

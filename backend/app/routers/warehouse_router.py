@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update as sa_update, delete as sa_delete
+from sqlalchemy import select, func, or_, update as sa_update, delete as sa_delete
 
 from ..database import get_db
 from .. import models, schemas
@@ -115,21 +115,38 @@ async def _material_projects(db: AsyncSession, material_ids: list[int]) -> dict[
 # ==================== 物料主数据 ====================
 @router.get("/materials", response_model=schemas.WhStockOut)
 async def list_materials(
-    kw: Optional[str] = Query(None),
+    kw: Optional[str] = Query(None, description="名称/规格/编码/单位/库位，任一命中"),
+    location: Optional[str] = Query(None, description="按库位精确筛"),
+    low_only: bool = Query(False, description="只看低于安全库存的"),
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """物料 + 实时库存（全员可读=查库存集成点；写操作另校验）。"""
+    """物料 + 实时库存（全员可读=查库存集成点；写操作另校验）。
+
+    🆕 仓库反馈：551 个物料，只能按名称/规格/编码找，找一个"放在 A-03 的密封圈"
+       还得自己一页页翻。搜索面扩到库位和单位，另加库位精确筛 + 只看缺料。
+    ⚠️ 编码(code)全库只有 6/551 有值，所以**不能只按编码搜**——按编码搜等于搜不到。
+    """
     r = await db.execute(select(models.WhMaterial).order_by(models.WhMaterial.id))
     mats = list(r.scalars().all())
     if kw:
-        k = kw.strip()
-        mats = [m for m in mats if k in (m.name or "") or k in (m.spec or "") or k in (m.code or "")]
+        k = kw.strip().lower()
+        def _hit(m):
+            return any(k in (getattr(m, f, None) or "").lower()
+                       for f in ("name", "spec", "code", "unit", "location", "material_grade"))
+        mats = [m for m in mats if _hit(m)]
+    if location:
+        loc = location.strip()
+        mats = [m for m in mats if (m.location or "") == loc]
     stock = await _stock_map(db, [m.id for m in mats])
     cat_paths = await _category_path_map(db)   # 🆕 编码文字说明
     proj_by_mat = await _material_projects(db, [m.id for m in mats])   # 🆕 出库反显关联项目
     outs = [_mat_out(m, stock.get(m.id, m.init_stock or 0), cat_paths.get(m.category_id),
                      proj_by_mat.get(m.id)) for m in mats]
+    # ⚠️ low_only 必须在算完实时库存之后过滤——low 是 stock 与 safety_stock 比出来的，
+    #    在取物料那一步过滤不到。
+    if low_only:
+        outs = [o for o in outs if o.low]
     return schemas.WhStockOut(materials=outs, total=len(outs),
                               low_count=sum(1 for o in outs if o.low))
 
@@ -886,20 +903,52 @@ async def reverse_txn(
     return schemas.Msg(message=f"已冲红 {o.ref_no}（生成 {ref}）")
 
 
-@router.get("/txns", response_model=List[schemas.WhTxnOut])
+@router.get("/txns", response_model=schemas.WhTxnListOut)
 async def list_txns(
     direction: Optional[str] = Query(None),
     material_id: Optional[int] = Query(None),
+    kw: Optional[str] = Query(None, description="单号/物料/规格/库位/来源/往来单位/项目编号"),
+    date_from: Optional[str] = Query(None, description="业务日期 >= YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="业务日期 <= YYYY-MM-DD"),
     limit: int = Query(200, ge=1, le=1000),
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(models.WhTxn)
+    """出入库流水。
+
+    ⚠️ **搜索必须在服务端做。** 原来只回最近 `limit` 条、由前端在这堆里过滤——
+       生产上流水已经 1083 条，前端能搜到的最早只到昨天，
+       仓库入完料第二天就搜不着了（正是 2026-08-06 报上来的问题）。
+       现在 kw/日期都进 SQL，先筛后截断；并回 total 让前端知道有没有被截断。
+    """
+    base = select(models.WhTxn)
     if direction in ("in", "out"):
-        q = q.where(models.WhTxn.direction == direction)
+        base = base.where(models.WhTxn.direction == direction)
     if material_id:
-        q = q.where(models.WhTxn.material_id == material_id)
-    r = await db.execute(q.order_by(models.WhTxn.id.desc()).limit(limit))
+        base = base.where(models.WhTxn.material_id == material_id)
+    if date_from:
+        base = base.where(models.WhTxn.biz_date >= date_from)
+    if date_to:
+        base = base.where(models.WhTxn.biz_date <= date_to)
+    if kw and kw.strip():
+        k = f"%{kw.strip()}%"
+        # 物料名/规格在关联表上，项目编号在 projects 上——都要 join 进来搜，
+        # 否则"搜密封圈"「搜 2026-071」这种最常用的搜法直接落空。
+        mat_ids = select(models.WhMaterial.id).where(
+            or_(models.WhMaterial.name.ilike(k), models.WhMaterial.spec.ilike(k)))
+        proj_ids = select(models.Project.id).where(models.Project.code.ilike(k))
+        base = base.where(or_(
+            models.WhTxn.ref_no.ilike(k),
+            models.WhTxn.source.ilike(k),
+            models.WhTxn.party.ilike(k),
+            models.WhTxn.location.ilike(k),
+            models.WhTxn.biz_date.ilike(k),
+            models.WhTxn.material_id.in_(mat_ids),
+            models.WhTxn.project_id.in_(proj_ids),
+        ))
+    total = (await db.execute(
+        select(func.count()).select_from(base.subquery()))).scalar() or 0
+    r = await db.execute(base.order_by(models.WhTxn.id.desc()).limit(limit))
     txns = list(r.scalars().all())
     # 项目编号
     pids = {t.project_id for t in txns if t.project_id}
@@ -907,7 +956,7 @@ async def list_txns(
     if pids:
         r = await db.execute(select(models.Project.id, models.Project.code).where(models.Project.id.in_(pids)))
         pmap = dict(r.all())
-    return [schemas.WhTxnOut(
+    rows = [schemas.WhTxnOut(
         id=t.id, material_id=t.material_id,
         material_name=t.material.name if t.material else "", spec=t.material.spec if t.material else None,
         biz_date=t.biz_date, direction=t.direction, qty=t.qty,
@@ -915,6 +964,7 @@ async def list_txns(
         project_id=t.project_id, project_code=pmap.get(t.project_id), location=t.location,
         ref_no=t.ref_no, is_reversal=t.is_reversal, reversed=t.reversed, created_at=t.created_at,
     ) for t in txns]
+    return schemas.WhTxnListOut(rows=rows, total=total, shown=len(rows))
 
 
 @router.get("/summary", response_model=List[schemas.WhSummaryRow])
