@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  同辉 TH 齿轮标。三层都由 mobile/tools/make-icons.py 生成，换 logo 就重跑那个脚本。
+  ⚠️ monochrome 是 Android 13+ 的主题图标：系统按用户壁纸配色重新上色，
+     所以那一层必须是**纯剪影**（脚本里从 alpha 生成），带颜色的话主题图标会糊成一坨。
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background"/>
+    <background android:drawable="@drawable/ic_launcher_background"/>
     <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome"/>
 </adaptive-icon>
