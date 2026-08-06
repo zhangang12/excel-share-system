@@ -56,7 +56,11 @@ async def main():
         # ===== 2. 必填校验（缺字段 → 400） =====
         base = {"category": "business", "doc_type": "payment", "department_id": dept_id,
                 "amount": 12800.5,
+                # 🆕 反馈#348 起收款账号/开户行也是必填（财务批完要直接打款），
+                #    老 payload 没有这两项会被 400 挡在门外——补上，不是放松校验。
                 "detail": {"payee": "苏州某某供应商有限公司", "reason": "2026-061M 项目尾款",
+                           "payee_account": "6222021234567890",
+                           "payee_bank": "工商银行苏州分行营业部",
                            "expect_pay_date": "2026-07-31"}}
         bad_cases = [
             ({**base, "detail": {**base["detail"], "payee": ""}}, "缺收款单位"),
@@ -64,6 +68,8 @@ async def main():
             ({**base, "amount": None}, "缺付款金额"),
             ({**base, "amount": 0}, "付款金额为0"),
             ({**base, "detail": {**base["detail"], "reason": ""}}, "缺付款事由"),
+            ({**base, "detail": {**base["detail"], "payee_account": ""}}, "缺收款账号"),
+            ({**base, "detail": {**base["detail"], "payee_bank": ""}}, "缺开户行"),
         ]
         for body, name in bad_cases:
             r = await c.post("/api/oa/requests", headers=H, json=body)

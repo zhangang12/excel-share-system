@@ -620,6 +620,14 @@ async def create_request(
             raise HTTPException(400, "请填写付款金额")
         if not str(_d.get("reason") or "").strip():
             raise HTTPException(400, "请填写付款事由")
+        # 🆕 反馈#348（杨坛）：单子上没收款账户，财务批完还得回头一个个问，钱压在那儿付不出去。
+        #    账号和开户行都必填——少一样照样打不出款，等于这张单还要再走一轮。
+        #    ⚠️ 前端也校验了，这里是同口径的服务端校验：只拦前端的话，
+        #       H5/旧客户端/直接打接口都能绕过去，账户照样是空的。
+        if not str(_d.get("payee_account") or "").strip():
+            raise HTTPException(400, "请填写收款账号")
+        if not str(_d.get("payee_bank") or "").strip():
+            raise HTTPException(400, "请填写开户行")
     req_no = await _next_oa_no(db)
     req = models.OaRequest(
         request_no=req_no, category=category, doc_type=body.doc_type, department_id=dept.id,

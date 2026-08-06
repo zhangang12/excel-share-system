@@ -96,6 +96,8 @@ const DETAIL_FIELD_LABELS: Record<string, string> = {
   period: '提成月份', payback_total: '回款合计', commission_total: '提成总计',
   // 🆕 反馈#285 付款申请字段
   payee: '收款单位', reason: '付款事由', expect_pay_date: '期望付款日期',
+  // 🆕 反馈#348（杨坛）：批完还得回头问收款账户，钱才付得出去
+  payee_account: '收款账号', payee_bank: '开户行',
 }
 function detailFieldLabel(k: string): string { return DETAIL_FIELD_LABELS[k] || k }
 // 🆕 #236 详情里提成明细的「总计」行：只对回款金额/提成两列求和
@@ -129,7 +131,8 @@ const subForm = reactive({
   related_request_id: null as number | '' | null,
   d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
   // 🆕 反馈#285 付款申请：收款单位/付款事由/期望付款日期（金额复用通用 amount 字段）
-  p_payee: '', p_reason: '', p_pay_date: '',
+  // 🆕 反馈#348：再加收款账号/开户行——不然财务批完还得回头问，钱打不出去
+  p_payee: '', p_reason: '', p_pay_date: '', p_account: '', p_bank: '',
   // 🆕 反馈#236 销售提成申请：改为「按月 + 多项目明细」，原单项目平铺字段(#217)已废弃
   c_period: '' as string,
   commission_items: [] as CommissionItem[],
@@ -256,7 +259,7 @@ function resetSubForm() {
   Object.assign(subForm, {
     doc_type: '', department_id: '', title: '', amount: null, related_request_id: null,
     d_destination: '', d_start_date: '', d_end_date: '', d_notes: '', d_items: '', d_purpose: '', d_transport: '',
-    p_payee: '', p_reason: '', p_pay_date: '',   // 🆕 反馈#285 付款申请
+    p_payee: '', p_reason: '', p_pay_date: '', p_account: '', p_bank: '',   // 🆕 反馈#285/#348 付款申请
     c_period: new Date().toISOString().slice(0, 7),   // 🆕 #236 提成按月提交，默认本月
     commission_items: [],
     expense_items: [],
@@ -298,7 +301,14 @@ async function submitNew() {
     if (!subForm.p_payee.trim()) { ElMessage.warning('请填写收款单位'); return }
     if (!subForm.amount || Number(subForm.amount) <= 0) { ElMessage.warning('请填写付款金额'); return }
     if (!subForm.p_reason.trim()) { ElMessage.warning('请填写付款事由'); return }
-    detail = { payee: subForm.p_payee.trim(), reason: subForm.p_reason.trim(), expect_pay_date: subForm.p_pay_date || '' }
+    // 🆕 #348：账号和开户行都必填——少一样财务照样打不出款，这张单还得再问一轮
+    if (!subForm.p_account.trim()) { ElMessage.warning('请填写收款账号'); return }
+    if (!subForm.p_bank.trim()) { ElMessage.warning('请填写开户行'); return }
+    detail = {
+      payee: subForm.p_payee.trim(), reason: subForm.p_reason.trim(),
+      expect_pay_date: subForm.p_pay_date || '',
+      payee_account: subForm.p_account.trim(), payee_bank: subForm.p_bank.trim(),
+    }
   } else if (showBusinessFields.value) {
     detail = { destination: subForm.d_destination, start_date: subForm.d_start_date, end_date: subForm.d_end_date, notes: subForm.d_notes }
     if (showTripFields.value) detail.transport = subForm.d_transport
@@ -1117,8 +1127,17 @@ onMounted(async () => {
 
           <!-- 🆕 反馈#285 付款申请专属字段（不走业务类通用字段块） -->
           <template v-if="showPaymentFields">
-            <el-col :xs="24" :sm="12"><el-form-item label="收款单位 *"><el-input v-model="subForm.p_payee" placeholder="收款单位全称" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12">
+              <el-form-item label="收款单位 *">
+                <el-input v-model="subForm.p_payee" placeholder="收款单位全称" />
+                <div class="fi-hint">要跟银行账户的户名一致，对不上银行会退回</div>
+              </el-form-item>
+            </el-col>
             <el-col :xs="24" :sm="12"><el-form-item label="期望付款日期（选填）"><el-date-picker v-model="subForm.p_pay_date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" /></el-form-item></el-col>
+            <!-- 🆕 反馈#348（杨坛）：批完还得回头问收款账户，钱才付得出去。
+                 账号和开户行都必填——少一样财务照样打不出款。 -->
+            <el-col :xs="24" :sm="12"><el-form-item label="收款账号 *"><el-input v-model="subForm.p_account" placeholder="银行卡号 / 对公账号" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item label="开户行 *"><el-input v-model="subForm.p_bank" placeholder="如 工商银行无锡分行营业部" /></el-form-item></el-col>
             <el-col :span="24"><el-form-item label="付款事由 *"><el-input v-model="subForm.p_reason" type="textarea" :rows="2" placeholder="为什么付这笔钱" /></el-form-item></el-col>
           </template>
 
@@ -1359,6 +1378,7 @@ onMounted(async () => {
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .form-section-title { font-weight: 600; margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--el-border-color-lighter); }
 .summary-bar { margin-top: 12px; padding: 10px 14px; background: var(--el-fill-color-light); border-radius: 6px; text-align: right; }
+.fi-hint { font-size: 12px; line-height: 1.6; color: var(--el-text-color-secondary); margin-top: 2px; }
 .cost-notes {
   margin: 10px 0 0; padding-left: 1.2em;
   font-size: 12.5px; line-height: 1.75; color: var(--el-text-color-secondary);
