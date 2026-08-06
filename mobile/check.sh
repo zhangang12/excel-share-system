@@ -126,6 +126,41 @@ then ok "资源 XML 全部合法（注释里不能有 -- ，否则资源合并�
 else no "有非法 XML（见上），资源合并会失败"
 fi
 
+# ── ③.6 应用图标：错了照样能编译，装上才发现是默认图标 ─────────────────
+if python3 - <<'PY'
+import os, sys
+try:
+    from PIL import Image
+except ImportError:
+    print("    warn: 没装 Pillow，跳过图标尺寸校验"); sys.exit(0)
+# 密度 → (传统图标边长, 自适应前景边长=108dp 换算)
+EXP = {"mdpi": (48, 108), "hdpi": (72, 162), "xhdpi": (96, 216),
+       "xxhdpi": (144, 324), "xxxhdpi": (192, 432)}
+bad = []
+for d, (leg, fg) in EXP.items():
+    base = f"android/app/src/main/res/mipmap-{d}"
+    for name, want in (("ic_launcher", leg), ("ic_launcher_round", leg),
+                       ("ic_launcher_foreground", fg), ("ic_launcher_monochrome", fg)):
+        p = f"{base}/{name}.png"
+        if not os.path.exists(p):
+            bad.append(f"缺 {p}"); continue
+        s = Image.open(p).size
+        if s != (want, want):
+            bad.append(f"{p} 是 {s}，应为 {want}×{want}")
+# ⚠️ 自适应前景**必须透明底**：画了底色的话，启动器裁切时会露出一圈方角
+for d in EXP:
+    p = f"android/app/src/main/res/mipmap-{d}/ic_launcher_foreground.png"
+    if os.path.exists(p):
+        im = Image.open(p).convert("RGBA")
+        if im.getpixel((0, 0))[3] != 0:
+            bad.append(f"{p} 四角不透明 —— 自适应前景不能自己画底")
+print("\n".join("    " + b for b in bad))
+sys.exit(1 if bad else 0)
+PY
+then ok "应用图标齐全（5 档密度 × 传统/圆形/自适应/单色），前景透明底"
+else no "应用图标有问题（见上）—— 重跑 python3 mobile/tools/make-icons.py"
+fi
+
 # ── ④ 热更新：验不了签就等于谁都能往 APP 里推 JS ──────────────────────
 if [ -f "$KEYASSET" ] && grep -q "BEGIN PUBLIC KEY" "$KEYASSET"; then
   ok "APK 里有热更新验签公钥"
