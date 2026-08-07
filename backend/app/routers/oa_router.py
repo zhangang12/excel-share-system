@@ -27,6 +27,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import String, select, func, exists, or_, update as sa_update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -479,11 +480,26 @@ async def chains_overview(
 
 # ==================== 申请单 ====================
 async def _next_oa_no(db: AsyncSession) -> str:
+    """当天流水号 = 已有的**最大序号 + 1**。
+
+    ⚠️ 原来是 `count(distinct request_no) + 1` —— **只要当天删过/撤过一张单就会撞号**。
+       2026-08-07 生产上就炸了：当天有 001、003、004（002 被删），count=3 → 生成 004
+       → 004 已存在 → 唯一约束冲突 → 前端弹「数据已存在，不能重复」，
+       **当天所有人、所有类型的 OA 申请全都提不了**。
+
+    ⚠️ 不用字符串 max()：序号超过 999 变成 4 位后，字符串比较会把 "1000" 排在 "999" 前面。
+       当天单量很小，取回来按整数比最稳。
+    """
     prefix = f"OA{_date.today().strftime('%Y%m%d')}-"
-    r = await db.execute(select(func.count(func.distinct(models.OaRequest.request_no)))
+    r = await db.execute(select(models.OaRequest.request_no)
                          .where(models.OaRequest.request_no.like(f"{prefix}%")))
-    n = (r.scalar() or 0) + 1
-    return f"{prefix}{n:03d}"
+    mx = 0
+    for (no,) in r.all():
+        try:
+            mx = max(mx, int((no or "")[len(prefix):]))
+        except (ValueError, TypeError):
+            continue          # 手工改过的怪号不参与比较，但也不能让它把生成卡死
+    return f"{prefix}{mx + 1:03d}"
 
 
 async def _fetch_request(db: AsyncSession, rid: int) -> Optional[models.OaRequest]:
@@ -639,15 +655,29 @@ async def create_request(
                 raise HTTPException(400, "请填写收款账号")
             if not str(_d.get("payee_bank") or "").strip():
                 raise HTTPException(400, "请填写开户行")
-    req_no = await _next_oa_no(db)
-    req = models.OaRequest(
-        request_no=req_no, category=category, doc_type=body.doc_type, department_id=dept.id,
-        requester_id=current.id, title=(body.title or "").strip() or doc_label, amount=body.amount,
-        detail=body.detail or {}, related_request_id=body.related_request_id,
-        status="pending", current_step_order=steps_cfg[0].step_order,
-    )
-    db.add(req)
-    await db.flush()
+    # ⚠️ 单号是"读最大值再 +1"，两个人同时提交会读到同一个 max → 撞唯一约束。
+    #    这里带重试：撞了就回滚重算一次。不重试的话并发提交会直接给用户
+    #    「数据已存在，不能重复」，而他什么也没做错。
+    req = None
+    for attempt in range(5):
+        req_no = await _next_oa_no(db)
+        req = models.OaRequest(
+            request_no=req_no, category=category, doc_type=body.doc_type, department_id=dept.id,
+            requester_id=current.id, title=(body.title or "").strip() or doc_label, amount=body.amount,
+            detail=body.detail or {}, related_request_id=body.related_request_id,
+            status="pending", current_step_order=steps_cfg[0].step_order,
+        )
+        db.add(req)
+        try:
+            await db.flush()
+            break
+        except IntegrityError:
+            await db.rollback()
+            if attempt == 4:
+                raise HTTPException(500, "单号生成冲突，请重试一次")
+            req = None
+    if req is None:
+        raise HTTPException(500, "单号生成失败，请重试")
     # 🆕 #149：报销费用明细——服务端按明细重算报销金额 + 把逐行发票附件挂到本申请（仅本人上传的未归属发票）
     if category == "reimbursement":
         eitems = (req.detail or {}).get("expense_items") or []
