@@ -2,7 +2,7 @@
 // 🆕 v3 M07 仓库组：总览/出入库/收发存/流水/物料主数据/发货清单 六 tab
 import { ref, onMounted, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Lock, View, Download, Printer, Setting, Delete, ArrowLeft, QuestionFilled, Upload } from '@element-plus/icons-vue'
+import { Plus, Search, Lock, View, Download, Printer, Setting, Delete, ArrowLeft, ArrowRight, QuestionFilled, Upload } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow, type WhCustomField , type WhLocation } from '@/api/warehouse'
@@ -728,8 +728,16 @@ async function issueAll() {
     .map(r => ({ material_id: r.material_id!, qty: Math.min(demandRemain(r), r.stock) }))
   if (!lines.length) { ElMessage.info('没有可领用出库的物料（需有货且仍有未领用需求）'); return }
   try {
-    await ElMessageBox.confirm(`将按需求把 ${lines.length} 种有货物料领用出库到本项目？会自动登记出库并计入项目材料成本。`,
-      '一键领用出库', { type: 'warning', confirmButtonText: '领用出库' })
+    // 🆕 把到底会出哪几样列出来再确认——原来只说"N 种"，人不知道是哪 N 种，
+    //    这正是王利利说的"容易出错"。
+    const preview = lines.slice(0, 12)
+      .map((r: any) => `${r.item_name}${r.spec ? '·' + r.spec : ''} × ${demandRemain(r)}`)
+      .join('<br>')
+    const more = lines.length > 12 ? `<br><span style="color:#999">…另有 ${lines.length - 12} 种</span>` : ''
+    await ElMessageBox.confirm(
+      `<div style="max-height:40vh;overflow:auto;line-height:1.9">${preview}${more}</div>`
+      + `<div style="margin-top:8px">共 <b>${lines.length}</b> 种，将登记出库并计入本项目材料成本。</div>`,
+      '确认一键领用出库', { type: 'warning', confirmButtonText: '确认出库', dangerouslyUseHTMLString: true })
   } catch { return }
   try {
     const r = await whApi.issueDemand(demandProj.value!, lines)
@@ -844,11 +852,30 @@ async function loadPreqBuyers() {
   try { preqBuyers.value = (await http.get<{ id: number; name: string }[]>('/purchase-mgmt/buyers')).data }
   catch { preqBuyers.value = [] }
 }
-function openPurchReq() {
-  preqForm.buyer_id = ''; preqForm.notes = ''; preqForm.lines = [blankPreqLine()]
+function openPurchReq(presetLines?: PreqLine[], presetNote?: string) {
+  preqForm.buyer_id = ''
+  preqForm.notes = presetNote || ''
+  // 🆕 反馈 2026-08-07（杨坛）：「低于安全库存的物料要能展开清单，并且能直接递交采购申请」。
+  //    缺料清单可以直接带进来，不用再一行行手抄。
+  preqForm.lines = (presetLines && presetLines.length) ? presetLines : [blankPreqLine()]
   preqMode.value = 'lines'; preqFiles.value = []
   if (!preqBuyers.value.length) loadPreqBuyers()
   preqVisible.value = true
+}
+
+// 🆕 缺料清单：可展开 + 一键带进采购申请
+const lowExpanded = ref(false)
+function preqFromLow() {
+  if (!lowList.value.length) { ElMessage.info('当前没有低于安全库存的物料'); return }
+  const lines: PreqLine[] = lowList.value.map(m => ({
+    item_name: m.name,
+    spec: m.spec || '',
+    // 建议采购量 = 安全库存 - 现存，至少 1；采购可以再改
+    qty: Math.max(1, Math.ceil((m.safety_stock || 0) - (m.stock || 0))),
+    project_code: '',
+    notes: `低于安全库存（现存 ${m.stock}，安全线 ${m.safety_stock}）`,
+  }))
+  openPurchReq(lines, `仓库缺料补货：${lines.length} 项低于安全库存`)
 }
 function addPreqLine() { preqForm.lines.push(blankPreqLine()) }
 function removePreqLine(i: number) { preqForm.lines.splice(i, 1); if (!preqForm.lines.length) preqForm.lines.push(blankPreqLine()) }
@@ -925,9 +952,21 @@ const filteredDemandOverview = computed(() =>
   demandOverview.value.filter(r => kwHit(r, demandOvSearch.value, ['code', 'name'])))
 
 const demandSearch = ref('')
+// 🆕 反馈 2026-08-07（王利利）：「已有订单号未出库的能不能不要显示，
+//    这样在某个订单一键出库的话容易出错」。
+//    列表里混着一堆现在出不了库的行（没货、已领完、还没到货），
+//    「一键领用出库」只会处理其中有货且还有需求的那些——所见与所得不一致，
+//    人对着一屏行按下去，自然心里没底。默认只显示**真正会被出库的行**，
+//    让所见即所得；要看全貌把勾去掉即可。
+const demandOnlyIssuable = ref(true)
+function demandIssuable(r: any) {
+  return !!r.material_id && (r.stock || 0) > 0 && demandRemain(r) > 0
+}
 const filteredDemandRows = computed(() =>
-  demandRows.value.filter(r => kwHit(r, demandSearch.value,
-    ['item_name', 'spec', 'location', 'source', 'purchase_status'])))
+  demandRows.value
+    .filter(r => !demandOnlyIssuable.value || demandIssuable(r))
+    .filter(r => kwHit(r, demandSearch.value,
+      ['item_name', 'spec', 'location', 'source', 'purchase_status'])))
 
 // 采购收货**不在这里加**：它本来就有三个搜索框且已下沉到后端（见 #330 的 filteredRecv），
 // 能搜到上限之外的老单，比我再叠一层本地过滤强。重复造只会两套口径打架。
@@ -953,6 +992,64 @@ const filteredPreq = computed(() => {
   })
 })
 
+
+// ⚠️ 放文件末尾：下面用到的 ioLines / ioForm / projects 都在前面几百行才声明，
+//    写在它们之前会踩 TDZ，页面一开就白屏（这个坑今天已经踩过一次）。
+// 🆕 反馈 2026-08-07（杨坛）：「出库登记这里加一个功能，可搜索采购单号，
+//    然后选择里面的物料进行出库」。仓库手头拿的是一张采购单，
+//    而登记表单只能从几百个物料里翻着找。
+interface PoItem {
+  id: number; po_no?: string | null; item_name: string; spec?: string | null
+  qty?: number | null; arrival_date?: string | null; project_code?: string | null
+  stock_location?: string | null
+  material_id?: number | null; stock: number; unmatched_reason?: string | null
+}
+const poPickVisible = ref(false)
+const poKw = ref('')
+const poItems = ref<PoItem[]>([])
+const poLoading = ref(false)
+const poSel = ref<PoItem[]>([])
+let poTimer: ReturnType<typeof setTimeout> | null = null
+function onPoSearch() {
+  if (poTimer) clearTimeout(poTimer)
+  poTimer = setTimeout(loadPoItems, 300)
+}
+async function loadPoItems() {
+  poLoading.value = true
+  try {
+    poItems.value = (await http.get<PoItem[]>('/wh/po-items',
+      { params: { po_no: poKw.value.trim() || undefined } })).data
+  } catch { poItems.value = [] } finally { poLoading.value = false }
+}
+function openPoPick() {
+  poKw.value = ''; poSel.value = []
+  poPickVisible.value = true
+  loadPoItems()
+}
+// 匹配不到物料主数据的行不能出库（出库扣的是物料库存），禁选并在行里说明原因
+function poSelectable(r: PoItem) { return !!r.material_id }
+function applyPoPick() {
+  const picked = poSel.value.filter(r => r.material_id)
+  if (!picked.length) { ElMessage.warning('请至少勾选一行能出库的物料'); return }
+  // 已经填了的空行先清掉，避免带进一堆空行
+  const kept = ioLines.value.filter(l => l.material_id)
+  for (const r of picked) {
+    const exist = kept.find(l => l.material_id === r.material_id)
+    // 同一个物料在一张单里出现两次就合并数量，不然会生成两张出库单
+    if (exist) exist.qty = (exist.qty || 0) + (r.qty || 1)
+    else kept.push({ material_id: r.material_id as number, qty: r.qty || 1 })
+  }
+  ioLines.value = kept.length ? kept : [{ material_id: undefined, qty: 1 }]
+  // 采购单上挂了项目就顺带带上，省得再选一次
+  const withProj = picked.find(r => r.project_code)
+  if (withProj?.project_code) {
+    const p = projects.value.find(x => x.code === withProj.project_code)
+    if (p) ioForm.project_id = p.id
+  }
+  poPickVisible.value = false
+  ElMessage.success(`已带入 ${picked.length} 种物料`)
+}
+
 </script>
 
 <template>
@@ -974,8 +1071,37 @@ const filteredPreq = computed(() => {
             <div v-if="isManager" class="kpi"><div class="kpi-v">{{ fmtMoney(totalValue) }}</div><div class="kpi-l">库存总价</div></div>
             <div class="kpi" :class="lowCount ? 'is-bad' : ''"><div class="kpi-v">{{ lowCount }}</div><div class="kpi-l">低于安全库存</div></div>
           </div>
-          <el-alert v-if="lowList.length" type="warning" :closable="false" style="margin:10px 0"
-                    :title="`⚠ 低库存预警：${lowList.map(m => m.name + (m.spec ? '·' + m.spec : '')).join('、')}`" />
+          <!-- 🆕 反馈 2026-08-07（杨坛）：缺料要能展开看清单，并直接提采购申请。
+               原来只有一条 alert 把名字挤成一行，缺 20 种就是一坨看不清，
+               看完还得自己去采购申请里一行行手抄。 -->
+          <div v-if="lowList.length" class="low-box">
+            <div class="low-head" @click="lowExpanded = !lowExpanded">
+              <el-icon class="low-arrow" :class="{ open: lowExpanded }"><ArrowRight /></el-icon>
+              <b>⚠ 低库存预警：{{ lowList.length }} 种物料低于安全库存</b>
+              <span class="muted small">（点击{{ lowExpanded ? '收起' : '展开' }}清单）</span>
+              <span style="flex:1"></span>
+              <el-button v-if="canWrite" type="warning" size="small" :icon="Plus"
+                         @click.stop="preqFromLow">一键提采购申请</el-button>
+            </div>
+            <el-table v-if="lowExpanded" :data="lowList" size="small" stripe class="compact-tbl"
+                      max-height="260" style="margin-top:8px">
+              <el-table-column prop="name" label="物料" min-width="140" />
+              <el-table-column prop="spec" label="规格型号" min-width="120">
+                <template #default="{ row }">{{ row.spec || '—' }}</template>
+              </el-table-column>
+              <el-table-column prop="location" label="库位" width="100">
+                <template #default="{ row }">{{ row.location || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="现存" width="90" align="right">
+                <template #default="{ row }"><b style="color:var(--el-color-danger)">{{ row.stock }}</b></template>
+              </el-table-column>
+              <el-table-column prop="safety_stock" label="安全库存" width="90" align="right" />
+              <el-table-column label="缺口" width="90" align="right">
+                <template #default="{ row }">{{ Math.max(0, (row.safety_stock || 0) - (row.stock || 0)) }}</template>
+              </el-table-column>
+              <el-table-column prop="unit" label="单位" width="60" />
+            </el-table>
+          </div>
           <div style="display:flex;gap:10px;margin-bottom:10px">
             <el-input v-model="kw" placeholder="搜索物料" :prefix-icon="Search" clearable style="width:240px" @change="loadMaterials" />
           </div>
@@ -1201,7 +1327,9 @@ const filteredPreq = computed(() => {
             <el-button v-if="canWrite" type="warning" plain size="small" :disabled="!demandSel.length"
                        @click="issueSelected">批量领用出库{{ demandSel.length ? `（已选 ${demandSel.length}）` : '' }}</el-button>
             <el-input v-model="demandSearch" placeholder="搜名称/规格/库位/来源" :prefix-icon="Search" clearable size="small" style="width:240px" />
-            <span class="muted" style="font-size:12.5px" v-if="demandSearch">命中 {{ filteredDemandRows.length }} / {{ demandRows.length }}</span>
+            <!-- 🆕 反馈（王利利）：默认只显示真正能出库的行，一键出库前所见即所得 -->
+            <el-checkbox v-model="demandOnlyIssuable" size="small">只看现在能出库的</el-checkbox>
+            <span class="muted" style="font-size:12.5px">显示 {{ filteredDemandRows.length }} / 共 {{ demandRows.length }} 行</span>
             <span class="muted small">合并「材料清单需求(标准件清单/电工采购单/不锈钢原料下料单)」与「采购单入库到本项目的物料」(来源列区分),逐行看 需求量 / 现有库存 / 建议采购量。有货的可勾选后批量领用、或单行领用、或一键全部,缺的走采购。</span>
           </div>
           <el-table show-overflow-tooltip :data="filteredDemandRows" v-loading="demandLoading" stripe size="small"
@@ -1540,6 +1668,9 @@ const filteredPreq = computed(() => {
             <el-button :icon="Delete" circle plain type="danger" :disabled="ioLines.length <= 1" @click="removeIoLine(i)" />
           </div>
           <el-button :icon="Plus" plain size="small" @click="addIoLine">添加一行物料</el-button>
+          <!-- 🆕 反馈 2026-08-07（杨坛）：仓库手头拿的是一张采购单，
+               让他按单号把该单的物料整批带进来，别在几百个物料里翻 -->
+          <el-button :icon="Search" plain size="small" type="primary" @click="openPoPick">按采购单号带入</el-button>
         </el-form-item>
         <el-form-item v-else label="物料" required>
           <el-select v-model="ioForm.material_id" filterable placeholder="选择物料" style="width:100%">
@@ -1595,6 +1726,48 @@ const filteredPreq = computed(() => {
       <template #footer>
         <el-button @click="ioVisible = false">取消</el-button>
         <el-button type="primary" :loading="ioSubmitting" @click="submitIo">登记</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 🆕 按采购单号挑物料出库 -->
+    <el-dialog v-model="poPickVisible" title="📦 按采购单号选物料出库" width="760px" append-to-body>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <el-input v-model="poKw" placeholder="输入采购单号（可只输一段）" :prefix-icon="Search"
+                  clearable style="width:280px" @input="onPoSearch" @clear="loadPoItems" />
+        <span class="muted small">只列**已到货**的行——没到货的出不了库。勾选后带进出库单，数量可再改。</span>
+      </div>
+      <el-table :data="poItems" v-loading="poLoading" size="small" stripe max-height="42vh"
+                @selection-change="(v: PoItem[]) => poSel = v">
+        <el-table-column type="selection" width="42" :selectable="poSelectable" />
+        <el-table-column prop="po_no" label="采购单号" width="150" />
+        <el-table-column prop="item_name" label="物料" min-width="130" />
+        <el-table-column prop="spec" label="规格型号" min-width="120">
+          <template #default="{ row }">{{ row.spec || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="qty" label="采购量" width="80" align="right" />
+        <el-table-column label="现存" width="80" align="right">
+          <template #default="{ row }">
+            <b :style="row.stock > 0 ? '' : 'color:var(--el-color-danger)'">{{ row.stock }}</b>
+          </template>
+        </el-table-column>
+        <el-table-column prop="project_code" label="项目" width="110">
+          <template #default="{ row }">{{ row.project_code || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="能否出库" min-width="150">
+          <template #default="{ row }">
+            <span v-if="row.material_id" style="color:var(--el-color-success)">可出库</span>
+            <el-tooltip v-else :content="row.unmatched_reason || ''" placement="top">
+              <span style="color:var(--el-color-danger)">未建档，不能出库</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <template #empty><EmptyHint :text="poKw ? '这个单号下没有已到货的物料' : '暂无已到货的采购明细'" size="sm" /></template>
+      </el-table>
+      <template #footer>
+        <el-button @click="poPickVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!poSel.length" @click="applyPoPick">
+          带入出库单{{ poSel.length ? `（已选 ${poSel.length}）` : '' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -1824,6 +1997,12 @@ const filteredPreq = computed(() => {
 </template>
 
 <style scoped>
+.low-box { margin: 10px 0; padding: 10px 14px; border-radius: 8px;
+  background: var(--el-color-warning-light-9); border: 1px solid var(--el-color-warning-light-5); }
+.low-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.low-arrow { transition: transform .15s; }
+.low-arrow.open { transform: rotate(90deg); }
+
 .bad { color: var(--danger); }
 /* 🆕 出入库+物料需求合并：顶部登记按钮条 */
 .io-bar {

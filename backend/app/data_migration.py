@@ -6,7 +6,7 @@
 import json
 import logging
 import re
-from sqlalchemy import select, inspect, text
+from sqlalchemy import func, select, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine
 
 from . import models
@@ -234,6 +234,50 @@ async def fix_oa_activated_at_tz(db: AsyncSession) -> dict:
     await db.commit()
     log.info("[fix_oa_activated_at_tz] activated_at 已改为 TIMESTAMPTZ（存量值按 UTC 解释）")
     return {"altered": 1}
+
+
+
+async def split_payment_doc_type(db: AsyncSession) -> dict:
+    """把旧的「付款申请」拆成对公/现金两类，并**把审批链复制过去**。
+
+    反馈 2026-08-07（杨坛）：「OA审批里面的付款申请分成两个：对公付款申请和现金付款申请，
+    因为涉及到的付款审批流程不一样」。
+
+    ⚠️ 光加两个单据类型是不够的：新类型没有审批链，一提交就被
+       「尚未配置审批流程」挡住——功能上线即不可用。所以要把旧 payment 的链
+       复制到两个新类型（只在新类型还没有链时复制），让两边立刻能用，
+       杨坛再去把现金那条改成他要的短流程。
+    ⚠️ 旧的 payment **停用不删**：在途的旧单还要走完，删了历史单据就没了类型名。
+    """
+    old = (await db.execute(select(models.OaDocTypeDict)
+                            .where(models.OaDocTypeDict.key == "payment"))).scalar_one_or_none()
+    if not old:
+        return {"skipped": "没有旧的 payment 类型"}
+
+    copied = 0
+    for new_key in ("payment_public", "payment_cash"):
+        exists_new = (await db.execute(select(func.count(models.OaApprovalStep.id))
+                                       .where(models.OaApprovalStep.doc_type == new_key))).scalar() or 0
+        if exists_new:
+            continue
+        steps = list((await db.execute(select(models.OaApprovalStep)
+                                       .where(models.OaApprovalStep.doc_type == "payment"))).scalars().all())
+        for st in steps:
+            db.add(models.OaApprovalStep(
+                department_id=st.department_id, doc_type=new_key, step_order=st.step_order,
+                approver_role=st.approver_role, approver_user_id=st.approver_user_id,
+                step_label=st.step_label, enabled=st.enabled))
+            copied += 1
+
+    disabled = False
+    if old.enabled:
+        old.enabled = False       # 停用不删：在途旧单要走完，历史单据也要留着类型名
+        disabled = True
+    if copied or disabled:
+        await db.commit()
+        log.info("[split_payment_doc_type] 复制审批链 %d 条到对公/现金；旧 payment 已停用=%s",
+                 copied, disabled)
+    return {"copied": copied, "old_disabled": disabled}
 
 
 async def backfill_empty_project_members(db: AsyncSession) -> int:
@@ -1983,6 +2027,10 @@ async def backfill_oa_doc_types(db: AsyncSession) -> dict:
         ("travel_expense", "reimbursement", "差旅费用报销"), ("expense", "reimbursement", "费用报销"),
         ("purchase", "purchase", "采购申请"),
         ("payment", "business", "付款申请"),   # 🆕 反馈#285 付款申请(收款单位/金额/事由/期望付款日期)
+        # 🆕 反馈 2026-08-07（杨坛）：付款申请拆成对公/现金两类——**审批流程不一样**。
+        #    顺带解决 #348 的别扭：现金付款根本没有银行账户，却被要求填账号和开户行。
+        ("payment_public", "business", "对公付款申请"),
+        ("payment_cash", "business", "现金付款申请"),
     ]
     r = await db.execute(select(models.OaDocTypeDict.key))
     existing = {k for (k,) in r.all()}
@@ -2391,6 +2439,13 @@ async def run_all(db: AsyncSession) -> None:
         log.warning("backfill_employee_no failed: %s", e)
     try:
         await backfill_oa_doc_types(db)
+    except Exception as e:
+        log.warning("backfill_oa_doc_types failed: %s", e)
+    try:
+        # ⚠️ 必须排在 backfill_oa_doc_types **之后**：那一步先把
+        #    payment_public / payment_cash 建出来，这一步才有东西可复制审批链。
+        #    放前面的话它什么也不做，而且不会报错——是个静默失效。
+        await split_payment_doc_type(db)
     except Exception as e:
         log.warning("backfill_oa_doc_types failed: %s", e)
     try:

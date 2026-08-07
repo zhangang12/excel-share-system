@@ -54,17 +54,17 @@ async def main():
         depts = (await c.get("/api/oa/departments", headers=H)).json()
         dept = [d for d in depts if d["name"] == "销售部"][0]
         docs = (await c.get("/api/oa/doc-types", headers=H)).json()
-        pay = [d for d in docs if d["key"] == "payment"]
-        chk(bool(pay), f"有「付款申请」单据类型: {[d['key'] for d in docs][:8]}")
+        pay = [d for d in docs if d["key"] == "payment_public"]
+        chk(bool(pay), f"有「对公付款申请」单据类型: {[d['key'] for d in docs][:8]}")
         if not pay:
             return
         pay = pay[0]
         # 配一条审批链，否则提交会先被「尚未配置审批流程」挡掉，测不到账户校验
         await c.post("/api/oa/chains", headers=H, json={
-            "department_id": dept["id"], "doc_type": "payment", "step_order": 1,
+            "department_id": dept["id"], "doc_type": "payment_public", "step_order": 1,
             "approver_role": "manager", "enabled": True})
 
-        base = {"category": pay["category"], "doc_type": "payment",
+        base = {"category": pay["category"], "doc_type": "payment_public",
                 "department_id": dept["id"], "title": "付供应商货款", "amount": 5000}
 
         # 1+2) 少账号 / 少开户行都要被服务端拒
@@ -100,7 +100,7 @@ async def main():
         chk(det.get("payee") == "无锡某某机械有限公司", "原有的收款单位没被弄丢")
 
         # 4) 别的单据类型不受影响——付款申请的必填不能溢出
-        other = [x for x in docs if x["key"] != "payment" and x["enabled"]]
+        other = [x for x in docs if x["key"] not in ("payment", "payment_public", "payment_cash") and x["enabled"]]
         if other:
             o = other[0]
             await c.post("/api/oa/chains", headers=H, json={

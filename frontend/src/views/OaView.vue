@@ -185,7 +185,12 @@ const TRANSPORT_OPTIONS = ['高铁', '飞机', '火车', '私车公用', '公车
 // 🆕 反馈#217/#236 销售提成申请：按月提交 + 多项目明细，每行提成=回款金额×提成点%，底部总计
 const showCommissionFields = computed(() => subForm.doc_type === 'sales_commission')
 // 🆕 反馈#285 付款申请：收款单位/付款金额/付款事由(必填) + 期望付款日期(选填)
-const showPaymentFields = computed(() => subForm.doc_type === 'payment')
+// 🆕 反馈 2026-08-07（杨坛）：付款申请拆成对公/现金（审批流不一样）。
+// payment 是拆分前的旧类型，已停用；这里仍然认它，免得存量草稿/旧客户端选到它时表单变空白。
+const PAYMENT_TYPES = ['payment', 'payment_public', 'payment_cash']
+const showPaymentFields = computed(() => PAYMENT_TYPES.includes(subForm.doc_type))
+// ⚠️ 现金付款**没有银行账户**——照 #348 一刀切要求填账号开户行，只会逼人瞎填，比不填更糟
+const showBankFields = computed(() => subForm.doc_type !== 'payment_cash' && showPaymentFields.value)
 const PAYBACK_TYPES = ['预付款', '进度款', '到货款', '尾款', '质保金', '全款']
 // 单行提成（分转整，避免浮点误差）
 function rowCommission(r: CommissionItem) {
@@ -301,13 +306,17 @@ async function submitNew() {
     if (!subForm.p_payee.trim()) { ElMessage.warning('请填写收款单位'); return }
     if (!subForm.amount || Number(subForm.amount) <= 0) { ElMessage.warning('请填写付款金额'); return }
     if (!subForm.p_reason.trim()) { ElMessage.warning('请填写付款事由'); return }
-    // 🆕 #348：账号和开户行都必填——少一样财务照样打不出款，这张单还得再问一轮
-    if (!subForm.p_account.trim()) { ElMessage.warning('请填写收款账号'); return }
-    if (!subForm.p_bank.trim()) { ElMessage.warning('请填写开户行'); return }
+    // 🆕 #348：账号和开户行都必填——少一样财务照样打不出款，这张单还得再问一轮。
+    //    ⚠️ 现金付款跳过：现金没有账户。
+    if (showBankFields.value) {
+      if (!subForm.p_account.trim()) { ElMessage.warning('请填写收款账号'); return }
+      if (!subForm.p_bank.trim()) { ElMessage.warning('请填写开户行'); return }
+    }
     detail = {
       payee: subForm.p_payee.trim(), reason: subForm.p_reason.trim(),
       expect_pay_date: subForm.p_pay_date || '',
-      payee_account: subForm.p_account.trim(), payee_bank: subForm.p_bank.trim(),
+      payee_account: showBankFields.value ? subForm.p_account.trim() : '',
+      payee_bank: showBankFields.value ? subForm.p_bank.trim() : '',
     }
   } else if (showBusinessFields.value) {
     detail = { destination: subForm.d_destination, start_date: subForm.d_start_date, end_date: subForm.d_end_date, notes: subForm.d_notes }
@@ -1130,14 +1139,17 @@ onMounted(async () => {
             <el-col :xs="24" :sm="12">
               <el-form-item label="收款单位 *">
                 <el-input v-model="subForm.p_payee" placeholder="收款单位全称" />
-                <div class="fi-hint">要跟银行账户的户名一致，对不上银行会退回</div>
+                <div class="fi-hint" v-if="showBankFields">要跟银行账户的户名一致，对不上银行会退回</div>
               </el-form-item>
             </el-col>
             <el-col :xs="24" :sm="12"><el-form-item label="期望付款日期（选填）"><el-date-picker v-model="subForm.p_pay_date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" /></el-form-item></el-col>
             <!-- 🆕 反馈#348（杨坛）：批完还得回头问收款账户，钱才付得出去。
                  账号和开户行都必填——少一样财务照样打不出款。 -->
-            <el-col :xs="24" :sm="12"><el-form-item label="收款账号 *"><el-input v-model="subForm.p_account" placeholder="银行卡号 / 对公账号" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item label="开户行 *"><el-input v-model="subForm.p_bank" placeholder="如 工商银行无锡分行营业部" /></el-form-item></el-col>
+            <el-col v-if="showBankFields" :xs="24" :sm="12"><el-form-item label="收款账号 *"><el-input v-model="subForm.p_account" placeholder="银行卡号 / 对公账号" /></el-form-item></el-col>
+            <el-col v-if="showBankFields" :xs="24" :sm="12"><el-form-item label="开户行 *"><el-input v-model="subForm.p_bank" placeholder="如 工商银行无锡分行营业部" /></el-form-item></el-col>
+            <el-col v-else :span="24">
+              <el-alert type="info" :closable="false" title="现金付款不需要填银行账户；如果对方要走银行转账，请改选「对公付款申请」。" />
+            </el-col>
             <el-col :span="24"><el-form-item label="付款事由 *"><el-input v-model="subForm.p_reason" type="textarea" :rows="2" placeholder="为什么付这笔钱" /></el-form-item></el-col>
           </template>
 

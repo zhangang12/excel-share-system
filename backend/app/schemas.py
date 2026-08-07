@@ -582,6 +582,22 @@ class WhTxnListOut(BaseModel):
     total: int = 0      # 按当前条件命中的总数
     shown: int = 0      # 本次真正返回了几条
 
+class WhPoItemOut(BaseModel):
+    """🆕 按采购单号带出来的物料行（供出库登记直接勾选）。"""
+    id: int
+    po_no: Optional[str] = None
+    item_name: str
+    spec: Optional[str] = None
+    qty: Optional[float] = None
+    arrival_date: Optional[str] = None
+    project_code: Optional[str] = None
+    stock_location: Optional[str] = None
+    # 匹配到的物料主数据；匹配不上时为空，前端要禁选并显示 unmatched_reason
+    material_id: Optional[int] = None
+    stock: float = 0
+    unmatched_reason: Optional[str] = None
+
+
 
 
 class WhSummaryRow(BaseModel):

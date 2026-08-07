@@ -68,24 +68,49 @@ const catLoading = ref(false)
 // 展开状态自己管。原来用 default-expand-all，但 catTree 是 computed，
 // 每次保存后 loadCats 换掉 catFlat → 整个 :data 被重建 → el-tree 重新套用
 // default-expand-all → 用户辛苦收起来的分支又全展开了（#342）。
-const expandedKeys = ref<number[]>([])
-const catFirstLoad = ref(true)
+// 🆕 反馈 2026-08-07（杨坛）：「字典分类不要默认展开，根据需要人工点击展开」。
+//    原来首次进来全展开——分类树三级、几百个节点，一进页面就是一屏，找东西反而更慢。
+//    改成默认全收起，并把展开状态记进 localStorage：下次进来还是你上次的样子。
+const CAT_EXPAND_KEY = 'pms_dict_cat_expanded'
+function loadExpanded(): number[] {
+  try {
+    const raw = localStorage.getItem(CAT_EXPAND_KEY)
+    const a = raw ? JSON.parse(raw) : []
+    return Array.isArray(a) ? a.filter((x: unknown) => typeof x === 'number') : []
+  } catch { return [] }
+}
+const expandedKeys = ref<number[]>(loadExpanded())
+function saveExpanded() {
+  try { localStorage.setItem(CAT_EXPAND_KEY, JSON.stringify(expandedKeys.value)) } catch { /* 隐私模式写不了，不影响使用 */ }
+}
 function onNodeExpand(d: CatNode) {
   if (!expandedKeys.value.includes(d.id)) expandedKeys.value = [...expandedKeys.value, d.id]
+  saveExpanded()
 }
 function onNodeCollapse(d: CatNode) {
   expandedKeys.value = expandedKeys.value.filter(k => k !== d.id)
+  saveExpanded()
+}
+// 偶尔要看全貌，给个手动的一键展开/收起，别让"默认收起"变成"想全看时很麻烦"
+const allExpanded = computed(() =>
+  catFlat.value.length > 0 &&
+  catFlat.value.filter(c => catFlat.value.some(x => x.parent_id === c.id))
+    .every(c => expandedKeys.value.includes(c.id)))
+function toggleExpandAll() {
+  if (allExpanded.value) expandedKeys.value = []
+  else expandedKeys.value = catFlat.value
+    .filter(c => catFlat.value.some(x => x.parent_id === c.id)).map(c => c.id)
+  saveExpanded()
 }
 async function loadCats() {
   catLoading.value = true
   try { catFlat.value = (await http.get<CatNode[]>('/wh/material-categories')).data }
   catch { catFlat.value = [] } finally { catLoading.value = false }
-  if (catFirstLoad.value) {
-    // 首次进来还是全展开（原来的观感不变），之后就听用户的
-    catFirstLoad.value = false
-    const hasChild = new Set(catFlat.value.map(c => c.parent_id).filter((x): x is number => x != null))
-    expandedKeys.value = catFlat.value.filter(c => hasChild.has(c.id)).map(c => c.id)
-  }
+  // ⚠️ 这里原来有一段"首次进来全展开"，已按反馈去掉。
+  //    加载完把已不存在的节点从展开集合里清掉，免得 localStorage 里越攒越多。
+  const ids = new Set(catFlat.value.map(c => c.id))
+  const kept = expandedKeys.value.filter(k => ids.has(k))
+  if (kept.length !== expandedKeys.value.length) { expandedKeys.value = kept; saveExpanded() }
 }
 const catTree = computed<CatNode[]>(() => {
   const byParent = new Map<number | null, CatNode[]>()
@@ -185,6 +210,8 @@ async function removeCat(n: CatNode) {
         <div class="bar">
           <span class="hint">三级分类：大类(1位段码) → 中类(2位) → 细分类(2位)；物料在「仓库-物料主数据」选到<b>细分类</b>后保存，自动发码 = 前缀 + 4位流水（如 1·01·01 → 101010001）。改段码只影响之后新发的码。</span>
           <span class="spacer" />
+          <!-- 🆕 默认收起后，偶尔想看全貌得有个一键入口，否则"默认收起"就变成"想全看很麻烦" -->
+          <el-button size="small" @click="toggleExpandAll">{{ allExpanded ? '全部收起' : '全部展开' }}</el-button>
           <el-button type="primary" :icon="Plus" @click="openCatAdd(null)">新增大类</el-button>
         </div>
         <el-tree v-loading="catLoading" :data="catTree" node-key="id"

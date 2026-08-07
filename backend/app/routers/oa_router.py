@@ -195,6 +195,12 @@ async def delete_doc_type(
 
 COST_CENTERS = ["销售成本", "售后成本", "制造费用", "管理费用"]
 
+# 🆕 付款类单据。payment 是拆分前的旧类型，已停用但**在途旧单还要走完**，
+#    所以校验里仍然认它（按对公口径，原来就是这么校验的）。
+PAYMENT_DOC_TYPES = ("payment", "payment_public", "payment_cash")
+# 需要银行账户的：现金付款没有账号和开户行，不在此列
+PAYMENT_BANK_DOC_TYPES = ("payment", "payment_public")
+
 
 def _norm_cost_center(v) -> Optional[str]:
     v = (v or "").strip()
@@ -612,7 +618,10 @@ async def create_request(
         if not rel.scalar_one_or_none():
             raise HTTPException(400, "关联的业务申请不存在")
     # 🆕 反馈#285 付款申请：服务端必填校验（收款单位/付款金额/付款事由），与前端校验同口径
-    if body.doc_type == "payment":
+    # 🆕 反馈 2026-08-07（杨坛）：付款申请拆成对公/现金两类（审批流不一样）。
+    #    ⚠️ **现金付款不校验银行账户**——现金根本没有账号和开户行，
+    #       照 #348 的口径一刀切要求填，只会逼人瞎填一个，比不填更糟。
+    if body.doc_type in PAYMENT_DOC_TYPES:
         _d = body.detail or {}
         if not str(_d.get("payee") or "").strip():
             raise HTTPException(400, "请填写收款单位")
@@ -624,10 +633,12 @@ async def create_request(
         #    账号和开户行都必填——少一样照样打不出款，等于这张单还要再走一轮。
         #    ⚠️ 前端也校验了，这里是同口径的服务端校验：只拦前端的话，
         #       H5/旧客户端/直接打接口都能绕过去，账户照样是空的。
-        if not str(_d.get("payee_account") or "").strip():
-            raise HTTPException(400, "请填写收款账号")
-        if not str(_d.get("payee_bank") or "").strip():
-            raise HTTPException(400, "请填写开户行")
+        #    ⚠️ 只对**转账类**要求：现金付款没有账户。
+        if body.doc_type in PAYMENT_BANK_DOC_TYPES:
+            if not str(_d.get("payee_account") or "").strip():
+                raise HTTPException(400, "请填写收款账号")
+            if not str(_d.get("payee_bank") or "").strip():
+                raise HTTPException(400, "请填写开户行")
     req_no = await _next_oa_no(db)
     req = models.OaRequest(
         request_no=req_no, category=category, doc_type=body.doc_type, department_id=dept.id,

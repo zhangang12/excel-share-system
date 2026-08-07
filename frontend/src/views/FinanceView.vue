@@ -848,6 +848,15 @@ async function revokeInvoice(row: ViewRow) {
                 <span v-else>—</span>
               </template>
             </el-table-column>
+            <!-- 🆕 反馈 2026-08-07（王芹）：「付款人看不到备注，付款人需要看到备注」。
+                 请款时填的「付款说明/账期」只在「请款审批」tab 有，付款这一步反而没有，
+                 付款的人得回头去翻审批 tab 才知道这笔钱有什么讲究。 -->
+            <el-table-column prop="notes" label="备注" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.notes">{{ row.notes }}</span>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="付款信息" min-width="170">
               <template #default="{ row }">
                 <template v-if="row.status === 'paid'">

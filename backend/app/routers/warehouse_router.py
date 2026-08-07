@@ -967,6 +967,55 @@ async def list_txns(
     return schemas.WhTxnListOut(rows=rows, total=total, shown=len(rows))
 
 
+
+@router.get("/po-items", response_model=List[schemas.WhPoItemOut])
+async def po_items(
+    po_no: Optional[str] = Query(None, description="采购单号，模糊匹配"),
+    limit: int = Query(50, ge=1, le=200),
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈 2026-08-07（杨坛）：「出库登记这里加一个功能，可搜索采购单号，
+    然后选择里面的物料进行出库」。
+
+    仓库出库时手头拿的是一张采购单，而登记表单只能从 551 个物料里翻着找——
+    这里按单号把该单的物料行带出来，直接勾选出库。
+
+    ⚠️ 只返回**已到货**(arrival_date 非空)的行：没到货的东西出不了库，
+       列出来只会让人误选。
+    ⚠️ 物料要匹配到 wh_materials 才能出库（出库扣的是物料库存，不是采购行），
+       匹配不上的行照样返回但标 material_id=None，前端要禁选并说明原因，
+       否则仓库会以为系统坏了。
+    """
+    q = select(models.PurchaseItem).where(models.PurchaseItem.arrival_date.isnot(None),
+                                          models.PurchaseItem.arrival_date != "")
+    if po_no and po_no.strip():
+        q = q.where(models.PurchaseItem.po_no.ilike(f"%{po_no.strip()}%"))
+    rows = list((await db.execute(
+        q.order_by(models.PurchaseItem.id.desc()).limit(limit))).scalars().all())
+
+    # 按 名称+规格 匹配物料主数据（出库扣的是它的库存）
+    mats = list((await db.execute(select(models.WhMaterial))).scalars().all())
+    by_key = {}
+    for m in mats:
+        by_key[((m.name or "").strip(), (m.spec or "").strip())] = m
+    stock = await _stock_map(db, [m.id for m in mats])
+
+    out = []
+    for it in rows:
+        key = ((it.item_name or "").strip(), (it.spec or "").strip())
+        m = by_key.get(key) or by_key.get((key[0], ""))
+        out.append(schemas.WhPoItemOut(
+            id=it.id, po_no=it.po_no, item_name=it.item_name, spec=it.spec,
+            qty=it.qty, arrival_date=it.arrival_date, project_code=it.project_code,
+            stock_location=getattr(it, "stock_location", None),
+            material_id=(m.id if m else None),
+            stock=(stock.get(m.id, m.init_stock or 0) if m else 0),
+            unmatched_reason=None if m else "物料主数据里没有同名同规格的料，出库前先在「物料主数据」建档",
+        ))
+    return out
+
+
 @router.get("/summary", response_model=List[schemas.WhSummaryRow])
 async def summary(
     period: str = Query(..., description="YYYY-MM"),
