@@ -668,6 +668,33 @@ async def _attach_pay_status(db: AsyncSession, outs: list) -> list:
         vch = voucher_by_item.get(o.id)
         if vch:
             o.pay_voucher_file_id, o.pay_voucher_name = vch
+
+    # 🆕 反馈#358（李新新）：整单现金全款付清了，却显示「部分付款」。
+    #   付款是**按单付**的——供应商收的是一张采购单的钱，不是某一行零件的钱。
+    #   而「整单维护」为了让汇总合计恰好等于所填总额，故意把整单付款额记在**首行**、
+    #   其余行置 0（见 set_group_summary）。于是上面按行判定时，除首行外全是「未付款」，
+    #   前端合并父行 every(已付款) 不成立 → 显示「部分付款」。
+    #   现场：TH20260808-019 共 13 行，收货 12.92 / 已付 12.92，只有 1 行带付款额。
+    #   生产上 129 张已付清的单里有 35 张这样显示错。
+    #   做法：整单收货额已全部付清时，把该单**所有行**提升为「已付款」。
+    #   ⚠️ 只升不降——Σ付 < Σ收 的单一行都不动，逐行状态照旧，
+    #      因此「请款单只覆盖 5 行里的 2 行」这种真·部分付款不会被误判成已付清。
+    #   ⚠️ 合计必须回数据库整单算，不能只加 outs：分页/筛选时 outs 只是这单的一部分，
+    #      按残缺的合计判会把没付清的单也标成已付款。
+    po_nos = {o.po_no for o in outs if o.po_no}
+    if po_nos:
+        tr = await db.execute(
+            select(models.PurchaseItem.po_no,
+                   func.sum(func.coalesce(models.PurchaseItem.received_amount, 0)),
+                   func.sum(func.coalesce(models.PurchaseItem.paid_amount, 0)))
+            .where(models.PurchaseItem.po_no.in_(po_nos))
+            .group_by(models.PurchaseItem.po_no)
+        )
+        settled = {po for po, recv_t, paid_t in tr.all()
+                   if (recv_t or 0) > 0 and (paid_t or 0) >= (recv_t or 0) - 0.005}
+        for o in outs:
+            if o.po_no in settled:
+                o.pay_status = "已付款"
     return outs
 
 

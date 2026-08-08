@@ -218,10 +218,35 @@ async function deleteRow(r: Row) {
   }
 }
 
+// 反馈#357（杨坛）：「售后审批的时候看不到具体费用清单」。
+// 他是审批人，看到的只有一个总额 —— 批的是钱，却不知道钱花在哪几项上。
+// 清单本来就在 row.items 里（接口一直有返回），只是台账没渲染。
+// 这里两处都补上：台账加展开行（可随时翻），审批确认框里再列一遍——
+// 展开行要主动点，确认框是**必经**的，「审批的时候看得到」只有后者能保证。
+const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string))
+
+function costListHtml(r: Row): string {
+  const its = r.items || []
+  if (!its.length) return '<div style="color:#999">（旧流程登记的记录没有费用清单）</div>'
+  const rows_ = its.map(it => `<tr>
+      <td style="padding:3px 10px 3px 0">${esc(it.name)}</td>
+      <td style="padding:3px 10px 3px 0;text-align:right;white-space:nowrap">${fmtMoney(it.amount)}</td>
+      <td style="padding:3px 0;white-space:nowrap;color:${it.invoice_file_id ? '#67c23a' : '#f56c6c'}">${it.invoice_file_id ? '有发票' : '缺发票'}</td>
+    </tr>`).join('')
+  return `<div style="max-height:38vh;overflow:auto"><table style="width:100%;border-collapse:collapse">${rows_}</table></div>`
+}
+
 async function approve(r: Row, ok: boolean) {
   if (ok) {
     try {
-      await ElMessageBox.confirm('通过后将自动把售后费用同步到财务部，确认通过？', '审批通过', { type: 'warning' })
+      const miss = (r.items || []).filter(it => !it.invoice_file_id).length
+      await ElMessageBox.confirm(
+        `<div style="margin-bottom:6px">费用清单（共 <b>${fmtMoney(r.cost)}</b>）：</div>`
+        + costListHtml(r)
+        + (miss ? `<div style="margin-top:8px;color:#e6a23c">⚠ 有 ${miss} 项没传发票，财务核对时会被退回</div>` : '')
+        + '<div style="margin-top:8px">通过后将自动把售后费用同步到财务部，确认通过？</div>',
+        '审批通过', { type: 'warning', dangerouslyUseHTMLString: true })
     } catch { return }
     actingId.value = r.id
     try {
@@ -271,6 +296,23 @@ async function approve(r: Row, ok: boolean) {
     <el-card shadow="never">
       <template #header>📋 安装/售后登记台账</template>
       <el-table show-overflow-tooltip :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+        <!-- 反馈#357：费用清单放展开行（与财务部那张表同口径）。
+             一条售后动辄三五行费用，摊成列会把表挤到要横向滚动。 -->
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div class="as-detail">
+              <div v-for="(it, i) in (row.items || [])" :key="it.id || i" class="as-item">
+                <span class="as-nm">{{ it.name }}</span>
+                <span class="as-amt">{{ fmtMoney(it.amount) }}</span>
+                <el-button v-if="it.invoice_file_id" size="small" link type="primary"
+                           @click="downloadAttachment({ id: it.invoice_file_id, name: it.invoice_file_name || '发票' })">查看发票</el-button>
+                <span v-else class="miss">缺发票</span>
+              </div>
+              <div v-if="!(row.items || []).length" class="muted small">旧流程登记的记录没有费用清单</div>
+              <div v-if="row.pay_note" class="muted small">备注：{{ row.pay_note }}</div>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column type="index" label="#" width="50" />
         <el-table-column label="类型" width="70" align="center">
           <template #default="{ row }">
@@ -282,8 +324,13 @@ async function approve(r: Row, ok: boolean) {
         </el-table-column>
         <el-table-column prop="name" label="项目名称" min-width="140" show-overflow-tooltip />
         <el-table-column prop="problem" label="问题/说明" min-width="200" show-overflow-tooltip />
-        <el-table-column label="费用" width="110" align="right">
-          <template #default="{ row }">{{ fmtMoney(row.cost) }}</template>
+        <el-table-column label="费用" width="120" align="right">
+          <template #default="{ row }">
+            <div>{{ fmtMoney(row.cost) }}</div>
+            <!-- 反馈#357：几项费用一眼可见，不用展开也知道这钱是几笔凑的 -->
+            <div v-if="(row.items || []).length" class="muted small">{{ row.items.length }} 项</div>
+            <div v-if="row.missing_invoice" class="miss small">缺 {{ row.missing_invoice }} 张发票</div>
+          </template>
         </el-table-column>
         <el-table-column label="清单" min-width="150">
           <template #default="{ row }">
@@ -434,4 +481,10 @@ async function approve(r: Row, ok: boolean) {
 .small { font-size: 12px; }
 .kpi-grid { margin-bottom: 14px; }
 .op-cell { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+/* 反馈#357 费用清单展开行（与财务部那张表同一套样式，两边看到的长得一样） */
+.as-detail { padding: 6px 18px 8px; }
+.as-item { display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 2; }
+.as-item .as-nm { min-width: 90px; }
+.as-item .as-amt { min-width: 90px; text-align: right; font-variant-numeric: tabular-nums; }
+.miss { color: var(--el-color-danger); }
 </style>

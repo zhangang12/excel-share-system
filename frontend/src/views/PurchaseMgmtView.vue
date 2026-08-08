@@ -1701,12 +1701,16 @@ const groupSumForm = reactive({ invoice_amount: null as number | null, paid_amou
 //   分摊总价的，价填错时按同样口径重填一次总价最自然）。
 const groupSumLines = ref<{ id: number; item_name: string; spec?: string | null; qty: number | null
                             unit_price: number | null; received_amount: number | null
-                            _price0: number | null; _amt0: number | null }[]>([])
+                            notes: string
+                            _price0: number | null; _amt0: number | null; _notes0: string }[]>([])
 const groupSumTotalInput = ref<number | null>(null)
 const groupSumLinesTotal = computed(() =>
   groupSumLines.value.reduce((s, l) => s + (l.received_amount || 0), 0))
+// 🆕 反馈#356（李新新）：备注也算「改动过」——外购件只有图纸，仓库要对料，
+//   详细尺寸就写在这儿；她明确提了希望能在整单维护时补写（下单时来不及写全）。
 const groupSumPriceDirty = computed(() =>
-  groupSumLines.value.filter(l => l.unit_price !== l._price0 || l.received_amount !== l._amt0))
+  groupSumLines.value.filter(l => l.unit_price !== l._price0 || l.received_amount !== l._amt0
+                                  || l.notes !== l._notes0))
 function openGroupSummary(row: any) {
   groupSumRow.value = row
   groupSumForm.invoice_amount = row.invoice_amount || null
@@ -1716,7 +1720,8 @@ function openGroupSummary(row: any) {
   groupSumLines.value = (row.children || []).map((c: any) => ({
     id: c.id, item_name: c.item_name, spec: c.spec, qty: c.qty,
     unit_price: c.unit_price ?? null, received_amount: c.received_amount ?? null,
-    _price0: c.unit_price ?? null, _amt0: c.received_amount ?? null,
+    notes: c.notes || '',
+    _price0: c.unit_price ?? null, _amt0: c.received_amount ?? null, _notes0: c.notes || '',
   }))
   groupSumTotalInput.value = null
   groupSumVisible.value = true
@@ -1750,11 +1755,12 @@ async function submitGroupSummary() {
   if (!row?.children?.length) return
   groupSumSaving.value = true
   try {
-    // 先落改价（逐条 PUT，只发动过的字段；后端会同步回写入库流水金额）
+    // 先落改价/改备注（逐条 PUT，只发动过的行；后端会同步回写入库流水金额）
     const dirty = groupSumPriceDirty.value
     for (const l of dirty) {
       await http.put(`/purchase-mgmt/items/${l.id}`, {
         unit_price: l.unit_price, received_amount: l.received_amount,
+        notes: l.notes.trim() || null,
       })
     }
     const r = await http.post<{ updated: number }>('/purchase-mgmt/items/set-group-summary', {
@@ -1765,7 +1771,7 @@ async function submitGroupSummary() {
       invoice_status: groupSumForm.invoice_status || null,
     })
     ElMessage.success(dirty.length
-      ? `整单维护完成（改价 ${dirty.length} 条 / 共 ${r.data.updated} 条零件）`
+      ? `整单维护完成（改动 ${dirty.length} 条 / 共 ${r.data.updated} 条零件）`
       : `整单维护完成（${r.data.updated} 条零件）`)
     groupSumVisible.value = false
     await loadItems()
@@ -3364,12 +3370,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     </el-dialog>
 
     <!-- ==================== 🆕 #4 合并父行「整单维护」==================== -->
-    <el-dialog v-model="groupSumVisible" title="整单维护（合并单）" width="760px">
+    <el-dialog v-model="groupSumVisible" title="整单维护（合并单）" width="900px">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
         :title="`对采购单「${groupSumRow?.po_no || ''}」整单维护：开票金额/已付款按整单总额维护(不拆分到各零件，记在汇总)，对账状态套用到全部 ${groupSumRow?._count || 0} 项零件。留空的字段不改。`" />
 
       <!-- 🆕 #329 逐条改价：仓库收货填错价时，采购在这里直接改，不用再展开逐条点「编辑」 -->
-      <div class="form-section-title">按零件改价（仓库收货价填错时改这里）</div>
+      <div class="form-section-title">按零件改价 / 补备注（仓库收货价填错时改这里；备注仓库收货页看得到）</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <span class="small muted">整单重填总价：</span>
         <el-input-number v-model="groupSumTotalInput" :min="0" :precision="2" :controls="false"
@@ -3397,6 +3403,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <template #default="{ row }">
             <el-input-number v-model="row.received_amount" :precision="2" :controls="false"
                              size="small" style="width:100%" @change="onGroupLineAmount(row)" />
+          </template>
+        </el-table-column>
+        <!-- 🆕 反馈#356：备注在这儿也能补写。外购件只附图纸，仓库对料要详细尺寸；
+             下单时未必来得及写全，事后在整单维护里补上，仓库收货页就能看到。 -->
+        <el-table-column label="备注（仓库对料看得到）" min-width="180">
+          <template #default="{ row }">
+            <el-input v-model="row.notes" size="small" placeholder="如详细尺寸，仓库收货时可见" />
           </template>
         </el-table-column>
       </el-table>

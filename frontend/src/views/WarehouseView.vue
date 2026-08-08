@@ -352,6 +352,7 @@ interface RecvItem {
   delivery_note_no?: string | null; arrival_date?: string | null
   delivery_date?: string | null   // 🆕 #290 下单时间（采购下单填，PurchaseItem.delivery_date）
   receipt_count?: number   // 🆕 需求十四：已上传收货单数量
+  notes?: string | null    // 🆕 #356 采购下单填的备注（外购件的详细尺寸等，仓库对料要看）
 }
 const recvItems = ref<RecvItem[]>([])
 const recvLoading = ref(false)
@@ -413,6 +414,7 @@ const groupedRecv = computed<any[]>(() => {
         _isGroup: true, _key: 'g:' + po, po_no: po,
         supplier_name: it.supplier_name, supplier_id: it.supplier_id,
         qty: 0, received_amount: 0, receipt_count: 0, stock_location: null as string | null,
+        _noteCount: 0,                // 🆕 #356 该单有几行带备注
         _codes: new Set<string>(), _dnotes: new Set<string>(), _arrivals: new Set<string>(),
         _odates: new Set<string>(),   // 🆕 #290 下单时间聚合
         children: [] as RecvItem[],
@@ -428,6 +430,7 @@ const groupedRecv = computed<any[]>(() => {
     if (it.delivery_note_no) g._dnotes.add(it.delivery_note_no)
     if (it.arrival_date) g._arrivals.add(it.arrival_date)
     if (it.delivery_date) g._odates.add(it.delivery_date)
+    if ((it.notes || '').trim()) g._noteCount++      // 🆕 #356 父行提示"里面有几条备注要看"
   }
   return out.map((r) => {
     if (!r._isGroup) return r
@@ -1434,6 +1437,18 @@ function applyPoPick() {
               <el-table-column prop="spec" label="规格型号" min-width="120">
                 <template #default="{ row }">{{ row._isGroup ? '' : (row.spec || '—') }}</template>
               </el-table-column>
+              <!-- 🆕 反馈#356（李新新）：外购件常常只有图纸，仓库对料时得知道详细尺寸。
+                   采购下单时本来就能填「备注」，但收货这张表从来不显示——填了也白填。
+                   紧挨规格型号放，对料时一眼扫过去；合并父行提示里面有几条，提醒展开看。 -->
+              <el-table-column prop="notes" label="备注（采购填）" min-width="150">
+                <template #default="{ row }">
+                  <span v-if="row._isGroup" class="muted small">{{ row._noteCount ? `📝 ${row._noteCount} 项有备注，展开看` : '' }}</span>
+                  <el-tooltip v-else-if="row.notes" :content="row.notes" placement="top" :show-after="200">
+                    <span class="recv-note">{{ row.notes }}</span>
+                  </el-tooltip>
+                  <span v-else class="muted">—</span>
+                </template>
+              </el-table-column>
               <el-table-column label="数量" width="72" align="right">
                 <template #default="{ row }">{{ row.qty ?? '—' }}</template>
               </el-table-column>
@@ -2014,6 +2029,8 @@ function applyPoPick() {
 .recv-toggle :deep(.el-radio-button__inner) {
   font-size: 18px; font-weight: 700; padding: 15px 34px; line-height: 1.2; min-width: 150px;
 }
+/* 🆕 #356 采购备注：对料要看的尺寸信息，标成可读的强调色，鼠标悬停出全文 */
+.recv-note { color: var(--el-color-warning-dark-2, #b88230); }
 /* 🆕 #141 tab 待办数红色角标 */
 .wh-tab-badge { display: inline-block; margin-left: 6px; min-width: 16px; height: 16px; line-height: 16px;
   padding: 0 4px; border-radius: 8px; background: var(--el-color-danger); color: #fff; font-size: 11px;
