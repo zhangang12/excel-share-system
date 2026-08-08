@@ -15,6 +15,7 @@ import { collabApi, ASSEMBLY_SHEETS, type Workflow } from '@/api/collab'
 import { feedbackApi, FB_STATUS_TXT, FB_STATUS_TAG, type Feedback } from '@/api/feedback'
 import { fetchExport } from '@/api/exportRequest'
 import type { Project, ProjectMember, User, Datasheet } from '@/types'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const route = useRoute()
 const router = useRouter()
@@ -259,10 +260,12 @@ async function exportAll() {
   await fetchExport(`/api/projects/${pid.value}/export`, 'project.xlsx', `项目导出 ${project.value?.code || ''}`)
 }
 
-onMounted(async () => {
+// 反馈#359：刷新按钮和首屏加载走同一个函数，不会出现"刷新只刷了一半"
+async function reloadAll() {
   await loadProject()
   await Promise.all([loadMembers(), loadDatasheets()])
-})
+}
+onMounted(reloadAll)
 </script>
 
 <template>
@@ -287,6 +290,7 @@ onMounted(async () => {
         <input type="file" accept=".xlsx,.xlsm,.xls" hidden @change="onImportFile" />
       </label>
       <el-button :icon="Download" @click="exportAll">导出全部</el-button>
+      <PageRefresh :load="reloadAll" />
     </div>
 
     <el-tabs v-model="activeTab" class="proj-tabs" @tab-change="onCollabTab">

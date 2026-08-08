@@ -11,6 +11,7 @@ import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 interface Att { id: number; name: string; pushed_at?: string | null }
 interface Row {
@@ -230,6 +231,7 @@ async function packDownload() {
         <el-option label="全部" value="" />
       </el-select>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+      <PageRefresh :load="load" />
     </div>
 
     <el-card shadow="never">

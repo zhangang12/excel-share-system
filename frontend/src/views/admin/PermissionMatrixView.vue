@@ -6,6 +6,7 @@ import {
   type OverviewMatrix, type DatasheetProject, type DatasheetMatrix,
 } from '@/api/permissions'
 import FieldPermissionDialog from '@/components/FieldPermissionDialog.vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const activeView = ref<'overview' | 'datasheets'>('overview')
 
@@ -113,6 +114,7 @@ function cellLabel(cell: { can_view: boolean; can_edit: boolean }) {
       </div>
       <div class="spacer"></div>
       <el-button :icon="Refresh" @click="refresh">刷新</el-button>
+      <PageRefresh :load="loadOverview" />
     </div>
 
     <el-card>

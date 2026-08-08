@@ -187,6 +187,7 @@ onMounted(() => {
   }, 60_000)
 })
 import { onBeforeUnmount } from 'vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 onBeforeUnmount(() => { if (_todayTimer !== null) window.clearInterval(_todayTimer) })
 
 // 一览专属前缀 __o__，与项目详情的 __h__ 完全独立
@@ -713,6 +714,7 @@ onMounted(load)
         <input type="file" accept=".xlsx,.xlsm,.xls" hidden @change="onImportFile" />
       </label>
       -->
+      <PageRefresh :load="load" />
     </div>
 
     <el-card v-loading="loading">

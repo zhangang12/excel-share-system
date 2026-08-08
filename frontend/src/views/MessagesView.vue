@@ -6,6 +6,7 @@ import { messagesApi, type Message } from '@/api/messages'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtRelative } from '@/utils/format'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const loading = ref(false)
 const list = ref<Message[]>([])
@@ -61,6 +62,7 @@ onMounted(async () => {
       </div>
       <div class="spacer"></div>
       <el-button @click="markAllRead">全部已读</el-button>
+      <PageRefresh :load="load" />
     </div>
 
     <el-card v-loading="loading" shadow="never">

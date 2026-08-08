@@ -5,6 +5,7 @@ import { adminApi } from '@/api/admin'
 import type { AuditLog } from '@/types'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtRelative } from '@/utils/format'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const list = ref<AuditLog[]>([])
 const loading = ref(false)
@@ -72,6 +73,7 @@ onMounted(load)
       <el-input v-model="keyword" placeholder="搜索用户/动作/详情"
                 style="width: 280px" size="large" clearable :prefix-icon="Search" />
       <el-button :icon="Refresh" size="large" @click="load">刷新</el-button>
+      <PageRefresh :load="load" />
     </div>
 
     <el-card v-loading="loading">

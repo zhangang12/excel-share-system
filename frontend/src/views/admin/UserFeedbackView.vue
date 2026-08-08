@@ -8,6 +8,7 @@ import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtRelative } from '@/utils/format'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const loading = ref(false)
 const list = ref<UserFeedbackRow[]>([])
@@ -133,6 +134,7 @@ function closePreview() {
       <el-tooltip content="只导出「待处理」的反馈，已处理的不会包含在内" placement="top">
         <el-button type="primary" :icon="Download" @click="exportHtml">导出待处理 HTML</el-button>
       </el-tooltip>
+      <PageRefresh :load="load" />
     </div>
 
     <div class="sec-title">概览</div>

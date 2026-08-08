@@ -12,6 +12,7 @@ import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'
 import { fmtDate, fmtMoney, fmtMatCode } from '@/utils/format'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('warehouse', 'warehouse_lead', 'admin', 'manager'))
@@ -1062,6 +1063,8 @@ function applyPoPick() {
         <h1>仓库</h1>
         <div class="desc">物料主数据 + 出入库（自动单号·超库存拦截）+ 收发存汇总 + 流水（冲红）+ 发货清单</div>
       </div>
+      <div class="spacer"></div>
+      <PageRefresh :load="() => { loadMaterials(); loadMatDict(); loadBadgeCounts(); loadLocations(); onTab(tab) }" />
     </div>
 
     <el-card shadow="never" v-loading="loading">

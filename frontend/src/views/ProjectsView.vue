@@ -6,6 +6,7 @@ import { Plus, Edit, Delete, Search, FolderOpened } from '@element-plus/icons-vu
 import { projectsApi } from '@/api/projects'
 import { useAuthStore } from '@/stores/auth'
 import type { Project } from '@/types'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -121,6 +122,7 @@ onMounted(load)
         新建项目
       </el-button>
       -->
+      <PageRefresh :load="load" />
     </div>
 
     <div v-if="loading" v-loading="loading" class="loading-box"></div>

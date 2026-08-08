@@ -10,6 +10,7 @@ import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
 import LineChart from '@/components/LineChart.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'   // 🆕 反馈#296 凭证/回执在线预览
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
@@ -2093,6 +2094,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <h1>采购管理</h1>
         <div class="desc">采购部项目一览 · 采购明细录入 · 供应商账目 · 请款流程 · 汇总报表</div>
       </div>
+      <div class="spacer"></div>
+      <PageRefresh :load="() => onTabChange(tab)" />
     </div>
 
     <el-card shadow="never" v-loading="loading">

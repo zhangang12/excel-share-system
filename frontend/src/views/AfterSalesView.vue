@@ -10,6 +10,7 @@ import { fmtMoney } from '@/utils/format'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import FilePicker from '@/components/FilePicker.vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 interface Att { id: number; name: string }
 interface CostItem {
@@ -284,6 +285,7 @@ async function approve(r: Row, ok: boolean) {
       <div class="spacer"></div>
       <el-button v-if="canReg" type="primary" :icon="Plus" @click="openReg('aftersales')">登记售后</el-button>
       <el-button v-if="canReg" type="success" :icon="Plus" @click="openReg('install')">登记安装</el-button>
+      <PageRefresh :load="load" />
     </div>
 
     <div class="kpi-grid">

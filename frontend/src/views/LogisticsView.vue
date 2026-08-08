@@ -11,6 +11,7 @@ import EmptyHint from '@/components/EmptyHint.vue'
 import FilePicker from '@/components/FilePicker.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import AttachmentPackDialog from '@/components/AttachmentPackDialog.vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 interface DeptState { state: string; label: string }
 interface AttOut { id: number; name: string }
@@ -213,6 +214,7 @@ async function confirmShip(force = false) {
         <el-option label="已完成" value="已完成" />
         <el-option label="全部" value="" />
       </el-select>
+      <PageRefresh :load="load" />
     </div>
 
     <el-card shadow="never">

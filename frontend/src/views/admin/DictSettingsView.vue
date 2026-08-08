@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Edit, Delete } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 interface DictItem { id: number; dtype: string; value: string; sort_order: number; enabled: boolean }
 
@@ -197,6 +198,8 @@ async function removeCat(n: CatNode) {
         <h1>字典设置</h1>
         <div class="desc">统一维护受管理的取值：订单编号 / 物料类别 / 计量单位 / 材质 / 供应商分类（仅管理员/管理层）</div>
       </div>
+      <div class="spacer"></div>
+      <PageRefresh :load="load" />
     </div>
 
     <el-card shadow="never">

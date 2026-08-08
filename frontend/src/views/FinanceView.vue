@@ -8,6 +8,7 @@ import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/api/sales'
 import EmptyHint from '@/components/EmptyHint.vue'
 import { useAuthStore } from '@/stores/auth'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const auth = useAuthStore()
 const isManager = computed(() => auth.hasRole('admin', 'manager'))
@@ -591,6 +592,8 @@ async function revokeInvoice(row: ViewRow) {
         <h1>财务部</h1>
         <div class="desc">销售主管审批通过的开票申请汇到这里；开票后上传发票自动回传销售订单；售后费用经售后部审批自动同步</div>
       </div>
+      <div class="spacer"></div>
+      <PageRefresh :load="async () => { await load(); await loadPayReqs(); onFinTab(tab) }" />
     </div>
 
     <el-card shadow="never" v-loading="loading">

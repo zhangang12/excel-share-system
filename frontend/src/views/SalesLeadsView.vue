@@ -8,6 +8,7 @@ import { leadsApi, LEAD_SOURCES, LEAD_STATUSES, type SalesLeadRow, type SalesLea
 import { salesApi } from '@/api/sales'
 import { fmtDate, fmtDateTime } from '@/utils/format'
 import EmptyHint from '@/components/EmptyHint.vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const auth = useAuthStore()
 // 主管/管理层：录入、分配/改派、改来源、删除、报表、看全部；销售员：仅跟进本人线索
@@ -182,6 +183,7 @@ async function openReport() {
       <div class="spacer"></div>
       <el-button v-if="allView" type="primary" plain :icon="TrendCharts" @click="openReport">线索报表</el-button>
       <el-button v-if="allView" type="primary" :icon="Plus" @click="openCreate">录入线索</el-button>
+      <PageRefresh :load="() => { load(); loadStaff() }" />
     </div>
 
     <el-card shadow="never" style="margin-bottom: 12px">

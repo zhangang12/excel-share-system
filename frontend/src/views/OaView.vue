@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtDateTime } from '@/utils/format'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const auth = useAuthStore()
 const canConfig = computed(() => auth.isAdmin)               // 部门/审批流程设置：仅 admin/manager
@@ -649,9 +650,16 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <div class="page-head">
-      <h2>OA审批</h2>
-      <div class="desc">业务申请 · 报销申请 · 采购申请 —— 按部门+单据类型配置多级审批</div>
+    <!-- 反馈#359：这页的标题栏是 OA 自己的 .page-head（块级，不是全站那个 flex 的
+         .page-header），刷新按钮直接塞进去会掉到标题下面另起一行。包一层保持
+         "标题在左、刷新在右"，跟其它页面一致。 -->
+    <div class="page-head oa-head">
+      <div>
+        <h2>OA审批</h2>
+        <div class="desc">业务申请 · 报销申请 · 采购申请 —— 按部门+单据类型配置多级审批</div>
+      </div>
+      <div class="spacer"></div>
+      <PageRefresh :load="async () => { await loadList(); onMainTabChange(mainTab) }" />
     </div>
 
     <el-tabs v-model="mainTab" type="border-card" @tab-change="onMainTabChange">
@@ -1385,6 +1393,9 @@ onMounted(async () => {
 .page { padding: 20px; }
 .page-head { margin-bottom: 16px; }
 .page-head h2 { margin: 0 0 4px; font-size: 20px; }
+/* 反馈#359：标题在左、刷新在右（其它页面走全站 .page-header，这页是自己的样式） */
+.oa-head { display: flex; align-items: center; gap: 16px; }
+.oa-head .spacer { flex: 1; }
 .desc { color: var(--el-text-color-secondary); font-size: 13px; }
 .toolbar { display: flex; gap: 10px; margin-bottom: 14px; }
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }

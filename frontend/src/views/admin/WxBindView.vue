@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { http } from '@/api'
 import type { User } from '@/types'
 import StatusPill from '@/components/StatusPill.vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 // 🆕 v3 企微绑定：用户 ↔ 企业微信 userid（手动绑定 F1 口径）
 interface BindUser extends User { wxid?: string | null }
@@ -70,6 +71,7 @@ onMounted(load)
       </div>
       <div class="spacer" style="flex:1"></div>
       <el-button type="primary" plain :loading="testing" @click="testPush">🔔 测试推送（给自己）</el-button>
+      <PageRefresh :load="load" />
     </div>
 
     <el-card v-loading="loading" shadow="never">

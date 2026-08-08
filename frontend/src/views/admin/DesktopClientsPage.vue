@@ -7,6 +7,7 @@ import { desktopApi, type DesktopClientItem, type DesktopVersionDist,
 import EmptyHint from '@/components/EmptyHint.vue'
 import { fmtRelative } from '@/utils/format'
 import { ElMessage } from 'element-plus'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const tab = ref('clients')
 const loading = ref(false)
@@ -95,6 +96,7 @@ function shortId(id: string): string {
       <div class="spacer"></div>
       <el-button :icon="Refresh" :loading="loading || repLoading"
                  @click="tab === 'clients' ? load() : loadReports()">刷新</el-button>
+      <PageRefresh :load="() => { load(); loadReports() }" />
     </div>
 
     <el-tabs v-model="tab">

@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { fmtMoney } from '@/api/sales'
 import EmptyHint from '@/components/EmptyHint.vue'
 import { useAuthStore } from '@/stores/auth'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const auth = useAuthStore()
 const tv = (name: string) => auth.tabVisible('hr', name)
@@ -318,6 +319,8 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
         <h1>人事部</h1>
         <div class="desc">员工花名册（合同到期前 30 天 / 试用转正前 7 天自动提醒）；部门月度工资总额（项目毛利"含人工"口径的数据源）</div>
       </div>
+      <div class="spacer"></div>
+      <PageRefresh :load="async () => { await loadDepts(); await loadEmps(); loadBindableUsers(); onTab(tab) }" />
     </div>
 
     <el-card shadow="never">

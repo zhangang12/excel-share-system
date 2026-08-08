@@ -26,6 +26,7 @@ import StatusPill from '@/components/StatusPill.vue'
 import { fmtDate } from '@/utils/format'
 import { reportsApi, type DeptReport } from '@/api/reports'
 import { salesApi } from '@/api/sales'   // 复用建议编号
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 // el-tag type → StatusPill variant 映射（ORDER_STATUS_TAG 用）
 const PILL_VARIANT: Record<string, 'success' | 'warn' | 'info' | 'danger' | 'primary' | 'muted'> = {
@@ -912,6 +913,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
       <el-button v-if="canSpare" type="primary" @click="openSpare">➕ 备机下单</el-button>
       <el-button v-if="dept === 'design'" @click="stockVisible = true">🔎 查库存(只读)</el-button>
       <el-button v-if="isLead || isMgr" type="primary" plain @click="openReport">📊 {{ deptName }}报表</el-button>
+      <PageRefresh :load="load" />
     </div>
 
     <!-- ===== 🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账 ===== -->

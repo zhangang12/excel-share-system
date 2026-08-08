@@ -7,6 +7,7 @@ import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtRelative } from '@/utils/format'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 interface Req {
   id: number; user_id: number; user_name?: string | null; user_role?: string | null
@@ -59,6 +60,8 @@ function fmt(s: string) {
         <h1>导出审批</h1>
         <div class="desc">非管理层导出数据需申请，批准后永久获得导出权限</div>
       </div>
+      <div class="spacer"></div>
+      <PageRefresh :load="load" />
     </div>
     <el-alert v-if="!enabled" type="info" :closable="false" style="margin-bottom:12px"
               title="导出审批当前为「关闭」状态：所有角色可直接导出（与上线前一致）。开启需在后端 export_approval_enabled 配置。" />

@@ -6,6 +6,7 @@ import { adminApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 import type { User, Role } from '@/types'
 import StatusPill from '@/components/StatusPill.vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const auth = useAuthStore()
 const isAdmin = computed(() => auth.hasRole('admin', 'manager'))
@@ -194,6 +195,7 @@ onMounted(load)
       <el-button v-if="isAdmin" type="primary" size="large" :icon="Plus" @click="openCreate">
         新建用户
       </el-button>
+      <PageRefresh :load="load" />
     </div>
 
     <el-card v-loading="loading">

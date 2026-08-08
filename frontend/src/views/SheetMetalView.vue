@@ -6,6 +6,7 @@ import { Refresh, CircleCheck } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
 import SheetmetalGrid from '@/components/SheetmetalGrid.vue'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 interface Row {
   project_id: number; code: string; name: string; designer?: string | null
@@ -61,6 +62,7 @@ function viewSheet(row: Row) {
         <el-option label="全部" value="" />
       </el-select>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+      <PageRefresh :load="load" />
     </div>
 
     <el-card shadow="never">

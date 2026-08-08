@@ -10,6 +10,8 @@ defineProps<{ title: string }>()
         <h1>{{ title }}</h1>
         <div class="desc">本页将在后续 Sprint 实现</div>
       </div>
+      <!-- 页头是 justify-content:flex-end，没有 spacer 标题会被推到右边 -->
+      <div class="spacer"></div>
     </div>
     <el-card>
       <el-empty :image-size="120" description="即将上线，敬请期待">

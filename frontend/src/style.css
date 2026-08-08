@@ -255,7 +255,23 @@ a:hover { text-decoration: none; opacity: .85; }
   gap: 16px;
   margin-bottom: 20px;
   padding: 6px 4px 0;
+  /* 反馈#359 加刷新按钮时发现的老问题：头部是不换行的 flex，
+     控件一多就把标题块**压扁**——销售部(6 个按钮)在 1280 宽下标题被挤成
+     一个字一行的竖条，说明文字整段变成竖排，实测头部高 155px→442px。
+     不是新 bug：窄屏本来就会这样，只是这次多一个按钮把 1280 也压过界了。
+     允许换行 + 给标题块一个最小宽度：挤不下的控件整体挪到第二行，
+     标题永远是完整一行。代价是少数控件多的页头会高 30~40px，
+     换来的是标题不会再被压成竖条。
+     ⚠️ 别用 `> *:first-child { min-width }` 撑标题块：项目详情页的头部第一个
+        元素是「返回」按钮，会被撑成 280px。改成让 h1 不换行——标题块的
+        最小宽度自然就不小于标题本身，挤不下的控件只能换行。 */
+  flex-wrap: wrap;
+  /* 换行后第二行的控件跟第一行一样靠右（第一行是 .spacer 顶出来的，
+     第二行没有 spacer，不写这句就会孤零零地贴左边）。
+     前提：每个 .page-header 都有 .spacer——没有的话标题会被推到右边。 */
+  justify-content: flex-end;
 }
+.page-header h1 { white-space: nowrap; }
 .page-header h1 {
   margin: 0;
   font-size: 23px;

@@ -14,6 +14,7 @@ import FilePicker from '@/components/FilePicker.vue'
 import WorkflowGraph from '@/components/WorkflowGraph.vue'
 import { collabApi, type Workflow } from '@/api/collab'
 import { fmtDate } from '@/utils/format'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const auth = useAuthStore()
 const allView = computed(() => auth.hasRole('admin', 'manager', 'sales_lead'))
@@ -786,6 +787,7 @@ async function openReport() {
       <el-button v-if="allView" :icon="CircleClose" @click="openVoidApprovals">作废审批</el-button>
       <el-button :icon="DocumentCopy" @click="openMerge">合并开票</el-button>
       <el-button type="primary" :icon="Plus" :loading="openingOrder" @click="openOrder">销售下单</el-button>
+      <PageRefresh :load="() => { load(); loadSalesStaff(); loadCustomers(); loadEquipmentNames() }" />
     </div>
 
     <el-card shadow="never" style="margin-bottom: 12px">

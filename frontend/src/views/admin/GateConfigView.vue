@@ -4,6 +4,7 @@ import { ref, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { gateApi } from '@/api/gate'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const loading = ref(false)
 const saving = ref(false)
@@ -67,6 +68,7 @@ async function save() {
       </div>
       <div class="spacer"></div>
       <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      <PageRefresh :load="load" />
     </div>
 
     <el-card shadow="never" style="margin-bottom:14px" v-loading="loading">

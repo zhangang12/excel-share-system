@@ -6,6 +6,7 @@ import MarkdownIt from 'markdown-it'
 import { agentApi, type ChatHistoryItem, type AgentChatLogItem } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 import { fmtDateTime } from '@/utils/format'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 interface ChatItem {
   role: 'user' | 'assistant'
@@ -139,6 +140,12 @@ function reloadAudit() { auditPage.value = 1; loadAuditLogs() }
 
 onMounted(() => { if (isAdmin.value) loadAuditLogs() })
 
+// 反馈#359：这页的「刷新」= 重拉模型列表与审计日志（对话记录原样保留）
+async function reloadMeta() {
+  await loadModels()
+  if (isAdmin.value) await loadAuditLogs()
+}
+
 async function scrollBottom() {
   await nextTick()
   if (listRef.value) listRef.value.scrollTop = listRef.value.scrollHeight
@@ -201,6 +208,10 @@ async function send(text?: string) {
         style="margin-left: 10px"
         @click="openConfig"
       >配置</el-button>
+      <!-- 反馈#359 说的是「每个界面」，这页也不例外。
+           ⚠️ 只重拉模型列表/审计日志，**不动对话记录**——
+           聊天页上一个「刷新」很容易被当成"清空对话"，那是最不该发生的误解。 -->
+      <PageRefresh :load="reloadMeta" size="small" />
     </div>
 
     <el-card shadow="never" class="chat-card">

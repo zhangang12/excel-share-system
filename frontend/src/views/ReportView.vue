@@ -5,6 +5,7 @@ import { reportsApi, type MonthlyReport } from '@/api/reports'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtDate } from '@/utils/format'
+import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const month = ref(new Date().toISOString().slice(0, 7))
 const curYear = new Date().getFullYear()
@@ -37,6 +38,7 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
         <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
       </el-select>
       <el-date-picker v-model="month" type="month" value-format="YYYY-MM" @change="load" />
+      <PageRefresh :load="load" />
     </div>
 
     <div v-loading="loading">
