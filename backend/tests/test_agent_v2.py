@@ -143,7 +143,10 @@ async def main():
         chk(pj["shipment_status"] == "pending", f"带出发货状态：{pj['shipment_status']}")
         chk(pj["purchase_overdue_count"] == 1,
             f"采购未到货只算 arrival_date 为空的（PO-2 已到货不算）：{pj['purchase_overdue_count']}")
-        chk(len(pj["purchase_pending"]) == 1 and pj["purchase_pending"][0]["name"] == "减速机",
+        # ⚠️ 键名就叫 item_name（和表字段一致）。原来叫 name，渲染层的 _NAME_KEYS
+        #    按 name 匹配不到「物料」这个表头，采购明细的列名会退化成「名称」。
+        chk(len(pj["purchase_pending"]) == 1
+            and pj["purchase_pending"][0]["item_name"] == "减速机",
             f"未到货明细用 item_name 不是 name：{pj['purchase_pending']}")
 
         chk(not (await te.get_project(db, me, "V2-DEL"))["found"], "软删项目查不到")
