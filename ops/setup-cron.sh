@@ -7,6 +7,7 @@
 #   /etc/cron.daily/pms-backup        每日凌晨备份（cron.daily 默认 6:25）
 #   /etc/cron.d/pms-health            每 5 分钟健康检查 → 失败时重启 backend
 #   /etc/logrotate.d/pms-health       健康日志切割
+#   /etc/cron.d/pms-certrenew         每天两次续期 HTTPS 证书
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,7 +33,7 @@ echo "✓ 装好 /etc/cron.d/pms-health"
 
 # ===== 3. 日志轮转 =====
 cat > /etc/logrotate.d/pms <<'EOF'
-/var/log/pms-backup.log /var/log/pms-health.log {
+/var/log/pms-backup.log /var/log/pms-health.log /var/log/pms-certrenew.log {
     weekly
     rotate 4
     compress
@@ -43,10 +44,24 @@ cat > /etc/logrotate.d/pms <<'EOF'
 EOF
 echo "✓ 装好 /etc/logrotate.d/pms"
 
+# ===== 3.5 HTTPS 证书续期（每天 3:17 和 15:17）=====
+# ⚠️ 为什么一天两次：Let's Encrypt 官方就是这么建议的 —— 万一某次因网络或服务端
+#    问题失败，当天还有第二次机会。certbot 自己判断「剩余 <30 天」才真的去续，
+#    平时就是空跑，没有额外开销。
+# ⚠️ 错开整点：整点是全网 ACME 请求高峰，容易撞限流。
+cat > /etc/cron.d/pms-certrenew <<EOF
+# m h dom mon dow user cmd
+17 3,15 * * * root bash $SCRIPT_DIR/renew-cert.sh >> /var/log/pms-certrenew.log 2>&1
+EOF
+echo "✓ 装好 /etc/cron.d/pms-certrenew"
+
 # ===== 4. 重启 cron =====
 systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || true
 
 echo
 echo "查看安装情况:"
-echo "  ls -l /etc/cron.daily/pms-backup /etc/cron.d/pms-health /etc/logrotate.d/pms"
-echo "  tail -f /var/log/pms-backup.log /var/log/pms-health.log"
+echo "  ls -l /etc/cron.daily/pms-backup /etc/cron.d/pms-health /etc/cron.d/pms-certrenew /etc/logrotate.d/pms"
+echo "  tail -f /var/log/pms-backup.log /var/log/pms-health.log /var/log/pms-certrenew.log"
+echo
+echo "⚠️ 证书续期装完先跑一次演练（走完整条链路但不真签发）:"
+echo "  bash $SCRIPT_DIR/renew-cert.sh --dry-run"
