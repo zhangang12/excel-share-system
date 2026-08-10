@@ -1,0 +1,1502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>同辉智能项目管理系统 - 功能模块说明</title>
+    <style>
+        :root {
+            --primary: #007AFF;
+            --primary-light: #E3F2FD;
+            --secondary: #5856D6;
+            --success: #34C759;
+            --warning: #FF9500;
+            --danger: #FF3B30;
+            --background: #F2F2F7;
+            --surface: #FFFFFF;
+            --text-primary: #1C1C1E;
+            --text-secondary: #8E8E93;
+            --border: #E5E5EA;
+            --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+            --radius: 12px;
+            --radius-lg: 16px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+            background: var(--background);
+            color: var(--text-primary);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+
+        /* 头部样式 */
+        .header {
+            text-align: center;
+            margin-bottom: 60px;
+            padding: 60px 0;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border-radius: var(--radius-lg);
+            color: white;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 60%);
+            animation: pulse 4s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+        }
+
+        .header h1 {
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin-bottom: 16px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .header p {
+            font-size: 1.25rem;
+            opacity: 0.9;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* 导航标签 */
+        .nav-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 40px;
+            flex-wrap: wrap;
+            justify-content: center;
+            position: sticky;
+            top: 20px;
+            z-index: 100;
+            background: rgba(242, 242, 247, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 16px;
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+        }
+
+        .nav-tab {
+            padding: 12px 24px;
+            border-radius: 30px;
+            border: none;
+            background: var(--surface);
+            color: var(--text-primary);
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: var(--shadow);
+        }
+
+        .nav-tab:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .nav-tab.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        /* 模块网格 */
+        .modules-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 24px;
+            margin-bottom: 60px;
+        }
+
+        /* 模块卡片 */
+        .module-card {
+            background: var(--surface);
+            border-radius: var(--radius-lg);
+            padding: 32px;
+            box-shadow: var(--shadow);
+            transition: all 0.3s ease;
+            border: 1px solid var(--border);
+        }
+
+        .module-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .module-card h3 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+
+        .module-card .subtitle {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .module-card p {
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+
+        /* 功能列表 */
+        .features {
+            margin-bottom: 24px;
+        }
+
+        .features h4 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .feature-list {
+            list-style: none;
+        }
+
+        .feature-list li {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9375rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .feature-list li:last-child {
+            border-bottom: none;
+        }
+
+        .feature-list li::before {
+            content: '→';
+            color: var(--primary);
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        /* API端点 */
+        .api-endpoints {
+            background: var(--background);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .api-endpoints h4 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+
+        .endpoint {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.8125rem;
+            background: var(--surface);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border-left: 3px solid var(--primary);
+            overflow-x: auto;
+        }
+
+        .endpoint:last-child {
+            margin-bottom: 0;
+        }
+
+        .method {
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .path {
+            color: var(--text-primary);
+        }
+
+        /* 标签 */
+        .tags {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+
+        .tag {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            background: var(--primary-light);
+            color: var(--primary);
+        }
+
+        .tag.success {
+            background: #E8F5E9;
+            color: var(--success);
+        }
+
+        .tag.warning {
+            background: #FFF3E0;
+            color: var(--warning);
+        }
+
+        .tag.danger {
+            background: #FFEBEE;
+            color: var(--danger);
+        }
+
+        /* 数据模型 */
+        .data-model {
+            background: linear-gradient(135deg, #F8F9FA 0%, #E9ECEF 100%);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-top: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .data-model h4 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+
+        .model-item {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.8125rem;
+            padding: 8px 12px;
+            background: var(--surface);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .model-item:last-child {
+            margin-bottom: 0;
+        }
+
+        /* 关联关系 */
+        .relations {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+        }
+
+        .relations h4 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+        }
+
+        .relation-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: var(--background);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .relation-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .relation-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: var(--primary);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .relation-text {
+            font-size: 0.9375rem;
+            color: var(--text-secondary);
+        }
+
+        /* 分组标题 */
+        .section-title {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 32px;
+            letter-spacing: -0.02em;
+            text-align: center;
+        }
+
+        .section-subtitle {
+            text-align: center;
+            color: var(--text-secondary);
+            margin-bottom: 40px;
+            font-size: 1.125rem;
+        }
+
+        /* 页脚 */
+        .footer {
+            text-align: center;
+            padding: 40px 0;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            border-top: 1px solid var(--border);
+            margin-top: 60px;
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .modules-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .nav-tabs {
+                position: static;
+                background: transparent;
+                backdrop-filter: none;
+                padding: 0;
+            }
+
+            .nav-tab {
+                flex: 1;
+                min-width: calc(50% - 4px);
+            }
+
+            .container {
+                padding: 20px 16px;
+            }
+        }
+
+        /* 动画 */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .module-card {
+            animation: fadeInUp 0.5s ease forwards;
+        }
+
+        .module-card:nth-child(1) { animation-delay: 0.1s; }
+        .module-card:nth-child(2) { animation-delay: 0.2s; }
+        .module-card:nth-child(3) { animation-delay: 0.3s; }
+        .module-card:nth-child(4) { animation-delay: 0.4s; }
+
+        /* 减弱动画偏好 */
+        @media (prefers-reduced-motion: reduce) {
+            .module-card {
+                animation: none;
+            }
+            
+            .header::before {
+                animation: none;
+            }
+        }
+
+        /* 暗色模式支持 */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --background: #1C1C1E;
+                --surface: #2C2C2E;
+                --text-primary: #FFFFFF;
+                --text-secondary: #8E8E93;
+                --border: #3A3A3C;
+                --primary-light: #1C3A5C;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <header class="header">
+            <h1>同辉智能项目管理系统</h1>
+            <p>全流程 ERP 功能模块说明文档 · 28 个核心模块 · 10 个部门全覆盖</p>
+        </header>
+
+        <!-- 导航标签 -->
+        <nav class="nav-tabs">
+            <button class="nav-tab active" onclick="showSection('all')">全部模块</button>
+            <button class="nav-tab" onclick="showSection('business')">业务模块</button>
+            <button class="nav-tab" onclick="showSection('admin')">管理模块</button>
+            <button class="nav-tab" onclick="showSection('infra')">基础设施</button>
+            <button class="nav-tab" onclick="showSection('project')">项目管理</button>
+            <button class="nav-tab" onclick="showSection('sales')">销售相关</button>
+            <button class="nav-tab" onclick="showSection('production')">生产相关</button>
+            <button class="nav-tab" onclick="showSection('finance')">财务相关</button>
+        </nav>
+
+        <!-- 业务模块 -->
+        <section id="section-business">
+            <h2 class="section-title">业务模块</h2>
+            <p class="section-subtitle">覆盖项目全生命周期的核心业务流程</p>
+            
+            <div class="modules-grid">
+                <!-- 项目目录 -->
+                <div class="module-card" data-categories="business project">
+                    <h3>项目目录</h3>
+                    <div class="subtitle">Overview Module</div>
+                    <p>跨项目的公司级总览看板，14列固定模板+自定义列，支持就地编辑和拖拽填充，实时多人协作。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>项目一览表格（签订日期/交货日期/状态/销售/设计师/电工等）</li>
+                            <li>自定义列管理（增删改查+字段权限）</li>
+                            <li>就地编辑+向下拖拽填充</li>
+                            <li>WebSocket实时多人协作</li>
+                            <li>Excel全量导入（自动创建/匹配项目）</li>
+                            <li>导出Excel（受导出审批闸控制）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/overview</span> - 一览数据</div>
+                        <div class="endpoint"><span class="method">PUT</span> <span class="path">/api/overview/projects/{pid}/cell</span> - 更新单元格</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/overview/import</span> - 导入Excel</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">WebSocket</span>
+                        <span class="tag">Excel</span>
+                        <span class="tag">实时协作</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">OverviewField - 自定义列定义</div>
+                        <div class="model-item">OverviewFieldPermission - 字段级权限</div>
+                        <div class="model-item">Project.extra["__o__*"] - 一览数据存储</div>
+                    </div>
+                </div>
+
+                <!-- 项目详单 -->
+                <div class="module-card" data-categories="business project">
+                    <h3>项目详单</h3>
+                    <div class="subtitle">Projects & Datasheets Module</div>
+                    <p>项目内部的多维表格管理，类似飞书多维表格，支持自定义字段、行级数据、单元格编辑、字段权限。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>项目CRUD生命周期管理</li>
+                            <li>6张模板数据表（钣金装配/标准件/外协/不锈钢/激光/电工采购）</li>
+                            <li>数据表/字段/行/单元格CRUD</li>
+                            <li>字段级权限控制（FieldPermission）</li>
+                            <li>WebSocket实时协作编辑</li>
+                            <li>生产组专用编辑端点（绕详单闸门）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/projects</span> - 项目列表</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/projects/{pid}/datasheets</span> - 创建数据表</div>
+                        <div class="endpoint"><span class="method">PUT</span> <span class="path">/api/records/{rid}/cell</span> - 更新单元格</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">多维表格</span>
+                        <span class="tag">字段权限</span>
+                        <span class="tag">实时协作</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">Project - 项目主表</div>
+                        <div class="model-item">Datasheet - 数据表</div>
+                        <div class="model-item">Field - 字段定义</div>
+                        <div class="model-item">Record - 行数据（JSONB存储）</div>
+                        <div class="model-item">FieldPermission - 字段权限</div>
+                    </div>
+                </div>
+
+                <!-- 销售部 -->
+                <div class="module-card" data-categories="business sales">
+                    <h3>销售部</h3>
+                    <div class="subtitle">Sales Ledger Module</div>
+                    <p>销售台账是整个ERP的"销售总账"，记录客户、合同、金额、收款、开票等全生命周期数据。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>销售下单（含审批流：order_state状态机）</li>
+                            <li>台账查看与编辑（行级隔离）</li>
+                            <li>合同上传+签订日期/交货日期回写一览</li>
+                            <li>开票审批流（None→applying→pending_invoice→invoiced）</li>
+                            <li>合并开票（同客户多项目共享invoice_batch_id）</li>
+                            <li>订单作废（软删项目+清各部门任务）</li>
+                            <li>技术资料更换+修订意见处理</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/sales/ledger</span> - 台账列表</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/sales/orders</span> - 新建销售单</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/sales/invoice-apply</span> - 开票申请</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">状态机</span>
+                        <span class="tag">审批流</span>
+                        <span class="tag">行级隔离</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">SalesLedger - 销售台账（1:1绑定Project）</div>
+                        <div class="model-item">Shipment - 发货单</div>
+                        <div class="model-item">RevisionRequest - 技术资料修订意见</div>
+                    </div>
+                </div>
+
+                <!-- 销售线索 -->
+                <div class="module-card" data-categories="business sales">
+                    <h3>销售线索</h3>
+                    <div class="subtitle">Sales Leads Module</div>
+                    <p>管理网络询盘等潜在客户线索：主管录入→分配销售员→跟进→成交率统计。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>线索录入（来源：1688/Geo/爱采购/百度推广/其他）</li>
+                            <li>线索分配与改派</li>
+                            <li>跟进记录（自由文本+时间戳）</li>
+                            <li>状态流转（潜在需求→报价→成交/丢单）</li>
+                            <li>成交率报表（按来源/按销售两个维度）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/sales/leads</span> - 线索列表</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/sales/leads</span> - 录入线索</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/sales/leads/report</span> - 成交率报表</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">漏斗管理</span>
+                        <span class="tag">成交率</span>
+                        <span class="tag">独立模块</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">SalesLead - 线索主表（不与Project关联）</div>
+                    </div>
+                </div>
+
+                <!-- 设计部 -->
+                <div class="module-card" data-categories="business project production">
+                    <h3>设计部</h3>
+                    <div class="subtitle">Design Department Module</div>
+                    <p>设计师接收任务→上传CAD激光图纸/外购附图/封板文件→导入五张数据表→设计完成→发货准备。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>待接单/进行中/已完成三视图</li>
+                            <li>图纸上传（CAD激光/外购附图/封板/冷作）</li>
+                            <li>五表一次性导入（钣金装配/标准件/外协/不锈钢/激光）</li>
+                            <li>设计完成（一步完成+计考核）</li>
+                            <li>发货准备（说明书/铭牌/发货清单上传）</li>
+                            <li>技术资料修订意见提交</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/orders/list?dept=design</span> - 任务列表</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/orders/{oid}/start-upload</span> - 上传图纸</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/orders/{oid}/design_done</span> - 设计完成</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">图纸管理</span>
+                        <span class="tag">数据表导入</span>
+                        <span class="tag">考核计时</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">DeptOrder(dept=design) - 设计任务单</div>
+                        <div class="model-item">Attachment(kind=sheetpkg/outsource_img/sealing_pkg/coldwork_pkg)</div>
+                    </div>
+                </div>
+
+                <!-- 电工部 -->
+                <div class="module-card" data-categories="business project production">
+                    <h3>电工部</h3>
+                    <div class="subtitle">Electric Department Module</div>
+                    <p>电工接任务→上传采购清单(Excel)→自动解析写入电工采购单→接线完成→电路图上传→发货准备。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>两步完成流（接线完成→发货准备）</li>
+                            <li>采购清单上传+自动解析入「电工采购单」表</li>
+                            <li>标准件清单只读引用</li>
+                            <li>电路图上传（可在完成后补传）</li>
+                            <li>请购单提交（推送给采购员）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/orders/list?dept=electric</span> - 任务列表</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/orders/{oid}/start-upload?kind=plist</span> - 上传采购清单</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/orders/{oid}/electric_done</span> - 接线完成</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">两步完成</span>
+                        <span class="tag">Excel解析</span>
+                        <span class="tag">请购单</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">DeptOrder(dept=electric) - 电工任务单</div>
+                        <div class="model-item">Attachment(kind=plist) - 采购清单</div>
+                        <div class="model-item">Datasheet(name="电工采购单") - 自动解析目标表</div>
+                    </div>
+                </div>
+
+                <!-- 生产部 -->
+                <div class="module-card" data-categories="business project production">
+                    <h3>生产部</h3>
+                    <div class="subtitle">Production Module</div>
+                    <p>生产主管派发任务给三个组（钣金/装配/封板），各组独立完成后汇聚为生产完成，驱动发货闸门。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>任务派发（钣金+装配必选，封板可选）</li>
+                            <li>三组独立完成+自动汇聚</li>
+                            <li>钣金组tab（装配表编辑+材料库位+冷作图纸）</li>
+                            <li>装配组tab（标准件/外协加工备齐判定）</li>
+                            <li>封板组tab（CAD激光图纸/封板文件下载）</li>
+                            <li>换人+预计完成日期设置</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/produce/dispatch/{order_id}</span> - 派发任务</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/produce/group/{task_id}/done</span> - 标记完成</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/produce/sheetmetal-projects</span> - 钣金组项目</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">分组派发</span>
+                        <span class="tag">三组协同</span>
+                        <span class="tag">发货闸门</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">DeptOrder(dept=produce) - 生产任务单</div>
+                        <div class="model-item">ProduceGroupTask - 分组子任务</div>
+                    </div>
+                </div>
+
+                <!-- 采购管理 -->
+                <div class="module-card" data-categories="business production">
+                    <h3>采购管理</h3>
+                    <div class="subtitle">Purchase Management Module</div>
+                    <p>完整的采购全流程——供应商档案、采购下单、仓库收货、开票对账、请款付款、汇总报表。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>供应商CRUD+启用/停用+期初欠款</li>
+                            <li>采购明细管理（多维筛选+汇总统计）</li>
+                            <li>采购下单（散单/从清单/成套采购）</li>
+                            <li>仓库收货（自动入库+回写清单）</li>
+                            <li>开票对账（批量开票+统一开票号）</li>
+                            <li>请款付款流程（采购→财务审批→付款）</li>
+                            <li>采购申请（仓库发起→采购处理）</li>
+                            <li>汇总报表（KPI/月度趋势/按采购员/按项目/供应商排行）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/purchase-mgmt/items</span> - 采购明细</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/purchase-mgmt/orders</span> - 新建采购单</div>
+                        <div class="endpoint"><span class="method">PUT</span> <span class="path">/api/purchase-mgmt/items/{iid}/receive</span> - 收货</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/purchase-mgmt/payment-requests</span> - 发起请款</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">采购全流程</span>
+                        <span class="tag">供应商管理</span>
+                        <span class="tag">请款审批</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">Supplier - 供应商档案</div>
+                        <div class="model-item">PurchaseItem - 采购明细</div>
+                        <div class="model-item">PaymentRequest - 请款单</div>
+                        <div class="model-item">PurchaseRequest - 采购申请</div>
+                    </div>
+                </div>
+
+                <!-- 仓库 -->
+                <div class="module-card" data-categories="business production">
+                    <h3>仓库</h3>
+                    <div class="subtitle">Warehouse Module</div>
+                    <p>物料主数据、出入库流水、实时库存、收发存汇总、项目物料需求、采购收货、发货清单备货。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>物料主数据CRUD+自定义字段</li>
+                            <li>出入库登记（自动单号RK/CK+超库存拦截）</li>
+                            <li>冲红（反向单据+库存回滚）</li>
+                            <li>收发存汇总（期初+入-出=期末）</li>
+                            <li>项目物料需求+一键领用出库</li>
+                            <li>采购收货确认（自动入库）</li>
+                            <li>发货清单备货管理</li>
+                            <li>库存金额+项目材料成本（仅财务）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/wh/materials</span> - 物料主数据</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/wh/txns</span> - 出入库登记</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/wh/demand/{pid}</span> - 项目物料需求</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/wh/demand/{pid}/issue</span> - 领用出库</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">实时库存</span>
+                        <span class="tag">单据化</span>
+                        <span class="tag">成本核算</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">WhMaterial - 物料主数据</div>
+                        <div class="model-item">WhTxn - 出入库流水</div>
+                        <div class="model-item">WhLocation - 库位</div>
+                        <div class="model-item">MaterialCategory - 编码分类（3级树）</div>
+                    </div>
+                </div>
+
+                <!-- 物流发货部 -->
+                <div class="module-card" data-categories="business project">
+                    <h3>物流发货部</h3>
+                    <div class="subtitle">Logistics Module</div>
+                    <p>发货看板管理、D5发货闸门校验、收货信息维护、物料运输费录入、确认发货。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>发货看板（9列聚合数据）</li>
+                            <li>D5发货闸门校验（所有部门完成才可发货）</li>
+                            <li>收货信息维护（销售录入+物流补充）</li>
+                            <li>物料运输费录入（我方/到付）</li>
+                            <li>确认发货（回写sales_ledger.ship_date）</li>
+                            <li>项目自动标记"已完成"</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/logistics/board</span> - 发货看板</div>
+                        <div class="endpoint"><span class="method">PUT</span> <span class="path">/api/logistics/{sid}/receiver</span> - 收货信息</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/logistics/{sid}/ship</span> - 确认发货</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">发货闸门</span>
+                        <span class="tag">看板管理</span>
+                        <span class="tag">回写台账</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">Shipment - 发货单（1:1绑定Project）</div>
+                        <div class="model-item">DeptOrder - 部门任务单（闸门判断）</div>
+                    </div>
+                </div>
+
+                <!-- 财务部 -->
+                <div class="module-card" data-categories="business finance">
+                    <h3>财务部</h3>
+                    <div class="subtitle">Finance Module</div>
+                    <p>财务部综合工作台——开票管理、请款审批、售后费用、支出总览、项目毛利、成本审计、资金面板。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>待开票/已开票列表（开票状态机）</li>
+                            <li>请款审批+付款（内控：不能审自己的）</li>
+                            <li>售后费用查阅（只读已审批记录）</li>
+                            <li>支出总览（采购+售后+OA+运费按月汇总）</li>
+                            <li>项目毛利红黑榜（合同额-材料-直发-售后-运费）</li>
+                            <li>成本审计（无主领料/无价入库/孤儿采购）</li>
+                            <li>资金面板（应收账龄/预付敞口/应付账期/13周现金排程）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/finance/pending-invoices</span> - 待开票</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/finance/expense-overview</span> - 支出总览</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/reports/project-pnl</span> - 项目毛利</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/reports/fund-panel</span> - 资金面板</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">钱流中枢</span>
+                        <span class="tag">审批分离</span>
+                        <span class="tag">成本审计</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">SalesLedger - 销售台账（开票载体）</div>
+                        <div class="model-item">PaymentRequest - 请款单</div>
+                        <div class="model-item">AfterSales - 售后费用</div>
+                    </div>
+                </div>
+
+                <!-- 售后部 -->
+                <div class="module-card" data-categories="business finance">
+                    <h3>售后部</h3>
+                    <div class="subtitle">After-Sales Module</div>
+                    <p>管理安装/售后费用全生命周期——售后人员登记→主管审批→同步财务→售后侵蚀预警。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>费用登记（选/输项目+问题+费用+物料清单）</li>
+                            <li>主管审批（通过→推财务）</li>
+                            <li>售后侵蚀预警（超合同额5%自动告警）</li>
+                            <li>管理层作废/删除</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/aftersales</span> - 售后记录</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/aftersales</span> - 登记费用</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/aftersales/{aid}/approve</span> - 审批通过</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">费用管控</span>
+                        <span class="tag">侵蚀预警</span>
+                        <span class="tag">同步财务</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">AfterSales - 售后费用记录</div>
+                    </div>
+                </div>
+
+                <!-- 人事部 -->
+                <div class="module-card" data-categories="business">
+                    <h3>人事部</h3>
+                    <div class="subtitle">HR Module</div>
+                    <p>员工全生命周期管理+人事成本核算——花名册、部门工资总额、考勤、个人工资明细。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>花名册CRUD+Excel批量导入</li>
+                            <li>自动分配5位工号</li>
+                            <li>员工离职→自动推消息停用账号</li>
+                            <li>部门月度工资总额（盈利改善毛利口径）</li>
+                            <li>按月每人考勤（应/实出勤/请假/加班/迟到）</li>
+                            <li>按月每人个人工资明细（敏感数据）</li>
+                            <li>年度逐月工资总额走势</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/hr/employees</span> - 花名册</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/hr/payroll</span> - 部门工资总额</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/hr/attendance</span> - 考勤</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/hr/salary</span> - 工资明细</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">花名册</span>
+                        <span class="tag">成本核算</span>
+                        <span class="tag">敏感数据</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">Employee - 员工主表</div>
+                        <div class="model-item">PayrollMonthly - 部门工资总额</div>
+                        <div class="model-item">AttendanceMonthly - 考勤</div>
+                        <div class="model-item">EmployeeSalaryMonthly - 工资明细</div>
+                    </div>
+                </div>
+
+                <!-- 月度工作报表 -->
+                <div class="module-card" data-categories="business">
+                    <h3>月度工作报表</h3>
+                    <div class="subtitle">Reports Module</div>
+                    <p>多维度经营分析——月度报表、部门报表、销售报表、盈利改善（毛利+审计+资金面板）。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>月度工作报表（任务量/按时率/效率/逾期）</li>
+                            <li>部门报表（按部门聚合，生产部走分组统计）</li>
+                            <li>销售报表（合同额/开票/发货/应收）</li>
+                            <li>项目毛利红黑榜</li>
+                            <li>成本黑洞审计</li>
+                            <li>资金面板（13周现金排程）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/reports/monthly</span> - 月度报表</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/reports/dept/{dept}</span> - 部门报表</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/reports/sales</span> - 销售报表</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/reports/project-pnl</span> - 项目毛利</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">经营分析</span>
+                        <span class="tag">毛利计算</span>
+                        <span class="tag">资金预测</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">聚合多表（DeptOrder/SalesLedger/WhTxn/PurchaseItem/AfterSales/Shipment）</div>
+                    </div>
+                </div>
+
+                <!-- OA审批 -->
+                <div class="module-card" data-categories="business">
+                    <h3>OA审批</h3>
+                    <div class="subtitle">OA Approval Module</div>
+                    <p>全公司流程审批基础设施——部门字典+单据类型+可配置多级审批链+业务/报销/采购三类申请单。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>部门字典CRUD</li>
+                            <li>单据类型字典（business/reimbursement/purchase）</li>
+                            <li>可配置多级审批链</li>
+                            <li>流程级固定抄送角色</li>
+                            <li>申请提交→多级流转→财务审→待付款→已付款</li>
+                            <li>财务汇总报表+下钻明细</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/oa/requests</span> - 提交申请</div>
+                        <div class="endpoint"><span class="method">PUT</span> <span class="path">/api/oa/requests/{rid}/approve</span> - 审批通过</div>
+                        <div class="endpoint"><span class="method">PUT</span> <span class="path">/api/oa/requests/{rid}/mark-paid</span> - 标记已付款</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/oa/reports/summary</span> - 财务汇总</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">多级审批</span>
+                        <span class="tag">流程配置</span>
+                        <span class="tag">报销管理</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">OaRequest - 申请单（detail JSON存分类型表单）</div>
+                        <div class="model-item">OaApprovalStep - 审批链配置</div>
+                        <div class="model-item">OaRequestStep - 审批步骤快照</div>
+                    </div>
+                </div>
+
+                <!-- 消息中心 -->
+                <div class="module-card" data-categories="business">
+                    <h3>消息中心</h3>
+                    <div class="subtitle">Messages Module</div>
+                    <p>站内消息通知中心，聚合所有模块的推送通知（逾期提醒、审批流转、离职提醒等）。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>消息列表（按人过滤+分页）</li>
+                            <li>未读消息数（供顶层角标轮询）</li>
+                            <li>一键全部已读</li>
+                            <li>幂等键（biz_type+biz_id+当日，同天不重复推送）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/messages</span> - 消息列表</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/messages/unread-count</span> - 未读数</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/messages/read-all</span> - 一键已读</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">通知总线</span>
+                        <span class="tag">幂等推送</span>
+                        <span class="tag">跨模块</span>
+                    </div>
+                    
+                    <div class="data-model">
+                        <h4>关键数据模型</h4>
+                        <div class="model-item">Message - 站内消息（to_user_id+kind+text+read+biz_type+biz_id）</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 管理模块 -->
+        <section id="section-admin">
+            <h2 class="section-title">管理模块</h2>
+            <p class="section-subtitle">系统管理、权限控制、审计日志</p>
+            
+            <div class="modules-grid">
+                <!-- 用户管理 -->
+                <div class="module-card" data-categories="admin">
+                    <h3>用户管理</h3>
+                    <div class="subtitle">User Management</div>
+                    <p>管理系统账号全生命周期——创建、编辑、删除、角色分配、菜单权限配置、企业微信绑定。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>用户CRUD+admin系统级保护</li>
+                            <li>多角色平等模型（UserRole关联表，权限取并集）</li>
+                            <li>一级菜单按账号配置（User.menus）</li>
+                            <li>二级tab隐藏配置（User.hidden_tabs）</li>
+                            <li>企业微信userid绑定</li>
+                            <li>新用户自动加入所有存量活跃项目</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/admin/users</span> - 用户列表</div>
+                        <div class="endpoint"><span class="method">PUT</span> <span class="path">/api/admin/users/{uid}/menus</span> - 菜单配置</div>
+                        <div class="endpoint"><span class="method">PUT</span> <span class="path">/api/admin/users/{uid}/wxid</span> - 企微绑定</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">多角色</span>
+                        <span class="tag">菜单配置</span>
+                        <span class="tag">企微集成</span>
+                    </div>
+                </div>
+
+                <!-- 权限管理 -->
+                <div class="module-card" data-categories="admin">
+                    <h3>权限管理</h3>
+                    <div class="subtitle">Field Permission Matrix</div>
+                    <p>配置每个字段对每个角色的可见/可编辑权限，是系统细粒度权限控制的核心。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>数据表字段权限CRUD</li>
+                            <li>一览字段权限CRUD</li>
+                            <li>当前用户权限查询</li>
+                            <li>全量权限矩阵（按项目异步分片加载）</li>
+                            <li>项目权限克隆（按数据表名+字段名匹配）</li>
+                            <li>并集语义（多角色OR合并）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/permissions/fields/{fid}</span> - 字段权限</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/permissions/matrix</span> - 权限矩阵</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/permissions/clone-project/{pid}</span> - 权限克隆</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">字段级权限</span>
+                        <span class="tag">并集语义</span>
+                        <span class="tag">异步加载</span>
+                    </div>
+                </div>
+
+                <!-- 操作审计 -->
+                <div class="module-card" data-categories="admin">
+                    <h3>操作审计</h3>
+                    <div class="subtitle">Audit Log</div>
+                    <p>记录系统所有关键操作，供管理员追溯。admin用户操作对所有人隐身。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>审计日志查看（最近200条）</li>
+                            <li>关键字搜索</li>
+                            <li>admin操作隐身过滤</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/admin/audit</span> - 审计日志</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">操作追溯</span>
+                        <span class="tag">安全审计</span>
+                    </div>
+                </div>
+
+                <!-- 字典设置 -->
+                <div class="module-card" data-categories="admin">
+                    <h3>字典设置</h3>
+                    <div class="subtitle">Dictionary Settings</div>
+                    <p>维护受管的下拉取值字典（订单编号/物料类别/计量单位/材质/供应商分类）+物料编码分类(3级树)。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>5种字典类型CRUD+启停用</li>
+                            <li>物料编码分类（3级树：大类1位→中类2位→细分类2位）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/wh/material-dict</span> - 字典数据</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/wh/material-categories</span> - 编码分类</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">下拉字典</span>
+                        <span class="tag">编码分类</span>
+                    </div>
+                </div>
+
+                <!-- 导出审批 -->
+                <div class="module-card" data-categories="admin">
+                    <h3>导出审批</h3>
+                    <div class="subtitle">Export Approval</div>
+                    <p>控制非管理层的数据导出权限——普通用户需申请→管理层审批→永久放行。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>全局开关控制</li>
+                            <li>导出申请（防重复提交）</li>
+                            <li>管理层审批（批准后永久生效）</li>
+                            <li>消息通知（申请/审批/驳回）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/export-requests</span> - 提交申请</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/export-requests/{rid}/approve</span> - 批准</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">导出控制</span>
+                        <span class="tag">一次性审批</span>
+                    </div>
+                </div>
+
+                <!-- 用户反馈 -->
+                <div class="module-card" data-categories="admin">
+                    <h3>用户反馈</h3>
+                    <div class="subtitle">User Feedback</div>
+                    <p>用户反馈小助手——任意用户提交问题/建议/其他反馈，管理层汇总、处理、回复。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>反馈提交（kind/content/page_url+截图）</li>
+                            <li>管理层回复（自动标记已处理+触发登录弹窗）</li>
+                            <li>HTML导出（截图base64内嵌）</li>
+                            <li>未读回复检测</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/user-feedback</span> - 提交反馈</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/user-feedback/{fid}/reply</span> - 回复</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/user-feedback/export.html</span> - 导出HTML</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">反馈收集</span>
+                        <span class="tag">HTML导出</span>
+                        <span class="tag">登录弹窗</span>
+                    </div>
+                </div>
+
+                <!-- Agent助手 -->
+                <div class="module-card" data-categories="admin">
+                    <h3>Agent助手</h3>
+                    <div class="subtitle">AI Assistant (POC)</div>
+                    <p>ERP内置的只读数据分析助手，支持自然语言问答，查询采购、财务、人事、项目等实时数据。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>自然语言问答（LLM function calling）</li>
+                            <li>7个只读数据工具（晨报/采购/尾款/逾期/项目）</li>
+                            <li>规则降级（无Key或LLM异常时自动降级）</li>
+                            <li>Markdown渲染+追问建议chips</li>
+                            <li>页面化配置（admin专属，存app_settings）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/agent/chat</span> - 对话</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/agent/models</span> - 模型列表</div>
+                        <div class="endpoint"><span class="method">PUT</span> <span class="path">/api/agent/config</span> - 配置</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">AI助手</span>
+                        <span class="tag">只读查询</span>
+                        <span class="tag">规则降级</span>
+                    </div>
+                </div>
+
+                <!-- 桌面端统计 -->
+                <div class="module-card" data-categories="admin">
+                    <h3>桌面端统计</h3>
+                    <div class="subtitle">Desktop Client Stats</div>
+                    <p>监控Windows Electron桌面客户端的在线版本分布和设备明细，供管理员掌握升级进度。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>版本分布条形图</li>
+                            <li>设备明细表格（version/username/last_seen）</li>
+                            <li>60秒节流upsert（中间件自动采集）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/admin/desktop-clients</span> - 客户端统计</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">版本监控</span>
+                        <span class="tag">自动采集</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 基础设施 -->
+        <section id="section-infra">
+            <h2 class="section-title">基础设施</h2>
+            <p class="section-subtitle">认证、实时协作、附件管理等底层服务</p>
+            
+            <div class="modules-grid">
+                <!-- 认证模块 -->
+                <div class="module-card" data-categories="infra">
+                    <h3>认证模块</h3>
+                    <div class="subtitle">Authentication</div>
+                    <p>用户登录/登出/改密，获取当前用户信息和菜单权限——系统入口和权限基石。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>用户名密码登录（JWT token）</li>
+                            <li>获取当前用户信息（含role_codes多角色并集）</li>
+                            <li>获取菜单权限（/menus端点驱动侧边栏）</li>
+                            <li>修改密码（校验旧密码+不等于新密码）</li>
+                            <li>登出（客户端清token）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/auth/login</span> - 登录</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/auth/me</span> - 当前用户</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/auth/menus</span> - 菜单权限</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/auth/change-password</span> - 改密码</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">JWT</span>
+                        <span class="tag">菜单权限</span>
+                        <span class="tag">多角色</span>
+                    </div>
+                </div>
+
+                <!-- WebSocket协作 -->
+                <div class="module-card" data-categories="infra">
+                    <h3>WebSocket协作</h3>
+                    <div class="subtitle">Real-time Collaboration</div>
+                    <p>基于WebSocket的实时广播，用于多用户协作编辑时的单元格变更通知和在线状态感知。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>数据表房间（ws://.../ws/datasheets/{did}）</li>
+                            <li>总览房间（ws://.../ws/overview）</li>
+                            <li>单元格变更广播（broadcast_cell_changed）</li>
+                            <li>在线状态感知（presence.join/leave）</li>
+                            <li>keepalive（ping/pong）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">WS</span> <span class="path">/ws/datasheets/{did}</span> - 数据表协作</div>
+                        <div class="endpoint"><span class="method">WS</span> <span class="path">/ws/overview</span> - 总览协作</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">实时协作</span>
+                        <span class="tag">房间管理</span>
+                        <span class="tag">在线状态</span>
+                    </div>
+                </div>
+
+                <!-- 附件管理 -->
+                <div class="module-card" data-categories="infra">
+                    <h3>附件管理</h3>
+                    <div class="subtitle">Attachments</div>
+                    <p>全系统所有业务文件的统一上传、下载、打包、删除——被所有业务模块复用的底层服务。</p>
+                    
+                    <div class="features">
+                        <h4>核心功能</h4>
+                        <ul class="feature-list">
+                            <li>文件上传（16种业务类型+扩展名白名单）</li>
+                            <li>单文件下载</li>
+                            <li>打包下载（ZIP流式返回）</li>
+                            <li>删除（仅上传者本人或admin/manager）</li>
+                            <li>辅助函数供其他路由复用（save_upload/copy_attachment/delete_attachment_file）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="api-endpoints">
+                        <h4>关键API端点</h4>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/attachments</span> - 上传文件</div>
+                        <div class="endpoint"><span class="method">GET</span> <span class="path">/api/attachments/{aid}/download</span> - 下载</div>
+                        <div class="endpoint"><span class="method">POST</span> <span class="path">/api/attachments/package</span> - 打包下载</div>
+                        <div class="endpoint"><span class="method">DELETE</span> <span class="path">/api/attachments/{aid}</span> - 删除</div>
+                    </div>
+                    
+                    <div class="tags">
+                        <span class="tag">文件管理</span>
+                        <span class="tag">ZIP打包</span>
+                        <span class="tag">权限控制</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 页脚 -->
+        <footer class="footer">
+            <p>同辉智能项目管理系统 · 功能模块说明文档 · 2026年7月</p>
+            <p>覆盖销售/设计/电工/采购/仓库/生产/物流/财务/售后/OA/人事+管理层 十部门全流程</p>
+        </footer>
+    </div>
+
+    <script>
+        // 导航标签切换
+        function showSection(section) {
+            // 更新标签状态
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            // 显示/隐藏section
+            const sections = ['business', 'admin', 'infra'];
+            sections.forEach(s => {
+                const sectionEl = document.getElementById(`section-${s}`);
+                if (sectionEl) {
+                    if (section === 'all' || section === s || 
+                        (section === 'project' && s === 'business') ||
+                        (section === 'sales' && s === 'business') ||
+                        (section === 'production' && s === 'business') ||
+                        (section === 'finance' && s === 'business')) {
+                        sectionEl.style.display = 'block';
+                    } else {
+                        sectionEl.style.display = 'none';
+                    }
+                }
+            });
+            
+            // 处理分类筛选
+            if (['project', 'sales', 'production', 'finance'].includes(section)) {
+                document.querySelectorAll('.module-card').forEach(card => {
+                    const categories = card.dataset.categories || '';
+                    if (categories.includes(section)) {
+                        card.style.display = 'block';
+                    } else {
+                        card.style.display = 'none';
+                    }
+                });
+            } else {
+                document.querySelectorAll('.module-card').forEach(card => {
+                    card.style.display = 'block';
+                });
+            }
+        }
+    </script>
+</body>
+</html>

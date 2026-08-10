@@ -1201,7 +1201,7 @@ class LoginGateCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))     # 10 分钟有效
     used: Mapped[bool] = mapped_column(default=False)                         # 已用/已作废（重发即作废旧码）
-    fail_count: Mapped[int] = mapped_column(default=0)                        # 连续错码次数（>=5 锁定）
+    fail_count: Mapped[int] = mapped_column(default=0)                        # 错码次数（仅计数，不锁定；2026-07-28 起）
 
 
 # ---------- 🆕 AI 助手对话审计日志（记录用户/问题/模型输出，agent_router._log_chat 写入） ----------

@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 助手 · UI 设计稿（查询 + 审批）</title>
+<style>
+:root{
+  --pri:#2563eb; --pri-soft:#eff5ff; --pri-line:#c7dbff;
+  --ai:#7c3aed; --ai-soft:#f6f2ff; --ai-line:#ddd0fb;
+  --dan:#dc2626; --dan-soft:#fef2f2; --dan-line:#fecaca;
+  --wrn:#b45309; --wrn-soft:#fffbeb; --wrn-line:#fde68a;
+  --tea:#0f766e;
+  --bg:#f5f6f8; --card:#fff; --line:#e5e7eb; --line2:#f1f2f4;
+  --t1:#111827; --t2:#4b5563; --t3:#9ca3af;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--t1);
+  font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1020px;margin:0 auto;padding:0 20px 70px}
+.hero{background:linear-gradient(135deg,#0f1d30 0%,#1e3a5f 100%);color:#fff;padding:40px 0 34px;margin-bottom:28px}
+.hero .wrap{padding-bottom:0}
+.hero h1{margin:0 0 8px;font-size:26px;letter-spacing:-.3px}
+.hero .sub{opacity:.72;font-size:14px}
+.hero .tags{margin-top:15px;display:flex;gap:8px;flex-wrap:wrap}
+.hero .tags span{background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.16);
+  padding:3px 11px;border-radius:20px;font-size:12.5px}
+
+h2{font-size:19px;margin:42px 0 6px;padding-top:15px;border-top:2px solid var(--t1);
+  display:flex;align-items:baseline;gap:10px}
+h2 .n{font-family:var(--mono);font-size:13px;color:var(--pri);font-weight:700}
+h3{font-size:15px;margin:24px 0 9px}
+.lead{color:var(--t2);font-size:14px;margin:0 0 16px}
+table{width:100%;border-collapse:collapse;background:var(--card);font-size:13.5px;
+  border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:12px 0 16px}
+th{background:#fafbfc;text-align:left;padding:9px 12px;font-weight:600;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--line2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.num{font-family:var(--mono);text-align:right}
+.ok{color:#15803d;font-weight:700} .no{color:var(--t3)}
+code{font-family:var(--mono);font-size:12.5px;background:#f3f4f6;padding:1px 5px;border-radius:4px}
+.note{background:var(--pri-soft);border-left:3px solid var(--pri);padding:11px 14px;
+  border-radius:0 6px 6px 0;font-size:13.5px;color:#1e3a5f;margin:14px 0}
+.note b{color:var(--pri)}
+
+.canvas{background:#e9ebef;border:1px solid var(--line);border-radius:12px;padding:20px;margin:16px 0 10px}
+.cap{font-size:12.5px;color:var(--t3);margin:0 0 13px;display:flex;align-items:center;gap:7px}
+.cap::before{content:"";width:14px;height:1px;background:var(--t3)}
+.app{background:var(--card);border-radius:10px;overflow:hidden;
+  box-shadow:0 1px 3px rgba(0,0,0,.07),0 8px 26px rgba(0,0,0,.07)}
+.topbar{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line);background:#fcfcfd}
+.topbar .dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
+.topbar .title{font-weight:600;font-size:14px}
+.topbar .pill{margin-left:auto;font-size:11.5px;color:var(--t2);background:#f3f4f6;padding:2px 9px;border-radius:12px}
+.body{padding:18px;background:#fbfcfd}
+.msg{display:flex;gap:11px;margin-bottom:16px}
+.msg:last-child{margin-bottom:0}
+.msg.me{flex-direction:row-reverse}
+.av{width:29px;height:29px;border-radius:8px;flex:none;display:grid;place-items:center;
+  font-size:12.5px;font-weight:700;color:#fff;background:var(--ai)}
+.av.u{background:#64748b}
+.bub{max-width:calc(100% - 42px);width:100%}
+.msg.me .bub{width:auto;background:var(--pri);color:#fff;padding:8px 13px;border-radius:12px 12px 3px 12px;font-size:13.5px}
+
+.badge-sys{background:var(--tea);color:#fff;font-size:10px;padding:1.5px 7px;border-radius:4px;font-weight:700;letter-spacing:.3px}
+.badge-ai{background:var(--ai);color:#fff;font-size:10px;padding:1.5px 7px;border-radius:4px;font-weight:700;letter-spacing:.3px}
+
+.facts{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.facts-hd{display:flex;align-items:center;gap:7px;padding:8px 13px;background:#f8fafc;
+  border-bottom:1px solid var(--line);font-size:11.5px;color:var(--t2);font-weight:600}
+.fact-row{display:flex;padding:8px 13px;border-bottom:1px solid var(--line2);font-size:13.5px}
+.fact-row:last-child{border-bottom:none}
+.fact-k{width:82px;flex:none;color:var(--t2);font-size:13px}
+.fact-v{font-weight:600;font-family:var(--mono);font-size:13.5px}
+.fact-v .wtag{display:inline-block;margin-left:8px;background:var(--wrn-soft);color:var(--wrn);
+  border:1px solid var(--wrn-line);font-size:11px;padding:1px 7px;border-radius:4px;font-family:inherit}
+.trace{display:flex;align-items:center;gap:10px;padding:8px 13px;background:#f8fafc;
+  border-top:1px solid var(--line);font-size:11.5px;color:var(--t3);flex-wrap:wrap}
+.trace a{color:var(--pri);text-decoration:none;font-weight:600;margin-left:auto}
+.ai-note{background:var(--ai-soft);border:1px solid var(--ai-line);border-radius:10px;
+  padding:10px 13px;font-size:13.5px;color:#4c1d95;margin-top:10px}
+.ai-note .hd{display:flex;align-items:center;gap:7px;margin-bottom:5px;font-size:11.5px;color:#6d28d9;font-weight:600}
+
+.dtable{width:100%;border-collapse:collapse;font-size:12.5px;margin:0}
+.dtable th{background:#f8fafc;padding:7px 11px;font-size:11.5px;color:var(--t2);border-bottom:1px solid var(--line);text-align:left}
+.dtable td{padding:7px 11px;border-bottom:1px solid var(--line2)}
+.dtable tr:last-child td{border-bottom:none}
+.dtable .n{font-family:var(--mono);text-align:right}
+.dtable .bad{color:var(--dan);font-weight:600}
+
+.btn{border:1px solid var(--line);background:#fff;color:var(--t1);padding:6px 15px;border-radius:7px;font-size:13px;font-weight:500;cursor:pointer}
+.btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+.btn.dan{background:#fff;border-color:var(--dan-line);color:var(--dan)}
+.btn.off{background:#f3f4f6;border-color:var(--line);color:var(--t3);cursor:not-allowed}
+.acts{display:flex;align-items:center;gap:9px;padding:12px 13px;background:#fafbfc;border-top:1px solid var(--line);flex-wrap:wrap}
+.act-hint{font-size:11.5px;color:var(--t3);margin-left:auto}
+.act-why{width:100%;font-size:12px;color:var(--wrn);background:var(--wrn-soft);border:1px solid var(--wrn-line);border-radius:6px;padding:6px 10px;margin-top:2px}
+
+.todo{display:flex;flex-direction:column;gap:8px}
+.trow{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);
+  border-left:3px solid var(--pri);border-radius:9px;padding:10px 13px}
+.trow.hi{border-left-color:var(--dan)}
+.trow .n{font-family:var(--mono);font-size:16px;font-weight:700;min-width:26px;text-align:right}
+.trow.hi .n{color:var(--dan)}
+.trow .tx{flex:1}
+.trow .t1{font-size:13.5px;font-weight:600}
+.trow .t2{font-size:12px;color:var(--t3);margin-top:1px}
+.trow .go{font-size:12px;color:var(--pri);font-weight:600;white-space:nowrap}
+
+.chips{display:flex;gap:7px;flex-wrap:wrap;padding:0 18px 12px;background:#fff}
+.chip{border:1px solid var(--pri-line);background:var(--pri-soft);color:var(--pri);font-size:12px;padding:4px 11px;border-radius:15px}
+.inputbar{display:flex;gap:9px;align-items:center;padding:12px 18px;background:#fff;border-top:1px solid var(--line)}
+.inputbar .fake{flex:1;border:1px solid var(--line);border-radius:9px;padding:8px 13px;color:var(--t3);font-size:13.5px;background:#fcfcfd}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.state{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.state .sh{padding:8px 13px;font-size:11.5px;font-weight:600;border-bottom:1px solid var(--line)}
+.state .sb{padding:13px}
+.sh.a{background:#fff7ed;color:#9a3412} .sh.b{background:#f0f9ff;color:#075985}
+.sh.c{background:#fef2f2;color:#991b1b} .sh.d{background:#f8fafc;color:var(--t2)}
+.state p{margin:0;font-size:13px;color:var(--t2)} .state p+p{margin-top:7px}
+.state .q{font-size:12.5px;color:var(--t3);font-style:italic;margin-bottom:9px;padding-bottom:9px;border-bottom:1px dashed var(--line)}
+
+.flow{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:17px;
+  font-family:var(--mono);font-size:12px;line-height:2;color:var(--t2);overflow-x:auto;white-space:pre}
+.ask{background:var(--wrn-soft);border:1px solid var(--wrn-line);border-radius:10px;padding:15px 18px;margin:18px 0}
+.ask h4{margin:0 0 9px;font-size:14px;color:#92400e}
+.ask ol{margin:0;padding-left:20px;font-size:13.5px;color:#78350f}
+.ask li{margin-bottom:6px}
+@media(max-width:800px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <h1>AI 助手 · UI 设计稿</h1>
+    <div class="sub">2026-08-02 · 范围：常规查询 + 管理层审批 · 数据取自生产库</div>
+    <div class="tags">
+      <span>使用者：杨坛 · 赵仁辉</span><span>查询只读</span><span>审批用本人身份执行</span>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+
+<h2><span class="n">01</span>做两件事</h2>
+
+<table>
+<tr><th style="width:110px">模块</th><th>内容</th></tr>
+<tr><td><b>常规查询</b></td><td>问什么答什么。项目进度、逾期任务、采购到货、应收尾款、销售情况</td></tr>
+<tr><td><b>审批</b></td><td>待批的推到眼前，在对话里直接批。按钮打的是现有审批端点，用本人身份</td></tr>
+</table>
+
+<div class="note">
+  <b>一条底线：</b>助手全程不写数据。查询是只读的；审批是<b>把卡片摆到你面前，你点按钮，
+  用你自己的账号调现有审批接口</b>。审计日志记的是你本人，职责分离照常生效。
+</div>
+
+<h3>管理层能批什么（按现有端点的角色要求列）</h3>
+<table>
+<tr><th>审批类型</th><th>端点</th><th>要求角色</th><th class="num">杨坛</th><th class="num">赵仁辉</th></tr>
+<tr><td>请款审批</td><td><code>payment-requests/{id}/approve</code></td><td>finance</td><td class="num ok">✓</td><td class="num no">—</td></tr>
+<tr><td>开票审批</td><td><code>ledger/{id}/invoice-approve</code></td><td>sales_lead</td><td class="num ok">✓</td><td class="num no">—</td></tr>
+<tr><td>合并开票批次</td><td><code>invoice-batch/{id}/approve</code></td><td>sales_lead</td><td class="num ok">✓</td><td class="num no">—</td></tr>
+<tr><td>导出审批</td><td><code>export-requests/{id}/approve</code></td><td>admin/manager</td><td class="num ok">✓</td><td class="num ok">✓</td></tr>
+<tr><td>OA 审批</td><td><code>oa/requests/{id}/approve</code></td><td>按流程步骤指定</td><td class="num">看流程</td><td class="num">看流程</td></tr>
+</table>
+
+<h2><span class="n">02</span>主界面</h2>
+<p class="lead">打开先给待办和几个常看的数，不做「你好请问有什么可以帮你」。</p>
+
+<div class="canvas">
+  <p class="cap">杨坛登录（finance_lead + sales_lead + manager）</p>
+  <div class="app">
+    <div class="topbar">
+      <span class="dot"></span><span class="title">AI 助手</span>
+      <span class="pill">2026-08-02 09:14</span>
+    </div>
+    <div class="body">
+      <div class="msg">
+        <div class="av">AI</div>
+        <div class="bub">
+          <div style="font-size:13.5px;color:var(--t2);margin-bottom:10px">待你处理：</div>
+          <div class="todo">
+            <div class="trow hi">
+              <div class="n">2</div>
+              <div class="tx">
+                <div class="t1">请款单待审批</div>
+                <div class="t2">合计 ¥54,240 · 其中 1 单收款账号本周变更过</div>
+              </div>
+              <div class="go">在这里批 →</div>
+            </div>
+            <div class="trow">
+              <div class="n">1</div>
+              <div class="tx">
+                <div class="t1">开票申请待审批</div>
+                <div class="t2">昆山泰威尔 · 2026-033B</div>
+              </div>
+              <div class="go">在这里批 →</div>
+            </div>
+            <div class="trow">
+              <div class="n">1</div>
+              <div class="tx">
+                <div class="t1">OA 申请待审批</div>
+                <div class="t2">按流程轮到你这一步</div>
+              </div>
+              <div class="go">在这里批 →</div>
+            </div>
+          </div>
+
+          <div style="font-size:13.5px;color:var(--t2);margin:16px 0 9px">顺便看一眼：</div>
+          <div class="todo">
+            <div class="trow hi">
+              <div class="n">7</div>
+              <div class="tx">
+                <div class="t1">采购到期未到货</div>
+                <div class="t2">最长超期 12 天 · 江苏鸿旭隆占 4 条</div>
+              </div>
+              <div class="go">看明细 →</div>
+            </div>
+            <div class="trow">
+              <div class="n">¥2.8万</div>
+              <div class="tx">
+                <div class="t1">逾期应收</div>
+                <div class="t2">最长 61–90 天</div>
+              </div>
+              <div class="go">看明细 →</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">2026-059B 进度</span>
+      <span class="chip">这个月销售额</span>
+      <span class="chip">哪些供应商总迟到</span>
+      <span class="chip">各部门逾期任务</span>
+    </div>
+    <div class="inputbar">
+      <div class="fake">问点什么…</div>
+      <button class="btn pri">发送</button>
+    </div>
+  </div>
+</div>
+
+<table>
+<tr><th style="width:150px">设计点</th><th>说明</th></tr>
+<tr><td>待办在上，数据在下</td><td>要动手的排前面，看一眼的排后面</td></tr>
+<tr><td>第二行写「为什么值得看」</td><td>「7 条」不构成理由，「最长超期 12 天」才是</td></tr>
+<tr><td>按角色决定显示哪几类待办</td><td>赵仁辉没有 finance / sales_lead，就不显示请款和开票那两行</td></tr>
+</table>
+
+<h2><span class="n">03</span>常规查询</h2>
+
+<div class="canvas">
+  <p class="cap">问：哪些供应商老是迟到？</p>
+  <div class="app">
+    <div class="body">
+      <div class="msg me"><div class="av u">杨</div><div class="bub">哪些供应商老是迟到？</div></div>
+      <div class="msg">
+        <div class="av">AI</div>
+        <div class="bub">
+          <div class="facts">
+            <div class="facts-hd"><span class="badge-sys">系统查得</span>到期未到货 · 按供应商聚合 · 共 7 条</div>
+            <table class="dtable">
+              <tr><th>供应商</th><th class="n">未到货</th><th class="n">最长超期</th><th>涉及项目</th></tr>
+              <tr><td>江苏鸿旭隆传动科技</td><td class="n">4</td><td class="n bad">12 天</td><td>2026-059B</td></tr>
+              <tr><td>上海屹上脚轮</td><td class="n">2</td><td class="n">5 天</td><td>2026-061、2026-074</td></tr>
+              <tr><td>无锡越欣发型材</td><td class="n">1</td><td class="n">1 天</td><td>2026-059B</td></tr>
+            </table>
+            <div class="trace">
+              <span>取自「采购明细」</span><span>09:14</span><span>共 7 条，已全部列出</span>
+              <a href="#">在采购明细页打开 →</a>
+            </div>
+          </div>
+          <div class="ai-note">
+            <div class="hd"><span class="badge-ai">AI 判断</span>供参考</div>
+            江苏鸿旭隆最集中——4 条、最长 12 天，且都压在 2026-059B 一个项目上，建议优先催这家。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<table>
+<tr><th style="width:150px">设计点</th><th>说明</th></tr>
+<tr><td>系统数据和 AI 判断分色</td><td>青标是查来的，紫底是 AI 说的。AI 可以错，但不能装成系统事实</td></tr>
+<tr><td>「共 7 条，已全部列出」</td><td>单次最多 20 行。<b>截断了必须说</b>，否则会被当成全部</td></tr>
+<tr><td>时间戳 + 回原页面</td><td>ERP 数据一直在变；要核对时一步就能到那张熟悉的表</td></tr>
+</table>
+
+<h2><span class="n">04</span>审批 · 在对话里直接批</h2>
+
+<div class="canvas">
+  <p class="cap">点了「请款单待审批」</p>
+  <div class="app">
+    <div class="body">
+      <div class="msg">
+        <div class="av">AI</div>
+        <div class="bub">
+          <div style="font-size:13.5px;color:var(--t2);margin-bottom:10px">2 单待批，先看这一单：</div>
+          <div class="facts">
+            <div class="facts-hd"><span class="badge-sys">系统事实</span>请款单 #1287 · 要素由后端实时查得，非 AI 生成</div>
+            <div class="fact-row"><div class="fact-k">供应商</div><div class="fact-v">上海屹上脚轮有限公司</div></div>
+            <div class="fact-row"><div class="fact-k">请款金额</div><div class="fact-v">¥48,000.00</div></div>
+            <div class="fact-row"><div class="fact-k">收款账号</div>
+              <div class="fact-v">农业银行 …8127 <span class="wtag">3 天前变更过</span></div></div>
+            <div class="fact-row"><div class="fact-k">申请人</div><div class="fact-v">李新新 · 2026-08-01</div></div>
+            <div style="padding:11px 13px;border-top:1px solid var(--line2)">
+              <div style="background:var(--dan-soft);border:1px solid var(--dan-line);border-radius:8px;
+                          padding:8px 11px;font-size:13px;color:#991b1b">
+                ⚠ 收款账号 3 天前变更 · 金额为该供应商历史均值的 4.2 倍
+              </div>
+              <div class="ai-note">
+                <div class="hd"><span class="badge-ai">AI 建议</span>仅供参考</div>
+                两个异常同时出现，建议先电话与李新新核实账号变更，再决定是否放行。
+              </div>
+            </div>
+            <div class="acts">
+              <button class="btn pri">审批通过</button>
+              <button class="btn dan">驳回（需填原因）</button>
+              <button class="btn">打开原单</button>
+              <span class="act-hint">以 <b>杨坛</b> 的身份执行 · 有效期 4:38</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>批不了的时候，按钮提前灰掉</h3>
+<div class="canvas">
+  <p class="cap">职责分离：不能批自己提交的单</p>
+  <div class="app">
+    <div class="body">
+      <div class="facts">
+        <div class="facts-hd"><span class="badge-sys">系统事实</span>请款单 #1291 · 申请人：杨坛（你本人）</div>
+        <div class="fact-row"><div class="fact-k">供应商</div><div class="fact-v">江苏鸿旭隆传动科技</div></div>
+        <div class="fact-row"><div class="fact-k">请款金额</div><div class="fact-v">¥6,240.00</div></div>
+        <div class="acts">
+          <button class="btn off" disabled>审批通过</button>
+          <button class="btn off" disabled>驳回</button>
+          <button class="btn">打开原单</button>
+          <div class="act-why">按职责分离规则，你不能审批自己提交的请款单，需由另一位审批人处理。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<table>
+<tr><th style="width:150px">设计点</th><th>说明</th></tr>
+<tr><td>金额、账号由后端回填</td><td>模型改不了。防的是「卡上写 ¥4,800、按钮批 ¥48,000」</td></tr>
+<tr><td>异常标记在按钮正上方</td><td>签字前最后一眼必然看到</td></tr>
+<tr><td>「以 杨坛 的身份执行」</td><td>不是 AI 代批，责任仍在自己</td></tr>
+<tr><td>灰按钮 + 写明原因</td><td>复用页面同一个判断，不让人点了才被拒</td></tr>
+<tr><td>有效期倒计时</td><td>卡片令牌 5 分钟，过期要重新拉取，保证金额是最新的</td></tr>
+</table>
+
+<h2><span class="n">05</span>点下按钮之后</h2>
+<div class="flow">点「审批通过」
+   │
+   ├─ 前端按卡片类型查白名单 → PUT /api/purchase-mgmt/payment-requests/1287/approve
+   │  （端点写死在前端组件里，模型指定不了）
+   │
+   ├─ 带<b>用户自己的 token</b> → 职责分离、行级权限照常生效
+   │
+   ├─ 成功 → 卡片原地变已审批态，审计记「杨坛」
+   │
+   └─ 失败 → 原样显示后端返回的报错，AI 不参与解释</div>
+
+<h2><span class="n">06</span>四种边界状态</h2>
+<p class="lead">日常最高频的失败态，做对了比多加十个查询更能建立信任。</p>
+
+<div class="canvas">
+  <div class="grid2">
+    <div class="state">
+      <div class="sh a">权限外</div>
+      <div class="sb">
+        <div class="q">「王芹那边的激光件到货没？」</div>
+        <p>这部分在王芹的权限范围内，我这边看不到。</p>
+        <p style="color:var(--t3);font-size:12px">可见范围与你在页面上看到的一致，助手不额外放开。</p>
+      </div>
+    </div>
+    <div class="state">
+      <div class="sh b">查得到，是空的</div>
+      <div class="sb">
+        <div class="q">「本月有超期的外协加工吗？」</div>
+        <p><b>没有</b>。8 月外协共 4 单，都在期内。</p>
+        <p style="color:var(--t3);font-size:12px">「没有」是答案，「查不到」是故障，两者要分清。</p>
+      </div>
+    </div>
+    <div class="state">
+      <div class="sh c">数据不够，不硬答</div>
+      <div class="sb">
+        <div class="q">「哪些项目在亏钱？」</div>
+        <p>算不准。目前只有 28% 的项目归集了成本，且有 9 个项目合同额没录、会被算成假亏损。</p>
+        <p style="color:var(--t3);font-size:12px">口径不可靠时说清楚，别给一个会误导决策的数。</p>
+      </div>
+    </div>
+    <div class="state">
+      <div class="sh d">卡片过期</div>
+      <div class="sb">
+        <p style="color:var(--t3)">这张卡片已超过 5 分钟。为确保金额和账号是最新的，请重新拉取。</p>
+        <div style="margin-top:10px"><button class="btn">重新获取</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  第三种是我拉生产库时发现的真实情况：毛利榜上 9 个「亏损」项目<b>全部是合同额为 0</b>（销售金额没录），
+  一个真亏损都没有。所以<b>毛利/利润类问题这一期先不接</b>，接了就是给假答案。
+  其余查询（进度、逾期、到货、应收、销售额）数据都是实的，正常答。
+</div>
+
+<h2><span class="n">07</span>要你定的事</h2>
+<div class="ask">
+  <h4>四个</h4>
+  <ol>
+    <li><b>先做哪几类审批？</b>建议请款 + 开票（杨坛日常最多），OA 和导出后面加。</li>
+    <li><b>赵仁辉的开场要不要不同？</b>他没有 finance / sales_lead，请款和开票那两行对他是空的，
+        更该给交付类（在手订单、部门逾期）。</li>
+    <li><b>异常标记的阈值谁定？</b>「金额为历史均值 4.2 倍」这种是业务规则，得业务方拍板。</li>
+    <li><b>待办要不要推企微？</b>推的话要跟现有推送的去重窗口打通。</li>
+  </ol>
+</div>
+
+</div>
+</body>
+</html>

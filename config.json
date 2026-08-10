@@ -1,0 +1,139 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "command": {},
+  "plugin": [
+    "file:///Users/zhangang/.config/opencode/plugin/read-spill.js",
+    "file:///Users/zhangang/.config/opencode/plugin/bocomhermes-context-guard.js"
+  ],
+  "username": "unknown",
+  "mode": {},
+  "agent": {},
+  "mcp": {
+    "BocomHermes-browser": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/mcp/browser-mcp.mjs"
+      ],
+      "environment": {
+        "BOCOMHERMES_BROWSER_HEADFUL": "0"
+      },
+      "enabled": true
+    },
+    "BocomHermes-httpcap": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/mcp/httpcap-mcp.mjs"
+      ],
+      "enabled": true
+    },
+    "BocomHermes-git": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/mcp/git-mcp.mjs"
+      ],
+      "enabled": true
+    },
+    "BocomHermes-repro": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/mcp/repro-mcp.mjs"
+      ],
+      "enabled": true
+    },
+    "BocomHermes-mail": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/mcp/mail-mcp.mjs"
+      ],
+      "enabled": true
+    },
+    "BocomHermes-db": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/mcp/db-mcp.mjs"
+      ],
+      "enabled": true
+    },
+    "BocomHermes-orch": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/mcp/orch-mcp.mjs"
+      ],
+      "enabled": true
+    },
+    "BocomHermes-doc": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/mcp/doc-mcp.mjs"
+      ],
+      "enabled": true
+    }
+  },
+  "lsp": {
+    "typescript": {
+      "command": [
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/node_modules/typescript-language-server/lib/cli.mjs",
+        "--stdio"
+      ],
+      "extensions": [
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".mts",
+        ".cts"
+      ],
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1"
+      },
+      "initialization": {
+        "tsserver": {
+          "path": "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/node_modules/typescript/lib/tsserver.js"
+        }
+      }
+    },
+    "vue": {
+      "command": [
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/node_modules/@vue/language-server/bin/vue-language-server.js",
+        "--stdio"
+      ],
+      "extensions": [
+        ".vue"
+      ],
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1"
+      }
+    },
+    "pyright": {
+      "command": [
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+        "/Users/zhangang/Desktop/个人智能体/Person-Agent/BocomHermes-shell/node_modules/pyright/langserver.index.js",
+        "--stdio"
+      ],
+      "extensions": [
+        ".py",
+        ".pyi"
+      ],
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1"
+      }
+    }
+  },
+  "permission": {
+    "bash": {
+      "echo __cfg_patch_probe__ *": "allow"
+    }
+  }
+}

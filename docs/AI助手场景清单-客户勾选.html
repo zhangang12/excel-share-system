@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 助手能做什么 · 场景勾选清单</title>
+<style>
+:root{--ink:#16202e;--ink2:#3d4a5c;--dim:#7b8698;--line:#e2e7ee;--bg:#eef1f6;--card:#fff;
+  --acc:#2b5ce6;--acc2:#eaf0ff;--ok:#0f9d6b;--warn:#d97706;--no:#b91c1c;
+  --sh:0 1px 2px rgba(16,24,40,.05),0 4px 14px rgba(16,24,40,.05)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);line-height:1.75;font-size:15.5px;
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:0 20px 140px}
+header{background:linear-gradient(150deg,#1b2b52,#0f1a30);color:#fff;padding:44px 20px 38px;margin-bottom:22px}
+header .in{max-width:1000px;margin:0 auto}
+header h1{font-size:29px;margin:0 0 10px;font-weight:700}
+header p{margin:0;color:#c3d2ea;font-size:15px;max-width:720px}
+.how{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;
+  margin:18px 0 8px;box-shadow:var(--sh);font-size:14.5px}
+.how b{color:var(--acc)}
+.how ol{margin:8px 0 0;padding-left:22px}.how li{margin:5px 0;color:var(--ink2)}
+h2{font-size:21px;margin:38px 0 4px;display:flex;align-items:center;gap:10px}
+h2 .n{background:var(--acc);color:#fff;width:28px;height:28px;border-radius:9px;font-size:14px;
+  display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.lead{color:var(--dim);font-size:14px;margin:0 0 14px 38px}
+h3{font-size:15.5px;margin:22px 0 8px;color:var(--ink2);padding-left:11px;border-left:4px solid var(--acc)}
+.item{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:12px 15px;
+  margin:9px 0;display:flex;gap:12px;align-items:flex-start;box-shadow:var(--sh);
+  transition:border-color .14s,background .14s;cursor:pointer}
+.item:hover{border-color:#b9c8e8}
+.item.on{border-color:var(--acc);background:var(--acc2)}
+.item input[type=checkbox]{width:19px;height:19px;margin:4px 0 0;flex:0 0 auto;cursor:pointer;accent-color:var(--acc)}
+.body{flex:1;min-width:0}
+.t{font-weight:600;font-size:15.5px;margin-bottom:2px}
+.d{color:var(--ink2);font-size:14px}
+.eg{color:var(--dim);font-size:13.5px;margin-top:4px;font-style:italic}
+.star{background:none;border:0;cursor:pointer;font-size:19px;line-height:1;padding:3px 2px;
+  filter:grayscale(1);opacity:.28;transition:.15s;flex:0 0 auto}
+.star:hover{opacity:.65}
+.star.on{filter:none;opacity:1}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.tag{font-size:11.5px;padding:1px 8px;border-radius:20px;font-weight:600;white-space:nowrap}
+.tg-now{background:#dcfce7;color:var(--ok)}
+.tg-new{background:#dbeafe;color:#1e40af}
+.tg-big{background:#fef3c7;color:var(--warn)}
+.tg-card{background:#f3e8ff;color:#7e22ce}
+.note{background:#fffbeb;border:1px solid #fde68a;border-radius:11px;padding:13px 16px;margin:14px 0;font-size:14px;color:#78350f}
+.note b{display:block;margin-bottom:3px}
+.skip{background:var(--card);border:1px dashed var(--line);border-radius:11px;padding:13px 16px;margin:9px 0}
+.skip .t{color:var(--dim)}
+.skip .d{color:var(--dim);font-size:13.6px}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);
+  box-shadow:0 -3px 18px rgba(16,24,40,.09);padding:11px 20px;z-index:50}
+.bar .in{max-width:1000px;margin:0 auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cnt{font-size:14.5px;color:var(--ink2)}
+.cnt b{color:var(--acc);font-size:19px;margin:0 3px}
+.cnt i{color:var(--warn);font-style:normal;font-weight:700}
+.btn{border:1px solid var(--line);background:var(--card);color:var(--ink2);border-radius:9px;
+  padding:8px 15px;cursor:pointer;font-size:14px;font-family:inherit;transition:.14s}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.p{background:var(--acc);color:#fff;border-color:var(--acc);font-weight:600}
+.btn.p:hover{background:#1d4bd0;color:#fff}
+.ml{margin-left:auto}
+dialog{border:0;border-radius:14px;padding:0;max-width:640px;width:92%;box-shadow:0 18px 60px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(15,26,48,.55)}
+.dlg{padding:22px 24px}
+.dlg h3{margin:0 0 10px;border:0;padding:0;font-size:18px;color:var(--ink)}
+textarea{width:100%;height:300px;border:1px solid var(--line);border-radius:9px;padding:12px;
+  font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.65;resize:vertical;color:var(--ink)}
+.dlg .row{display:flex;gap:10px;margin-top:12px;justify-content:flex-end}
+@media print{
+  header{background:#fff!important;color:#000;padding:0 0 16px}
+  header h1{color:#000}header p{color:#444}
+  .bar,.star,.btn{display:none!important}
+  .item{break-inside:avoid;box-shadow:none}
+  body{background:#fff;font-size:11pt}
+}
+@media(max-width:640px){header h1{font-size:22px}.wrap{padding:0 14px 150px}}
+</style></head><body>
+
+<header><div class="in">
+  <h1>AI 助手能为我们做什么</h1>
+  <p>下面列的每一条，都是这套系统<b>已有数据、技术上能做</b>的事。请按你的实际需要勾选——
+     我们会按勾选结果排优先级，先做最有用的那几件。</p>
+</div></header>
+
+<div class="wrap">
+
+<div class="how">
+  <b>怎么用这份清单</b>
+  <ol>
+    <li>把你<b>确实需要</b>的勾上。不用担心勾多了——我们会按投入产出排序，不是全都做。</li>
+    <li>其中<b>最想先要的，点一下右边的星星</b>⭐。星标的会排进第一批。</li>
+    <li>勾完点底部「<b>导出已选</b>」，把内容发回来即可。选择会自动保存，关掉页面再打开还在。</li>
+    <li>觉得有遗漏？直接在导出的文本里补充，或者告诉我们你平时最费时间的是什么事。</li>
+  </ol>
+</div>
+
+<div class="note">
+  <b>先说一句实在话</b>
+  AI 助手的价值不在于"什么都能问"，而在于<b>省掉你反复翻页面、跨部门打电话核对的时间</b>。
+  如果某件事你点两下页面就能看到，让它去问反而更慢。所以请优先勾那些
+  <b>要翻好几个页面、要问好几个人、或者容易漏掉</b>的事。
+</div>
+
+<!-- ══════════ 1 查询 ══════════ -->
+<h2><span class="n">1</span>问一句就知道</h2>
+<p class="lead">不用翻页面、不用打电话，直接问。回答里带明细表格，数据都从系统里实时取。</p>
+
+<h3>采购与供应商</h3>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">哪些采购超期没到货</div><div class="d">按超期天数排序，看得到物料、供应商、项目、采购员</div><div class="eg">「有哪些货该到没到？」</div><div class="tags"><span class="tag tg-now">现在就能做</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">未来几天要到什么货</div><div class="d">提前安排收货人手和库位</div><div class="eg">「这周还有哪些货要到？」</div><div class="tags"><span class="tag tg-now">现在就能做</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">哪些供应商总是延期</div><div class="d">按供应商汇总超期次数与最长超期天数，谈判和选型时有据可依</div><div class="eg">「哪几家老是拖？」</div><div class="tags"><span class="tag tg-now">现在就能做</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">某供应商还欠他多少钱 / 该付多少</div><div class="d">收货金额、已开票、已付款、欠款一次说清</div><div class="eg">「屹上脚轮那边账目怎么样？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">哪些货已经开票了但还没付款</div><div class="d">按供应商汇总，排付款计划用</div><div class="eg">「这个月要付哪些款？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">有哪些采购申请还没处理</div><div class="d">仓库/车间提的请购单，谁提的、多久了</div><div class="eg">「还有没处理的请购单吗？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+
+<h3>仓库与物料</h3>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">哪些物料快不够了</div><div class="d">低于安全库存的清单，避免停工待料</div><div class="eg">「有什么快用完了？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">某个物料现在有多少、放在哪</div><div class="d">当前库存数量与库位，不用跑仓库确认</div><div class="eg">「304 钢板还有多少？在哪个位？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">哪些货压着很久没动</div><div class="d">呆滞库存清单，占用资金的大头往往在这</div><div class="eg">「有哪些料半年没动过？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">有哪些待发货 / 待备货</div><div class="d">物流和仓库的待办一眼看全</div><div class="eg">「今天要发哪些货？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+
+<h3>销售与回款</h3>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">哪些尾款到期了 / 快到期了</div><div class="d">按到期日排序，含客户、金额、负责销售</div><div class="eg">「这半个月有哪些款该收？」</div><div class="tags"><span class="tag tg-now">现在就能做</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">某个客户总共还欠我们多少</div><div class="d">按客户汇总应收，含账龄（欠了多久）</div><div class="eg">「这家客户一共欠多少？拖了多久？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">本月签了多少、开了多少票</div><div class="d">合同额、开票额、签约率，按销售员排名</div><div class="eg">「这个月业绩怎么样？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">线索跟进情况与成交率</div><div class="d">哪些线索久未跟进、各销售的转化率</div><div class="eg">「有哪些线索一个月没动了？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+
+<h3>生产 · 设计 · 电工</h3>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">哪些任务逾期了</div><div class="d">按部门看，含负责人和超期天数</div><div class="eg">「设计部有哪些拖了？」</div><div class="tags"><span class="tag tg-now">现在就能做</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">谁手上活最多 / 谁还有余力</div><div class="d">按人看在手任务量，派工前先看负载</div><div class="eg">「设计部现在谁比较空？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">各部门本月按时完成率</div><div class="d">部门之间横向比，也看得到个人效率</div><div class="eg">「上个月哪个部门最准时？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">有哪些生产问题反馈没处理</div><div class="d">装配反馈给设计/生产的问题，积压了多少</div><div class="eg">「还有没解决的现场问题吗？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+
+<h3>项目全局（跨部门，最省时间的一类）</h3>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">某个项目现在到底卡在哪</div><div class="d">销售、设计、电工、生产、采购、仓库、物流一次问清，不用挨个页面翻</div><div class="eg">「2026-071 现在什么情况？」</div><div class="tags"><span class="tag tg-now">现在就能做</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">这个项目花了多少钱、还剩多少利润</div><div class="d">合同额减去材料、采购、售后、运费，看得到毛利</div><div class="eg">「这单还有多少赚头？」</div><div class="tags"><span class="tag tg-big">较复杂</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">哪些项目有风险</div><div class="d">综合逾期、缺料、欠款、交期临近几个信号，排出最该盯的几个</div><div class="eg">「这周最该盯哪几个项目？」</div><div class="tags"><span class="tag tg-big">较复杂</span></div></div><button class="star">★</button></div>
+
+<h3>财务</h3>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">现在有多少待开票、多少待付款</div><div class="d">两个数一问就有，不用进两个页面数</div><div class="eg">「还有多少票没开？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">未来三个月钱够不够</div><div class="d">按周排出预计流入流出，累计为负就是缺口预警</div><div class="eg">「下个月资金紧不紧？」</div><div class="tags"><span class="tag tg-big">较复杂</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">哪些项目在亏钱</div><div class="d">项目毛利红黑榜，亏得最多的排最前</div><div class="eg">「有哪些单是做亏的？」</div><div class="tags"><span class="tag tg-big">较复杂</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">这个月钱花在哪了</div><div class="d">支出按类别拆开：材料、外协、工资、运费、售后</div><div class="eg">「本月支出构成？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+
+<h3>人事 · OA</h3>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">谁的合同快到期了 / 谁该转正了</div><div class="d">提前 30 天提醒，别漏了续签</div><div class="eg">「这个月有谁要续合同？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">各部门多少人、这个月工资多少</div><div class="d">仅人事和管理层可见</div><div class="eg">「生产部现在几个人？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">我有哪些待审批的事</div><div class="d">报销、请购、出差等，一句话看全，不用进 OA 翻</div><div class="eg">「有什么等我批的？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">我提的那个申请批到哪了</div><div class="d">看得到当前卡在谁那里、多久了</div><div class="eg">「我上周报的销到哪一步了？」</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+
+<!-- ══════════ 2 审批 ══════════ -->
+<h2><span class="n">2</span>在对话里直接办完</h2>
+<p class="lead">助手把事情整理成一张卡片推到你面前——该批什么、有没有异常，都写清楚，你点一下就办完，不用再跳去页面。</p>
+
+<div class="note">
+  <b>这一类的安全底线，请放心</b>
+  按钮是<b>你本人点的、用你自己的账号执行</b>，助手只负责把事情整理出来推给你看。
+  所以谁批的、什么时候批的，记录里清清楚楚；原有的审批规则（比如"审批和付款必须两个人"）
+  <b>一条都不会被绕过</b>。助手<b>不会替你做决定</b>。
+</div>
+
+<div class="item"><input type="checkbox"><div class="body"><div class="t">请款审批</div><div class="d">卡片上直接显示供应商、金额、收款账号，<b>并标出异常</b>——比如"这个收款账号本周刚改过"、"金额是该供应商历史平均的 4 倍"</div><div class="eg">这是最推荐先做的一个，直接对着付款诈骗最常见的手法</div><div class="tags"><span class="tag tg-card">卡片确认</span><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">付款时发现问题，一键驳回</div><div class="d">出纳发现账号或户名不对，直接在卡片上填原因退回，发起人收到通知去改</div><div class="eg">该功能主体已上线，这里是把入口搬进对话</div><div class="tags"><span class="tag tg-card">卡片确认</span><span class="tag tg-now">基础已有</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">开票申请审批</div><div class="d">卡片显示项目、金额、税率、附件，批完自动同步财务待开票</div><div class="tags"><span class="tag tg-card">卡片确认</span><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">OA 报销 / 请购 / 出差审批</div><div class="d">卡片显示申请人、金额、明细、当前步骤</div><div class="tags"><span class="tag tg-card">卡片确认</span><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">采购申请处理</div><div class="d">车间/仓库提的请购单，采购在卡片上直接受理或驳回</div><div class="tags"><span class="tag tg-card">卡片确认</span><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">任务派工</div><div class="d">卡片列出待分派任务和各人当前负载，主管直接指派</div><div class="tags"><span class="tag tg-card">卡片确认</span><span class="tag tg-big">较复杂</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">管理层待办的顺延申请</div><div class="d">下属申请延期，卡片显示原承诺日、申请理由、已延几次</div><div class="tags"><span class="tag tg-card">卡片确认</span><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">采购改期（供应商说要延后）</div><div class="d">采购转述"某供应商整批延到几号"，助手先预演影响哪些项目、哪些行，确认后一次改完并通知相关人</div><div class="eg">这一条能省最多重复劳动，但也最需要谨慎，建议放到后面做</div><div class="tags"><span class="tag tg-card">卡片确认</span><span class="tag tg-big">较复杂</span></div></div><button class="star">★</button></div>
+
+<!-- ══════════ 3 主动提醒 ══════════ -->
+<h2><span class="n">3</span>不用问，它来找你</h2>
+<p class="lead">按时推送到系统消息和企业微信。<b>系统现在已经有一批单条提醒了</b>，这一类是把它们汇总成"一张报"，而不是再多吵你几遍。</p>
+
+<div class="item"><input type="checkbox"><div class="body"><div class="t">每天早上一份"今天要盯的事"</div><div class="d">采购超期、任务逾期、尾款到期、合同到期汇总成一条，<b>按你的岗位只发和你相关的</b>——管理层看全局，主管看本部门，个人看自己的</div><div class="eg">投入产出最高的一项：所需数据全都现成，只差定时发送</div><div class="tags"><span class="tag tg-now">最快能做</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">资金缺口预警</div><div class="d">未来几周预计的钱不够付的时候，提前通知财务和管理层</div><div class="tags"><span class="tag tg-big">较复杂</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">供应商准点率异常提醒</div><div class="d">某家供应商最近明显变差时主动提示，别等停工了才发现</div><div class="tags"><span class="tag tg-big">较复杂</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">周报 / 月报自动生成</div><div class="d">各部门完成情况、销售业绩、采购金额，到点自动出，不用人整理</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+
+<!-- ══════════ 4 异常发现 ══════════ -->
+<h2><span class="n">4</span>它替你盯着不对劲的地方</h2>
+<p class="lead">这一类不用你问，也不用你记得去查——它自己发现了才告诉你。<b>越是容易被忽略、出事代价越大的，越值得放这里。</b></p>
+
+<div class="item"><input type="checkbox"><div class="body"><div class="t">收款账号被改动</div><div class="d">供应商的银行账号近期发生变更时，在付款环节醒目提示</div><div class="eg">这是防付款诈骗最有效的一道，强烈建议勾</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">金额明显偏离历史</div><div class="d">某笔请款或采购价远高于该供应商/该物料的历史水平时提示</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">领料没挂到项目上</div><div class="d">出库了但没写是哪个项目用的，这部分成本会凭空消失，导致算出来的利润偏高</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">收了货但没填价格</div><div class="d">库存金额和项目成本都会因此偏低，越积越多越难补</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+<div class="item"><input type="checkbox"><div class="body"><div class="t">长期没人动的单据</div><div class="d">卡在某个环节很久没人处理的请款、请购、任务，主动捞出来</div><div class="tags"><span class="tag tg-new">需新增</span></div></div><button class="star">★</button></div>
+
+<!-- ══════════ 5 暂不建议 ══════════ -->
+<h2><span class="n">5</span>我们暂时不建议做的</h2>
+<p class="lead">这几件技术上能做，但我们认为现在做投入产出不划算——列出来是为了透明，你如果确实需要也可以勾。</p>
+
+<div class="skip"><div class="t">☐ 让 AI 自己决定并直接改数据（不用人确认）</div><div class="d">风险与收益不成比例。改错了不容易发现，责任也不清楚。建议永远保持"人点确认"这一步。</div></div>
+<div class="skip"><div class="t">☐ 问制度类问题（报销怎么走、这个字段什么意思）</div><div class="d">这类答案不在业务数据里，需要另建一套资料库并持续维护。建议先用现有的制度文档，等真的问得多了再说。</div></div>
+<div class="skip"><div class="t">☐ 让 AI 随意查询任意数据（不限定范围）</div><div class="d">听起来灵活，实际上权限管不住——很容易让人看到不该看的。我们坚持"能查什么是列得出来的"。</div></div>
+<div class="skip"><div class="t">☐ 语音输入 / 手机 App</div><div class="d">桌面客户端刚稳定下来，再开一个端会分散精力。等问数这条路走顺了再评估。</div></div>
+
+<div class="note" style="margin-top:26px">
+  <b>还有什么没列到的？</b>
+  最有价值的场景往往来自一线的真实抱怨。如果你平时有"这事每次都要问好几个人""这个数每次都要自己算"
+  的情况，请直接写在导出的文本末尾——那种才是最该做的。
+</div>
+
+</div>
+
+<div class="bar"><div class="in">
+  <span class="cnt">已选 <b id="c">0</b> 项，其中标星 <i id="s">0</i> 项</span>
+  <button class="btn" id="clr">清空</button>
+  <button class="btn ml" onclick="window.print()">打印 / 存 PDF</button>
+  <button class="btn p" id="exp">导出已选</button>
+</div></div>
+
+<dialog id="dlg"><div class="dlg">
+  <h3>把下面的内容发回给我们即可</h3>
+  <textarea id="out" readonly></textarea>
+  <div class="row">
+    <button class="btn" id="cp">复制</button>
+    <button class="btn p" id="cls">关闭</button>
+  </div>
+</div></dialog>
+
+<script>
+var items=[].slice.call(document.querySelectorAll('.item'));
+function key(i){return 'sc_'+i}
+function sync(){
+  var n=0,s=0;
+  items.forEach(function(it,i){
+    var cb=it.querySelector('input'),st=it.querySelector('.star');
+    it.classList.toggle('on',cb.checked);
+    if(cb.checked)n++;
+    if(st.classList.contains('on'))s++;
+    try{localStorage.setItem(key(i),(cb.checked?'1':'0')+(st.classList.contains('on')?'1':'0'))}catch(e){}
+  });
+  document.getElementById('c').textContent=n;
+  document.getElementById('s').textContent=s;
+}
+items.forEach(function(it,i){
+  var cb=it.querySelector('input'),st=it.querySelector('.star');
+  try{var v=localStorage.getItem(key(i));if(v){cb.checked=v[0]==='1';if(v[1]==='1')st.classList.add('on')}}catch(e){}
+  it.addEventListener('click',function(e){
+    if(e.target===st)return;
+    if(e.target!==cb)cb.checked=!cb.checked;
+    sync();
+  });
+  st.addEventListener('click',function(e){
+    e.stopPropagation();
+    st.classList.toggle('on');
+    if(st.classList.contains('on'))cb.checked=true;
+    sync();
+  });
+});
+sync();
+document.getElementById('clr').onclick=function(){
+  if(!confirm('确定清空所有勾选？'))return;
+  items.forEach(function(it){it.querySelector('input').checked=false;it.querySelector('.star').classList.remove('on')});
+  sync();
+};
+document.getElementById('exp').onclick=function(){
+  var star=[],pick=[],cur='';
+  items.forEach(function(it){
+    var h=it.closest('.wrap')?it:it, sec='';
+    var p=it.previousElementSibling;
+    while(p){if(p.tagName==='H3'||p.tagName==='H2'){sec=p.textContent.replace(/^\d/,'').trim();break}p=p.previousElementSibling}
+    var t=it.querySelector('.t').textContent.trim();
+    if(it.querySelector('.star').classList.contains('on'))star.push('  ⭐ ['+sec+'] '+t);
+    else if(it.querySelector('input').checked)pick.push('  · ['+sec+'] '+t);
+  });
+  var L=[];
+  L.push('AI 助手场景选择结果');
+  L.push('填写日期：'+new Date().toLocaleDateString('zh-CN'));
+  L.push('');
+  L.push('【最想先要】共 '+star.length+' 项');
+  L.push(star.length?star.join('\n'):'  （未标记）');
+  L.push('');
+  L.push('【也需要】共 '+pick.length+' 项');
+  L.push(pick.length?pick.join('\n'):'  （未选择）');
+  L.push('');
+  L.push('【补充说明 / 清单里没列到的需求】');
+  L.push('  （请在这里补充：平时最费时间、最容易出错、最需要反复核对的事）');
+  L.push('  ');
+  document.getElementById('out').value=L.join('\n');
+  document.getElementById('dlg').showModal();
+};
+document.getElementById('cls').onclick=function(){document.getElementById('dlg').close()};
+document.getElementById('cp').onclick=function(){
+  var t=document.getElementById('out');t.readOnly=false;t.select();t.setSelectionRange(0,99999);
+  try{document.execCommand('copy');this.textContent='已复制 ✓';var b=this;setTimeout(function(){b.textContent='复制'},1600)}catch(e){}
+  t.readOnly=true;
+};
+</script>
+</body></html>
