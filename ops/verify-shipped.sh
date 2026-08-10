@@ -54,9 +54,23 @@ NEWER=$(git log --oneline "$(git log --oneline -1 --format=%H --grep="客户端 
 
 if [[ $# -gt 0 ]]; then
   echo -e "${BOLD}── 功能是否真在线上包里 ──${OFF}"
+  # ⚠️ **三个地方都要搜**（2026-08-10 踩到）：原来只搜网页版的 assets/，
+  #    于是查 H5 的改动一律报「不在生产构建产物里」——连早就上线的 sumcard
+  #    也查不到。差点当成发版失败去重发。三份产物各在各的位置：
+  #      · 网页版  /usr/share/nginx/html/assets   （npm run build）
+  #      · H5 助手 /usr/share/nginx/html/h5       （npm run build:h5，base=/h5/）
+  #      · 后端    pms2_backend:/app              （Python 源码，没有构建产物）
+  #    后端符号（函数名）永远不可能出现在前端产物里，反之亦然。
   for s in "$@"; do
-    n=$($SSH "docker exec pms2_frontend sh -c \"grep -rl '$s' /usr/share/nginx/html/assets/ 2>/dev/null | wc -l\"" 2>/dev/null | tr -d ' \r')
-    if [[ "${n:-0}" -gt 0 ]]; then echo -e "  ${OK}✅${OFF} $s"; else echo -e "  ${BAD}❌ $s —— 不在生产构建产物里${OFF}"; fail=1; fi
+    hit=""
+    n=$($SSH "docker exec pms2_frontend sh -c \"grep -rl -- '$s' /usr/share/nginx/html/assets/ 2>/dev/null | wc -l\"" 2>/dev/null | tr -d ' \r')
+    [[ "${n:-0}" -gt 0 ]] && hit="网页版"
+    n=$($SSH "docker exec pms2_frontend sh -c \"grep -rl -- '$s' /usr/share/nginx/html/h5/ 2>/dev/null | wc -l\"" 2>/dev/null | tr -d ' \r')
+    [[ "${n:-0}" -gt 0 ]] && hit="${hit:+$hit+}H5"
+    n=$($SSH "docker exec pms2_backend sh -c \"grep -rl --include='*.py' -- '$s' /app 2>/dev/null | wc -l\"" 2>/dev/null | tr -d ' \r')
+    [[ "${n:-0}" -gt 0 ]] && hit="${hit:+$hit+}后端"
+    if [[ -n "$hit" ]]; then echo -e "  ${OK}✅${OFF} $s  ${DIM}($hit)${OFF}"
+    else echo -e "  ${BAD}❌ $s —— 网页版/H5/后端 三处都没有${OFF}"; fail=1; fi
   done
   echo -e "  ${DIM}（这是查线上实物，比「发版成功」可靠）${OFF}"
 fi
