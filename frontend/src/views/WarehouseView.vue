@@ -299,6 +299,12 @@ async function loadMatDict() {
   catch { matDict.value = [] }
 }
 // 🆕 弃用「物料类别」下拉(与编码分类树重复);matCatOptions 已移除
+// 🆕 订单编号里合法的**非项目**取值（备用/车间耗材/售后维修…），由字典维护。
+//   原来收货弹窗的「订单编号」下拉只列项目，这几个值得靠人手打——于是生产上打出了
+//   「车间消耗」「消耗」「消耗品」三个「车间耗材」的变体，按编号汇总的报表被打散，
+//   而且随手打错的项目编号（如 2025-087，项目根本不存在）会静默变成无主料，谁也领不到。
+//   放进下拉让人选，比事后在「孤儿采购」报表里捞回来便宜得多。
+const orderNoOptions = computed(() => matDict.value.filter(d => d.dtype === 'order_no').map(d => d.value))
 const matUnitOptions = computed(() => matDict.value.filter(d => d.dtype === 'unit').map(d => d.value))
 const matGradeOptions = computed(() => matDict.value.filter(d => d.dtype === 'material_grade').map(d => d.value))
 function openMat(m?: WhMaterial) {
@@ -496,6 +502,14 @@ const recvForm = reactive({
   stock_location: '' as string | null, project_code: '' as string | null,   // 🆕 #253 订单编号
   delivery_note_no: '', arrival_date: new Date().toISOString().slice(0, 10),
   unit_price: null as number | null, received_amount: null as number | null,
+})
+// 收货弹窗里填的编号既不是项目、也不在字典里 → 提示。
+// 判定口径与财务「成本审计·孤儿采购」完全一致（reports_router: 项目编号 ∪ order_no 字典）。
+// ⚠️ 必须放在 recvForm 声明之后：`<script setup>` 里 computed 引用后声明的 ref 会踩 TDZ。
+const recvUnknownCode = computed(() => {
+  const c = (recvForm.project_code || '').trim()
+  if (!c) return false
+  return !projects.value.some(p => p.code === c) && !orderNoOptions.value.includes(c)
 })
 function openReceive(it: RecvItem) {
   if (!projects.value.length) loadProjects()   // 🆕 #253 订单编号下拉需要项目列表
@@ -1934,9 +1948,21 @@ function applyPoPick() {
         <!-- 🆕 #253 订单编号：手工采购单没填的，仓库收货可补/改（选项目 或 直接输订单号） -->
         <el-form-item label="订单编号（属于哪个项目/订单；手工采购单没填的可在此补）">
           <el-select v-model="recvForm.project_code" filterable allow-create default-first-option clearable
-                     placeholder="选项目编号，或直接输入订单编号" style="width:100%">
-            <el-option v-for="p in projects" :key="p.id" :label="`${p.code}　${p.name}`" :value="p.code" />
+                     placeholder="选项目编号，或选「备用/车间耗材」这类订单编号" style="width:100%">
+            <el-option-group v-if="orderNoOptions.length" label="非项目（字典维护）">
+              <el-option v-for="v in orderNoOptions" :key="'d:' + v" :label="v" :value="v" />
+            </el-option-group>
+            <el-option-group label="项目">
+              <el-option v-for="p in projects" :key="p.id" :label="`${p.code}　${p.name}`" :value="p.code" />
+            </el-option-group>
           </el-select>
+          <!-- 手打了一个既不是项目、也不在字典里的编号：不硬拦（总有临时情况），但必须让人看见。
+               静默接受的代价是这批料挂不到任何项目，仓库在「物料需求」里根本看不到它，
+               成本也永远归不上去——生产上已经这样丢了 ¥11,637。 -->
+          <div v-if="recvUnknownCode" class="small" style="color:var(--el-color-warning-dark-2,#b88230);margin-top:4px">
+            ⚠ 「{{ recvForm.project_code }}」不是系统里的项目，也不在订单编号字典里。
+            这批料不会出现在任何项目的「物料需求」里，成本也归不到项目上。确认要用请忽略此提示。
+          </div>
         </el-form-item>
         <div class="frow">
           <!-- 反馈#346（李新新）：采购用优惠券会单开一行负金额，收货补价时也得能填负数。 -->

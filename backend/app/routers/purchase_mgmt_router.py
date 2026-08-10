@@ -1406,8 +1406,16 @@ async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: m
     (直发对应项目，净库存过账为0)；备货(is_stock=True)只入库、留库存。幂等：同一采购明细只过账一次。"""
     if not item.qty or item.qty <= 0:
         return
+    # 幂等：同一采购明细只过账一次。
+    # ⚠️ 必须**同时**排除已被冲红的原单（reversed=True）——冲红的做法是保留原单、
+    #    另插一条反向单并把原单标 reversed（见 warehouse_router 的冲红接口）。
+    #    只滤 is_reversal 的话，原单仍然命中这个守卫：仓库把收错的入库冲红后再收一次，
+    #    接口照样返回成功，**库存却一动不动**，静默失败。
+    #    同文件删除明细那段(`_can_delete` 附近)两个条件都滤了，这里是漏写。
     ex = await db.execute(select(models.WhTxn).where(
-        models.WhTxn.purchase_item_id == item.id, models.WhTxn.is_reversal == False))  # noqa: E712
+        models.WhTxn.purchase_item_id == item.id,
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False))    # noqa: E712
     if ex.scalars().first():
         return
     spec = (item.spec or "").strip() or None
@@ -1448,15 +1456,43 @@ async def _sync_txn_amount(db: AsyncSession, item: models.PurchaseItem) -> None:
     qty×unit_price 会有分位差）；部分入库等其他情况退回 qty×单价。"""
     if item.unit_price is None and item.received_amount is None:
         return
+    # ⚠️ 同样要排除已冲红的原单：冲红后重新收货会留下两条非冲红流水（旧的已冲红 + 新的），
+    #    把旧单的金额也改了，它和对应的冲红单就对不上，净额永远差一截。只改**当前有效**的那条。
     tr = await db.execute(select(models.WhTxn).where(
         models.WhTxn.purchase_item_id == item.id,
-        models.WhTxn.is_reversal == False))  # noqa: E712
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False))    # noqa: E712
     for t in tr.scalars().all():
         t.unit_price = item.unit_price
         if item.received_amount is not None and item.qty and t.qty == item.qty:
             t.amount = round(item.received_amount, 4)
         elif item.unit_price is not None:
             t.amount = round((t.qty or 0) * item.unit_price, 4)
+
+
+async def _sync_txn_project(db: AsyncSession, item: models.PurchaseItem) -> None:
+    """订单编号改了 → 把已生成的入库流水的 project_id 一起改过来。
+
+    为什么必须有：入库流水上的 project_id 决定了这批料出现在**哪个项目的「物料需求」**里，
+    仓库才领得到、成本才落得上。而 `_auto_stock_in` 是幂等的，收货后再改订单编号
+    不会重新过账——不同步的话，采购明细上的编号改对了，流水还挂在旧项目（或压根没挂），
+    这批料在正确的项目里永远不出现，谁也领不到，成本永远归不上去。
+    补挂接口（reports_router）只认出库流水，入库这边没有别的补救口子。
+
+    编号查不到对应项目（如「备用」「车间耗材」这类非项目编号，或干脆打错了）→ 置空，
+    与 `_auto_stock_in` 同口径。
+    """
+    pid = None
+    code = (item.project_code or "").strip()
+    if code:
+        pr = await db.execute(select(models.Project.id).where(models.Project.code == code))
+        pid = pr.scalar_one_or_none()
+    tr = await db.execute(select(models.WhTxn).where(
+        models.WhTxn.purchase_item_id == item.id,
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False))    # noqa: E712
+    for t in tr.scalars().all():
+        t.project_id = pid
 
 
 # ==================== 采购历史数据 一键导入 ====================
@@ -1821,6 +1857,9 @@ async def update_item(
     #   PurchaseItem，收货时生成的 amount=NULL 的 wh_txn 永久无价，库存金额与项目材料成本双双偏低。
     if "qty" in data or "unit_price" in data or "received_amount" in data:
         await _sync_txn_amount(db, item)
+    # 🆕 采购在明细里改「订单编号」，同样要跟到已生成的入库流水上（见 _sync_txn_project）
+    if "project_code" in data:
+        await _sync_txn_project(db, item)
     if ea_touched and new_ea != old_ea and item.source_sheet_id and item.source_record_id:
         # 回写来源清单「预计到货」列，保持项目详单与采购单一致（清空日期则清空单元格）
         wb = {c: (new_ea or "") for c in _ALL_EXPECTED_ARRIVAL_COLS}
@@ -2007,6 +2046,9 @@ async def _finish_receive(db: AsyncSession, item: models.PurchaseItem,
     # 🆕 #329 仓库在「已收货」页签点「修改」改价时，_auto_stock_in 幂等直接 return，流水金额会停在旧价；
     #   这里统一回写，保证「采购明细收货金额」与「库存/项目材料成本」始终同一个数。
     await _sync_txn_amount(db, item)
+    # 🆕 同理：仓库在收货弹窗里补/改「订单编号」，幂等的 _auto_stock_in 也不会重新过账，
+    #   流水的 project_id 会停在旧值——这批料就永远出现在错的项目（或哪个项目都不出现）。
+    await _sync_txn_project(db, item)
     _maybe_auto_reconcile(item)
 
 
