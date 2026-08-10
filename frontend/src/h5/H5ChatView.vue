@@ -23,9 +23,13 @@ interface CardSummary {
   groups: { key: string; label: string; count: number; amount: number; note: string }[]
 }
 
+/** 🆕 提问卡：模型拿不准时给几个选项，点一下就把 send 发出去，
+ *  省得用户自己重新打一遍问题。 */
+interface Ask { q: string; options: { label: string; send: string }[] }
+
 type Msg =
   | { kind: 'user'; text: string }
-  | { kind: 'ai'; text: string; sources?: string[] }
+  | { kind: 'ai'; text: string; sources?: string[]; ask?: Ask }
   // 汇总卡：先给总账，点「逐条处理」才展开明细。一次弹 20 张没人看得下去。
   // 汇总 → 列表 → 单笔明细，三级都能退回。
   // 原来是 expanded 布尔：一点就把 20 张卡全铺开，而且**收不回去**。
@@ -226,6 +230,7 @@ async function streamChat(q: string, history: { role: string; content: string }[
           bubble = msgs.value[msgs.value.length - 1] as Extract<Msg, { kind: 'ai' }>
         }
         bubble.sources = d.sources
+        if (d.ask?.options?.length) bubble.ask = d.ask
         if (d.suggestions?.length) suggestions.value = d.suggestions
         toolHint.value = ''
       } else if (ev === 'error') {
@@ -328,6 +333,12 @@ onMounted(() => {
               <!-- renderMd 里 html:false，模型输出的原始 HTML 会被转义成文本；
                    这两处是成对的，改任一处都会打穿 XSS 防线（手册 3.4.2） -->
               <div class="md" v-html="renderMd(m.text)"></div>
+              <!-- 🆕 提问卡：点一下直接把 send 发出去，不用自己再打一遍 -->
+              <div v-if="m.ask" class="ask">
+                <div v-if="m.ask.q" class="ask-q">{{ m.ask.q }}</div>
+                <button v-for="(o, oi) in m.ask.options" :key="oi" class="ask-opt"
+                        :disabled="thinking" @click="send(o.send)">{{ o.label }}</button>
+              </div>
               <div v-if="m.sources?.length" class="src">来源：{{ m.sources.join('、') }}</div>
             </div>
           </div>
@@ -488,6 +499,21 @@ onMounted(() => {
   box-shadow: var(--h5-sh-card);
 }
 .src { margin-top: 6px; font-size: 11px; color: var(--h5-ink-4) }
+
+/* 🆕 提问卡。做成竖排整行按钮而不是横排 chip：选项是项目名/供应商名，
+   动辄十几个字，横排必然换行错位，竖排在手机上一屏点得完也不会截断。 */
+.ask { margin-top: 10px; display: flex; flex-direction: column; gap: 7px }
+.ask-q { font-size: 12px; color: var(--h5-ink-3); margin-bottom: 1px }
+.ask-opt {
+  width: 100%; text-align: left; font-family: inherit; cursor: pointer;
+  /* 43,110,246 = --h5-blue #2B6EF6。这里要的是它的低透明度版本，
+     而 CSS 变量存的是 hex，没法直接塞进 rgba()，所以写通道值。 */
+  background: rgba(43, 110, 246, .07); border: 1px solid rgba(43, 110, 246, .22);
+  border-radius: var(--h5-r-chip); padding: 9px 12px; font-size: 13px;
+  color: var(--h5-blue);
+}
+.ask-opt:active { background: rgba(43, 110, 246, .15) }
+.ask-opt:disabled { opacity: .5; cursor: default }
 
 /* Markdown 排版：模型爱用加粗小标题和列表，不排一下就是一坨字 */
 .md :deep(p) { margin: 0 0 8px }

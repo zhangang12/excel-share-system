@@ -226,6 +226,16 @@ async def get_customer(db: AsyncSession, current: models.User, name: str) -> dic
     }
 
 
+# 部门/生产组的中文名。⚠️ 别把 "electric" 直接甩给用户看 ——
+# 这些是数据库里的枚举值，不是人话。
+_DEPT_CN = {"design": "设计", "electric": "电工", "produce": "生产"}
+_GROUP_CN = {"sheetmetal": "钣金", "assembly": "装配", "sealing": "打胶"}
+_ORDER_CN = {"pending_assign": "待分派", "assigned": "待接单",
+             "in_progress": "进行中", "done": "已完成", "voided": "已作废",
+             # 生产组任务用的是另一套：派下去了就是 dispatched
+             "dispatched": "已派工"}
+
+
 async def _project_snapshot(db: AsyncSession, p: models.Project) -> dict:
     """单个项目的全链路快照。get_project 与交期看板共用，**口径只有这一份**。"""
     led = (await db.execute(select(models.SalesLedger).where(
@@ -243,6 +253,23 @@ async def _project_snapshot(db: AsyncSession, p: models.Project) -> dict:
     sh = (await db.execute(select(models.Shipment).where(
         models.Shipment.project_id == p.id)
         .order_by(models.Shipment.id.desc()).limit(1))).scalar_one_or_none()
+
+    # ── 负责人姓名。⚠️ 生产实测：杨坛问过两次「2026-037 的电是谁做的」，
+    #    而这里以前只给 dept/status/due_date，**根本答不了** —— 数据是有的
+    #    （138 条部门单填了 worker_id），只是没取出来。
+    uids = {o.worker_id for o in orders if o.worker_id} | \
+           {g.worker_id for g in groups if g.worker_id}
+    who: dict[int, str] = {}
+    if uids:
+        who = {u.id: (u.full_name or u.username)
+               for u in (await db.execute(select(models.User).where(
+                   models.User.id.in_(uids)))).scalars().all()}
+    # 供应商名（采购明细里以前只给 supplier_id，一串数字对人没意义）
+    sids = {i.supplier_id for i in pos if i.supplier_id}
+    sup_name: dict[int, str] = {}
+    if sids:
+        sup_name = {s2.id: s2.name for s2 in (await db.execute(select(models.Supplier)
+                    .where(models.Supplier.id.in_(sids)))).scalars().all()}
 
     today = date.today().isoformat()
     deliver = deliver_date(p)
@@ -262,17 +289,21 @@ async def _project_snapshot(db: AsyncSession, p: models.Project) -> dict:
             "balance": float(led.balance or 0), "balance_date": led.balance_date or "",
             "order_state": led.order_state,
         },
-        "dept_orders": [{"dept": o.dept, "status": o.status, "due_date": o.due_date,
+        "dept_orders": [{"dept": o.dept, "dept_name": _DEPT_CN.get(o.dept, o.dept),
+                         "worker": who.get(o.worker_id or 0, ""),
+                         "status": o.status, "due_date": o.due_date,
                          "overdue": bool(o.status == "in_progress" and o.due_date
                                          and o.due_date < today)}
                         for o in live_orders],
         "dept_overdue_count": sum(1 for o in live_orders if o.status == "in_progress"
                                   and o.due_date and o.due_date < today),
-        "produce_groups": [{"group": g.group, "status": g.status,
-                            "due_date": g.due_date} for g in groups],
+        "produce_groups": [{"group": g.group, "group_name": _GROUP_CN.get(g.group, g.group),
+                            "worker": who.get(g.worker_id or 0, ""),
+                            "status": g.status, "due_date": g.due_date} for g in groups],
         "produce_open_count": sum(1 for g in groups if g.status != "done"),
-        "purchase_pending": [{"name": i.item_name, "spec": i.spec,
-                              "supplier_id": i.supplier_id, "po_no": i.po_no,
+        "purchase_pending": [{"item_name": i.item_name, "spec": i.spec,
+                              "supplier": sup_name.get(i.supplier_id or 0, ""),
+                              "po_no": i.po_no,
                               "expected_arrival": i.expected_arrival,
                               "over_days": _over_days(i.expected_arrival)}
                              for i in po_pending][:_DETAIL_MAX],
@@ -400,8 +431,63 @@ def _diagnose(deliver: str, left: int | None, orders: list, all_orders: list,
             "shipped_not_closed": False}
 
 
-async def get_project(db: AsyncSession, current: models.User, code: str) -> dict:
+def _project_items(snaps: list[dict], detail: str) -> tuple[list[dict], list[str]]:
+    """把项目快照摊成**可渲染的明细行**，并给出该显示哪几列。
+
+    ⚠️⚠️ 为什么非做不可：`get_project` 以前返回的是**嵌套对象**，而渲染层只认
+       `items` / `suppliers` / `rows` 这几个**列表**字段。结果是——
+       杨坛最近 5 次问答里有 3 次 `rendered=false`，**最高频的「查某个项目」
+       反而享受不到表格**，又退回成一堆文字。
+       口径归工具：这里同时给 items 和 columns，渲染层照着摆就行。
+    """
+    multi = len(snaps) > 1
+    rows: list[dict] = []
+    if detail == "purchase":
+        for s in snaps:
+            for it in s["purchase_pending"]:
+                r = dict(it)
+                if multi:
+                    # ⚠️ 别单开一列 project：渲染层会把「编号+名称」并成第一格，
+                    #    3 列的预算就被吃掉一列，供应商直接被挤没（实测）。
+                    r["item_name"] = s["project"] + " " + str(r.get("item_name") or "")
+                rows.append(r)
+        return rows, ["item_name", "supplier", "over_days"]
+
+    # 默认：卡点清单。用户问「这个项目怎么样／卡在哪」时要看的就是这张表。
+    for s in snaps:
+        pre = (s["project"] + " ") if multi else ""
+        groups = [g for g in s["produce_groups"] if g["status"] != "done"]
+        for o in s["dept_orders"]:
+            if o["status"] == "done":
+                continue
+            # 生产已经拆到组了就只报组，别「生产 / 生产·钣金 / 生产·装配」报三行
+            if o["dept"] == "produce" and groups:
+                continue
+            rows.append({"stage": pre + o["dept_name"], "worker": o["worker"],
+                         "status": ("逾期未完成" if o["overdue"]
+                                    else _ORDER_CN.get(o["status"], o["status"])),
+                         "due_date": o["due_date"]})
+        for g in groups:
+            rows.append({"stage": pre + "生产·" + g["group_name"], "worker": g["worker"],
+                         "status": _ORDER_CN.get(g["status"], g["status"]),
+                         "due_date": g["due_date"]})
+        if s["purchase_pending_count"]:
+            extra = ""
+            if s["purchase_overdue_count"]:
+                extra = "（" + str(s["purchase_overdue_count"]) + " 项已超期）"
+            rows.append({"stage": pre + "采购", "worker": "",
+                         "status": str(s["purchase_pending_count"]) + " 项未到货" + extra})
+        if s["shipment_status"] == "pending":
+            rows.append({"stage": pre + "发货", "worker": "", "status": "待发货"})
+    return rows, ["stage", "worker", "status"]
+
+
+async def get_project(db: AsyncSession, current: models.User, code: str,
+                      detail: str = "blockers") -> dict:
     """项目全景：交期 + 台账 + 各部门任务 + 生产组 + 采购在途 + 发货 + 卡点判定。
+
+    detail="blockers"（默认）明细是**卡点清单**（环节/负责人/状态）；
+    detail="purchase" 明细是**采购未到货**（物料/供应商/超期）。
 
     ⚠️ **多个项目命中时全部返回，绝不静默取一条**。项目编号大量带字母后缀
        （071A/071B、043B~043E…），说「071」时两个都该出现在答案里。
@@ -414,10 +500,13 @@ async def get_project(db: AsyncSession, current: models.User, code: str) -> dict
         return {"project": c, "found": False, "hint": "查无此项目，先用 find_entity 找"}
 
     snaps = [await _project_snapshot(db, p) for p in ps]
+    items, cols = _project_items(snaps, detail)
     if len(snaps) == 1:
-        return snaps[0]
+        return {**snaps[0], "items": items, "columns": cols,
+                "count": len(items), "shown": len(items)}
     return {
         "query": c, "found": True, "matched_count": len(snaps),
+        "items": items, "columns": cols, "count": len(items), "shown": len(items),
         # 这句是给模型看的硬约束：多命中时**每一个都要讲到**，不许只挑一个说
         "note": f"「{c}」命中 {len(snaps)} 个项目（"
                 + "、".join(s["project"] for s in snaps)

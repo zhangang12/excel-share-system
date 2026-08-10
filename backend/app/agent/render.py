@@ -40,6 +40,8 @@ _FIELD_ORDER = [
     # ── ① 认得出是哪一单（编号在名字前，人是按编号对单的）──
     ("project", "", False, "项目"), ("project_code", "", False, "项目"),
     ("code", "", False, "编号"),
+    # 单项目的卡点清单用它当第一列（设计/电工/生产·钣金/采购/发货）
+    ("stage", "", False, "环节"),
     ("supplier", "", False, "供应商"), ("customer", "", False, "客户"),
     ("name", "", False, "名称"), ("item_name", "", False, "物料"),
     ("material", "", False, "物料"), ("spec", "", False, "规格"),

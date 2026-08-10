@@ -377,7 +377,7 @@ TOOL_LABELS = {
 TOOL_DESC = {
     "find_entity": "说个大概的名字就能找到项目/客户/供应商/物料，不用记编号",
     "get_customer": "这家客户一共几单、收了多少、还欠多少、卡在哪一步",
-    "get_project": "一个项目从台账到发货全看完：交期、收款、各部门任务、生产组、采购在途、卡在哪",
+    "get_project": "一个项目从台账到发货全看完：交期、收款、各部门任务（含负责人）、生产组、采购在途、卡在哪",
     "project_progress": "在建项目还剩几天交货、哪些已过期、每个卡在哪一环",
     "sales_summary": "按月看销售额（合同额），本月/上月对比；按签订日期归月",
     "get_supplier": "这家供应商准时率多少、平均拖几天、现在还欠几批货",
@@ -514,7 +514,11 @@ TOOL_SCHEMAS += [
         "name": "get_project",
         "description": "项目全景：台账收款分解 + 各部门任务与逾期 + 采购未到货 + 发货状态，一次给全",
         "parameters": {"type": "object", "properties": dict(
-            _LIM_PROP, code={"type": "string", "description": "项目编号或名称"}),
+            _LIM_PROP, code={"type": "string", "description": "项目编号或名称"},
+            detail={"type": "string", "enum": ["blockers", "purchase"],
+                    "description": "明细看哪一类：blockers=卡点清单（默认，环节/负责人/状态）；"
+                                   "purchase=采购未到货（物料/供应商/超期）。"
+                                   "用户问「采购/物料/还有什么没到」时传 purchase"}),
             "required": ["code"]}}},
     {"type": "function", "function": {
         "name": "project_progress",
@@ -668,7 +672,8 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
     _V2 = {
         "find_entity":  lambda: _te.find_entity(db, current, args.get("q", ""), args.get("kind")),
         "get_customer": lambda: _te.get_customer(db, current, args.get("name", "")),
-        "get_project":  lambda: _te.get_project(db, current, args.get("code", "")),
+        "get_project":  lambda: _te.get_project(db, current, args.get("code", ""),
+                                                detail=args.get("detail") or "blockers"),
         "sales_summary": lambda: _te.sales_summary(
             db, current, months=int(args.get("months") or 6)),
         "project_progress": lambda: _te.project_progress(
@@ -818,6 +823,25 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
 - 只在「确实要列明细」时给这个块；一句话能答完的问题不要给。
 - `fields` 从工具返回的字段里挑，按 `主体 · 关键量 · 时间/状态 · (补充)` 的顺序，最多 5 个。
 
+# ❓ 拿不准就给提问卡，别猜也别踢皮球
+问题有歧义、或者你要在几个对象之间选一个时，**不要自己挑一个答**，
+也不要回一句「请提供更多信息」让用户重新打字。在正文末尾附一张提问卡：
+
+```ask
+{{"q":"查哪个 060？","options":[
+  {{"label":"2026-060A 双行星混合机","send":"2026-060A 进度"}},
+  {{"label":"2026-060B 提升式压料机","send":"2026-060B 进度"}},
+  {{"label":"两个都要","send":"060A 和 060B 的进度"}}]}}
+```
+
+- `label` 是给人看的（≤20 字），`send` 是用户点了之后**自动发出去的那句问话**。
+- 最多 4 个选项，手机上一屏点得完。选项要**互斥且具体**，别放「其他」。
+- 用在这几种情况：① 编号/人名/供应商匹配到多个 ② 时间范围不明（本月？本季？）
+  ③ 用户问「怎么样」但可能想看进度、也可能想看钱。
+- **已经能查到确定答案的，绝不给提问卡**——那是给用户添一次点击。
+- 已经调了工具、拿到多条结果的，优先**直接把多条都答了**（见项目口径），
+  提问卡只用于「答完这条还得追问一句」的场合。
+
 # 输出格式（手机上看）
 - **第一行永远是结论**，一句话，带上最关键的那个数，加粗。
 - 明细用无序列表，**一条一行**，字段之间用「·」分隔，顺序固定：
@@ -949,7 +973,10 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
                     max_tokens = _MAX_TOKENS_FULL
                     continue
                 raise RuntimeError("LLM 返回空内容")
-            return apply_render(content, last_result, want_list), tool_names
+            # ⚠️ 非流式的调用方（桌面端）渲染不了提问卡，但**不能因此把块留在正文里**
+            #    ——那就是把一段裸 JSON 直接甩给用户。摘出来降级成纯文本选项。
+            body, ask = extract_ask(apply_render(content, last_result, want_list))
+            return (body + "\n" + ask_to_text(ask)).strip() if ask else body, tool_names
         messages.append(msg)  # 含 tool_calls 的 assistant 消息原样回灌
         # 🆕 同一轮里的多个工具并发跑：它们之间没有依赖，串行等于把等待时间乘以工具数。
         #   注意共用同一个 db session —— SQLAlchemy 的 AsyncSession 不是并发安全的，
@@ -1384,7 +1411,64 @@ class ChatIn(BaseModel):
 _LOG_TEXT_MAX = 5000   # question/answer 入库前截断上限，防超大文本撑爆行
 
 
-_RENDER_RE = re.compile(r"```render\s*(\{.*?\})\s*```", re.S)
+# ⚠️ 捕获组是 `.*?` 而不是 `\{.*?\}`。原来只认花括号，模型写成数组
+#    （```ask\n[1,2,3]\n```）时正则整个不匹配 → **块原样漏给用户看**。
+#    这两个块的第一职责是「绝不出现在用户眼前」，所以**先无条件删干净，
+#    再去解析**；解析失败顶多少一段明细/少一张卡，那是可接受的降级。
+_RENDER_RE = re.compile(r"```render\s*(.*?)```", re.S)
+_ASK_RE = re.compile(r"```ask\s*(.*?)```", re.S)
+_ASK_MAX_OPTS = 4      # 手机上一屏能点的就这么几个，多了等于没给选择
+
+
+def extract_ask(reply: str) -> tuple[str, dict | None]:
+    """🆕 提问卡：模型拿不准时不猜，出一张让用户点的卡。
+
+    模型写 ```ask {"q": "...", "options": [{"label":"给人看的","send":"点了就发这句"}]} ```，
+    这里把块摘出来变成结构化数据，正文里那段原样删掉。
+
+    为什么要它：实测「060的项目清单」这类问法，模型只能在
+    「猜一个 060A」和「回一句请提供更多信息」之间二选一 —— 前者可能答错，
+    后者把球踢回给用户还得自己打字。给几个选项点一下，两个毛病都没有。
+
+    ⚠️ 和 render 块同款铁律：**JSON 不合法就只删块、不出卡**，
+       绝不把裸 JSON 漏给用户看。
+    """
+    text = reply or ""
+    m = _ASK_RE.search(text)
+    if not m:
+        return text, None
+    body = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    try:
+        raw = json.loads(m.group(1))
+    except (ValueError, TypeError):
+        return body, None
+    if not isinstance(raw, dict):
+        return body, None
+    opts = []
+    for o in (raw.get("options") or [])[:_ASK_MAX_OPTS]:
+        if not isinstance(o, dict):
+            continue
+        label = str(o.get("label") or "").strip()[:40]
+        # send 缺省就用 label：模型经常只写 label，这时点一下把它当问题发出去就对了
+        send = str(o.get("send") or label).strip()[:120]
+        if label and send:
+            opts.append({"label": label, "send": send})
+    if not opts:
+        return body, None
+    return body, {"q": str(raw.get("q") or "").strip()[:100], "options": opts}
+
+
+def ask_to_text(ask: dict | None) -> str:
+    """提问卡降级成纯文本 —— 给不支持卡片的调用方（非流式 /chat、桌面端）。
+
+    ⚠️ 不能因为对方渲染不了卡片就把问题整个丢掉：那是模型唯一想说的话，
+       丢了用户就收到一句没头没尾的结论。
+    """
+    if not ask:
+        return ""
+    lines = [ask["q"]] if ask.get("q") else []
+    lines += [f"{i}. {o['label']}" for i, o in enumerate(ask["options"], 1)]
+    return "\n".join(lines)
 
 
 def _has_detail_lines(text: str) -> bool:
@@ -1417,6 +1501,10 @@ def apply_render(reply: str, last_result: dict | None, want_list: bool = False) 
             return body
         try:
             plan = json.loads(m.group(1))
+            if not isinstance(plan, dict):
+                # 合法 JSON 但不是对象（模型偶尔直接写个数组）——照样当坏块处理。
+                # 不挡这一下，下面 plan.get() 直接抛异常，整条请求 500。
+                return body
         except (ValueError, TypeError):
             # ⚠️ 模型给了坏 JSON 就**只删块、不渲染**。
             #    这时它的意图（排序/挑哪些字段）已经丢了，硬用默认编排铺一堆行，
@@ -1958,14 +2046,14 @@ async def _chat_stream(message: str, history: list[dict], model: str,
             # ⚠️ 判空必须在**渲染之后**。模型完全可以只回一句结论 + 一个编排块，
             #    而编排块整段被 suppress 吞掉了 —— 拿吞之前的文本判空会误判成
             #    「LLM 返回空内容」→ 抛异常 → 整条请求降级成功能菜单。踩过。
-            final = apply_render(text, last_result, want_list)
-            if not final.strip():
+            final, ask = extract_ask(apply_render(text, last_result, want_list))
+            if not final.strip() and not ask:
                 raise RuntimeError("LLM 返回空内容")
             if len(final) > streamed:
                 yield "delta", final[streamed:]
             # rounds / last_result / rendered 只给审计用（见 _log_chat）：
             # 没有它们就看不出「跑了几轮」「查出 46 条只给了 20 条」「明细到底出没出」
-            yield "done", {"text": final, "tools": tool_names,
+            yield "done", {"text": final, "tools": tool_names, "ask": ask,
                            "rounds": rnd + 1, "last_result": last_result,
                            "rendered": final != text}
             return
@@ -2055,7 +2143,7 @@ async def chat_stream(
                 yield sse("error", {"message": f"无效模型「{model}」"})
                 return
             allowed = _allowed_tools(current)
-            reply, tools, via = "", [], "llm"
+            reply, tools, via, ask = "", [], "llm", None
 
             # ── v2 阶段三：Skill 命中就不进 ReAct ──
             # 可预测性来自固定编排，不来自模型即兴发挥。省一次规划、答案稳定、能写测试。
@@ -2091,6 +2179,7 @@ async def chat_stream(
                         yield sse("tool", {"label": payload})
                     else:
                         reply, tools = payload["text"], payload["tools"]
+                        ask = payload.get("ask")
                         st["rounds"] = payload.get("rounds")
                         st["result"] = payload.get("last_result")
                         st["rendered"] = payload.get("rendered")
@@ -2100,13 +2189,17 @@ async def chat_stream(
                 reply, tools = await _rule_chat(text, db, current)
                 yield sse("delta", {"text": reply})
 
-            st.update(reply=reply, tools=tools, via=via, outcome="ok",
+            # ⚠️ 审计日志要带上提问卡的问题：它是正文之外模型真正说的话，
+            #    不记进去，日志里就只剩一句没头没尾的结论，复盘时看不懂。
+            st.update(reply=(reply + "\n" + ask_to_text(ask)).strip() if ask else reply,
+                      tools=tools, via=via, outcome="ok",
                       model=model if via == "llm" else via)
             ms = int((time.perf_counter() - t0) * 1000)
             yield sse("done", {
                 "duration_ms": ms, "fallback": via != "llm",
                 "sources": [TOOL_LABELS[n] for n in tools],
                 "suggestions": _suggestions_for(tools, allowed),
+                "ask": ask,
             })
           finally:
             # ⚠️ **必须落在 finally 里**：用户划走 / 关页面 / 断网时，这个生成器会被
