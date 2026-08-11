@@ -373,8 +373,12 @@ async function confirmShip(force = false) {
                 :title="`${shipRow.receiver_name} ｜ ${shipRow.receiver_phone || '—'} ｜ ${shipRow.receiver_addr || '—'}`" />
       <el-alert v-else type="warning" :closable="false" style="margin-bottom: 12px"
                 title="⚠ 收货信息待完善，建议先在列表「收货信息」列填写" />
+      <!-- 反馈#367：强制发货放给了物流负责人。文案要说清两件事：缺什么、以及这一次会留痕，
+           不然人会以为「按钮能点=没问题」，闸门就真的白设了。 -->
       <el-alert v-if="shipRow && !shipRow.can_ship" type="error" :closable="false" style="margin-bottom: 12px"
-                :title="`闸门未通过（${shipRow.gate_missing.join('、')}未完成），管理层可强制发货`" />
+                :title="`闸门未通过：${shipRow.gate_missing.join('、')} 未完成`"
+                :description="'仍要发货的话，点「确认已发货」即为强制发货——会记入操作日志并通知管理层。'"
+                show-icon />
       <el-form label-position="top">
         <el-form-item label="发货单（PDF/图片，必传）" required>
           <FilePicker v-model="shipFile" accept=".pdf,.jpg,.jpeg,.png" placeholder="选择发货单（PDF/JPG/PNG）" />

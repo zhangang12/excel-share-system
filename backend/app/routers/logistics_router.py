@@ -351,9 +351,16 @@ async def confirm_ship(
     res = await db.execute(select(models.DeptOrder).where(
         models.DeptOrder.project_id == s.project_id))
     can, missing = _gate(list(res.scalars().all()))
-    is_mgr = current.has_role("admin", "manager")
-    if not can and not (force and is_mgr):
+    # 🆕 反馈#367（赵仁辉）：强制发货放给物流负责人。
+    # ⚠️ 这一步的实际后果要清楚：本接口 require_roles("logistics")，能调它的本来就只有
+    #    物流 + 管理层。把 force 也放给 logistics 之后，**D5 闸门就不再拦任何人了**，
+    #    它从「硬闸」变成「提醒 + 留痕」。是有意为之，但补偿手段必须跟上：
+    #      ① 审计写清楚绕过时到底缺了什么（原来只写一个 FORCE，事后看不出漏了哪道工序）
+    #      ② 每次绕过都推给管理层——没人看得见的旁路等于没有旁路
+    can_force = current.has_role("admin", "manager", "logistics")
+    if not can and not (force and can_force):
         raise HTTPException(400, f"发货闸门未通过：{('、'.join(missing))} 未完成（D5：已下单任务须全部完成）")
+    forced = bool(force and not can)
 
     a = await save_upload(db, file, biz_type="ship_doc", biz_id=s.id,
                           project_id=s.project_id, user=current)
@@ -393,7 +400,17 @@ async def confirm_ship(
     await push_message(db, to_role="sales_lead", kind="info",
                        text=f"【已发货】{code} 已发货（{today_s}）。",
                        biz_type="shipment", biz_id=s.id)
-    await write_audit(db, user=current, action="ship", target_type="shipment",
-                      target_id=sid, detail=f"{code} {today_s}{' FORCE' if force and not can else ''}")
+    # 🆕 #367：绕过闸门必须让管理层看见——否则放开权限就等于把 D5 静悄悄关掉了
+    if forced:
+        who = current.full_name or current.username
+        for role in ("manager", "admin"):
+            await push_message(db, to_role=role, kind="warn",
+                               text=f"【强制发货】{code} 在闸门未通过的情况下由 {who} 发出"
+                                    f"（未完成：{'、'.join(missing)}）。",
+                               biz_type="shipment", biz_id=s.id,
+                               exclude_user_ids={current.id})
+    await write_audit(db, user=current, action="ship", target_type="shipment", target_id=sid,
+                      # 绕过时把缺了哪几道工序一并记下：原来只写 FORCE，事后看不出漏了什么
+                      detail=f"{code} {today_s}" + (f" FORCE 未完成：{'、'.join(missing)}" if forced else ""))
     tail = "，项目已自动标记为已完成" if proj_auto_done else ""
     return schemas.Msg(message=f"{code} 已发货，发货日期已回传销售台账{tail}")
