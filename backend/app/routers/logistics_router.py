@@ -91,53 +91,46 @@ def _gate(orders: list[models.DeptOrder]) -> tuple[bool, list[str]]:
 @router.get("/board", response_model=List[BoardRow])
 async def board(
     year: Optional[str] = None,
+    ship_status: Optional[str] = None,
     proj_status: Optional[str] = None,
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """发货看板（物流/管理层；其它角色只读不限制——数据无敏感金额）。"""
+    """发货看板（物流/管理层；其它角色只读不限制——数据无敏感金额）。
 
-    if proj_status == "已完成":
-        # 🆕 2026-07-30 修筛选口径（举一反三排查）：「已完成」只看真实发货（Shipment.status==shipped）。
-        #   原逻辑把「项目手动置已完成」也并入——导致没发货的行在已完成筛选下显示「待齐/可发货」
-        #   且按钮被禁、 tooltip 为空（筛选与状态列对不上）。
-        #   历史存量兼容保留：从 Project 出发查再 LEFT 取 Shipment（不漏无 Shipment 记录的历史项目）。
-        proj_q = select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
-        if year:
-            proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
-        proj_q = proj_q.where(
-            models.Project.id.in_(
-                select(models.Shipment.project_id).where(models.Shipment.status == "shipped")
-            )
-        )
-        res = await db.execute(proj_q.order_by(models.Project.code.desc()).limit(300))
-        projects = [p for p in res.scalars().all()
-                    if not str((p.extra or {}).get("__o__销售") or "").startswith("备机")]
-        pids = [p.id for p in projects]
-        if not pids:
-            return []
-        # 获取这些项目的 Shipment（可能不存在）
-        res = await db.execute(select(models.Shipment).where(
-            models.Shipment.project_id.in_(pids)))
-        ships_by_pid: dict[int, models.Shipment] = {s.project_id: s for s in res.scalars().all()}
-    else:
-        ship_q = select(models.Shipment).join(models.Project).where(
-            models.Project.is_deleted == False)  # noqa: E712
-        if year:
-            ship_q = ship_q.where(models.Project.code.like(f"{year}-%"))
-        if proj_status == "进行中":
-            ship_q = ship_q.where(
-                models.Shipment.status == "pending",
-                models.Project.status != "已完成",
-            )
-        res = await db.execute(ship_q.order_by(models.Project.code.desc()).limit(300))
-        ships = [s for s in res.scalars().all()
-                 if not str((s.project.extra or {}).get("__o__销售") or "").startswith("备机")]
-        pids = [s.project_id for s in ships]
-        if not pids:
-            return []
-        ships_by_pid = {s.project_id: s for s in ships}
-        projects = None  # 非"已完成"路径不需要单独查 Project
+    🆕 2026-08-11 筛选口径改为**发货状态**（已发货 / 未发货 / 全部）。
+    这是发货看板，物流关心的是发没发货，不是项目立项状态。
+
+    ⚠️ 旧口径会漏单：原「进行中」= 未发货 **且** 项目状态≠已完成。
+       生产上有 27 张「未发货、但项目被手工标成了已完成」的单，
+       「进行中」和「已完成」两个筛选都看不到它们，只有「全部」才露出来——
+       而**运费就是在这张表上录的**，看不到就录不进成本（见反馈#364）。
+       新口径只看 `Shipment.status`，这 27 张回到「未发货」里。
+
+    `proj_status` 是旧客户端还在发的参数，映射到新口径后继续可用
+    （进行中→未发货、已完成→已发货）；不映射的话没升级的客户端筛选会**静默失效**。
+    """
+    if not ship_status and proj_status:
+        ship_status = {"进行中": "未发货", "已完成": "已发货"}.get(proj_status)
+
+    # 统一从 Shipment 出发。原来「已完成」单独走一条以 Project 为主的路径，
+    # 但它的 WHERE 要求项目必须有 shipped 的发货单，所以那条路径里
+    # 「项目没有 Shipment」的兜底分支永远走不到，纯属死代码，一并去掉。
+    ship_q = select(models.Shipment).join(models.Project).where(
+        models.Project.is_deleted == False)  # noqa: E712
+    if year:
+        ship_q = ship_q.where(models.Project.code.like(f"{year}-%"))
+    if ship_status == "已发货":
+        ship_q = ship_q.where(models.Shipment.status == "shipped")
+    elif ship_status == "未发货":
+        ship_q = ship_q.where(models.Shipment.status != "shipped")
+    res = await db.execute(ship_q.order_by(models.Project.code.desc()).limit(300))
+    ships = [s for s in res.scalars().all()
+             if not str((s.project.extra or {}).get("__o__销售") or "").startswith("备机")]
+    pids = [s.project_id for s in ships]
+    if not pids:
+        return []
+    ships_by_pid: dict[int, models.Shipment] = {s.project_id: s for s in ships}
 
     # 任务单批量
     res = await db.execute(select(models.DeptOrder).where(
@@ -182,60 +175,28 @@ async def board(
         doc_names = {a.id: a.name for a in res.scalars().all()}
 
     rows = []
-    if projects is not None:
-        # "已完成"路径：以 Project 列表为主，Shipment 数据按需补填
-        for p in projects:
-            s = ships_by_pid.get(p.id)
-            orders = orders_by_pid.get(p.id, [])
-            rows.append(BoardRow(
-                id=s.id if s else -p.id,           # 无 Shipment 用负 project_id 占位
-                project_id=p.id,
-                code=p.code, name=p.name,
-                status=s.status if s else "shipped",  # 无 Shipment 视为已发货
-                design_files=files_by_pid_dept.get((p.id, "design"), []),
-                electric_files=files_by_pid_dept.get((p.id, "electric"), []),
-                design_state=_dept_state(orders, "design"),
-                electric_state=_dept_state(orders, "electric"),
-                produce_state=_dept_state(orders, "produce"),
-                ship_list_files=shiplist_by_pid.get(p.id, []),
-                packlist_status=s.packlist_status if s else "none",
-                receiver_name=s.receiver_name if s else None,
-                receiver_company=s.receiver_company if s else None,
-                receiver_phone=s.receiver_phone if s else None,
-                receiver_addr=s.receiver_addr if s else None,
-                ship_doc_name=doc_names.get(s.ship_doc_file_id) if s else None,
-                ship_doc_id=s.ship_doc_file_id if s else None,
-                shipped_at=s.shipped_at if s else None,
-                freight_cost=s.freight_cost if s else None,
-                freight_payer=s.freight_payer if s else None,
-                freight_note=s.freight_note if s else None,
-                can_ship=False,
-                gate_missing=[],
-            ))
-    else:
-        # "进行中" / 全部 路径：以 Shipment 列表为主
-        for s in ships_by_pid.values():
-            orders = orders_by_pid.get(s.project_id, [])
-            can, missing = _gate(orders)
-            rows.append(BoardRow(
-                id=s.id, project_id=s.project_id,
-                code=s.project.code, name=s.project.name, status=s.status,
-                design_files=files_by_pid_dept.get((s.project_id, "design"), []),
-                electric_files=files_by_pid_dept.get((s.project_id, "electric"), []),
-                design_state=_dept_state(orders, "design"),
-                electric_state=_dept_state(orders, "electric"),
-                produce_state=_dept_state(orders, "produce"),
-                ship_list_files=shiplist_by_pid.get(s.project_id, []),
-                packlist_status=s.packlist_status,
-                receiver_name=s.receiver_name, receiver_company=s.receiver_company,
-                receiver_phone=s.receiver_phone, receiver_addr=s.receiver_addr,
-                ship_doc_name=doc_names.get(s.ship_doc_file_id),
-                ship_doc_id=s.ship_doc_file_id,
-                shipped_at=s.shipped_at,
-                freight_cost=s.freight_cost, freight_payer=s.freight_payer, freight_note=s.freight_note,
-                can_ship=(s.status == "pending" and can),
-                gate_missing=missing if s.status == "pending" else [],
-            ))
+    for s in ships_by_pid.values():
+        orders = orders_by_pid.get(s.project_id, [])
+        can, missing = _gate(orders)
+        rows.append(BoardRow(
+            id=s.id, project_id=s.project_id,
+            code=s.project.code, name=s.project.name, status=s.status,
+            design_files=files_by_pid_dept.get((s.project_id, "design"), []),
+            electric_files=files_by_pid_dept.get((s.project_id, "electric"), []),
+            design_state=_dept_state(orders, "design"),
+            electric_state=_dept_state(orders, "electric"),
+            produce_state=_dept_state(orders, "produce"),
+            ship_list_files=shiplist_by_pid.get(s.project_id, []),
+            packlist_status=s.packlist_status,
+            receiver_name=s.receiver_name, receiver_company=s.receiver_company,
+            receiver_phone=s.receiver_phone, receiver_addr=s.receiver_addr,
+            ship_doc_name=doc_names.get(s.ship_doc_file_id),
+            ship_doc_id=s.ship_doc_file_id,
+            shipped_at=s.shipped_at,
+            freight_cost=s.freight_cost, freight_payer=s.freight_payer, freight_note=s.freight_note,
+            can_ship=(s.status == "pending" and can),
+            gate_missing=missing if s.status == "pending" else [],
+        ))
     return rows
 
 
@@ -244,10 +205,15 @@ async def pending_count(
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # ⚠️ 只数「进行中」项目的待发货。2026-08-11 起存量已完成项目也会补出 pending 的
+    #   Shipment 行（让它们在看板上可见、能录运费），但那些是历史补录、不是今天要干的活。
+    #   角标是「你还有几件事要做」，混进 37 条历史项目就没人看了。
+    #   看板要看全部：把筛选切到「全部」或「未发货」。
     res = await db.execute(
         select(func.count(models.Shipment.id)).join(models.Project).where(
             models.Shipment.status == "pending",
             models.Project.is_deleted == False,  # noqa: E712
+            models.Project.status == "进行中",
         )
     )
     return {"count": res.scalar() or 0}

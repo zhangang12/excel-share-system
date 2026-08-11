@@ -65,13 +65,14 @@ function openPack(row: BoardRow) {
 const curYear = String(new Date().getFullYear())
 const yearFilter = ref(curYear)
 const yearOptions = computed(() => { const y = parseInt(curYear); return [y - 1, y, y + 1].map(String) })
-const projStatusFilter = ref('进行中')
+// 🆕 筛选口径：发货状态（未发货 / 已发货 / 空=全部）。默认「未发货」——物流每天要处理的就是这批。
+const shipStatusFilter = ref('未发货')
 
 async function load() {
   loading.value = true
   try {
     rows.value = (await http.get<BoardRow[]>('/logistics/board', {
-      params: { year: yearFilter.value, proj_status: projStatusFilter.value || undefined }
+      params: { year: yearFilter.value, ship_status: shipStatusFilter.value || undefined }
     })).data
   } finally {
     loading.value = false
@@ -209,9 +210,12 @@ async function confirmShip(force = false) {
       <el-select v-model="yearFilter" size="large" style="width:100px" @change="load">
         <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
       </el-select>
-      <el-select v-model="projStatusFilter" size="large" style="width:100px" @change="load">
-        <el-option label="进行中" value="进行中" />
-        <el-option label="已完成" value="已完成" />
+      <!-- 🆕 筛选改成「发货状态」：这是发货看板，物流关心的是发没发货，不是项目立项状态。
+           旧的「进行中」= 未发货 且 项目状态≠已完成，把 27 张「未发货但项目被标已完成」
+           的单挡在两个筛选之外（只有「全部」才看得到），而运费就是在这张表上录的。 -->
+      <el-select v-model="shipStatusFilter" size="large" style="width:110px" @change="load">
+        <el-option label="未发货" value="未发货" />
+        <el-option label="已发货" value="已发货" />
         <el-option label="全部" value="" />
       </el-select>
       <PageRefresh :load="load" />
@@ -320,7 +324,7 @@ async function confirmShip(force = false) {
           </template>
         </el-table-column>
       </el-table>
-      <EmptyHint v-if="!loading && !rows.length" :text="projStatusFilter === '已完成' ? '暂无已发货项目' : '暂无待发货项目'" />
+      <EmptyHint v-if="!loading && !rows.length" :text="shipStatusFilter === '已发货' ? '暂无已发货项目' : shipStatusFilter === '未发货' ? '暂无未发货项目' : '暂无项目'" />
     </el-card>
 
     <!-- 收货信息 -->

@@ -1362,12 +1362,21 @@ async def backfill_sales_ledger(db: AsyncSession) -> dict:
 
 
 async def backfill_shipments(db: AsyncSession) -> dict:
-    """🆕 v3 M08 存量回填：给「进行中」未删项目补发货待办行（已完成/已归档视为历史已交付不补）。
-    幂等：project_id 已有 shipment 跳过。收货信息留空待补。"""
+    """🆕 v3 M08 存量回填：给未删项目补发货待办行。幂等：已有 shipment 的跳过。
+
+    🆕 2026-08-11：**去掉「只补进行中项目」的限制**（原注释说"已完成视为历史已交付不补"）。
+    实际后果是：42 个项目（其中 37 个已完成）从来没有 Shipment 行，
+    而发货看板是从 Shipment 出发查的——这些项目在物流部**根本不存在**，
+    王芹想给它们录运费都无从下手（反馈#364「所有的项目编号应同步过来」）。
+    项目「已完成」并不代表系统里记过发货：这个状态是发货时自动置的，
+    也可能是人工标的、或者历史导入的——后两种就是这 37 个。
+    ⚠️ 补出来的行是 pending，会出现在看板「未发货」里。这是**如实反映**：
+       系统里确实没有它们的发货记录。侧边栏那个「待发货」角标不受影响，
+       它只数进行中项目（见 logistics_router.pending_count），仍然是真待办数。
+    """
     res = await db.execute(
         select(models.Project).where(
             models.Project.is_deleted == False,  # noqa: E712
-            models.Project.status == "进行中",
         )
     )
     projects = res.scalars().all()
