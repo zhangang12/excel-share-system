@@ -192,6 +192,28 @@ const PAYMENT_TYPES = ['payment', 'payment_public', 'payment_cash']
 const showPaymentFields = computed(() => PAYMENT_TYPES.includes(subForm.doc_type))
 // ⚠️ 现金付款**没有银行账户**——照 #348 一刀切要求填账号开户行，只会逼人瞎填，比不填更糟
 const showBankFields = computed(() => subForm.doc_type !== 'payment_cash' && showPaymentFields.value)
+
+// 🆕 反馈#365：用过的收款账户。数据来自历史付款申请（后端 /oa/payee-accounts 抽的），
+//   不另建表——另起一张表就得管"改了账号谁去同步"，会出现历史单据和账户库两个版本。
+interface PayeeAcct { payee: string; account: string; bank: string; used: number }
+const payeeBook = ref<PayeeAcct[]>([])
+const payeeFilled = ref(false)   // 这次是不是自动带出来的（带出来就提示核对一眼）
+async function loadPayeeBook() {
+  try { payeeBook.value = (await http.get<PayeeAcct[]>('/oa/payee-accounts')).data }
+  catch { payeeBook.value = [] }   // 拿不到就退回纯手输，不挡提交
+}
+function onPayeePick(v: string) {
+  payeeFilled.value = false
+  const hit = payeeBook.value.find(a => a.payee === (v || '').trim())
+  if (!hit) return
+  // ⚠️ 只在两个字段都空的时候带：人已经手填过就别覆盖他，
+  //    偷偷改掉他填的账号是这类"智能填充"最容易闯的祸。
+  if (!subForm.p_account.trim() && !subForm.p_bank.trim()) {
+    subForm.p_account = hit.account
+    subForm.p_bank = hit.bank
+    payeeFilled.value = true
+  }
+}
 const PAYBACK_TYPES = ['预付款', '进度款', '到货款', '尾款', '质保金', '全款']
 // 单行提成（分转整，避免浮点误差）
 function rowCommission(r: CommissionItem) {
@@ -643,6 +665,7 @@ function onMainTabChange(name: string | number) {
 onMounted(async () => {
   await Promise.all([loadDepartments(), loadDocTypes()])
   await loadList()
+  loadPayeeBook()   // 🆕 #365 用过的收款账户（不阻塞首屏；拿不到就退回手输）
   // 管理层才配得了审批链；非管理层调 listUsers 会 403，所以只对管理层拉
   if (auth.hasRole('admin', 'manager')) loadApproverCandidates()
 })
@@ -1146,8 +1169,19 @@ onMounted(async () => {
           <template v-if="showPaymentFields">
             <el-col :xs="24" :sm="12">
               <el-form-item label="收款单位 *">
-                <el-input v-model="subForm.p_payee" placeholder="收款单位全称" />
+                <!-- 🆕 反馈#365（计梦蝶）：付同一个收款单位时，账号/开户行不用再手敲一遍。
+                     下拉列的是**历史付款申请里用过的**收款单位，选中自动带出上次的账号+开户行。
+                     allow-create：新单位照样直接输，不挡人。 -->
+                <el-select v-model="subForm.p_payee" filterable allow-create default-first-option clearable
+                           placeholder="收款单位全称（用过的可直接选，账号自动带出）"
+                           style="width:100%" @change="onPayeePick">
+                  <el-option v-for="a in payeeBook" :key="a.payee"
+                             :label="`${a.payee}　${a.account.slice(-6).padStart(8, '·')}`" :value="a.payee" />
+                </el-select>
                 <div class="fi-hint" v-if="showBankFields">要跟银行账户的户名一致，对不上银行会退回</div>
+                <div class="fi-hint" v-if="payeeFilled" style="color:var(--el-color-success)">
+                  已带出上次用的账号和开户行，付之前请再核一眼
+                </div>
               </el-form-item>
             </el-col>
             <el-col :xs="24" :sm="12"><el-form-item label="期望付款日期（选填）"><el-date-picker v-model="subForm.p_pay_date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" /></el-form-item></el-col>

@@ -326,6 +326,15 @@ async function approve(r: Row, ok: boolean) {
         </el-table-column>
         <el-table-column prop="name" label="项目名称" min-width="140" show-overflow-tooltip />
         <el-table-column prop="problem" label="问题/说明" min-width="200" show-overflow-tooltip />
+        <!-- 反馈#361（杨坛）：「售后清单看不到提交申请人」。
+             接口一直返回 created_by_name/created_at，只是台账没渲染——
+             审批人看到一笔费用却不知道是谁报的，要批也不知道找谁核实。 -->
+        <el-table-column label="提交人" width="110">
+          <template #default="{ row }">
+            <div>{{ row.created_by_name || '—' }}</div>
+            <div class="muted small">{{ (row.created_at || '').slice(5, 16).replace('T', ' ') }}</div>
+          </template>
+        </el-table-column>
         <el-table-column label="费用" width="120" align="right">
           <template #default="{ row }">
             <div>{{ fmtMoney(row.cost) }}</div>

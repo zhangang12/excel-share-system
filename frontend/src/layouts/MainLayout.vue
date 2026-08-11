@@ -101,6 +101,20 @@ function checkDesktopUpdate() {
   desktop.checkUpdate()
 }
 
+// 🆕 反馈#360（赵仁辉）：「下载有问题，不知道下载到哪里了」。
+//   客户端其实一直有固定的下载目录，也弹了系统通知——但：
+//   ① Windows 通知被静音/免打扰时，那条通知等于不存在，人只看到"点了没反应"；
+//   ② 改下载位置的入口在**菜单栏**里，而窗口是 autoHideMenuBar，菜单根本看不见。
+//   所以这里做两件事：下完在应用内弹提示（带「打开文件夹」），
+//   以及把「下载位置」搬到左下角，跟改密码/退出放一起。
+const downloadDir = ref('')
+function openDownloadFolder(p: string) { desktop?.showInFolder?.(p) }
+async function changeDownloadDir() {
+  if (!desktop?.pickDownloadDir) return
+  const dir = await desktop.pickDownloadDir()
+  if (dir) { downloadDir.value = dir; ElMessage.success(`下载位置已改为 ${dir}`) }
+}
+
 async function submitChangePwd() {
   if (!pwdForm.value.old || !pwdForm.value.new1) {
     ElMessage.warning('请填写完整'); return
@@ -142,7 +156,28 @@ onMounted(async () => {
     else if (s.status === 'error') ElMessage.error(s.message ? `检查更新失败：${s.message}` : '检查更新失败，请稍后再试')
     if (!['checking', 'available'].includes(s.status)) updateChecking.value = false
   })
+  // 🆕 #360 下载完在应用内给反馈——不依赖系统通知
+  desktop?.getDownloadDir?.().then(d => { downloadDir.value = d || '' }).catch(() => { /* 老客户端没有这个 IPC */ })
+  desktop?.onDownloadDone?.((d) => {
+    if (!d?.ok) { ElMessage.error(`下载失败：${d?.name || '文件'}`); return }
+    downloadDir.value = d.dir || downloadDir.value
+    ElNotification({
+      title: '下载完成',
+      dangerouslyUseHTMLString: true,
+      message: `<div style="word-break:break-all">${escHtml(d.name)}</div>`
+        + `<div style="color:var(--el-text-color-secondary);font-size:12px;margin-top:4px;word-break:break-all">${escHtml(d.dir)}</div>`
+        + '<div style="margin-top:6px"><b style="cursor:pointer;color:var(--el-color-primary)" data-open="1">打开文件夹</b></div>',
+      type: 'success',
+      duration: 8000,
+      onClick: () => openDownloadFolder(d.path),
+    })
+  })
 })
+
+// 通知里带的是文件名/路径，都是用户数据，拼进 HTML 前先转义
+function escHtml(s: string) {
+  return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string))
+}
 
 onUnmounted(() => {
   if (unreadTimer) window.clearInterval(unreadTimer)
@@ -245,6 +280,13 @@ onUnmounted(() => {
           <el-tooltip v-if="desktop" :content="`检查更新（当前 v${desktop.version}）`" placement="top">
             <button class="icon-btn" :disabled="updateChecking" @click="checkDesktopUpdate">
               <el-icon :class="{ 'is-loading': updateChecking }"><Refresh /></el-icon>
+            </button>
+          </el-tooltip>
+          <!-- 🆕 #360：下载位置原来只在**菜单栏**里，而窗口 autoHideMenuBar，用户找不到 -->
+          <el-tooltip v-if="desktop?.pickDownloadDir" placement="top"
+                      :content="`下载位置：${downloadDir || '系统下载目录'}（点击更改）`">
+            <button class="icon-btn" @click="changeDownloadDir">
+              <el-icon><FolderOpened /></el-icon>
             </button>
           </el-tooltip>
           <el-tooltip content="修改密码" placement="top">

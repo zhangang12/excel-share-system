@@ -129,6 +129,43 @@ async def list_doc_types(_: models.User = Depends(get_current_user), db: AsyncSe
             for d in await _doc_types(db)]
 
 
+@router.get("/payee-accounts")
+async def list_payee_accounts(
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#365（计梦蝶）：「建议使用过的收款账户有保存功能，下次付款同一收款单位的话较为便捷」。
+
+    从历史付款申请里把「收款单位 → 收款账号/开户行」抽出来，前端选到同一个收款单位时自动带出。
+    不单独建表：这些数据本来就在 OaRequest.detail 里，另起一张表就得考虑改了账号谁去同步，
+    反而会出现「历史单据上的账号」和「账户库里的账号」两个版本。
+
+    同一收款单位换过账号时**以最近一次为准**（按 id 倒序，后写的覆盖先写的），
+    并把用过几次带上——前端可以标出来，让人一眼看出哪个是常用的、哪个只用过一次。
+    """
+    r = await db.execute(
+        select(models.OaRequest.detail)
+        .where(models.OaRequest.doc_type.in_(PAYMENT_BANK_DOC_TYPES))
+        .order_by(models.OaRequest.id.desc())
+        .limit(500)
+    )
+    out: dict[str, dict] = {}
+    for (detail,) in r.all():
+        d = detail or {}
+        payee = str(d.get("payee") or "").strip()
+        acct = str(d.get("payee_account") or "").strip()
+        bank = str(d.get("payee_bank") or "").strip()
+        if not payee or not acct:
+            continue
+        hit = out.get(payee)
+        if hit is None:
+            # 第一次遇到 = 最近一次用的（已按 id 倒序），账号以它为准
+            out[payee] = {"payee": payee, "account": acct, "bank": bank, "used": 1}
+        else:
+            hit["used"] += 1
+    return sorted(out.values(), key=lambda x: (-x["used"], x["payee"]))
+
+
 @router.post("/doc-types", response_model=schemas.OaDocTypeOut)
 async def create_doc_type(
     body: schemas.OaDocTypeIn,

@@ -51,6 +51,7 @@ interface AsRow {
   pay_status?: string | null; pay_note?: string | null
   items?: AsItem[]; missing_invoice?: number
   mat_file_id?: number | null; mat_file_name?: string | null
+  created_by_name?: string | null; created_at?: string   // 🆕 #361 谁报的
 }
 const KIND_TXT: Record<string, string> = { aftersales: '售后', install: '安装' }
 const AS_PAY_TXT: Record<string, string> = {
@@ -668,7 +669,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <el-tab-pane v-if="tv('aftersales')" :label="`🛎️ 安装/售后费用 (${aftersales.length})`" name="aftersales">
-          <el-table show-overflow-tooltip :data="aftersales" stripe show-summary :summary-method="() => ['', '合计', '', '', '', '', fmtMoney(asTotal), '', '', '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="aftersales" stripe show-summary :summary-method="() => ['', '合计', '', '', '', '', '', fmtMoney(asTotal), '', '', '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <!-- 明细放展开行：一条售后动辄三五行费用，摊成列会把表挤到要横向滚动 -->
             <el-table-column type="expand">
               <template #default="{ row }">
@@ -692,6 +693,13 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="140" />
             <el-table-column prop="problem" label="问题/说明" min-width="200" show-overflow-tooltip />
+            <!-- 🆕 #361：财务这张表同样看不到是谁报的。要打钱的人更需要知道找谁核实。 -->
+            <el-table-column label="提交人" width="110">
+              <template #default="{ row }">
+                <div>{{ row.created_by_name || '—' }}</div>
+                <div class="muted small">{{ (row.created_at || '').slice(5, 16).replace('T', ' ') }}</div>
+              </template>
+            </el-table-column>
             <el-table-column label="费用" width="130" align="right">
               <template #default="{ row }">
                 <div>{{ fmtMoney(row.cost) }}</div>

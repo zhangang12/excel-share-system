@@ -32,6 +32,14 @@ contextBridge.exposeInMainWorld('pmsDesktop', {
   //    客户端可能连开好几天不重启（还有 30 天免登录），只靠启动时那一次查不到新版。
   enforceVersion: () => ipcRenderer.invoke('pms-desktop:enforce-version'),
 
+  // ---- 🆕 反馈#360 下载：菜单栏是隐藏的，「下载位置…」用户找不到，把它搬进页面 ----
+  //   onDownloadDone：下完推给页面，前端弹应用内提示（不依赖系统通知——
+  //   Windows 通知被静音时那条系统通知等于不存在，人就以为没下成）
+  onDownloadDone: (cb) => ipcRenderer.on('pms-desktop:download-done', (_e, d) => cb(d)),
+  showInFolder: (p) => ipcRenderer.send('pms-desktop:show-in-folder', p),
+  getDownloadDir: () => ipcRenderer.invoke('pms-desktop:download-dir'),
+  pickDownloadDir: () => ipcRenderer.invoke('pms-desktop:pick-download-dir'),
+
   // ---- 强制更新页专用最小 IPC ----
   forceUpdateNotes: info.forceNotes || '',
   onProgress: (cb) => ipcRenderer.on('force-update:progress', (_e, p) => cb(p)),

@@ -260,6 +260,19 @@ async function exportAll() {
   await fetchExport(`/api/projects/${pid.value}/export`, 'project.xlsx', `项目导出 ${project.value?.code || ''}`)
 }
 
+// 反馈#368（杨坛）：「项目目录点击返回时要返回到项目目录界面，目前一点击返回就跑到项目详单里面去了」
+//   原来写死 router.push({name:'projects'})，而路由名 `projects` 对应的是侧边栏的
+//   **「项目详单」**（ProjectsView）；侧边栏的**「项目目录」**是 `overview`。
+//   项目详情页从这两个地方都进得来，写死一个就必然有一半的人回错地方。
+//   改成回退到**上一页**：从哪进来就回哪去。
+//   ⚠️ 直接开链接/刷新进来时没有站内上一页（history.state.back 为空），
+//      这时 router.back() 会退出本站，所以要兜底到项目详单。
+function goBack() {
+  const prev = (window.history.state as { back?: string } | null)?.back
+  if (prev) router.back()
+  else router.push({ name: 'projects' })
+}
+
 // 反馈#359：刷新按钮和首屏加载走同一个函数，不会出现"刷新只刷了一半"
 async function reloadAll() {
   await loadProject()
@@ -271,7 +284,7 @@ onMounted(reloadAll)
 <template>
   <div v-if="project">
     <div class="page-header">
-      <el-button :icon="ArrowLeft" @click="router.push({ name: 'projects' })">返回</el-button>
+      <el-button :icon="ArrowLeft" @click="goBack">返回</el-button>
       <div>
         <h1>{{ project.name }}</h1>
         <div class="desc">
