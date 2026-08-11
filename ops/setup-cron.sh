@@ -44,6 +44,30 @@ cat > /etc/logrotate.d/pms <<'EOF'
 EOF
 echo "✓ 装好 /etc/logrotate.d/pms"
 
+# ===== 3.1 🆕 nginx 访问日志轮转（2026-08-11 日志改为落盘后必须有，否则磁盘迟早被撑爆）=====
+# 背景：原来 nginx 日志只进 docker logs，**一发版重启容器就清零**——
+#   2026-08-11 要查三天前"谁是用客户端登录的"，日志已经没了，只能靠推断。
+#   改成 bind mount 落盘（docker-compose.prod.yml: ./nginx/logs:/var/log/nginx）后要自己轮转。
+# ⚠️ postrotate 里的 `nginx -s reopen` 不能省：logrotate 是把文件改名，
+#    nginx 还攥着旧的文件句柄继续往里写，不发信号的话新文件永远是空的，
+#    而被改名的旧文件还在悄悄变大——磁盘照样满，日志照样查不到。
+cat > /etc/logrotate.d/pms-nginx <<EOF
+$PROJECT_DIR/nginx/logs/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+    sharedscripts
+    postrotate
+        docker exec pms2_nginx nginx -s reopen 2>/dev/null || true
+    endscript
+}
+EOF
+echo "✓ 装好 /etc/logrotate.d/pms-nginx（nginx 访问日志 daily 轮转，留 14 天）"
+
 # ===== 3.5 HTTPS 证书续期（每天 3:17 和 15:17）=====
 # ⚠️ 为什么一天两次：Let's Encrypt 官方就是这么建议的 —— 万一某次因网络或服务端
 #    问题失败，当天还有第二次机会。certbot 自己判断「剩余 <30 天」才真的去续，
