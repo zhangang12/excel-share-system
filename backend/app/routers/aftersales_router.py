@@ -243,9 +243,14 @@ async def approve(
             models.AfterSalesItem.aftersales_id == a.id,
             models.AfterSalesItem.invoice_file_id.is_(None)))).scalar() or 0
         warn = f"，其中 {miss} 行没传发票" if miss else ""
+        # 🆕 反馈#362：消息里必须写清**去哪办**。
+        #   现场教训：王芹一直收得到这条通知，但她的「财务部→安装/售后费用」tab 被隐藏了，
+        #   打开系统找不到在哪核对，3 单 ¥9,636 就这么卡了三天，系统一声不吭。
+        #   带上位置，至少人能照着找、找不到会问，而不是以为自己没这个活。
         await push_message(db, to_role="finance", kind="info",
                            text=(f"【{label}报销待核对】{disp} {label}费用 ¥{a.cost:,.0f} "
-                                 f"已经售后主管审批，请核对报销明细与发票{warn}"),
+                                 f"已经售后主管审批，请到「财务部 → 安装/售后费用」"
+                                 f"核对报销明细与发票后点「核对无误，安排报销」{warn}"),
                            biz_type="aftersales", biz_id=a.id)
     else:
         await push_message(db, to_role="finance", kind="info",
