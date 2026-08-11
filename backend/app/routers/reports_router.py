@@ -406,14 +406,19 @@ async def sales_report(
 
 # ==================== 🆕 盈利改善第一档：项目毛利红黑榜(1a) + 成本黑洞审计(1b) ====================
 # 依据《盈利改善功能规划.md》。纯只读聚合（两个修复动作除外），无新表。
-# ⚠️ 口径（页面须醒目标注）：毛利 = 合同额 − 材料领料成本(加权均价) − 直发/外协采购
-#   − 安装/售后费用(已审批)，**不含人工/运费** ——"材料边际贡献"口径。
-# 防双算：收货已生成 wh_txn 的采购明细，其成本经「领料出库×加权均价」走仓库腿；
-#   未经仓库过账的（直发/外协加工费）按 project_code 直接计入采购腿。两腿互斥不重叠。
+# ⚠️ 口径（页面须醒目标注）：毛利 = 合同额 − 材料成本(收货即计) − 直发/外协采购
+#   − 安装/售后费用(已审批) − 物料运输费(我方)，**不含人工** ——"材料边际贡献"口径。
+# 🆕 反馈#373：材料腿从「领料出库×均价」改成**收货即计成本**（见 warehouse_router
+#   `_project_cost_map`）。现场料到货直接上工位、领料手续常年补不上，旧口径只认出
+#   ¥163,697/¥421,444，六成成本蒸发，毛利榜系统性虚高。
+# 防双算：收货已生成 wh_txn 的采购明细，其成本走仓库腿(腿1)；未经仓库过账的
+#   （直发/外协加工费）按 project_code 计入采购腿(腿2)。腿2 显式排除已挂 wh_txn 的明细，
+#   两腿互斥不重叠——改腿1 口径时**不要碰腿2 的 not_in(linked)**，那是唯一的隔离墙。
 
 _PNL_ROLES = ("finance", "finance_lead")
-_PNL_NOTE = ("口径：合同额 − 材料领料(加权均价) − 直发/外协采购 − 安装/售后费用 − 物料运输费(我方)；"
-             "不含人工工资等系统外成本，排名供比较用，绝对值≠净利")
+_PNL_NOTE = ("口径：合同额 − 材料成本(挂项目收货金额 + 通用物料领用×均价) − 直发/外协采购 "
+             "− 安装/售后费用 − 物料运输费(我方)；不含人工工资等系统外成本，"
+             "排名供比较用，绝对值≠净利")
 
 
 def _code_year(code: str) -> str:
@@ -427,24 +432,13 @@ async def project_pnl(
     db: AsyncSession = Depends(get_db),
 ):
     """1a 项目毛利榜：逐项目 收入−三腿成本，带成本完整度标签；亏损最多的排最前。"""
-    from .warehouse_router import _avg_price_map
-    avg = await _avg_price_map(db)
-
-    # ── 腿1：材料领料成本(仓库口径) + 完整度(领料中无均价的物料行数)
-    r = await db.execute(
-        select(models.WhTxn.project_id, models.WhTxn.material_id, func.sum(models.WhTxn.qty))
-        .where(models.WhTxn.direction == "out", models.WhTxn.project_id.isnot(None),
-               models.WhTxn.is_reversal == False,  # noqa: E712
-               models.WhTxn.reversed == False)  # noqa: E712
-        .group_by(models.WhTxn.project_id, models.WhTxn.material_id))
-    mat_cost: dict = defaultdict(float)
-    noprice: dict = defaultdict(int)
-    for pid, mid, qty in r.all():
-        price = avg.get(mid)
-        if price is not None:
-            mat_cost[pid] += (qty or 0) * price
-        elif qty:
-            noprice[pid] += 1
+    # ── 腿1：材料成本(仓库口径) + 完整度(缺加权均价的物料行数)
+    # ⚠️ 必须与「财务→库存/成本→项目材料成本」共用 `_project_cost_map`。
+    #    两处各写一份聚合的话，口径一改就有一处忘记跟，同一个项目在两页显示两个数——
+    #    用户一眼就看出来，然后整个毛利榜的可信度归零。
+    from .warehouse_router import _project_cost_map
+    mat_cost, _cost_extra = await _project_cost_map(db)
+    noprice: dict = _cost_extra.get("noprice_by_project") or {}
 
     # ── 腿2：直发/外协采购——收货金额>0 且收货未生成 wh_txn(未经仓库)，按 project_code
     linked = select(models.WhTxn.purchase_item_id).where(models.WhTxn.purchase_item_id.isnot(None))
@@ -499,7 +493,7 @@ async def project_pnl(
         elif not amount:
             flags.append("合同额为0")
         if noprice.get(p.id):
-            flags.append(f"领料缺价{noprice[p.id]}项")
+            flags.append(f"物料缺价{noprice[p.id]}项")
         rows.append({
             "project_id": p.id, "code": p.code, "name": p.name, "status": p.status,
             "customer": (led.customer if led else None) or "未填",
@@ -524,6 +518,79 @@ async def project_pnl(
                     "loss_count": sum(1 for x in rows if x["profit"] < 0),
                     "incomplete_count": sum(1 for x in rows if x["flags"])},
     }
+
+
+@router.get("/project-pnl/{project_id}/detail")
+async def project_pnl_detail(
+    project_id: int,
+    _: models.User = Depends(require_roles(*_PNL_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#390：项目毛利**按腿展开到明细**——总表上的「材料/直发外协/售后/运费」
+    四个大类，点开哪个项目就把哪个项目的原始单据列出来。
+
+    ⚠️ 性能：**按项目单独查，绝不在总榜里预先全查**。全公司 500+ 项目，
+    材料一项就有上万行流水，一次拉完页面直接卡死——用户在反馈里专门点了这条。
+    这里每条腿都带 project 过滤，最坏情况是单项目的几十行。
+
+    每条腿的口径与 `project_pnl` 的合计**必须一致**（同样的过滤条件、同样的排除），
+    否则展开的明细加起来对不上外面那个数，比不给明细还糟。"""
+    p = (await db.execute(select(models.Project).where(
+        models.Project.id == project_id))).scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "项目不存在")
+    legs: list[dict] = []
+
+    # 腿1 材料：与毛利榜同源（warehouse `_project_cost_map` 的逐行版本）
+    from .warehouse_router import _project_cost_detail_rows
+    for r_ in await _project_cost_detail_rows(db, project_id):
+        legs.append({"leg": "材料", "sub": r_["leg"],
+                     "title": r_["name"] + (f" · {r_['spec']}" if r_.get("spec") else ""),
+                     "qty": r_["qty"], "unit": r_.get("unit"),
+                     "date": None, "party": None, "amount": r_["amount"]})
+
+    # 腿2 直发/外协采购：口径与毛利榜一字不差——收货金额>0 且**未生成 wh_txn**（未经仓库）
+    linked = select(models.WhTxn.purchase_item_id).where(models.WhTxn.purchase_item_id.isnot(None))
+    code = (p.code or "").strip()
+    if code:
+        r = await db.execute(
+            select(models.PurchaseItem).where(
+                models.PurchaseItem.received_amount > 0,
+                models.PurchaseItem.project_code == code,
+                models.PurchaseItem.id.not_in(linked)))   # supplier 是 lazy="joined"，无需 options
+        for it in r.scalars().all():
+            legs.append({"leg": "直发/外协", "sub": it.po_no or "散单",
+                         "title": it.item_name + (f" · {it.spec}" if it.spec else ""),
+                         "qty": it.qty, "unit": None, "date": it.arrival_date,
+                         "party": (it.supplier.name if it.supplier else None),
+                         "amount": round(it.received_amount or 0, 2)})
+
+    # 腿3 安装/售后费用（已审批）
+    r = await db.execute(select(models.AfterSales).where(
+        models.AfterSales.project_id == project_id, models.AfterSales.status == "approved"))
+    for a in r.scalars().all():
+        legs.append({"leg": "安装/售后", "sub": ("安装" if a.kind == "install" else "售后"),
+                     "title": (a.problem or "")[:60] or "安装/售后费用", "qty": None, "unit": None,
+                     "date": (a.appr_at or a.created_at).strftime("%Y-%m-%d") if (a.appr_at or a.created_at) else None,
+                     "party": a.project_name, "amount": round(a.cost or 0, 2)})
+
+    # 腿4 物料运输费（我方承担；freight_payer 为空按我方，与毛利榜一致）
+    r = await db.execute(select(models.Shipment).where(
+        models.Shipment.project_id == project_id, models.Shipment.freight_cost > 0,
+        (models.Shipment.freight_payer == "我方") | (models.Shipment.freight_payer.is_(None))))
+    for s in r.scalars().all():
+        legs.append({"leg": "运费", "sub": s.freight_payer or "我方",
+                     "title": s.freight_note or "物料运输费", "qty": None, "unit": None,
+                     "date": s.shipped_at.strftime("%Y-%m-%d") if s.shipped_at else None,
+                     "party": s.receiver_company or s.receiver_name,
+                     "amount": round(s.freight_cost or 0, 2)})
+
+    legs.sort(key=lambda x: (x["leg"], -(x["amount"] or 0)))
+    by_leg: dict = defaultdict(float)
+    for x in legs:
+        by_leg[x["leg"]] += x["amount"] or 0
+    return {"rows": legs, "total": round(sum(x["amount"] or 0 for x in legs), 2),
+            "by_leg": {k: round(v, 2) for k, v in by_leg.items()}}
 
 
 @router.get("/cost-audit")

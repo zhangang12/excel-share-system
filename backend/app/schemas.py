@@ -476,6 +476,9 @@ class WhMaterialOut(BaseModel):
     # 🆕 出库反显：物料按项目入库时的关联项目(入库流水唯一项目才反显)
     project_id: Optional[int] = None
     project_code: Optional[str] = None
+    # 🆕 #373/#374：有过挂项目编号的入库 = 项目物料，不进「库存总览」「库存金额」，
+    #   它的钱已经在收货那一刻算进项目材料成本了（判据见 _project_material_ids）
+    is_project_material: bool = False
 
 
 class WhMaterialCustomFieldIn(BaseModel):
@@ -1340,6 +1343,21 @@ class DemandIssueIn(BaseModel):
     lines: list[DemandIssueLine] = Field(default_factory=list)
 
 
+class WhTransferToProjectLine(BaseModel):
+    material_id: int
+    qty: float
+
+
+class WhTransferToProjectIn(BaseModel):
+    """🆕 #377：库位存量物料 → 调至项目物料（中转）。生成「无项目出库 + 挂项目入库」两笔流水，
+    净库存不变，物料随即进该项目的物料需求、退出库存总览。"""
+    project_id: int
+    lines: list[WhTransferToProjectLine] = Field(default_factory=list)
+    biz_date: Optional[str] = None
+    location: Optional[str] = None   # 转入库位（中转库），不填沿用物料当前库位
+    note: Optional[str] = None
+
+
 class WhClearIn(BaseModel):
     """🆕 需求十五：仓库一键清空确认（需输入确认词「清空仓库」）。"""
     confirm: str = ""
@@ -1395,6 +1413,9 @@ class BatchReceiveLine(BaseModel):
     item_id: int
     unit_price: Optional[float] = None
     received_amount: Optional[float] = None
+    # 🆕 #376：逐行订单编号。一次合并收货里各行本来就可能属于不同项目
+    #   （同一供应商一车拉来三个项目的料），整批一个编号会把它们全抹成一个。
+    project_code: Optional[str] = None
 
 
 class BatchReceiveIn(BaseModel):

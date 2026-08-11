@@ -77,18 +77,42 @@ async function loadPayables() {
   finally { payablesLoading.value = false }
 }
 const payablesTotal = computed(() => payables.value.reduce((s, r) => s + (r.outstanding || 0), 0))
-const invValue = ref<{ total_value: number; rows: any[] }>({ total_value: 0, rows: [] })
-const projCost = ref<{ code: string; name: string; cost: number }[]>([])
+// 🆕 反馈#373/#388：物料按有没有项目编号一刀切开——
+//   有编号的料在**收货那一刻**就算那个项目的成本（不再等领料出库），并退出库存金额；
+//   没编号的料才是公司库存，被领用出库时才转成领用项目的成本。
+//   改之前生产上：收货 ¥421,444 只认出 ¥163,697 的项目成本，六成钱在系统里蒸发；
+//   库存金额 ¥148,099 里 ¥116,718(79%) 其实早已名花有主。
+const invValue = ref<{ total_value: number; rows: any[]; excluded_value?: number; excluded_count?: number }>({ total_value: 0, rows: [] })
+const projCost = ref<{ project_id: number; code: string; name: string; cost: number }[]>([])
+const projCostExtra = ref<{ unassigned?: number; note?: string }>({})
 const invLoading = ref(false)
 async function loadInventory() {
   invLoading.value = true
   try {
     const [iv, pc] = await Promise.all([
-      http.get<{ total_value: number; rows: any[] }>('/wh/inventory-value').then(r => r.data),
-      http.get<{ rows: any[] }>('/wh/project-cost').then(r => r.data),
+      http.get<{ total_value: number; rows: any[]; excluded_value?: number; excluded_count?: number }>('/wh/inventory-value').then(r => r.data),
+      http.get<{ rows: any[]; unassigned?: number; note?: string }>('/wh/project-cost').then(r => r.data),
     ])
     invValue.value = iv; projCost.value = pc.rows || []
+    projCostExtra.value = { unassigned: pc.unassigned, note: pc.note }
+    costDetail.value = {}   // 口径数据重来一遍，展开过的明细缓存作废
   } finally { invLoading.value = false }
+}
+const projCostTotal = computed(() => projCost.value.reduce((s, r) => s + (r.cost || 0), 0))
+
+// 🆕 #389 项目材料成本展开明细：**点开哪个项目才查哪个**。
+//   全公司 500+ 项目、上万行流水，一次全查出来页面直接卡死——用户在反馈里专门点了性能。
+//   查过的留在 costDetail 里，重复展开不再打接口。
+interface CostDetailRow { material_id: number; name: string; spec?: string | null; unit?: string; qty: number; avg_price?: number | null; amount?: number | null; leg: string }
+const costDetail = ref<Record<number, { rows: CostDetailRow[]; total: number; noprice_count: number } | 'loading'>>({})
+async function onCostExpand(row: { project_id: number }, expanded: any[]) {
+  if (!expanded.some((r: any) => r.project_id === row.project_id)) return   // 收起不查
+  if (costDetail.value[row.project_id]) return                              // 查过就不再查
+  costDetail.value[row.project_id] = 'loading'
+  try {
+    costDetail.value[row.project_id] = (await http.get<{ rows: CostDetailRow[]; total: number; noprice_count: number }>(
+      `/wh/project-cost/${row.project_id}/detail`)).data
+  } catch { delete costDetail.value[row.project_id] }   // 失败要能重试，别把 loading 卡死
 }
 function onFinTab(name: string) {
   if (name === 'payables') loadPayables()
@@ -164,8 +188,22 @@ const GROUP_LABELS: Record<string, string> = {
 }
 async function loadPnl() {
   pnlLoading.value = true
-  try { pnlData.value = (await http.get<PnlData>('/reports/project-pnl')).data }
+  try { pnlData.value = (await http.get<PnlData>('/reports/project-pnl')).data; pnlDetail.value = {} }
   catch { pnlData.value = null } finally { pnlLoading.value = false }
+}
+
+// 🆕 #390 项目毛利展开明细：把「材料/直发外协/安装售后/运费」四个大类展开成原始单据。
+//   同 #389，**按项目单独查**——总榜里预先全查会把上万行流水一次拉进浏览器。
+interface PnlDetailRow { leg: string; sub?: string | null; title: string; qty?: number | null; unit?: string | null; date?: string | null; party?: string | null; amount: number | null }
+const pnlDetail = ref<Record<number, { rows: PnlDetailRow[]; total: number; by_leg: Record<string, number> } | 'loading'>>({})
+async function onPnlExpand(row: PnlRow, expanded: any[]) {
+  if (!expanded.some((r: any) => r.project_id === row.project_id)) return
+  if (pnlDetail.value[row.project_id]) return
+  pnlDetail.value[row.project_id] = 'loading'
+  try {
+    pnlDetail.value[row.project_id] = (await http.get<{ rows: PnlDetailRow[]; total: number; by_leg: Record<string, number> }>(
+      `/reports/project-pnl/${row.project_id}/detail`)).data
+  } catch { delete pnlDetail.value[row.project_id] }
 }
 const pnlYears = computed(() =>
   Array.from(new Set((pnlData.value?.rows || []).map(r => r.year))).sort().reverse())
@@ -905,7 +943,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-select v-model="expYear" style="width:110px" @change="loadExpense">
               <el-option v-for="y in expYears" :key="y" :label="y + ' 年'" :value="y" />
             </el-select>
-            <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先) + 物料运输费(物流录入·我方承担)。材料领用是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「📈 项目毛利」tab。</span>
+            <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先) + 物料运输费(物流录入·我方承担)。材料是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「📈 项目毛利」tab。</span>
           </div>
           <div v-if="expData" class="kpi-grid" style="margin-bottom:12px">
             <div class="kpi is-primary"><div class="kpi-v">{{ fmtMoney(expData.totals.grand) }}</div><div class="kpi-l">{{ expData.year }} 年总支出</div></div>
@@ -938,7 +976,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-select v-model="pnlYear" clearable style="width:120px" placeholder="全部年份">
               <el-option v-for="y in pnlYears" :key="y" :label="y" :value="y" />
             </el-select>
-            <span class="muted small">默认亏得最多的排最前（红榜在上）；点列头可重新排序。带「领料缺价」标签的行成本被低估，先去成本审计页清黑洞。</span>
+            <span class="muted small">默认亏得最多的排最前（红榜在上）；点列头可重新排序。点行首箭头展开看成本明细。带「物料缺价」标签的行成本被低估，先去成本审计页清黑洞。</span>
           </div>
           <div v-if="pnlData" class="kpi-grid" style="margin-bottom:12px">
             <div class="kpi is-primary"><div class="kpi-v">{{ fmtMoney(pnlData.summary.profit) }}</div><div class="kpi-l">总毛利（材料边际贡献）</div></div>
@@ -948,7 +986,37 @@ async function revokeInvoice(row: ViewRow) {
           </div>
           <el-table v-if="!pnlGroup" show-overflow-tooltip v-loading="pnlLoading" :data="pnlRows" stripe size="small"
                     class="compact-tbl" max-height="calc(100vh - 400px)" :scrollbar-always-on="true"
+                    row-key="project_id" @expand-change="onPnlExpand"
                     :row-class-name="({ row }: any) => row.profit < 0 ? 'pnl-loss-row' : ''">
+            <!-- 🆕 #390 展开明细：四个大类展开成原始单据。**点开哪个项目才查哪个**——
+                 总榜预先全查会把上万行流水一次拉进浏览器，用户在反馈里专门点了性能。 -->
+            <el-table-column type="expand" fixed="left" width="40">
+              <template #default="{ row }">
+                <div style="padding:6px 10px 10px 40px">
+                  <div v-if="pnlDetail[row.project_id] === 'loading'" class="muted small">明细加载中…</div>
+                  <template v-else-if="pnlDetail[row.project_id]">
+                    <div class="muted small" style="margin-bottom:6px">
+                      <span v-for="(v, k) in (pnlDetail[row.project_id] as any).by_leg" :key="k" style="margin-right:14px">
+                        {{ k }} <b>{{ fmtMoney(v) }}</b>
+                      </span>
+                      <span>合计 <b>{{ fmtMoney((pnlDetail[row.project_id] as any).total) }}</b></span>
+                    </div>
+                    <el-table :data="(pnlDetail[row.project_id] as any).rows" size="small" stripe class="compact-tbl" max-height="340">
+                      <el-table-column label="大类" width="90">
+                        <template #default="{ row: d }"><el-tag size="small" effect="plain">{{ d.leg }}</el-tag></template>
+                      </el-table-column>
+                      <el-table-column prop="sub" label="来源" width="110"><template #default="{ row: d }">{{ d.sub || '—' }}</template></el-table-column>
+                      <el-table-column prop="title" label="内容" min-width="200" show-overflow-tooltip />
+                      <el-table-column label="数量" width="80" align="right"><template #default="{ row: d }">{{ d.qty != null ? `${d.qty}${d.unit || ''}` : '—' }}</template></el-table-column>
+                      <el-table-column prop="date" label="日期" width="100"><template #default="{ row: d }">{{ d.date || '—' }}</template></el-table-column>
+                      <el-table-column prop="party" label="供应商/对象" min-width="120" show-overflow-tooltip><template #default="{ row: d }">{{ d.party || '—' }}</template></el-table-column>
+                      <el-table-column label="金额" width="110" align="right"><template #default="{ row: d }"><b>{{ d.amount != null ? fmtMoney(d.amount) : '缺价' }}</b></template></el-table-column>
+                    </el-table>
+                    <EmptyHint v-if="!(pnlDetail[row.project_id] as any).rows.length" text="这个项目没有成本明细（成本全为 0）" size="sm" />
+                  </template>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column label="项目" min-width="170" fixed="left">
               <template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template>
             </el-table-column>
@@ -957,7 +1025,8 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column prop="amount" label="合同额" width="110" align="right" sortable>
               <template #default="{ row }">{{ row.amount ? fmtMoney(row.amount) : '—' }}</template>
             </el-table-column>
-            <el-table-column prop="mat_cost" label="材料领料" width="105" align="right" sortable>
+            <!-- 🆕 #373：口径已从「领料出库×均价」改成「挂项目收货金额 + 通用物料领用」，列名跟着改 -->
+            <el-table-column prop="mat_cost" label="材料成本" width="105" align="right" sortable>
               <template #default="{ row }">{{ row.mat_cost ? fmtMoney(row.mat_cost) : '—' }}</template>
             </el-table-column>
             <el-table-column prop="direct_cost" label="直发/外协" width="105" align="right" sortable>
@@ -1258,27 +1327,82 @@ async function revokeInvoice(row: ViewRow) {
         <!-- 🆕 库存 / 成本（需求六：仅管理层可见） -->
         <el-tab-pane v-if="tv('inventory')" label="📦 库存 / 成本" name="inventory">
           <div class="summary-bar" style="margin-bottom:10px">
-            <span>库存总金额 <b class="amt">{{ fmtMoney(invValue.total_value) }}</b></span>
-            <span class="muted small">库存金额 = 现存 × 入库加权平均单价;项目成本 = 领料出库 × 单价</span>
+            <span>通用库存金额 <b class="amt">{{ fmtMoney(invValue.total_value) }}</b></span>
+            <span>项目材料成本 <b class="amt">{{ fmtMoney(projCostTotal) }}</b></span>
+            <span v-if="projCostExtra.unassigned" class="muted">未归集 <b>{{ fmtMoney(projCostExtra.unassigned) }}</b></span>
           </div>
+          <!-- 🆕 #373/#388：这一刀砍掉了大半个库存金额，不把去向说清楚，财务只会以为系统坏了 -->
+          <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px"
+            title="口径：物料按有没有订单编号分两边，同一笔钱只算一次">
+            <template #default>
+              <div style="line-height:1.7">
+                <b>库存金额</b>只算<b>通用物料</b>（现存 × 入库加权均价）。<br />
+                <b>项目材料成本</b> = 挂了订单编号的<b>收货金额</b>（到货即计，不用等领料出库）
+                + 通用物料<b>领用出库</b> × 加权均价。<br />
+                <template v-if="invValue.excluded_value">
+                  本页已把 <b>{{ invValue.excluded_count }}</b> 种项目物料共
+                  <b>{{ fmtMoney(invValue.excluded_value) }}</b> 从库存金额移到右侧项目材料成本——它们是买给具体项目的料，不是公司备货。
+                </template>
+                <template v-if="projCostExtra.unassigned">
+                  另有 <b>{{ fmtMoney(projCostExtra.unassigned) }}</b> 未归集（项目物料上没填订单编号的零星收货），在采购明细里补上编号即可归位。
+                </template>
+              </div>
+            </template>
+          </el-alert>
           <el-row :gutter="16">
-            <el-col :span="14">
-              <div class="section-title">库存金额（按物料）</div>
-              <el-table show-overflow-tooltip :data="invValue.rows" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="compact-tbl">
+            <el-col :span="12">
+              <div class="section-title">库存金额（按物料 · 仅通用物料）</div>
+              <el-table show-overflow-tooltip :data="invValue.rows" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 420px)" class="compact-tbl">
                 <el-table-column prop="name" label="物料" min-width="140" />
                 <el-table-column prop="spec" label="规格" min-width="110"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
                 <el-table-column label="现存" width="80" align="right"><template #default="{ row }">{{ row.stock }}</template></el-table-column>
                 <el-table-column label="均价" width="100" align="right"><template #default="{ row }">{{ row.avg_price != null ? fmtMoney(row.avg_price) : '—' }}</template></el-table-column>
                 <el-table-column label="金额" width="120" align="right"><template #default="{ row }"><b>{{ row.value != null ? fmtMoney(row.value) : '—' }}</b></template></el-table-column>
               </el-table>
+              <EmptyHint v-if="!invLoading && !invValue.rows.length" text="暂无通用库存物料（料都挂了订单编号，已归入项目材料成本）" size="sm" />
             </el-col>
-            <el-col :span="10">
-              <div class="section-title">项目材料成本</div>
-              <el-table show-overflow-tooltip :data="projCost" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 340px)" class="compact-tbl">
+            <el-col :span="12">
+              <div class="section-title">项目材料成本<span class="muted small">（点左侧箭头展开明细）</span></div>
+              <!-- 🆕 #389 展开明细：row-key + @expand-change 懒加载，展开哪个查哪个 -->
+              <el-table show-overflow-tooltip :data="projCost" v-loading="invLoading" stripe size="small"
+                        max-height="calc(100vh - 420px)" class="compact-tbl"
+                        row-key="project_id" @expand-change="onCostExpand">
+                <el-table-column type="expand">
+                  <template #default="{ row }">
+                    <!-- ⚠️ 列宽总和必须留在展开格宽度内：这一列只占半屏(~485px)，
+                         固定列宽加起来超了 el-table 不会收缩，最右的「金额」直接被卡掉一截。
+                         实测 150+70+80+90+110=500 > 485，金额列少 37px。 -->
+                    <div style="padding:6px 8px 10px 12px">
+                      <div v-if="costDetail[row.project_id] === 'loading'" class="muted small">明细加载中…</div>
+                      <template v-else-if="costDetail[row.project_id]">
+                        <el-table :data="(costDetail[row.project_id] as any).rows" size="small" stripe class="compact-tbl" max-height="300">
+                          <el-table-column label="物料" min-width="110" show-overflow-tooltip>
+                            <template #default="{ row: d }">{{ d.name }}<span v-if="specOf(d.name, d.spec)" class="muted small"> · {{ specOf(d.name, d.spec) }}</span></template>
+                          </el-table-column>
+                          <el-table-column label="来源" width="58" align="center">
+                            <template #default="{ row: d }">
+                              <el-tag size="small" :type="d.leg === '收货' ? 'success' : 'warning'" effect="plain">{{ d.leg }}</el-tag>
+                            </template>
+                          </el-table-column>
+                          <el-table-column label="数量" width="70" align="right"><template #default="{ row: d }">{{ d.qty }} {{ d.unit || '' }}</template></el-table-column>
+                          <el-table-column label="均价" width="76" align="right"><template #default="{ row: d }">{{ d.avg_price != null ? fmtMoney(d.avg_price) : '—' }}</template></el-table-column>
+                          <el-table-column label="金额" width="96" align="right"><template #default="{ row: d }"><b>{{ d.amount != null ? fmtMoney(d.amount) : '缺价' }}</b></template></el-table-column>
+                        </el-table>
+                        <div class="muted small" style="margin-top:6px">
+                          明细合计 {{ fmtMoney((costDetail[row.project_id] as any).total) }}
+                          <template v-if="(costDetail[row.project_id] as any).noprice_count">
+                            ；<b style="color:var(--el-color-warning)">{{ (costDetail[row.project_id] as any).noprice_count }} 项缺加权均价</b>（入库没填金额，成本偏低）
+                          </template>
+                          。「收货」= 挂本项目编号的采购入库；「领料」= 从通用库存领用到本项目。
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </el-table-column>
                 <el-table-column label="项目" min-width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
                 <el-table-column label="材料成本" width="130" align="right"><template #default="{ row }"><b>{{ fmtMoney(row.cost) }}</b></template></el-table-column>
               </el-table>
-              <EmptyHint v-if="!invLoading && !projCost.length" text="暂无项目领料成本" size="sm" />
+              <EmptyHint v-if="!invLoading && !projCost.length" text="暂无项目材料成本" size="sm" />
             </el-col>
           </el-row>
         </el-tab-pane>

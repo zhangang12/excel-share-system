@@ -72,7 +72,7 @@ async def _category_path_map(db: AsyncSession) -> dict[int, str]:
 
 
 def _mat_out(m: models.WhMaterial, stock: float, cat_path: Optional[str] = None,
-             proj: Optional[tuple] = None) -> schemas.WhMaterialOut:
+             proj: Optional[tuple] = None, is_proj_mat: bool = False) -> schemas.WhMaterialOut:
     up = m.unit_price
     pid, pcode = proj if proj else (None, None)
     return schemas.WhMaterialOut(
@@ -85,6 +85,7 @@ def _mat_out(m: models.WhMaterial, stock: float, cat_path: Optional[str] = None,
         low=stock < (m.safety_stock or 0),
         custom_values=m.custom_values or {},
         project_id=pid, project_code=pcode,   # 🆕 出库反显关联项目
+        is_project_material=is_proj_mat,      # 🆕 #373/#374 项目物料不进库存总览/库存金额
     )
 
 
@@ -118,6 +119,7 @@ async def list_materials(
     kw: Optional[str] = Query(None, description="名称/规格/编码/单位/库位，任一命中"),
     location: Optional[str] = Query(None, description="按库位精确筛"),
     low_only: bool = Query(False, description="只看低于安全库存的"),
+    scope: str = Query("all", description="all 全部(默认) / general 只看通用物料 / project 只看项目物料"),
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -126,9 +128,20 @@ async def list_materials(
     🆕 仓库反馈：551 个物料，只能按名称/规格/编码找，找一个"放在 A-03 的密封圈"
        还得自己一页页翻。搜索面扩到库位和单位，另加库位精确筛 + 只看缺料。
     ⚠️ 编码(code)全库只有 6/551 有值，所以**不能只按编码搜**——按编码搜等于搜不到。
+
+    🆕 反馈#373/#374：每个物料带 `is_project_material`（判据见 `_project_material_ids`），
+       「库存总览」用它只显示通用物料——买给具体项目的料归「项目物料需求总览」管，
+       混在库存总览里既看不出真正的公司备货，也让人以为那些料还能随便领。
+    ⚠️ scope 默认 **all**，不是 general。这个接口同时喂着「物料主数据」和出库选料，
+       默认改成 general 会让项目物料在主数据里凭空消失、出库时搜不到。
+       过滤是前端按 is_project_material 做的（一次请求分两个 tab 用），
+       scope 只留给需要服务端过滤的调用方。
     """
     r = await db.execute(select(models.WhMaterial).order_by(models.WhMaterial.id))
     mats = list(r.scalars().all())
+    pm = await _project_material_ids(db)
+    if scope in ("general", "project"):
+        mats = [m for m in mats if (m.id in pm) == (scope == "project")]
     if kw:
         k = kw.strip().lower()
         def _hit(m):
@@ -142,7 +155,7 @@ async def list_materials(
     cat_paths = await _category_path_map(db)   # 🆕 编码文字说明
     proj_by_mat = await _material_projects(db, [m.id for m in mats])   # 🆕 出库反显关联项目
     outs = [_mat_out(m, stock.get(m.id, m.init_stock or 0), cat_paths.get(m.category_id),
-                     proj_by_mat.get(m.id)) for m in mats]
+                     proj_by_mat.get(m.id), m.id in pm) for m in mats]
     # ⚠️ low_only 必须在算完实时库存之后过滤——low 是 stock 与 safety_stock 比出来的，
     #    在取物料那一步过滤不到。
     if low_only:
@@ -1083,6 +1096,149 @@ async def _avg_price_map(db: AsyncSession) -> dict:
     return out
 
 
+async def _project_material_ids(db: AsyncSession) -> set[int]:
+    """🆕 反馈#373/#374/#388「项目物料 vs 通用物料」二分法的唯一判据。
+
+    **项目物料** = 有过任何一笔"挂了项目编号的有效入库"的物料。
+    这批料是采购替某个项目专门买的，钱一到货就该算那个项目的成本，
+    不该再躺在「库存金额」里当公司资产 —— 生产现场 2026-08-12 的实际比例：
+    库存金额 ¥148,099 里有 ¥116,718(79%) 其实是这种已经名花有主的料。
+
+    **口径保证（改这里之前先看懂）：每一笔入库金额有且只有一个去处，不重算也不漏。**
+      · 挂了项目的入库        → 项目材料成本(收货腿)
+      · 没挂项目 + 通用物料    → 留在库存金额；被领料出库时才转成那个项目的成本(领料腿)
+      · 没挂项目 + 项目物料    → 归「未归集」，在接口里单列出来（生产现存 ¥2,729/40 笔，
+                                 都是同一个料既有项目采购又有零星通用采购）。这笔钱不藏，
+                                 藏起来两页数字就永远对不上，用户第一眼就会发现。
+
+    为什么按**物料**整体分而不是按数量拆：拆数量会出现"A 项目收的料被 B 项目领走"，
+    A 的收货腿和 B 的领料腿会把同一批物理料算两遍 —— 生产现存这种重算 ¥34,771，
+    占超领总额的 99%。按物料整体归属就没有这个口子。
+    """
+    r = await db.execute(
+        select(models.WhTxn.material_id).where(
+            models.WhTxn.direction == "in",
+            models.WhTxn.project_id.isnot(None),
+            models.WhTxn.is_reversal == False,  # noqa: E712
+            models.WhTxn.reversed == False).distinct())  # noqa: E712
+    return {mid for (mid,) in r.all() if mid is not None}
+
+
+async def _project_cost_core(db: AsyncSession, material_ids: Optional[list[int]] = None):
+    """🆕 反馈#373 新口径「项目材料成本」的**唯一实现**——收货即计成本，不再等领料出库。
+
+    旧口径只认「领料出库 × 加权均价」。现场的实情是：料到货就直接拉到工位用了，
+    仓库的领料手续常常补不上 —— 2026-08-12 生产数据：收货 ¥421,444，
+    旧口径只认出 ¥163,697，六成的钱在系统里蒸发，项目毛利全是假的。
+
+    ── 两条腿（每一笔入库金额只落一处，不重算不漏）──────────────────
+      腿A 收货  Σ 挂本项目编号的入库金额（金额缺失时退回 qty × 加权均价）
+      腿B 领料  项目领得比自己收得多的部分（超领），**从通用池里按量扣**，扣多少算多少
+
+    腿B 为什么要卡通用池，不能见到出库就算：
+      · 不卡的话，「A 项目收了 100 → B 项目领走 30」会让 A 的收货腿和 B 的领料腿
+        把同一批物理料算两遍。生产上这种重算 ¥34,771，占超领总额的 99%。
+      · 但也不能因为"这个物料是项目物料"就一刀切把领料全不算 —— 那样
+        「通用螺栓领 120 给甲项目，剩下 380 调给乙项目」会把甲项目已经发生的
+        ¥144 成本倒扣掉。#377 调拨上线当天就会撞见（本地实测 13480 → 13336）。
+      · 卡通用池两头都对：甲的 120 从通用池里扣得出来 → 照算；
+        B 领 A 的料时通用池是 0 → 不算，钱留在 A 那边。
+
+    通用池 = 期初 + 无项目入库 − 无项目出库（无项目出库含 #377 调拨的转出腿、无主领料）。
+    多个项目同时超领而池子不够时按 project_id 升序先到先得——纯粹为了结果稳定可复现。
+
+    返回 (rows, unassigned_by_material)：
+      rows  逐 (project_id, material_id) 的成本行，带 leg/qty/amount，聚合与展开明细共用
+            **同一份数据**，所以外面的合计和展开的逐行加总天然对得上
+      unassigned  项目物料上没归到任何项目的通用池余额。这笔钱必须报出来：
+                  藏掉的话「入库总额 = 项目成本 + 库存金额 + 未归集」永远配不平。
+
+    material_ids 只在展开单个项目的明细时传（#389/#390），把扫描面收窄到那个项目
+    碰过的物料——不传就是全量，总榜用。
+    """
+    avg = await _avg_price_map(db)
+    pm = await _project_material_ids(db)
+
+    def _flt(q):
+        return q.where(models.WhTxn.material_id.in_(material_ids)) if material_ids else q
+
+    # ── 腿A：挂项目的入库，直接取流水金额（与采购明细收货金额同一个数，见 _sync_txn_amount）
+    rows: list[dict] = []
+    in_by_pm: dict[tuple, float] = defaultdict(float)   # (pid, mid) → 收货数量，腿B 判超领要用
+    r = await db.execute(_flt(
+        select(models.WhTxn.project_id, models.WhTxn.material_id,
+               func.sum(models.WhTxn.qty), func.sum(models.WhTxn.amount))
+        .where(models.WhTxn.direction == "in", models.WhTxn.project_id.isnot(None),
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False))  # noqa: E712
+        .group_by(models.WhTxn.project_id, models.WhTxn.material_id))
+    for pid, mid, qty, amt in r.all():
+        in_by_pm[(pid, mid)] += qty or 0
+        price = avg.get(mid)
+        if amt is None and price is not None:
+            amt = (qty or 0) * price
+        rows.append({"project_id": pid, "material_id": mid, "leg": "收货",
+                     "qty": qty or 0, "avg_price": price, "amount": amt})
+
+    # ── 通用池：期初 + 无项目入库 − 无项目出库
+    pool: dict[int, float] = defaultdict(float)
+    mq = select(models.WhMaterial.id, models.WhMaterial.init_stock)
+    if material_ids:
+        mq = mq.where(models.WhMaterial.id.in_(material_ids))
+    for mid, init in (await db.execute(mq)).all():
+        pool[mid] += init or 0
+    r = await db.execute(_flt(
+        select(models.WhTxn.material_id, models.WhTxn.direction, func.sum(models.WhTxn.qty))
+        .where(models.WhTxn.project_id.is_(None),
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False))  # noqa: E712
+        .group_by(models.WhTxn.material_id, models.WhTxn.direction))
+    for mid, direction, qty in r.all():
+        pool[mid] += (qty or 0) if direction == "in" else -(qty or 0)
+
+    # ── 腿B：超领的部分从通用池扣（project_id 升序，先到先得）
+    r = await db.execute(_flt(
+        select(models.WhTxn.project_id, models.WhTxn.material_id, func.sum(models.WhTxn.qty))
+        .where(models.WhTxn.direction == "out", models.WhTxn.project_id.isnot(None),
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False))  # noqa: E712
+        .group_by(models.WhTxn.project_id, models.WhTxn.material_id)
+        .order_by(models.WhTxn.material_id, models.WhTxn.project_id))
+    for pid, mid, qty in r.all():
+        over = (qty or 0) - in_by_pm.get((pid, mid), 0)
+        take = min(over, max(0.0, pool.get(mid, 0)))
+        if take <= 0:
+            continue
+        pool[mid] -= take
+        price = avg.get(mid)
+        rows.append({"project_id": pid, "material_id": mid, "leg": "领料",
+                     "qty": take, "avg_price": price,
+                     "amount": (take * price) if price is not None else None})
+
+    # 未归集：项目物料上剩下的通用池（通用物料的余额是「库存金额」，不算未归集）
+    unassigned = {mid: bal * avg[mid] for mid, bal in pool.items()
+                  if mid in pm and bal > 0 and avg.get(mid) is not None}
+    return rows, unassigned
+
+
+async def _project_cost_map(db: AsyncSession) -> tuple[dict, dict]:
+    """项目材料成本按项目汇总。口径与实现见 `_project_cost_core`。"""
+    rows, unassigned = await _project_cost_core(db)
+    by_proj: dict = defaultdict(float)
+    noprice: dict = defaultdict(int)
+    for r in rows:
+        if r["amount"] is None:
+            if r["qty"]:
+                noprice[r["project_id"]] += 1
+        else:
+            by_proj[r["project_id"]] += r["amount"]
+    return by_proj, {
+        "unassigned": round(sum(unassigned.values()), 2),
+        "noprice_by_project": dict(noprice),
+        "note": "口径：挂项目编号的收货入库金额 + 超领部分从通用库存扣（收货即计成本，不等领料）",
+    }
+
+
 def _dnum(v):
     if v in (None, ""):
         return None
@@ -1312,27 +1468,115 @@ async def issue_demand(
     return schemas.Msg(message=msg)
 
 
+@router.post("/transfer-to-project", response_model=schemas.Msg)
+async def transfer_to_project(
+    body: schemas.WhTransferToProjectIn,
+    current: models.User = Depends(require_roles(*WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#377：库位上的存量物料 → 调到项目物料（中转）。
+
+    场景：库里躺着的通用料，现在确定要给某个项目用了。以前只能等到出库时手填项目，
+    在「项目物料需求总览」里根本看不到这批料，项目上的人不知道有货。
+
+    实现是**两笔流水，不是改物料主数据**：
+      ① 一笔无项目出库（source=调拨项目·转出）—— 从通用库存扣掉
+      ② 一笔挂项目入库（source=调拨项目·转入）—— 进这个项目的账
+    净库存不变，而这个物料从此变成「项目物料」，于是：
+      · 自动出现在项目的物料需求里（`_demand_rows` 第二段专收挂项目的入库），后面统一领料出库
+      · 自动退出「库存总览 / 库存金额」（`_project_material_ids` 认这笔挂项目的入库）
+      · 成本自动归到这个项目（`_project_cost_map` 腿A）
+    不用为它写任何新的过滤逻辑——这是选两笔流水而不是加一个 `project_id` 字段的原因。
+
+    ⚠️ 入库那笔的金额按**加权均价**算，不是物料主数据上的参考单价 unit_price：
+    库存金额/项目成本全系统都用加权均价，用参考价会让调拨前后总额对不上。
+    """
+    lines = [ln for ln in body.lines if ln.qty and ln.qty > 0 and ln.material_id]
+    if not lines:
+        raise HTTPException(400, "请选择要调拨的物料并填写数量")
+    pr = await db.execute(select(models.Project).where(
+        models.Project.id == body.project_id, models.Project.is_deleted == False))  # noqa: E712
+    p = pr.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "项目不存在")
+    mids = [ln.material_id for ln in lines]
+    stock = await _stock_map(db, mids)
+    avg = await _avg_price_map(db)
+    mrows = {m.id: m for m in (await db.execute(
+        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)))).scalars().all()}
+    bd = normalize_date_str(body.biz_date) or date.today().isoformat()
+    note = (body.note or "").strip()
+    moved, skipped = 0, []
+    for ln in lines:
+        m = mrows.get(ln.material_id)
+        if not m:
+            skipped.append(f"物料{ln.material_id}不存在")
+            continue
+        avail = stock.get(m.id, m.init_stock or 0)
+        if ln.qty > avail:
+            skipped.append(f"{m.name} 现存 {avail} 不足 {ln.qty}")
+            continue
+        price = avg.get(m.id)
+        amt = round(ln.qty * price, 4) if price is not None else None
+        party = f"调拨至 {p.code}" + (f"（{note}）" if note else "")
+        db.add(models.WhTxn(
+            material_id=m.id, biz_date=bd, direction="out", qty=ln.qty,
+            unit_price=price, amount=amt, source="调拨项目·转出", party=party,
+            project_id=None, location=m.location,
+            ref_no=await _next_ref(db, "out", bd), operator_id=current.id))
+        db.add(models.WhTxn(
+            material_id=m.id, biz_date=bd, direction="in", qty=ln.qty,
+            unit_price=price, amount=amt, source="调拨项目·转入", party=party,
+            project_id=p.id, location=(body.location or m.location),
+            ref_no=await _next_ref(db, "in", bd), operator_id=current.id))
+        moved += 1
+    if not moved:
+        raise HTTPException(400, "没有可调拨的物料：" + "；".join(skipped[:3]))
+    await db.commit()
+    await write_audit(db, user=current, action="wh_transfer_to_project", target_type="project",
+                      target_id=p.id, detail=f"库位调项目物料 {moved} 项" + (f"，{len(skipped)} 项跳过" if skipped else ""))
+    msg = f"已调 {moved} 项到 {p.code} 的项目物料，可在「物料需求」里领用出库"
+    if skipped:
+        msg += f"（{len(skipped)} 项跳过：{skipped[0]}）"
+    return schemas.Msg(message=msg)
+
+
 @router.get("/inventory-value")
 async def inventory_value(
     _: models.User = Depends(require_roles("finance", "finance_lead")),   # 🆕 权限统一:tab由二级菜单权限控
     db: AsyncSession = Depends(get_db),
 ):
-    """库存金额：各物料 现存 × 入库加权平均单价，汇总总库存金额（仅管理层）。"""
+    """库存金额：各物料 现存 × 入库加权平均单价，汇总总库存金额（仅管理层）。
+
+    🆕 反馈#388：**只算通用物料**。挂过项目编号的料在收货那一刻就已经计进
+    「项目材料成本」了，再挂在库存金额里就是同一笔钱数两遍。
+    被排除的部分不藏起来，用 excluded_value / excluded_count 单独报出来——
+    上线当天这一刀砍掉 ¥116,718(79%)，不明说的话财务只会以为系统坏了。"""
     stock = await _stock_map(db)
     avg = await _avg_price_map(db)
+    pm = await _project_material_ids(db)
     mats = (await db.execute(select(models.WhMaterial))).scalars().all()
     rows = []
     total = 0.0
+    excluded_value, excluded_count = 0.0, 0
     for m in mats:
         st = stock.get(m.id, 0)
         price = avg.get(m.id)
         val = round(st * price, 2) if price is not None else None
+        if m.id in pm:
+            if val:
+                excluded_value += val
+            if st:
+                excluded_count += 1
+            continue
         if val:
             total += val
         rows.append({"material_id": m.id, "name": m.name, "spec": m.spec,
                      "unit": m.unit, "stock": st, "avg_price": price, "value": val})
     rows.sort(key=lambda x: (x["value"] or 0), reverse=True)
-    return {"total_value": round(total, 2), "rows": rows}
+    return {"total_value": round(total, 2), "rows": rows,
+            "excluded_value": round(excluded_value, 2), "excluded_count": excluded_count,
+            "note": "只统计通用物料；挂过项目编号的料已在收货时计入项目材料成本，不重复计"}
 
 
 @router.get("/project-cost")
@@ -1340,21 +1584,10 @@ async def project_cost(
     _: models.User = Depends(require_roles("finance", "finance_lead")),   # 🆕 权限统一:tab由二级菜单权限控
     db: AsyncSession = Depends(get_db),
 ):
-    """项目材料成本：出库(领料)到各项目的数量 × 物料加权平均单价，按项目汇总（仅管理层）。"""
-    avg = await _avg_price_map(db)
-    r = await db.execute(
-        select(models.WhTxn.project_id, models.WhTxn.material_id, func.sum(models.WhTxn.qty))
-        .where(models.WhTxn.direction == "out", models.WhTxn.project_id.isnot(None),
-               models.WhTxn.is_reversal == False,  # noqa: E712
-               models.WhTxn.reversed == False)  # noqa: E712
-        .group_by(models.WhTxn.project_id, models.WhTxn.material_id))
-    by_proj: dict = defaultdict(float)
-    for pid, mid, qty in r.all():
-        price = avg.get(mid)
-        if price:
-            by_proj[pid] += (qty or 0) * price
+    """项目材料成本（仅管理层）。口径见 `_project_cost_map` —— 收货即计成本。"""
+    by_proj, extra = await _project_cost_map(db)
     if not by_proj:
-        return {"rows": []}
+        return {"rows": [], **extra}
     pr = await db.execute(select(models.Project.id, models.Project.code, models.Project.name)
                           .where(models.Project.id.in_(list(by_proj.keys()))))
     pmap = {i: (c, n) for i, c, n in pr.all()}
@@ -1362,7 +1595,57 @@ async def project_cost(
              "name": pmap.get(pid, ("", ""))[1], "cost": round(cost, 2)}
             for pid, cost in by_proj.items()]
     rows.sort(key=lambda x: x["cost"], reverse=True)
-    return {"rows": rows}
+    return {"rows": rows, **extra}
+
+
+async def _project_cost_detail_rows(db: AsyncSession, project_id: int) -> list[dict]:
+    """🆕 反馈#389/#390：某个项目的材料成本**逐物料明细**——展开才查，不随总表一起拉。
+
+    总表 500 个项目 × 每个几十行物料，一次全查出来是几万行；按项目单独取，
+    展开哪个查哪个（前端 lazy expand）。两条腿分别标出来，好对账：
+      收货  = 挂本项目编号的采购入库（钱在到货那一刻就算本项目的）
+      领料  = 超领的部分，从通用库存里扣出来的（见 `_project_cost_core` 腿B）
+
+    ⚠️ 明细和总表**走同一个 `_project_cost_core`**，不是各算一遍。腿B 的通用池分配
+    依赖全局（谁先领谁扣得到），两处分头实现必然对不上；这里只是把扫描面收窄到
+    本项目碰过的物料，算法一模一样，所以逐行加总恒等于外面那个合计。"""
+    touched = (await db.execute(
+        select(models.WhTxn.material_id).where(
+            models.WhTxn.project_id == project_id,
+            models.WhTxn.is_reversal == False,  # noqa: E712
+            models.WhTxn.reversed == False).distinct())).all()   # noqa: E712
+    mids = [m for (m,) in touched if m is not None]
+    if not mids:
+        return []
+    core, _ = await _project_cost_core(db, material_ids=mids)
+    mats = {m.id: m for m in (await db.execute(
+        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)))).scalars().all()}
+    rows: list[dict] = []
+    for r in core:
+        if r["project_id"] != project_id or not r["qty"]:
+            continue
+        m = mats.get(r["material_id"])
+        if not m:
+            continue
+        rows.append({"material_id": r["material_id"], "name": m.name, "spec": m.spec,
+                     "unit": m.unit, "qty": round(r["qty"], 4),
+                     "avg_price": (round(r["avg_price"], 4) if r["avg_price"] is not None else None),
+                     "amount": (round(r["amount"], 2) if r["amount"] is not None else None),
+                     "leg": r["leg"]})
+    rows.sort(key=lambda x: (x["amount"] or 0), reverse=True)
+    return rows
+
+
+@router.get("/project-cost/{project_id}/detail")
+async def project_cost_detail(
+    project_id: int,
+    _: models.User = Depends(require_roles("finance", "finance_lead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#389：项目材料成本展开——逐物料明细，点开哪个项目才查哪个。"""
+    rows = await _project_cost_detail_rows(db, project_id)
+    return {"rows": rows, "total": round(sum(x["amount"] or 0 for x in rows), 2),
+            "noprice_count": sum(1 for x in rows if x["amount"] is None)}
 
 
 # ==================== 发货清单：设计推送 -> 仓库备货完成 -> 物流可见 ====================

@@ -2097,7 +2097,14 @@ async def receive_batch(
     """🆕 需求四：合并零件收货——一次收多条明细。两种填价方式：
     - 合并总价(total_amount)：按各行数量权重把总价分摊到 received_amount，单价=金额÷数量；
     - 逐行(lines)：各行分别填 单价/收货金额。
-    公共：填送货单号 + 到货日期 → 自动入库 + 回写清单。"""
+    公共：填送货单号 + 到货日期 → 自动入库 + 回写清单。
+
+    🆕 反馈#375/#376「合并收货会把不同项目编号的物料分派到对应项目吗」——**原来不会，
+    而且更糟**：整批一个 project_code 会把每一行原有的编号**全覆盖成同一个**
+    （同一供应商一车拉来三个项目的料，收完货全挂到一个项目上，另两个项目的料
+     在自己的物料需求里永远不出现、成本也永远归不上去）。
+    现在：逐行 `lines[].project_code` 优先；整批 `project_code` 只当**兜底**填空行，
+    不再覆盖已有编号。前端在弹窗里把每行的编号带出来、可逐行改。"""
     if not body.arrival_date:
         raise HTTPException(400, "请填写到货日期")
     if not body.item_ids:
@@ -2135,13 +2142,19 @@ async def receive_batch(
             elif it.qty and it.unit_price:
                 it.received_amount = round(it.qty * it.unit_price, 4)
     _loc = (body.stock_location or "").strip() or None   # 🆕 #204 整批一个库位,仓库收货时填
-    _pcode = (body.project_code or "").strip() or None    # 🆕 #253 整批一个订单编号
+    _pcode = (body.project_code or "").strip() or None    # 🆕 #253 整批订单编号(现在只兜底填空)
+    line_pcode = {ln.item_id: ln.project_code for ln in body.lines
+                  if ln.project_code is not None}         # 🆕 #376 逐行订单编号
     for it in ordered:
         it.delivery_note_no = body.delivery_note_no
         it.arrival_date = body.arrival_date
         if _loc:
             it.stock_location = _loc
-        if body.project_code is not None:
+        # 🆕 #376 分派优先级：逐行填的 > 明细上原有的 > 整批兜底。
+        #   ⚠️ 整批编号**只填空行**。老逻辑是无条件覆盖，一车三个项目的料收完全挂到一个项目上。
+        if it.id in line_pcode:
+            it.project_code = (line_pcode[it.id] or "").strip() or None
+        elif _pcode and not (it.project_code or "").strip():
             it.project_code = _pcode
         await _finish_receive(db, it, body.arrival_date, current)
     await db.commit()

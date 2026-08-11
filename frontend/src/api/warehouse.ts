@@ -9,6 +9,9 @@ export interface WhMaterial {
   safety_stock: number; init_stock: number; status: string; stock: number; low: boolean
   custom_values?: Record<string, any>   // 🆕 自定义字段值
   project_id?: number | null; project_code?: string | null  // 🆕 出库反显：按项目入库的关联项目
+  // 🆕 #373/#374：有过挂项目编号的入库 = 项目物料。库存总览/库存金额都不显示它——
+  //   它的钱在收货那一刻就已经算进项目材料成本了，再当公司库存就是同一笔钱数两遍。
+  is_project_material?: boolean
 }
 // 🆕 仓库物料自定义字段定义（跟采购 R6 同一套）
 export interface WhCustomField {
