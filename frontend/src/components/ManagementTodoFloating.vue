@@ -6,6 +6,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useDraggableFab } from '@/composables/useDraggableFab'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { EditPen } from '@element-plus/icons-vue'   // 反馈#366/#380：发出列表的「编辑」按钮
 import { useAuthStore } from '@/stores/auth'
 import { adminApi } from '@/api/admin'
 import { managementTodoApi, type MyTodoRow, type MgmtTodo, type TodoAttachment } from '@/api/managementTodo'
@@ -134,9 +135,26 @@ function pickCreateFiles() {
   input.click()
 }
 function removeCreateFile(i: number) { createFiles.value.splice(i, 1) }
+// 🆕 反馈#366/#380：编辑已下发的待办。复用同一个弹窗，editingId 非空即编辑态。
+//   原来只能「撤销 + 重发」：收件人被打扰两次，而且第一条上的回复/承诺时间/进度全丢。
+const editingId = ref<number | null>(null)
 async function openCreate() {
+  editingId.value = null
   createForm.value = { title: '', content: '', priority: 'normal', due_date: '', recipient_ids: [] }
   createFiles.value = []
+  createDlg.value = true
+  if (!users.value.length) {
+    try { users.value = await adminApi.listUsers() } catch { /* 静默 */ }
+  }
+}
+async function openEdit(t: MgmtTodo) {
+  editingId.value = t.id
+  createForm.value = {
+    title: t.title || '', content: t.content || '',
+    priority: t.priority || 'normal', due_date: t.due_date || '',
+    recipient_ids: (t.targets || []).map(x => x.user_id),
+  }
+  createFiles.value = []   // 编辑不动附图：附图是按待办 id 挂的，这里只改文字与收件人
   createDlg.value = true
   if (!users.value.length) {
     try { users.value = await adminApi.listUsers() } catch { /* 静默 */ }
@@ -146,6 +164,23 @@ const creating = ref(false)
 async function submitCreate() {
   if (!createForm.value.title.trim()) { ElMessage.warning('请填写待办标题'); return }
   if (!createForm.value.recipient_ids.length) { ElMessage.warning('请至少勾选一个收件人'); return }
+  if (editingId.value) {
+    creating.value = true
+    try {
+      await managementTodoApi.update(editingId.value, {
+        title: createForm.value.title.trim(),
+        content: createForm.value.content.trim(),
+        priority: createForm.value.priority,
+        due_date: createForm.value.due_date || '',
+        recipient_ids: createForm.value.recipient_ids,
+      })
+      ElMessage.success('已修改，收件人会收到变更通知')
+      createDlg.value = false
+      await loadSent()
+      refreshCount()
+    } finally { creating.value = false }
+    return
+  }
   creating.value = true
   try {
     const todo = await managementTodoApi.create({
@@ -296,6 +331,8 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                 <span v-if="t.pending_reply_count" class="pend"> · 待回复 {{ t.pending_reply_count }}</span>
               </span>
               <span class="tc-from">{{ t.creator_name }} · {{ fmtRelative(t.created_at) }}</span>
+              <!-- 反馈#366/#380：原来只能撤销重发，收件人被打扰两次、已有的回复和进度全丢 -->
+              <el-button type="primary" link size="small" :icon="EditPen" @click="openEdit(t)">编辑</el-button>
               <el-button type="danger" link size="small" @click="removeTodo(t)">撤销</el-button>
             </div>
             <div v-if="t.content" class="tc-content">{{ t.content }}</div>
@@ -370,7 +407,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
   </el-dialog>
 
   <!-- 新建待办（管理层） -->
-  <el-dialog v-model="createDlg" title="新建管理层待办" width="560px" append-to-body>
+  <el-dialog v-model="createDlg" :title="editingId ? '修改管理层待办' : '新建管理层待办'" width="560px" append-to-body>
     <el-form label-position="top">
       <el-form-item label="待办标题" required>
         <el-input v-model="createForm.title" maxlength="200" show-word-limit placeholder="要办的事" />

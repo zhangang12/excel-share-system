@@ -1420,10 +1420,10 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="钣金装配表" min-width="200" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
-                  <!-- 🆕 编辑装配表改图标按钮（悬停出文字），完成态保留绿勾 -->
-                  <el-tooltip content="编辑装配表" placement="top">
-                    <el-button link type="primary" :icon="EditPen" @click="viewSheet(row)" />
-                  </el-tooltip>
+                  <!-- 反馈#383/#384：原来是纯图标按钮（文字藏在悬停提示里），而隔壁「外协加工」列
+                       是「编辑外协加工表」文字——同一张表两种风格，一个要猜一个不用猜。
+                       统一成「编辑」+图标：一眼知道能点、点了干什么。完成态保留绿勾。 -->
+                  <el-button size="small" link type="primary" :icon="EditPen" @click="viewSheet(row)">编辑装配表</el-button>
                   <el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
                 </template>
                 <span v-else class="muted">—</span>
@@ -1499,10 +1499,8 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="钣金装配表" min-width="180" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
-                  <!-- 🆕 编辑装配表改图标按钮（悬停出文字） -->
-                  <el-tooltip content="编辑装配表" placement="top">
-                    <el-button link type="primary" :icon="EditPen" @click="viewSheet(row)" />
-                  </el-tooltip>
+                  <!-- 反馈#383/#384：统一成「编辑」+图标，与隔壁「外协加工」列一致（原来是纯图标） -->
+                  <el-button size="small" link type="primary" :icon="EditPen" @click="viewSheet(row)">编辑装配表</el-button>
                 </template>
                 <span v-else class="muted">—</span>
               </template>
@@ -1585,10 +1583,12 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <!-- 🆕 反馈#287：封板组也可「编辑装配表」（同钣金组，复用同一 SheetmetalGrid 弹窗）；无编辑权限角色维持「查看」 -->
             <el-table-column label="钣金装配表" min-width="120" align="center">
               <template #default="{ row }">
-                <!-- 🆕 反馈#287：封板组也可「编辑装配表」（同钣金组，复用同一 SheetmetalGrid 弹窗）；无编辑权限角色维持「查看」；图标按钮悬停出文字 -->
-                <el-tooltip v-if="row.sheetmetal_datasheet_id" :content="canEditSheet ? '编辑装配表' : '查看'" placement="top">
-                  <el-button link type="primary" :icon="canEditSheet ? EditPen : View" @click="viewSheet(row)" />
-                </el-tooltip>
+                <!-- 反馈#287：封板组也可「编辑装配表」，无编辑权限角色维持「查看」。
+                     反馈#383/#384：文字不再藏在悬停提示里，统一成「文字+图标」。 -->
+                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary"
+                           :icon="canEditSheet ? EditPen : View" @click="viewSheet(row)">
+                  {{ canEditSheet ? '编辑装配表' : '查看装配表' }}
+                </el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>

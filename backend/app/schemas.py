@@ -1874,6 +1874,20 @@ class MgmtTodoCreate(BaseModel):
     recipient_ids: list[int] = Field(min_length=1)   # 勾选的收件人
 
 
+class MgmtTodoUpdate(BaseModel):
+    """🆕 反馈#366/#380：已下发的待办要能改。
+
+    原来只有「撤销 + 重发」一条路——赵仁辉 2026-08-11 02:41 下发「买一个快装弯头」、
+    02:42 撤销、02:43 重发「19的快装弯头 卡盘50.5」，收件人被打扰两次、
+    第一条的回复和进度全丢了。
+    只发要改的字段（未传的不动）；`recipient_ids` 传了才动收件人。"""
+    title: Optional[str] = Field(default=None, max_length=200)
+    content: Optional[str] = None
+    priority: Optional[str] = None
+    due_date: Optional[str] = None
+    recipient_ids: Optional[list[int]] = None
+
+
 class MgmtTodoReplyIn(BaseModel):
     """收件人回复承诺完成时间（可带进展说明）。"""
     committed_at: str = Field(min_length=10, max_length=10)  # YYYY-MM-DD

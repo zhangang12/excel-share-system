@@ -11,7 +11,7 @@ import { downloadAttachment } from '@/api/orders'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'
-import { fmtDate, fmtMoney, fmtMatCode } from '@/utils/format'
+import { fmtDate, fmtMoney, fmtMatCode, specOf } from '@/utils/format'
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 const auth = useAuthStore()
@@ -2013,7 +2013,7 @@ function applyPoPick() {
       </el-form>
       <el-table show-overflow-tooltip :data="batchRecvLines" size="small" border max-height="34vh">
         <el-table-column label="名称" min-width="130">
-          <template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template>
+          <template #default="{ row }">{{ row.item_name }}<span v-if="specOf(row.item_name, row.spec)" class="muted small"> · {{ specOf(row.item_name, row.spec) }}</span></template>
         </el-table-column>
         <el-table-column label="数量" width="80" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
         <el-table-column label="单价" width="130" align="right">

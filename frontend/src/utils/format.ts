@@ -76,3 +76,21 @@ export function fmtMatCode(code?: string | null, dash = ''): string {
   if (/^\d{9}$/.test(s)) return `${s.slice(0, 1)}-${s.slice(1, 5)}-${s.slice(5)}`
   return s
 }
+
+/** 🆕 反馈#387「字体重复」：规格里同一段被重复拼接。
+ *  现场：成本审计→无价入库 显示「传动外协 · J01-油缸法兰 · J01-油缸法兰」。
+ *  来源是合并收货把多行的规格用「·」串起来，同名零件就串出重复段。
+ *  这里按「·」拆开去重（顺序保持首次出现的顺序，不排序——排序会打乱人习惯的阅读次序）。 */
+export function dedupSpec(spec?: string | null): string {
+  const parts = String(spec ?? '').split('·').map(p => p.trim()).filter(Boolean)
+  return [...new Set(parts)].join(' · ')
+}
+
+/** 🆕 #387：列表里「名称 · 规格」的规格段。规格与名称相同、或名称里已经含了它，就不再重复显示。
+ *  返回空字符串表示「不用显示规格」——调用方用 v-if 控制那个 span。 */
+export function specOf(name?: string | null, spec?: string | null): string {
+  const n = String(name ?? '').trim()
+  const s = dedupSpec(spec)
+  if (!s || s === n || (n && n.includes(s))) return ''
+  return s
+}

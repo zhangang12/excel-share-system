@@ -6,6 +6,7 @@ import { UploadFilled } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/api/sales'
+import { specOf } from '@/utils/format'   // 反馈#387：名称里已含规格时别再拼一遍
 import EmptyHint from '@/components/EmptyHint.vue'
 import { useAuthStore } from '@/stores/auth'
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
@@ -1039,7 +1040,7 @@ async function revokeInvoice(row: ViewRow) {
               <el-table show-overflow-tooltip :data="auditData?.orphan_out || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
                 <el-table-column prop="ref_no" label="单据号" width="130"><template #default="{ row }"><span class="code">{{ row.ref_no }}</span></template></el-table-column>
                 <el-table-column prop="biz_date" label="日期" width="100" />
-                <el-table-column label="物料" min-width="140"><template #default="{ row }">{{ row.name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                <el-table-column label="物料" min-width="140"><template #default="{ row }">{{ row.name }}<span v-if="specOf(row.name, row.spec)" class="muted small"> · {{ specOf(row.name, row.spec) }}</span></template></el-table-column>
                 <el-table-column prop="qty" label="数量" width="70" align="right" />
                 <el-table-column label="估值(均价)" width="110" align="right"><template #default="{ row }"><b v-if="row.value != null" class="danger">{{ fmtMoney(row.value) }}</b><span v-else class="muted">无均价</span></template></el-table-column>
                 <el-table-column prop="party" label="领用方" min-width="110"><template #default="{ row }">{{ row.party || '—' }}</template></el-table-column>
@@ -1061,7 +1062,7 @@ async function revokeInvoice(row: ViewRow) {
                 <el-table-column prop="ref_no" label="单据号" width="130"><template #default="{ row }"><span class="code">{{ row.ref_no }}</span></template></el-table-column>
                 <el-table-column label="方向" width="70"><template #default="{ row }"><el-tag size="small" :type="row.direction === 'in' ? 'success' : 'warning'" effect="plain">{{ row.direction === 'in' ? '入库' : '出库' }}</el-tag></template></el-table-column>
                 <el-table-column prop="biz_date" label="日期" width="100" />
-                <el-table-column label="物料" min-width="140"><template #default="{ row }">{{ row.name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                <el-table-column label="物料" min-width="140"><template #default="{ row }">{{ row.name }}<span v-if="specOf(row.name, row.spec)" class="muted small"> · {{ specOf(row.name, row.spec) }}</span></template></el-table-column>
                 <el-table-column prop="qty" label="数量" width="70" align="right" />
                 <el-table-column prop="po_no" label="采购单号" width="140"><template #default="{ row }"><span class="code">{{ row.po_no || '—' }}</span></template></el-table-column>
                 <el-table-column prop="supplier" label="供应商" min-width="120"><template #default="{ row }">{{ row.supplier || '—' }}</template></el-table-column>
@@ -1078,7 +1079,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-tab-pane :label="`👻 孤儿采购 (${auditData?.orphan_purchase.length ?? 0})`" name="orphan_purchase">
               <el-table show-overflow-tooltip :data="auditData?.orphan_purchase || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
                 <el-table-column prop="po_no" label="采购单号" width="140"><template #default="{ row }"><span class="code">{{ row.po_no || '散件' }}</span></template></el-table-column>
-                <el-table-column label="名称" min-width="140"><template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                <el-table-column label="名称" min-width="140"><template #default="{ row }">{{ row.item_name }}<span v-if="specOf(row.item_name, row.spec)" class="muted small"> · {{ specOf(row.item_name, row.spec) }}</span></template></el-table-column>
                 <el-table-column prop="supplier" label="供应商" min-width="120"><template #default="{ row }">{{ row.supplier || '—' }}</template></el-table-column>
                 <el-table-column label="订单编号(挂空)" width="130"><template #default="{ row }"><b class="danger">{{ row.project_code || '未填' }}</b></template></el-table-column>
                 <el-table-column label="收货金额" width="110" align="right"><template #default="{ row }">{{ row.received_amount ? fmtMoney(row.received_amount) : '—' }}</template></el-table-column>
@@ -1196,7 +1197,7 @@ async function revokeInvoice(row: ViewRow) {
                 <span class="muted small">≥90 天无出库动销的 现存×加权均价；可回溯谁为哪个项目买的</span>
               </div>
               <el-table show-overflow-tooltip :data="fundData?.dead_stock.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 470px)">
-                <el-table-column label="物料" min-width="150"><template #default="{ row }">{{ row.name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                <el-table-column label="物料" min-width="150"><template #default="{ row }">{{ row.name }}<span v-if="specOf(row.name, row.spec)" class="muted small"> · {{ specOf(row.name, row.spec) }}</span></template></el-table-column>
                 <el-table-column prop="stock" label="现存" width="80" align="right" />
                 <el-table-column label="金额" width="110" align="right" sortable prop="value"><template #default="{ row }"><b v-if="row.value != null" class="danger">{{ fmtMoney(row.value) }}</b><span v-else class="muted">无均价</span></template></el-table-column>
                 <el-table-column prop="idle_days" label="呆滞天数" width="100" align="right" sortable>
@@ -1209,7 +1210,7 @@ async function revokeInvoice(row: ViewRow) {
               <div v-if="fundData?.dead_stock.safety.length" style="margin-top:12px">
                 <div class="section-title">🩺 安全库存体检</div>
                 <el-table show-overflow-tooltip :data="fundData.dead_stock.safety" size="small" class="compact-tbl" style="max-width:860px" :fit="false">
-                  <el-table-column label="物料" min-width="150"><template #default="{ row }">{{ row.name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+                  <el-table-column label="物料" min-width="150"><template #default="{ row }">{{ row.name }}<span v-if="specOf(row.name, row.spec)" class="muted small"> · {{ specOf(row.name, row.spec) }}</span></template></el-table-column>
                   <el-table-column prop="safety_stock" label="安全库存" width="90" align="right" />
                   <el-table-column prop="month_avg_out" label="月均出库" width="90" align="right" />
                   <el-table-column prop="stock" label="现存" width="80" align="right" />
@@ -1317,7 +1318,7 @@ async function revokeInvoice(row: ViewRow) {
           </div>
           <el-table show-overflow-tooltip :data="payingPr.items" size="small" border max-height="180">
             <el-table-column label="采购单号" width="150"><template #default="{ row }"><span class="code">{{ row.po_no || '散件' }}</span></template></el-table-column>
-            <el-table-column label="名称" min-width="120"><template #default="{ row }">{{ row.item_name }}<span v-if="row.spec" class="muted small"> · {{ row.spec }}</span></template></el-table-column>
+            <el-table-column label="名称" min-width="120"><template #default="{ row }">{{ row.item_name }}<span v-if="specOf(row.item_name, row.spec)" class="muted small"> · {{ specOf(row.item_name, row.spec) }}</span></template></el-table-column>
             <el-table-column label="项目" width="100"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>
             <el-table-column label="本次付款" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.allocated_amount) }}</template></el-table-column>
           </el-table>

@@ -68,6 +68,10 @@ export const managementTodoApi = {
   create: (data: { title: string; content?: string; priority?: string; due_date?: string; recipient_ids: number[] }) =>
     http.post<MgmtTodo>('/management-todos', data).then((r) => r.data),
   listSent: () => http.get<MgmtTodo[]>('/management-todos/sent').then((r) => r.data),
+  // 🆕 反馈#366/#380：已下发的待办支持编辑。只发要改的字段；不传 recipient_ids 就不动收件人。
+  //   后端只增删收件人差集，留下来的人的回复/承诺时间/进度不会被清掉（撤销重发会全丢）。
+  update: (todoId: number, data: { title?: string; content?: string; priority?: string; due_date?: string; recipient_ids?: number[] }) =>
+    http.put<MgmtTodo>(`/management-todos/${todoId}`, data).then((r) => r.data),
   remove: (todoId: number) =>
     http.delete<{ message: string }>(`/management-todos/${todoId}`).then((r) => r.data),
   decideExtend: (targetId: number, approve: boolean, note?: string) =>
