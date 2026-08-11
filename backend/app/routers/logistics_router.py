@@ -205,15 +205,15 @@ async def pending_count(
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # ⚠️ 只数「进行中」项目的待发货。2026-08-11 起存量已完成项目也会补出 pending 的
-    #   Shipment 行（让它们在看板上可见、能录运费），但那些是历史补录、不是今天要干的活。
-    #   角标是「你还有几件事要做」，混进 37 条历史项目就没人看了。
-    #   看板要看全部：把筛选切到「全部」或「未发货」。
+    # 角标口径 = 看板「未发货」筛选，两边必须是同一个数：
+    #   角标显示 96、点进去看到 96 行，人才信这个数。
+    #   曾经想过只数「进行中」项目（把补录的历史单排除在待办外），但那样角标和看板对不上，
+    #   更糟——用户看到角标 32、进去却是 96 行，会以为系统在骗人。
+    #   历史单确实多，但那是**真实欠账**：系统里没有它们的发货记录，本来就该被看见。
     res = await db.execute(
         select(func.count(models.Shipment.id)).join(models.Project).where(
             models.Shipment.status == "pending",
             models.Project.is_deleted == False,  # noqa: E712
-            models.Project.status == "进行中",
         )
     )
     return {"count": res.scalar() or 0}

@@ -117,17 +117,19 @@ async def main():
         old_done = await board(proj_status="已完成")
         chk(set(old_done) == {"2026-803"}, f"5) 旧参数「已完成」映射到已发货: {sorted(old_done)}")
 
-        # 6) 角标只数进行中的
+        # 6) 角标口径 = 看板「未发货」，两边必须是同一个数
+        #    角标显示 N、点进去看到 N 行，人才信这个数；对不上比数字大更糟。
         cnt = (await c.get("/api/logistics/pending-count", headers=H)).json()["count"]
         async with SessionLocal() as db:
-            doing_pending = (await db.execute(
+            all_pending = (await db.execute(
                 select(func.count(models.Shipment.id)).join(models.Project).where(
                     models.Shipment.status == "pending",
-                    models.Project.is_deleted == False,      # noqa: E712
-                    models.Project.status == "进行中"))).scalar()
-        chk(cnt == doing_pending,
-            f"6) 待发货角标只数进行中项目（补进来的历史单不冲爆待办数）: {cnt}")
-        chk(cnt < len(await board(ship_status="未发货")) + 1 or True, "（角标与看板口径不同是有意的）")
+                    models.Project.is_deleted == False))).scalar()   # noqa: E712
+        chk(cnt == all_pending,
+            f"6) 待发货角标按发货状态数，不看项目状态: {cnt} == {all_pending}")
+        # 已完成但没发货的那个项目，必须同时出现在角标和看板未发货里
+        chk("2026-802" in (await board(ship_status="未发货")),
+            "6) 项目已完成但没发货的，角标和看板都算上（这是真实欠账，本来就该被看见）")
 
 
 asyncio.run(main())
