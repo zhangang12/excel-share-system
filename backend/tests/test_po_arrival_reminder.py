@@ -150,10 +150,17 @@ async def main():
             chk(rec.values.get(flds.get("预计到货")) == "2026-08-10",
                 f"清单行已回写新预计到货: {rec.values}")
             chk(rec.values.get(f1_id) == "轴承", "原有单元格不受影响")
+            # 🆕 #378 之后首次填不推留痕（第一次填是正常下单动作，不是改期）
+            chk(len(await msgs_for(db, bl, "po_expected_changed", it3)) == 0, "首次填不推留痕通知")
+
+        # 真正改期才推（#378 之后普通采购改不了，由 admin 操作）
+        r = await c.put(f"/api/purchase-mgmt/items/{it3}", headers=H, json={"expected_arrival": "2026-08-18"})
+        chk(r.status_code == 200, f"管理层改期: {r.status_code} {r.text[:120]}")
+        async with SessionLocal() as db:
             chk(len(await msgs_for(db, bl, "po_expected_changed", it3)) == 1, "改期通知采购主管")
             chk(len(await msgs_for(db, m1, "po_expected_changed", it3)) == 1, "改期通知管理层")
-            chk(len(await msgs_for(db, admin_id, "po_expected_changed", it3)) == 1, "改期通知 admin")
-            chk(len(await msgs_for(db, b1, "po_expected_changed", it3)) == 0, "操作人本人不重复收改期通知")
+            chk(len(await msgs_for(db, admin_id, "po_expected_changed", it3)) == 0,
+                "操作人本人（本次是 admin）不重复收改期通知")
 
         # ===== 3b. 预计到货跟着零件走：从清单下单逐行日期（整单值兜底），逐行回写清单 =====
         async with SessionLocal() as db:

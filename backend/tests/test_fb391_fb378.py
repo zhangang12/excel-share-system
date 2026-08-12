@@ -21,6 +21,7 @@ sys.path.insert(0, os.getcwd())
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.database import engine, SessionLocal, Base
+from app import models
 from app.seed import seed
 from app.data_migration import run_all, ensure_schema_columns
 
@@ -110,6 +111,17 @@ async def main():
                         json={"expected_arrival": "2026-08-20"})
         chk(r.status_code == 200 and r.json()["expected_arrival"] == "2026-08-20",
             f"#378 首次填预计到货，普通采购可以: {r.status_code} {r.text[:80]}")
+
+        # 首次填**不**推「预计到货变更」留痕。
+        # #378 之后普通采购能做的只剩首次填，不滤掉的话每建一条明细就 ping 一次主管+管理层；
+        # 历史数据 195 条通知里 84 条是「由 未填 改为」，43% 是这种噪音。
+        from sqlalchemy import select as _sel
+        from app.database import SessionLocal as _SL
+        async with _SL() as _db:
+            n = len((await _db.execute(_sel(models.Message).where(
+                models.Message.biz_type == "po_expected_changed",
+                models.Message.biz_id == iid))).scalars().all())
+        chk(n == 0, f"#378 首次填不推留痕通知（那是下单动作不是改期）: 推了 {n} 条")
 
         # 再改 —— 普通采购不行。
         # ⚠️ 只断言 403 是不够的：行级隔离也返回 403，撞上它断言照样绿。必须验错误文案。

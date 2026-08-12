@@ -50,6 +50,8 @@ async def main():
         b1 = await mk("b1", "buyer")
         bl = await mk("bl", "buyer_lead")
         Hb1 = await login("b1")
+        Hbl = await login("bl")   # 🆕 #378 之后改期只有采购主管/管理层能做
+        adm = (await c.get("/api/auth/me", headers=H)).json()["id"]
 
         r = await c.post("/api/purchase-mgmt/suppliers", headers=Hb1, json={"name": "批量改期供应商"})
         chk(r.status_code == 200, f"建供应商: {r.text[:120]}")
@@ -100,19 +102,36 @@ async def main():
             chk(va.get(ea_fid) == "2026-09-01", f"零件甲行详单已回写: {va.get(ea_fid)!r}")
             chk(vb.get(ea_fid) == "2026-09-01", f"零件乙行详单已回写: {vb.get(ea_fid)!r}")
 
-        # ===== 3. 改期留痕通知（与单条编辑同口径：推主管/管理层，排除操作人） =====
+        # ===== 3. 改期留痕通知 =====
+        # 🆕 #378 之后**首次填不推**：留痕针对的是"改期消音"，第一次填是正常下单动作。
+        #   历史数据 195 条通知里 84 条是「由 未填 改为」（43% 纯噪音），且 #378 之后
+        #   普通采购能做的只剩首次填 —— 不滤掉等于每建一条明细就 ping 一次主管+管理层。
+        async with SessionLocal() as db:
+            first = list((await db.execute(select(models.Message).where(
+                models.Message.biz_type == "po_expected_changed",
+                models.Message.biz_id == a))).scalars().all())
+            chk(len(first) == 0, f"首次填**不**推留痕通知: {[m.text for m in first]}")
+
+        # 真正改期（由主管操作，普通采购已被 #378 拦住）才推
+        r = await c.put("/api/purchase-mgmt/items/batch-expected-arrival", headers=Hbl,
+                        json={"ids": [a], "expected_arrival": "2026-09-05"})
+        chk(r.status_code == 200, f"主管改期: {r.status_code} {r.text[:120]}")
         async with SessionLocal() as db:
             msgs = list((await db.execute(select(models.Message).where(
+                models.Message.to_user_id == adm,
+                models.Message.biz_type == "po_expected_changed",
+                models.Message.biz_id == a))).scalars().all())
+            chk(len(msgs) == 1 and "2026-09-01" in msgs[0].text and "2026-09-05" in msgs[0].text,
+                f"真正改期才推留痕，且写明由哪天改到哪天: {[m.text for m in msgs]}")
+            own = list((await db.execute(select(models.Message).where(
                 models.Message.to_user_id == bl,
                 models.Message.biz_type == "po_expected_changed",
                 models.Message.biz_id == a))).scalars().all())
-            chk(len(msgs) == 1 and "2026-09-01" in msgs[0].text,
-                f"采购主管收到改期留痕: {[m.text for m in msgs]}")
-            own = list((await db.execute(select(models.Message).where(
-                models.Message.to_user_id == b1,
-                models.Message.biz_type == "po_expected_changed",
-                models.Message.biz_id == a))).scalars().all())
-            chk(len(own) == 0, "操作人本人不收改期通知")
+            chk(len(own) == 0, "操作人本人（本次是主管）不收自己的改期通知")
+        # 复位，后面几段仍按 2026-09-01 断言
+        r = await c.put("/api/purchase-mgmt/items/batch-expected-arrival", headers=Hbl,
+                        json={"ids": [a], "expected_arrival": "2026-09-01"})
+        chk(r.status_code == 200, f"复位到 2026-09-01: {r.status_code}")
 
         # ===== 5. 值未变的行不算 changed =====
         r = await c.put("/api/purchase-mgmt/items/batch-expected-arrival", headers=Hb1,

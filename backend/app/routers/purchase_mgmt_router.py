@@ -1857,10 +1857,17 @@ async def batch_expected_arrival(
         changed.append((item.id, item.po_no, item.item_name, old_ea))
     await db.commit()
     # 改期留痕通知（事务提交后再推，避免幻影通知）；排除操作人本人
+    # 🆕 #378 之后**首次填不推**：留痕针对的是"改期消音"，第一次填是正常下单动作，不是改期。
+    #   历史数据里 195 条通知有 84 条是「由 未填 改为」——占 43%，纯噪音。
+    #   而且 #378 已经把改期权收到采购主管/管理层，普通采购能做的只剩首次填，
+    #   不滤掉的话等于每建一条采购明细就 ping 一次主管和管理层。
+    #   （同 2026-07-26 收窄到货提醒的口径：信息太多等于没有信息。）
     uname = current.full_name or current.username
     for iid, po_no, item_name, old_ea in changed:
+        if not old_ea:
+            continue
         text = (f"【预计到货变更】采购单 {po_no or '（无单号）'}「{item_name}」预计到货日期"
-                f"由 {old_ea or '未填'} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
+                f"由 {old_ea} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
         for role in ("buyer_lead", "manager", "admin"):
             await push_message(db, to_role=role, kind="warn", text=text,
                                biz_type="po_expected_changed", biz_id=iid,
@@ -1909,11 +1916,12 @@ async def update_item(
         await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
     _maybe_auto_reconcile(item)
     await db.commit()
-    if ea_touched and new_ea != old_ea:
+    # 🆕 #378 之后**首次填不推**（old_ea 为空 = 正常下单动作，不是改期）。理由见批量接口那段。
+    if ea_touched and new_ea != old_ea and old_ea:
         # 改期留痕通知（事务提交后再推，避免幻影通知）；排除操作人本人
         uname = current.full_name or current.username
         text = (f"【预计到货变更】采购单 {item.po_no or '（无单号）'}「{item.item_name}」预计到货日期"
-                f"由 {old_ea or '未填'} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
+                f"由 {old_ea} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
         for role in ("buyer_lead", "manager", "admin"):
             await push_message(db, to_role=role, kind="warn", text=text,
                                biz_type="po_expected_changed", biz_id=item.id,
