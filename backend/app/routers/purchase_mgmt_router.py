@@ -1022,15 +1022,29 @@ def _stock_key(nm, sp):
 
 
 async def _build_stock_by_key(db: AsyncSession) -> dict:
-    """按 名称+规格 汇总实时库存（供 purchasable 类端点复用；跨项目聚合时只算一次）。"""
-    from .warehouse_router import _stock_map
+    """按 名称+规格 汇总实时库存（供 purchasable 类端点复用；跨项目聚合时只算一次）。
+
+    🆕 反馈#391（李新新）：「这个现有库存是库里有的（没有订单编号）还是我有订单已采购的？」
+    ——问到点子上了。原来这里给的是**全部库存**，其中大部分是别的项目已经买好、
+    动不得的料。生产实测：517 种有货物料里 **394 种挂着项目编号**（数量 1111/7709）。
+    采购看到「现有库存 5」就不下单，可那 5 个是别人项目的，等于**系统性少采**。
+
+    返回 {key: (可用, 项目占用)}：
+      可用     = 通用物料的库存，采购能自由支配的，**建议采购量按这个算**
+      项目占用 = 挂过项目编号的物料库存，只做提示，不参与建议采购
+    判据与仓库/财务同一个 `_project_material_ids`，三处口径不会各说各话。
+    """
+    from .warehouse_router import _stock_map, _project_material_ids
     mr = await db.execute(select(models.WhMaterial))
     mats = list(mr.scalars().all())
     stock_by_id = await _stock_map(db) if mats else {}
+    pm = await _project_material_ids(db) if mats else set()
     stock_by_key: dict = {}
     for m in mats:
         k = _stock_key(m.name, m.spec)
-        stock_by_key[k] = stock_by_key.get(k, 0) + stock_by_id.get(m.id, m.init_stock or 0)
+        free, held = stock_by_key.get(k, (0.0, 0.0))
+        s = stock_by_id.get(m.id, m.init_stock or 0)
+        stock_by_key[k] = (free, held + s) if m.id in pm else (free + s, held)
     return stock_by_key
 
 
@@ -1081,11 +1095,15 @@ async def _purchasable_rows(db: AsyncSession, ds: models.Datasheet, conf: tuple,
             continue
         spec = gv(spec_col)
         qty = _num(gv(qty_col)) if qty_col else None
-        stock = round(stock_by_key.get(_stock_key(name, spec), 0), 4)
+        # 🆕 #391：库存拆成「可用」与「项目占用」。建议采购量**只减可用**——
+        #   减总量的话，别的项目已经买好的料会被当成自己能用的，采购就不下单了。
+        free, held = stock_by_key.get(_stock_key(name, spec), (0.0, 0.0))
+        stock = round(free, 4)
         suggest = round(max(0.0, (qty or 0) - stock), 4) if qty is not None else 0
         out.append(schemas.PurchasableRow(
             sheet_id=ds.id, record_id=rec.id, item_name=name, spec=spec, brand=gv(brand_col),
             material=gv("材质"), drawing=gv("图纸名称"), qty=qty, stock=stock, suggest_purchase=suggest,
+            stock_project=round(held, 4),
             notes=gv("备注"), status=status,
             sheet_key=sheet_key, project_id=project_id,
             project_code=project_code, project_name=project_name))
@@ -1784,6 +1802,28 @@ async def import_suppliers(
     return {"message": msg, "created": created, "updated": updated, "errors": errors[:20]}
 
 
+def _ea_can_relock(u: models.User) -> bool:
+    """谁能改已经填过的预计到货：采购主管 / 管理层。"""
+    return u.has_role("buyer_lead", "admin", "manager")
+
+
+def _check_ea_locked(item: models.PurchaseItem, new_ea: Optional[str], u: models.User) -> None:
+    """🆕 反馈#378：预计到货**只让采购维护一次**，填过就不给自己改了。
+
+    为什么要锁：这个日期是逾期提醒和催货的唯一基准（见 agent_router 的到货预警）。
+    采购一路往后改，逾期就永远不会发生——提醒变成摆设，项目那头也永远等不到准信。
+    真要改（供应商确实改期）走采购主管/管理层，改动照旧推通知留痕。
+
+    只拦「已填 → 改成另一个值」。首次填、以及主管/管理层改，都放行。
+    """
+    old = (item.expected_arrival or "").strip() or None
+    new = (new_ea or "").strip() or None
+    if old and new != old and not _ea_can_relock(u):
+        raise HTTPException(
+            403, f"「{item.item_name}」的预计到货已填过（{old}），只能维护一次。"
+                 f"供应商确实改期请找采购主管改，会留痕通知管理层。")
+
+
 # 注意：本路由须在 PUT /items/{iid} 之前，否则 "batch-expected-arrival" 会被解析为 id 参数
 @router.put("/items/batch-expected-arrival")
 async def batch_expected_arrival(
@@ -1808,6 +1848,7 @@ async def batch_expected_arrival(
         old_ea = item.expected_arrival or None
         if old_ea == new_ea:
             continue
+        _check_ea_locked(item, new_ea, current)   # 🆕 #378 填过就不给采购自己改
         item.expected_arrival = new_ea
         if item.source_sheet_id and item.source_record_id:
             # 与单条编辑同一回写函数：保持项目详单「预计到货」列与采购明细一致
@@ -1848,6 +1889,8 @@ async def update_item(
     old_ea = item.expected_arrival or None
     ea_touched = "expected_arrival" in data
     new_ea = ((data.get("expected_arrival") or "").strip() or None) if ea_touched else old_ea
+    if ea_touched:
+        _check_ea_locked(item, new_ea, current)   # 🆕 #378 填过就不给采购自己改
     for k, v in data.items():
         setattr(item, k, v)
     if ("qty" in data or "unit_price" in data) and "received_amount" not in data:

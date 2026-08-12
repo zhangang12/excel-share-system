@@ -1273,8 +1273,12 @@ class PurchasableRow(BaseModel):
     material: Optional[str] = None       # 🆕 材质（不锈钢下料单专有列，单独成列不再塞备注）
     drawing: Optional[str] = None        # 🆕 #159/#160 图纸名称（不锈钢下料单专有；下单折进 spec 带上采购单）
     qty: Optional[float] = None          # 清单需求量
-    stock: float = 0                      # 现有库存（按名称+规格匹配物料）
-    suggest_purchase: float = 0           # 建议采购量 = 需求 - 库存
+    # 🆕 #391：stock 现在是**可用库存**（不带订单编号的通用物料），不是全部库存。
+    #   挂了项目编号的料是别的项目已经买好的，采购动不得，只作提示放在 stock_project。
+    #   生产实测 517 种有货物料里 394 种是项目料——原来一起算，采购看到"有货"就不下单。
+    stock: float = 0                      # 可用库存（通用物料，按名称+规格匹配）
+    stock_project: float = 0              # 已挂项目编号的库存（只提示，不参与建议采购）
+    suggest_purchase: float = 0           # 建议采购量 = 需求 - 可用库存
     notes: Optional[str] = None
     status: str = "未下单"          # 未下单 / 已下单 / 已到货
     # 🆕 跨项目待下单聚合用（单项目 purchasable 不填）

@@ -133,8 +133,9 @@ async def main():
             db.add(f1); await db.flush()
             rec = models.Record(datasheet_id=ds.id, values={str(f1.id): "轴承"})
             db.add(rec); await db.flush()
+            # 🆕 #378 后从**空**开始：预填的话普通采购再改会撞上「只能维护一次」的锁，
+            #   这一段验的是回写+留痕通知，不是锁本身（锁在 test_fb391_fb378.py 里验）。
             itm = models.PurchaseItem(supplier_id=sid, item_name="轴承", buyer_id=b1,
-                                      expected_arrival="2026-08-01",
                                       source_sheet_id=ds.id, source_record_id=rec.id)
             db.add(itm); await db.commit()
             ds_id, rec_id, it3, f1_id = ds.id, rec.id, itm.id, str(f1.id)

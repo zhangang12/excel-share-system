@@ -2923,8 +2923,24 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           </template>
         </el-table-column>
         <el-table-column v-if="curSheetHasQty" label="需求量" width="70" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
-        <el-table-column v-if="curSheetHasQty" label="现有库存" width="78" align="right">
-          <template #default="{ row }"><span :class="{ 'stock-has': row.stock > 0 }">{{ row.stock }}</span></template>
+        <!-- 🆕 #391（李新新）：原来这一列是**全部库存**，其中大半是别的项目已经买好、动不得的料
+             （生产实测 517 种有货物料里 394 种挂着项目编号）。采购看到"有货"就不下单 = 系统性少采。
+             现在只显示可用（不带订单编号的通用库存），项目占用另外用灰字提示。 -->
+        <el-table-column v-if="curSheetHasQty" label="可用库存" width="96" align="right">
+          <template #header>
+            <span>可用库存</span>
+            <el-tooltip placement="top" effect="dark">
+              <template #content>只算**没有订单编号**的通用库存——这些才是采购能自由支配的。<br/>挂了订单编号的料是别的项目已经买好的，灰字单独标出，不参与建议采购。</template>
+              <el-icon style="vertical-align:-2px;margin-left:3px;color:var(--text-3);cursor:help;font-size:13px"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <span :class="{ 'stock-has': row.stock > 0 }">{{ row.stock }}</span>
+            <el-tooltip v-if="row.stock_project > 0" placement="top" effect="dark"
+                        :content="`另有 ${row.stock_project} 件挂着订单编号（别的项目已采购），不能占用`">
+              <span class="muted" style="font-size:11.5px;margin-left:3px;cursor:help">+{{ row.stock_project }}项</span>
+            </el-tooltip>
+          </template>
         </el-table-column>
         <el-table-column v-if="curSheetHasQty" label="建议采购" width="80" align="right">
           <template #default="{ row }"><b :class="row.suggest_purchase > 0 ? 'sugg-buy' : 'sugg-none'">{{ row.suggest_purchase }}</b></template>
@@ -2977,7 +2993,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <template #footer>
         <div class="listorder-footer">
           <span v-if="listOrderMode === 'kit'" class="muted lo-hint">勾选的 <b>{{ listSelCount }}</b> 项零件打包成 <b>{{ kitSet.kit_qty || 0 }}</b> 套，作一条成套明细（一个总）；上方填好套名/套数/套总价/供应商。已勾选行会回写清单为「已下单」。</span>
-          <span v-else class="muted lo-hint"><b>每行必须选供应商</b>，生成时按供应商自动拆成多张采购单。<span v-if="curSheetHasQty">建议采购 = 需求量 − 现有库存，数量已默认填好可改。</span><span v-else>本清单无数量，采购数量请手填。</span></span>
+          <span v-else class="muted lo-hint"><b>每行必须选供应商</b>，生成时按供应商自动拆成多张采购单。<span v-if="curSheetHasQty">建议采购 = 需求量 − <b>可用库存</b>（只算没有订单编号的通用库存；挂了编号的是别的项目已买好的，不占用），数量已默认填好可改。</span><span v-else>本清单无数量，采购数量请手填。</span></span>
           <span class="lo-actions">
             <el-button @click="listOrderVisible = false">取消</el-button>
             <el-button v-if="listOrderMode === 'kit'" type="primary" :loading="listOrderSaving" :disabled="!listSelCount" @click="submitKitFromList">

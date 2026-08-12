@@ -66,8 +66,10 @@ async def main():
             rec_a = models.Record(datasheet_id=ds.id, values={str(f1.id): "零件甲"})
             rec_b = models.Record(datasheet_id=ds.id, values={str(f1.id): "零件乙"})
             db.add_all([rec_a, rec_b]); await db.flush()
+            # 🆕 #378 后三行都从**空**开始：批量改期的主流程验的是"首次维护"。
+            #   已填过的行由普通采购再改会被 #378 的锁拦下（本文件末尾单独验），
+            #   在这里预填等于让主流程一开始就撞锁，#297 的覆盖全丢。
             it_a = models.PurchaseItem(supplier_id=sid, item_name="零件甲", buyer_id=b1,
-                                       expected_arrival="2026-08-01",
                                        source_sheet_id=ds.id, source_record_id=rec_a.id)
             it_b = models.PurchaseItem(supplier_id=sid, item_name="零件乙", buyer_id=b1,
                                        source_sheet_id=ds.id, source_record_id=rec_b.id)
@@ -82,7 +84,7 @@ async def main():
         chk(r.status_code == 200, f"批量改期 200: {r.text[:200]}")
         if r.status_code == 200:
             chk(r.json().get("updated") == 3, f"updated=3: {r.json()}")
-            # it_a 由 2026-08-01 改、it_b 由空改 → changed=2；it_c 也是空→改，共 3
+            # 三行都是空→填，changed=3
             chk(r.json().get("changed") == 3, f"changed=3: {r.json()}")
         async with SessionLocal() as db:
             its = {i.id: i for i in (await db.execute(select(models.PurchaseItem).where(
@@ -118,8 +120,20 @@ async def main():
         chk(r.status_code == 200 and r.json().get("updated") == 2 and r.json().get("changed") == 0,
             f"重复同值批量改 changed=0: {r.text[:150]}")
 
-        # ===== 4. null = 批量清空（详单单元格同步清空） =====
+        # ===== 🆕 #378：填过之后普通采购不能再改（改期/清空都算改） =====
         r = await c.put("/api/purchase-mgmt/items/batch-expected-arrival", headers=Hb1,
+                        json={"ids": [a], "expected_arrival": "2026-10-01"})
+        chk(r.status_code == 403 and "只能维护一次" in r.text,
+            f"#378 普通采购改已填过的预计到货被拦（且拦的是这把锁）: {r.status_code} {r.text[:110]}")
+        async with SessionLocal() as db:
+            still = (await db.execute(select(models.PurchaseItem).where(
+                models.PurchaseItem.id == a))).scalar_one()
+            chk(still.expected_arrival == "2026-09-01",
+                f"#378 被拦下后日期没动: {still.expected_arrival}")
+
+        # ===== 4. null = 批量清空（详单单元格同步清空） =====
+        # ⚠️ #378 之后清空也算"改"，普通采购做不了，这里换管理层操作
+        r = await c.put("/api/purchase-mgmt/items/batch-expected-arrival", headers=H,
                         json={"ids": [a, b_], "expected_arrival": None})
         chk(r.status_code == 200 and r.json().get("changed") == 2, f"批量清空: {r.text[:150]}")
         async with SessionLocal() as db:
