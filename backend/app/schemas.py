@@ -1899,6 +1899,44 @@ class MgmtTodoCreate(BaseModel):
     recipient_ids: list[int] = Field(min_length=1)   # 勾选的收件人
 
 
+# ==================== 🆕 #363/#381/#382 个人待办 ====================
+class PersonalTodoIn(BaseModel):
+    """新建个人待办：只有 title 是必填——录入成本决定这个功能的死活。"""
+    title: str = Field(min_length=1, max_length=200)
+    note: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: str = "normal"
+    project_id: Optional[int] = None
+
+
+class PersonalTodoUpdate(BaseModel):
+    """改个人待办：只发要改的字段。project_id 显式传 null 可以摘掉项目。"""
+    title: Optional[str] = Field(default=None, max_length=200)
+    note: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: Optional[str] = None
+    project_id: Optional[int] = None
+
+
+class PersonalTodoOut(BaseModel):
+    id: int
+    title: str
+    note: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: str = "normal"
+    project_id: Optional[int] = None
+    project_code: Optional[str] = None
+    done: bool = False
+    done_at: Optional[datetime] = None
+    sort_order: int = 0
+    overdue: bool = False        # 未完成且已过截止日
+    created_at: datetime
+
+
+class PersonalTodoReorderIn(BaseModel):
+    ids: list[int] = Field(default_factory=list)   # 按新顺序排列的 id
+
+
 class MgmtTodoUpdate(BaseModel):
     """🆕 反馈#366/#380：已下发的待办要能改。
 

@@ -1092,6 +1092,36 @@ class ManagementTodo(Base):
         lazy="selectin", cascade="all, delete-orphan", back_populates="todo")
 
 
+class PersonalTodo(Base):
+    """🆕 反馈#363/#381/#382 个人待办：自己给自己记的事，只有自己看得见。
+
+    ⚠️ **刻意不与 `management_todos` 合表**。管理层待办的每一条都是有交代的管理动作，
+    它的「承诺完成时间 / 进度 / 延期审批」是留痕证据，删不得；个人待办随手记随手删。
+    合表的后果二选一：要么个人待办被迫填一堆用不上的字段（没人会用），
+    要么管理层待办的留痕被个人待办的随意删除污染。所以这里只有最少的字段，
+    没有收件人、没有承诺时间、没有进度、没有延期——加任何一个都是在把它变成第二个管理层待办。
+
+    业务已确认（2026-08-12）：要挂项目、要紧急档、到期当天推一次企微、
+    右下角角标 = 管理层待办未回复 + 个人待办未完成（合成一个数）。
+    """
+    __tablename__ = "personal_todos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # ⚠️ 每个接口都要 where(user_id == current.id)，不能只在列表接口过滤——
+    #    只滤列表、详情/改/删按 id 直接取，是最典型的越权口子（换个 id 就能改别人的）。
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    note: Mapped[Optional[str]] = mapped_column(Text)
+    due_date: Mapped[Optional[str]] = mapped_column(String(10))          # YYYY-MM-DD，空=没期限
+    priority: Mapped[str] = mapped_column(String(8), default="normal")   # normal/urgent
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), index=True)
+    done: Mapped[bool] = mapped_column(default=False, index=True)
+    done_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    sort_order: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    project: Mapped[Optional["Project"]] = relationship(lazy="joined")
+
+
 class ManagementTodoTarget(Base):
     """🆕 管理层待办·单个收件人的处理态：一行 = 一个人对一条待办。
     status: pending(待回复承诺时间) → committed(已承诺) → done(已完成)。

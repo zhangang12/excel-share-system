@@ -401,6 +401,44 @@ async def scan_po_arrival_overdue(db: AsyncSession) -> dict:
     return {"scanned": len(items), "notified": notified}
 
 
+async def scan_personal_todos(db: AsyncSession) -> dict:
+    """🆕 反馈#363/#381/#382 个人待办到期提醒：**到期当天推一次**（业务 2026-08-12 确认）。
+
+    ⚠️ 刻意只推到期当天这一次，不做"逾期后天天推"。个人待办是自己给自己设的闹钟，
+    天天推会让人把整个系统的通知一起静音——采购到货提醒 2026-07-26 就栽在这上面。
+    过期没做完的在自己列表里标红即可（`PersonalTodoOut.overdue`），不再骚扰。
+
+    幂等键 =(biz_type='personal_todo_due', biz_id=todo.id, 当日)：同一条同一天只推一次。
+    """
+    today_s = datetime.now(_CN_TZ).date().isoformat()
+    r = await db.execute(
+        select(models.PersonalTodo).where(
+            models.PersonalTodo.done == False,          # noqa: E712
+            models.PersonalTodo.due_date == today_s,
+        )
+    )
+    todos = list(r.scalars().all())
+    notified = 0
+    for t in todos:
+        r2 = await db.execute(
+            select(models.Message.created_at).where(
+                models.Message.biz_type == "personal_todo_due",
+                models.Message.biz_id == t.id,
+            )
+        )
+        if any(ts and _cn_date(ts) == today_s for (ts,) in r2.all()):
+            continue
+        pj = f"（{t.project.code}）" if t.project else ""
+        urg = "【紧急】" if t.priority == "urgent" else ""
+        await push_message(db, to_user_id=t.user_id, kind="wx",
+                           text=f"{urg}【个人待办今天到期】{t.title}{pj}",
+                           biz_type="personal_todo_due", biz_id=t.id)
+        notified += 1
+    if notified:
+        log.info("[scan_personal_todos] 推送 %d 条个人待办到期提醒（共扫描 %d）", notified, len(todos))
+    return {"scanned": len(todos), "notified": notified}
+
+
 def _try_acquire_scheduler_lock():
     """多 worker(uvicorn --workers N)部署时用 flock 保证只有一个进程跑周期扫描：
     否则 N 个 worker 同时醒来会同时通过 messages 表的当日去重检查(check-then-act 竞态)，
@@ -460,4 +498,9 @@ async def overdue_scheduler(interval_hours: int = 12) -> None:
                 await scan_po_arrival_overdue(db)
         except Exception as e:  # noqa: BLE001
             log.warning("scan_po_arrival_overdue 失败: %s", e)
+        try:
+            async with SessionLocal() as db:
+                await scan_personal_todos(db)   # 🆕 #363 个人待办到期当天推一次
+        except Exception as e:  # noqa: BLE001
+            log.warning("scan_personal_todos 失败: %s", e)
         await asyncio.sleep(interval_hours * 3600)
