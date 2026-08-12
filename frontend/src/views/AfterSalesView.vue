@@ -51,6 +51,24 @@ async function load() {
 }
 onMounted(load)
 
+// 🆕 反馈#392（杨坛）：台账加 类型 / 项目编号 / 提交人 筛选。
+// 整张表本来就是一次 /aftersales 取回全量（线上 4 条，量级不成问题），
+// 所以在前端过滤即可，不动后端——加分页/服务端筛选反而要重做加载与统计口径。
+// 下拉选项从数据里现算，不写死：新来的提交人/项目自动出现在选项里。
+const fKind = ref('')
+const fCode = ref('')
+const fUser = ref('')
+const codeOptions = computed(() =>
+  [...new Set(rows.value.map(r => r.code).filter(Boolean))].sort())
+const userOptions = computed(() =>
+  [...new Set(rows.value.map(r => r.created_by_name || '').filter(Boolean))].sort())
+const filteredRows = computed(() => rows.value.filter(r =>
+  (!fKind.value || r.kind === fKind.value)
+  && (!fCode.value || r.code === fCode.value)
+  && (!fUser.value || (r.created_by_name || '') === fUser.value)))
+const hasFilter = computed(() => !!(fKind.value || fCode.value || fUser.value))
+function clearFilters() { fKind.value = ''; fCode.value = ''; fUser.value = '' }
+
 const STATUS_TXT: Record<string, string> = { pending: '待审批', approved: '已审批', rejected: '已驳回' }
 const STATUS_TAG: Record<string, any> = { pending: 'warning', approved: 'success', rejected: 'danger' }
 const STATUS_VARIANT: Record<string, 'warn' | 'success' | 'danger' | 'muted'> = { pending: 'warn', approved: 'success', rejected: 'danger' }
@@ -297,7 +315,23 @@ async function approve(r: Row, ok: boolean) {
 
     <el-card shadow="never">
       <template #header>📋 安装/售后登记台账</template>
-      <el-table show-overflow-tooltip :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+      <!-- 🆕 #392（杨坛）：类型 / 项目编号 / 提交人 筛选 -->
+      <div class="as-filters">
+        <el-select v-model="fKind" clearable placeholder="全部类型" size="small" style="width:110px">
+          <el-option label="售后" value="aftersales" />
+          <el-option label="安装" value="install" />
+        </el-select>
+        <el-select v-model="fCode" clearable filterable placeholder="全部项目编号" size="small" style="width:170px">
+          <el-option v-for="c in codeOptions" :key="c" :label="c" :value="c" />
+        </el-select>
+        <el-select v-model="fUser" clearable filterable placeholder="全部提交人" size="small" style="width:140px">
+          <el-option v-for="u in userOptions" :key="u" :label="u" :value="u" />
+        </el-select>
+        <el-button v-if="hasFilter" link size="small" @click="clearFilters">清空筛选</el-button>
+        <span v-if="hasFilter" class="muted small">命中 {{ filteredRows.length }} / {{ rows.length }} 条</span>
+        <span v-else class="muted small">共 {{ rows.length }} 条</span>
+      </div>
+      <el-table show-overflow-tooltip :data="filteredRows" stripe v-loading="loading" max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
         <!-- 反馈#357：费用清单放展开行（与财务部那张表同口径）。
              一条售后动辄三五行费用，摊成列会把表挤到要横向滚动。 -->
         <el-table-column type="expand">
@@ -488,6 +522,8 @@ async function approve(r: Row, ok: boolean) {
   .cost-row .c-name { flex-basis: 100%; }
 }
 .code { color: var(--primary, #2563eb); }
+/* 🆕 #392 台账筛选条 */
+.as-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }
 .kpi-grid { margin-bottom: 14px; }

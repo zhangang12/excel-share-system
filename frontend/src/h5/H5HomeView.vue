@@ -126,7 +126,14 @@ const ask = (t: Tile) => {
 }
 const openChat = () => router.push({ name: 'chat' })
 function logout() { clearSession(); router.replace('/login') }
-onMounted(load)
+// 🆕 #382 待办角标：只取个数，失败静默（首页不该因为一个角标报错）
+const todoCount = ref(0)
+async function loadTodoCount() {
+  try { todoCount.value = (await http.get<{ count: number }>('/personal-todos/count')).data.count }
+  catch { todoCount.value = 0 }
+}
+
+onMounted(() => { load(); loadTodoCount() })
 </script>
 
 <template>
@@ -144,6 +151,10 @@ onMounted(load)
           </button>
         </template>
         <template v-else>
+          <!-- 🆕 #382 个人待办入口：独立一页，不挤占首页内容区 -->
+          <button class="tbtn" @click="router.push({ name: 'todos' })">
+            待办<b v-if="todoCount > 0" class="tdot">{{ todoCount > 99 ? '99+' : todoCount }}</b>
+          </button>
           <button class="tbtn" @click="editing = true">定制</button>
           <button class="more" @click="logout" aria-label="退出">···</button>
         </template>
@@ -239,6 +250,12 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 🆕 #382 待办入口角标 */
+.tdot {
+  display: inline-block; min-width: 16px; height: 16px; line-height: 16px;
+  padding: 0 4px; margin-left: 4px; border-radius: 999px;
+  background: #dc2626; color: #fff; font-size: 11px; font-weight: 700; text-align: center;
+}
 .brief {
   background: rgba(255,255,255,.7); border: 1px solid rgba(255,255,255,.85);
   border-radius: var(--h5-r-panel); box-shadow: var(--h5-sh-raised);
