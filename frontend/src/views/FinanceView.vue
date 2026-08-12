@@ -557,23 +557,49 @@ async function voidPendingInvoice(row: ViewRow) {
   }
 }
 
+// 🆕 2026-08-13：安装/售后费用加 类型 / 项目编号 / 提交人 筛选。
+//   与售后部那张台账同一套做法：整表本来就是一次 /finance/aftersales 取回全量，前端过滤即可。
+//   下拉选项从数据现算，新来的人/项目自动进选项。
+const fAsKind = ref('')
+const fAsCode = ref('')
+const fAsUser = ref('')
+const asCodeOptions = computed(() =>
+  [...new Set(aftersales.value.map(r => r.code).filter(Boolean))].sort())
+const asUserOptions = computed(() =>
+  [...new Set(aftersales.value.map(r => r.created_by_name || '').filter(Boolean))].sort())
+const filteredAftersales = computed(() => aftersales.value.filter(r =>
+  (!fAsKind.value || r.kind === fAsKind.value)
+  && (!fAsCode.value || r.code === fAsCode.value)
+  && (!fAsUser.value || (r.created_by_name || '') === fAsUser.value)))
+const hasAsFilter = computed(() => !!(fAsKind.value || fAsCode.value || fAsUser.value))
+function clearAsFilters() { fAsKind.value = ''; fAsCode.value = ''; fAsUser.value = '' }
+// ⚠️ 表底「合计」必须跟着筛选走，否则筛完只剩 1 行、合计还是全量，那就是个错数。
+//   后端 stats.approved_cost 本来就是 sum(rows.cost)（finance_router:99），
+//   所以不筛的时候按可见行加也和原来一致。
+const asShownTotal = computed(() =>
+  filteredAftersales.value.reduce((s, r) => s + (r.cost || 0), 0))
+
 // 🆕 售后报销：核对发票 → 安排报销 / 发票退回
 const asActing = ref<number | null>(null)
 
 async function asReimburse(row: AsRow) {
-  if (row.missing_invoice) {
-    ElMessage.warning(`还有 ${row.missing_invoice} 行没传发票，请先退回让登记人补齐`)
-    return
-  }
+  // 🆕 2026-08-13：缺发票**不再拦**（有的报销本来就没票，比如差旅零星支出、个人垫付小件）。
+  //   原来这里 return 掉，财务只能一直退回、单子永远走不完——拦不住乱报，只拦住了正常报销。
+  //   改成二次确认时把缺几张写在弹窗里，确认后照走；后端也会把"缺 N 张仍安排报销"记进审计。
+  const warn = row.missing_invoice
+    ? `\n\n⚠️ 其中 ${row.missing_invoice} 行没有发票，确认后仍会安排报销（此操作会记入审计）。`
+    : ''
   try {
     await ElMessageBox.confirm(
-      `确认「${row.code}」的报销明细与发票核对无误，安排报销 ${fmtMoney(row.cost)}？`,
-      '安排报销', { confirmButtonText: '核对无误，安排报销' })
+      `确认「${row.code}」的报销明细核对无误，安排报销 ${fmtMoney(row.cost)}？${warn}`,
+      '安排报销',
+      { confirmButtonText: '核对无误，安排报销',
+        type: row.missing_invoice ? 'warning' : undefined })
   } catch { return }
   asActing.value = row.id
   try {
-    await http.post(`/aftersales/${row.id}/reimburse`, new FormData())
-    ElMessage.success('已安排报销')
+    const r = await http.post<{ message: string }>(`/aftersales/${row.id}/reimburse`, new FormData())
+    ElMessage.success(r.data?.message || '已安排报销')
     await load()
   } finally { asActing.value = null }
 }
@@ -708,7 +734,27 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <el-tab-pane v-if="tv('aftersales')" :label="`🛎️ 安装/售后费用 (${aftersales.length})`" name="aftersales">
-          <el-table show-overflow-tooltip :data="aftersales" stripe show-summary :summary-method="() => ['', '合计', '', '', '', '', '', fmtMoney(asTotal), '', '', '']" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <!-- 🆕 2026-08-13：类型 / 项目编号 / 提交人 筛选 -->
+          <div class="as-filters">
+            <el-select v-model="fAsKind" clearable placeholder="全部类型" size="small" style="width:110px">
+              <el-option label="售后" value="aftersales" />
+              <el-option label="安装" value="install" />
+            </el-select>
+            <el-select v-model="fAsCode" clearable filterable placeholder="全部项目编号" size="small" style="width:180px">
+              <el-option v-for="c in asCodeOptions" :key="c" :label="c" :value="c" />
+            </el-select>
+            <el-select v-model="fAsUser" clearable filterable placeholder="全部提交人" size="small" style="width:140px">
+              <el-option v-for="u in asUserOptions" :key="u" :label="u" :value="u" />
+            </el-select>
+            <el-button v-if="hasAsFilter" link size="small" @click="clearAsFilters">清空筛选</el-button>
+            <span class="muted small">
+              <template v-if="hasAsFilter">命中 {{ filteredAftersales.length }} / {{ aftersales.length }} 条</template>
+              <template v-else>共 {{ aftersales.length }} 条</template>
+            </span>
+          </div>
+          <!-- ⚠️ summary-method 是**按数组下标**对列的：这张表 11 列，合计落在下标 7（费用）。
+               加/删列必须同步改这个数组，否则「合计」会落到隔壁列上（#361 踩过）。 -->
+          <el-table show-overflow-tooltip :data="filteredAftersales" stripe show-summary :summary-method="() => ['', '合计', '', '', '', '', '', fmtMoney(asShownTotal), '', '', '']" max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
             <!-- 明细放展开行：一条售后动辄三五行费用，摊成列会把表挤到要横向滚动 -->
             <el-table-column type="expand">
               <template #default="{ row }">
@@ -777,7 +823,7 @@ async function revokeInvoice(row: ViewRow) {
               </template>
             </el-table-column>
           </el-table>
-          <EmptyHint v-if="!aftersales.length" text="暂无已审批售后费用（售后部审批后自动同步）" />
+          <EmptyHint v-if="!filteredAftersales.length" :text="hasAsFilter ? '当前筛选没有匹配的记录' : '暂无已审批售后费用（售后部审批后自动同步）'" />
         </el-tab-pane>
 
         <el-tab-pane v-if="tv('pay_requests')" :label="`💰 请款审批 (${prCounts.pending})`" name="pay_requests">
@@ -1478,6 +1524,8 @@ async function revokeInvoice(row: ViewRow) {
 </template>
 
 <style scoped>
+/* 🆕 安装/售后费用筛选条 */
+.as-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .as-detail { padding: 6px 18px 8px; }
 .as-item { display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 2; }
 .as-item .as-nm { min-width: 90px; }

@@ -10,7 +10,9 @@
      改完直接回财务这一步，不用主管再批一遍
   3. 退回发票**不能动 status**——费用已经被主管认过了，退的是发票不是费用。
      打回 pending 会让这笔钱从售后成本里消失，月底对不上
-  4. 还有行没传发票时不许点「安排报销」
+  4. 🆕 2026-08-13 业务要求**取消发票硬闸**：缺发票也能安排报销（有的报销本来就没票——
+     差旅零星支出、个人垫付小件）。原来卡着，财务只能一直退回、单子永远走不完。
+     缺票不拦，但要**写进审计留痕**（谁批的、批时缺几张）
   5. 成本口径：审批通过即计入（**含 pending_payment**，那也是审批完的）；
      金额按核定金额、为空回退申请金额；采购申请不计
   6. **售后成本只认售后登记**，售后部走 OA 的存量报销单不并进合计（否则重复）
@@ -113,9 +115,32 @@ async def main():
         chk(row["status"] == "approved", f"status=approved（成本口径）: {row['status']}")
         chk(row["pay_status"] == "checking", f"pay_status=checking（待财务核对）: {row['pay_status']}")
 
-        # ===== 4) 还有行没发票，不许安排报销 =====
-        r = await c.post(f"/api/aftersales/{aid}/reimburse", headers=Hf, data={})
-        chk(r.status_code == 400 and "没传发票" in r.text, f"缺发票不许报销: {r.status_code} {r.text[:90]}")
+        # ===== 4) 🆕 缺发票**也能**安排报销（业务 2026-08-13 明确取消这道硬闸）=====
+        #   注意这里只验"能过"，不真的把单子推到 reimbursed——后面 2b/2c 还要继续
+        #   验退回重传的链路，提前终结状态机会把后面那几段全废掉。
+        #   所以先在另一条记录上验，本条继续走退回流程。
+        r2 = await c.post("/api/aftersales", headers=Hw,
+                          data={"project_id": pid, "problem": "没票的零星差旅",
+                                "items": json.dumps([{"name": "打车", "amount": 88}],
+                                                    ensure_ascii=False)},
+                          files=_f("物料清单2.pdf"))   # 登记必传物料清单
+        chk(r2.status_code == 200, f"另建一条无票记录: {r2.status_code} {r2.text[:90]}")
+        lst2 = (await c.get("/api/aftersales", headers=Hw)).json()["rows"]
+        aid2 = [x for x in lst2 if x["problem"] == "没票的零星差旅"][0]["id"]
+        chk((await c.post(f"/api/aftersales/{aid2}/approve", headers=Hl)).status_code == 200, "主管审批无票那条")
+        row2 = [x for x in (await c.get("/api/aftersales", headers=Hf)).json()["rows"] if x["id"] == aid2][0]
+        chk(row2["missing_invoice"] == 1, f"确认它确实缺票: {row2['missing_invoice']}")
+        r2 = await c.post(f"/api/aftersales/{aid2}/reimburse", headers=Hf, data={})
+        chk(r2.status_code == 200,
+            f"4) **缺发票也能安排报销**（硬闸已取消）: {r2.status_code} {r2.text[:110]}")
+        chk("无发票" in r2.json()["message"],
+            f"4) 返回里点明缺票已记入审计: {r2.json()['message']}")
+        async with SessionLocal() as db:
+            al = list((await db.execute(select(models.AuditLog).where(
+                models.AuditLog.action == "reimburse",
+                models.AuditLog.target_id == aid2))).scalars().all())
+        chk(len(al) == 1 and "缺 1 张发票" in (al[0].detail or ""),
+            f"4) 审计留痕写明缺几张（不拦不等于不留痕）: {[a.detail for a in al]}")
 
         # ===== 2b) 财务退回 → 登记人重传 =====
         r = await c.post(f"/api/aftersales/{aid}/pay-reject", headers=Hf, data={"reason": ""})
@@ -211,8 +236,10 @@ async def main():
         by = cost["by_center"]
         chk(abs(by.get("销售成本", 0) - 800) < 0.01,
             f"销售成本按核定金额 800（不是申请的 1000）: {by.get('销售成本')}")
-        chk(abs(by.get("售后成本", 0) - 1349.5) < 0.01,
-            f"售后成本 = 售后登记的 1349.5，只此一个来源: {by.get('售后成本')}")
+        # 1349.5(主记录) + 88(第 4 段验"缺票也能报销"时新建的那条无票记录，也是已审批的售后登记)
+        chk(abs(by.get("售后成本", 0) - 1437.5) < 0.01,
+            f"售后成本 = 两条售后登记 1349.5+88=1437.5，只此一个来源（OA 报销单不并进来）: "
+            f"{by.get('售后成本')}")
         srcs = {(r_["cost_center"], r_["source"]) for r_ in cost["rows"]}
         chk(("售后成本", "aftersales") in srcs, "售后成本来自售后登记")
         chk(("售后成本", "oa_reimbursement") not in srcs,
