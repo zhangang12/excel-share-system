@@ -167,7 +167,11 @@ class OrderOut(BaseModel):
     overdue: bool = False              # 进行中且超预计 / 完成且逾期
     created_at: datetime
     design_done_flag:   bool = False  # 🆕 设计完成第一步标记
-    electric_done_flag: bool = False  # 🆕 接线完成第一步标记
+    # 🆕 电工三步流：主板完成(结考核) → 电路完成(status=done,发货放行) → 上传电路图(必传不卡)
+    mainboard_done_flag: bool = False
+    wire_done_date: Optional[str] = None   # 电路完成日（done_date 是主板完成日=考核日）
+    has_circuit: bool = False              # 第三步：电路图传了没（给界面催传用）
+    electric_done_flag: bool = False  # 电工三步流第二步：电路完成（旧名「接线完成」）
     ship_prep_done:     bool = False  # 🆕 #5 设计部发货准备完成标记
     packlist_status: Optional[str] = None  # 🆕 发货清单：none/requested/ready（仅设计部任务所属项目有意义）
     input_files: list[AttachmentOut] = []

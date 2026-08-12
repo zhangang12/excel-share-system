@@ -32,6 +32,10 @@ export interface DeptOrder {
   overdue: boolean
   created_at: string
   design_done_flag: boolean
+  // 🆕 电工三步流：主板完成(结考核) → 电路完成(status=done,发货放行) → 上传电路图(必传不卡)
+  mainboard_done_flag: boolean
+  wire_done_date?: string | null   // 电路完成日；done_date 是主板完成日=考核日
+  has_circuit: boolean             // 第三步：电路图传了没
   electric_done_flag: boolean
   ship_prep_done: boolean
   packlist_status?: string | null   // 🆕 发货清单：none/requested/ready
@@ -143,7 +147,9 @@ export const ordersApi = {
   // 🆕 设计完成第一步：CAD图纸+外购附图+四表齐才可点
   markDesignDone: (id: number) => http.post(`/orders/${id}/design_done`).then((r) => r.data),
 
-  // 🆕 接线完成第一步：采购清单上传后才可点
+  // 🆕 电工三步流第一步：主板完成 → 结考核（done_date/效率/逾期都按这一刻算），状态仍进行中
+  markMainboardDone: (id: number) => http.post(`/orders/${id}/mainboard_done`).then((r) => r.data),
+  // 🆕 电工三步流第二步：电路完成 → status=done，物流发货闸门放行（不再改考核日期）
   markElectricDone: (id: number) => http.post(`/orders/${id}/electric_done`).then((r) => r.data),
 }
 

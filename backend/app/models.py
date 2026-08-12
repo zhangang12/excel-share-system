@@ -245,7 +245,15 @@ class DeptOrder(Base):
     done_date: Mapped[Optional[str]] = mapped_column(String(10))
     notify_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     design_done_flag:   Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 设计完成第一步
-    electric_done_flag: Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 接线完成第一步
+    # 🆕 电工部三步流（2026-08-12 业务确认）：主板完成 → 电路完成 → 上传电路图
+    #   ⚠️ 两个日期不是一回事，别合并：
+    #     done_date       = **主板完成**日 → 考核（效率/按时/逾期）只认它，due_date 也对着它
+    #     wire_done_date  = **电路完成**日 → 这一刻才 status=done，物流 D5 闸门才放行
+    #   电路图(circuit 附件)是第三步、必传，但**只在界面上催，不参与 status**——
+    #   否则电工忘传图就会把整个项目的发货顶住（电工部现存 16 条逾期，最久 47 天）。
+    mainboard_done_flag: Mapped[bool] = mapped_column(Boolean, default=False)   # 第一步：主板完成（结考核）
+    wire_done_date: Mapped[Optional[str]] = mapped_column(String(10))           # 第二步：电路完成日
+    electric_done_flag: Mapped[bool] = mapped_column(Boolean, default=False)  # 第二步：电路完成（旧名「接线完成」）
     ship_prep_done:     Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 #5 设计部发货准备(说明书/铭牌)完成
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

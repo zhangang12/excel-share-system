@@ -50,6 +50,19 @@ class OverdueItem(BaseModel):
     eff: Optional[int] = None
 
 
+def _kpi_done(o: models.DeptOrder) -> bool:
+    """这一单在**考核口径**上算不算完成。
+
+    🆕 电工三步流之后，考核完成 ≠ 部门完成，别再直接写 `o.status == "done"`：
+      · 主板完成 → done_date 已写、效率已定 → **考核上就算完成了**，status 还是 in_progress
+      · 电路完成 → status=done（那是给物流发货闸门看的）
+    只按 status 判的话，主板按时完成、电路还在做的单子会从当月报表里凭空消失，
+    按时率的分子分母一起少，数字看着还挺正常——这种错最难发现。
+    """
+    return o.status == "done" or (o.dept == "electric"
+                                  and getattr(o, "mainboard_done_flag", False))
+
+
 def _agg_workers(orders: list[models.DeptOrder]) -> tuple[list[WorkerStat], list[OverdueItem]]:
     by: dict[tuple, dict] = {}
     overdue: list[OverdueItem] = []
@@ -61,7 +74,7 @@ def _agg_workers(orders: list[models.DeptOrder]) -> tuple[list[WorkerStat], list
         r = by.setdefault(key, {"dept": o.dept, "name": wname, "total": 0, "done": 0,
                                 "ontime": 0, "over": 0, "effs": []})
         r["total"] += 1
-        if o.status == "done":
+        if _kpi_done(o):
             r["done"] += 1
             eff, on_time, over_days = compute_efficiency(o.start_date, o.due_date, o.done_date)
             if eff is not None:
@@ -198,7 +211,7 @@ async def monthly(
     orders = [o for o in all_orders if o.created_at and o.created_at.strftime("%Y-%m") == ym]
 
     stats, overdue_items = _agg_workers(orders)
-    done = [o for o in orders if o.status == "done"]
+    done = [o for o in orders if _kpi_done(o)]
     effs = []
     ontime = 0
     for o in done:
@@ -226,7 +239,7 @@ async def monthly(
             })
             continue
         ds = [o for o in orders if o.dept == dept and o.status not in ("voided", "pending_assign")]
-        dd = [o for o in ds if o.status == "done"]
+        dd = [o for o in ds if _kpi_done(o)]
         de = [compute_efficiency(o.start_date, o.due_date, o.done_date) for o in dd]
         de_eff = [x[0] for x in de if x[0] is not None]
         d_ontime = sum(1 for x in de if x[1])
@@ -309,7 +322,7 @@ async def dept_report(
     r = await db.execute(q)
     orders = [o for o in r.scalars().all() if o.status not in ("voided", "pending_assign")]
     stats, overdue_items = _agg_workers(orders)
-    done = [o for o in orders if o.status == "done"]
+    done = [o for o in orders if _kpi_done(o)]
     effs, ontime = [], 0
     for o in done:
         eff, on_time, _ = compute_efficiency(o.start_date, o.due_date, o.done_date)

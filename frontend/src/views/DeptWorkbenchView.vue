@@ -398,19 +398,29 @@ async function doDesignDone(o: DeptOrder) {
   }
 }
 
-// 🆕 电工部两步完成流
+// 🆕 电工部三步完成流（2026-08-12 业务确认）：主板完成 → 电路完成 → 上传电路图
+//   第一步结考核（done_date/效率/逾期都按主板完成那天算，预计完成也是对着它定的）；
+//   第二步才 status=done、物流发货闸门放行；
+//   第三步电路图必传，但只在这里催，不拦第二步——忘传图不该把整个项目的发货顶住。
+const markingMainboardDone = ref<number | null>(null)
 const markingElectricDone = ref<number | null>(null)
-function canElectricDone(o: DeptOrder) {
-  return o.status === 'in_progress' && !o.electric_done_flag  // 🆕 #4 采购清单可选
-}
-function canElectricShipReady(o: DeptOrder) {
-  return o.electric_done_flag  // 🆕 #4 电路图可选，接线完成后即可完成
+async function doMainboardDone(o: DeptOrder) {
+  markingMainboardDone.value = o.id
+  try {
+    const r: any = await ordersApi.markMainboardDone(o.id)
+    ElMessage.success(r?.message || '主板完成，已计入考核')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  } finally {
+    markingMainboardDone.value = null
+  }
 }
 async function doElectricDone(o: DeptOrder) {
   markingElectricDone.value = o.id
   try {
     const r: any = await ordersApi.markElectricDone(o.id)
-    ElMessage.success(r?.message || '接线完成，已计入考核。可先在当前卡片上传电路图并推送物流，也可到「已完成」补传')
+    ElMessage.success(r?.message || '电路完成，本项目发货闸门已放行')
     await load()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
@@ -1134,21 +1144,35 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                       </div>
                     </div>
                   </div>
-                  <!-- 第一步：接线完成（采购清单已上传） -->
-                  <template v-if="!o.electric_done_flag">
+                  <!-- 🆕 电工三步流：主板完成 → 电路完成 → 上传电路图。
+                       原来那段「发货准备完成」是死代码（接线完成已经把单子置 done，
+                       那个分支只有存量老单能走到），一并删掉。 -->
+                  <div class="estep">
+                    <span class="estep-i" :class="{ on: o.mainboard_done_flag }">1 主板</span>
+                    <span class="estep-l"></span>
+                    <span class="estep-i" :class="{ on: o.electric_done_flag }">2 电路</span>
+                    <span class="estep-l"></span>
+                    <span class="estep-i" :class="{ on: o.has_circuit }">3 电路图</span>
+                  </div>
+                  <!-- 第一步：主板完成 = 结考核 -->
+                  <template v-if="!o.mainboard_done_flag">
                     <el-button type="primary" size="small" :icon="Check"
-                               :disabled="!canElectricDone(o)"
-                               :loading="markingElectricDone === o.id"
-                               @click="doElectricDone(o)">接线完成</el-button>
-                    <div v-if="!canElectricDone(o)" class="tc-hint">需上传采购清单</div>
+                               :loading="markingMainboardDone === o.id"
+                               @click="doMainboardDone(o)">主板完成</el-button>
+                    <div class="tc-hint">点了就按今天计考核（效率/逾期都按这一步算）</div>
                   </template>
-                  <!-- 第二步：发货准备（存量二步流单子；电路图上方卡片可继续补传/推送） -->
+                  <!-- 第二步：电路完成 = 部门完成、发货闸门放行 -->
                   <template v-else>
-                    <el-tag type="success" size="small" style="margin-bottom:8px">✅ 接线已完成</el-tag>
+                    <el-tag type="success" size="small" style="margin-bottom:8px">
+                      ✅ 主板已完成（{{ o.done_date }} 计考核）
+                    </el-tag>
                     <el-button type="success" size="small" :icon="Check"
-                               :disabled="!canElectricShipReady(o)"
-                               @click="openComplete(o)">发货准备完成</el-button>
-                    <div v-if="!canElectricShipReady(o)" class="tc-hint">需上传电路图</div>
+                               :loading="markingElectricDone === o.id"
+                               @click="doElectricDone(o)">电路完成</el-button>
+                    <div class="tc-hint">
+                      点完本项目才可发货；<b v-if="!o.has_circuit" style="color:var(--el-color-warning)">电路图还没传</b>
+                      <span v-else>电路图已传 ✅</span>
+                    </div>
                   </template>
                 </template>
                 <!-- 其他部门：原完成按钮 -->
@@ -2009,6 +2033,15 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
 .tc-dates .fd { flex: 1; }
 .tc-dates label { font-size: 12px; color: var(--el-text-color-secondary); display: block; margin-bottom: 4px; }
 .tc-hint { font-size: 11.5px; color: var(--el-text-color-placeholder); margin: 2px 0 8px; }
+/* 🆕 电工三步流进度条：一眼看出卡在哪一步 */
+.estep { display: flex; align-items: center; gap: 4px; margin: 4px 0 8px; }
+.estep-i {
+  font-size: 11px; padding: 2px 7px; border-radius: 999px;
+  background: var(--el-fill-color-light); color: var(--el-text-color-secondary);
+  border: 1px solid var(--el-border-color-lighter); white-space: nowrap;
+}
+.estep-i.on { background: #16a34a; border-color: #16a34a; color: #fff; }
+.estep-l { flex: 1; height: 1px; background: var(--el-border-color-lighter); min-width: 6px; }
 .tc-kv { font-size: 12.5px; color: var(--el-text-color-secondary); margin: 6px 0 10px; }
 .tc-kv b { color: var(--el-text-color-primary); }
 .up-sec {

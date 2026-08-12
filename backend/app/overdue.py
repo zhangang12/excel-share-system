@@ -42,7 +42,11 @@ async def scan_overdue(db: AsyncSession) -> dict:
             models.DeptOrder.due_date < today_s,
         )
     )
-    orders = list(r.scalars().all())
+    # 🆕 电工三步流：主板完成那一刻考核就结了（done_date 已写、效率已算、逾期已提醒过一次），
+    #   但 status 要等电路完成才置 done。不排掉的话，这批单子会被当成"进行中且超期"
+    #   **每天继续报逾期**——考核都结了还天天挨骂，提醒就废了。
+    orders = [o for o in r.scalars().all()
+              if not (o.dept == "electric" and getattr(o, "mainboard_done_flag", False))]
     notified = 0
     for o in orders:
         # 幂等：该任务今日是否已推过逾期提醒（查 messages biz_type=order_overdue 当日）
