@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow, type WhCustomField , type WhLocation } from '@/api/warehouse'
 import { canInlinePreview, attachmentBlobUrl, isPdfAtt, isImageAtt } from '@/api/attachments'
 import { downloadAttachment } from '@/api/orders'
+import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'
@@ -1404,7 +1405,11 @@ function applyPoPick() {
             </div>
             <el-table show-overflow-tooltip :data="filteredDemandOverview" v-loading="demandOverviewLoading" stripe size="small"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl" :fit="false">
-              <el-table-column label="项目编号" width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
+              <!-- 🆕 #385 全流程进度同步到所有带项目编号的部门 -->
+              <el-table-column label="项目编号" width="160"><template #default="{ row }">
+                <b class="code">{{ row.code }}</b>
+                <ProjectFlowButton :project-id="row.project_id" :code="row.code" />
+              </template></el-table-column>
               <el-table-column prop="name" label="项目名称" min-width="200" show-overflow-tooltip />
               <el-table-column label="物料行数" width="100" align="right"><template #default="{ row }">{{ row.total_lines }}</template></el-table-column>
               <el-table-column label="待出库" width="110" align="center">

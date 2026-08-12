@@ -21,6 +21,7 @@ import FeedbackPanel from '@/components/FeedbackPanel.vue'
 import AttachmentPackDialog from '@/components/AttachmentPackDialog.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'
 import StockQueryDialog from '@/components/StockQueryDialog.vue'
+import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtDate } from '@/utils/format'
@@ -1250,8 +1251,13 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
 
         <el-tab-pane v-if="isLead || isMgr" label="📋 任务跟踪" name="track">
           <el-table show-overflow-tooltip :data="trackingList" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-            <el-table-column label="项目编号" min-width="112">
-              <template #default="{ row }"><b>{{ row.project_code }}</b></template>
+            <!-- 🆕 #385 全流程进度同步到所有带项目编号的部门：主管盯进度时最需要看
+                 上下游卡在哪一环，不用再切到销售台账去查 -->
+            <el-table-column label="项目编号" min-width="152">
+              <template #default="{ row }">
+                <b>{{ row.project_code }}</b>
+                <ProjectFlowButton :project-id="row.project_id" :code="row.project_code" />
+              </template>
             </el-table-column>
             <el-table-column prop="project_name" label="项目名称" min-width="180" show-overflow-tooltip />
             <el-table-column label="材料库位" min-width="120">

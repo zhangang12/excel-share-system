@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'   // 🆕 #245/#246 请购单直传文件下载
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
+import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
 import EmptyHint from '@/components/EmptyHint.vue'
 import LineChart from '@/components/LineChart.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'   // 🆕 反馈#296 凭证/回执在线预览
@@ -2118,8 +2119,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
           <el-table show-overflow-tooltip :data="purchaseRows" stripe v-loading="purchaseLoading" max-height="max(320px, calc(100vh - 310px))" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column type="index" label="#" width="50" fixed />
-            <el-table-column label="项目编号" width="116" fixed>
-              <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
+            <!-- 🆕 #385 全流程进度同步到所有带项目编号的部门 -->
+            <el-table-column label="项目编号" width="156" fixed>
+              <template #default="{ row }">
+                <b class="code">{{ row.code }}</b>
+                <ProjectFlowButton :project-id="row.project_id" :code="row.code" />
+              </template>
             </el-table-column>
             <el-table-column prop="name" label="项目名称" min-width="190" />
             <el-table-column v-if="showDesigner" label="设计师" min-width="90" align="center">

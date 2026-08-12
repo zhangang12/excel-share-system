@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { fmtMoney } from '@/api/sales'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
+import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
 import EmptyHint from '@/components/EmptyHint.vue'
 import FilePicker from '@/components/FilePicker.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -223,8 +224,13 @@ async function confirmShip(force = false) {
 
     <el-card shadow="never">
       <el-table show-overflow-tooltip :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-        <el-table-column label="项目" width="110" fixed>
-          <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
+        <!-- 🆕 #385 全流程进度同步到所有带项目编号的部门：物流看到一个编号，
+             想知道设计出图没有、仓库备齐没有，不用再挨个 tab 翻 -->
+        <el-table-column label="项目" width="150" fixed>
+          <template #default="{ row }">
+            <b class="code">{{ row.code }}</b>
+            <ProjectFlowButton :project-id="row.project_id" :code="row.code" />
+          </template>
         </el-table-column>
         <el-table-column prop="name" label="名称" min-width="130" show-overflow-tooltip />
         <el-table-column label="说明书/铭牌" min-width="120" align="center">
