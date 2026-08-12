@@ -363,6 +363,39 @@ async def scan_po_arrival_overdue(db: AsyncSession) -> dict:
                                text=text, biz_type="po_arrival_overdue", biz_id=it.id)
             notified += 1
 
+    # 🆕 2026-08-12 用户要求「采购收货逾期推送给采购员和管理层」——管理层这一路走**每日一条汇总**，
+    #   不是逐条扇出。原因：当前命中 31 条 × (2 manager + 1 admin) = 每天 93 条，天天重复，
+    #   一周就把管理层的消息列表淹了，然后整个系统的通知一起被静音——2026-07-26 收窄正是因为这个。
+    #   汇总保住了"管理层要知道有多少单逾期、压在谁手上"，又不制造噪音。
+    #   要改回逐条：把下面这段换成在上面循环里对 manager/admin 各 push 一次即可。
+    if items:
+        digest_id = int(today_s.replace("-", ""))   # 幂等键：当天一条（biz_id 用 YYYYMMDD）
+        r3 = await db.execute(
+            select(models.Message.created_at).where(
+                models.Message.biz_type == "po_arrival_overdue_digest",
+                models.Message.biz_id == digest_id,
+            )
+        )
+        if not any(ts and _cn_date(ts) == today_s for (ts,) in r3.all()):
+            by_buyer: dict[str, list[int]] = {}
+            for it in items:
+                nm = (it.buyer.full_name or it.buyer.username) if it.buyer else "（无归属采购员）"
+                try:
+                    od = (today - date.fromisoformat(it.expected_arrival)).days
+                except (ValueError, TypeError):
+                    continue
+                by_buyer.setdefault(nm, []).append(max(od, 0))
+            if by_buyer:
+                parts = []
+                for nm, days in sorted(by_buyer.items(), key=lambda kv: -len(kv[1])):
+                    parts.append(f"{nm} {len(days)} 条（最久超期 {max(days)} 天）")
+                total = sum(len(v) for v in by_buyer.values())
+                dtext = (f"【采购逾期未到货汇总】共 {total} 条采购明细已过预计到货日仍未收货："
+                         f"{'；'.join(parts)}。明细见 采购管理 → 采购明细（按预计到货排序）。")
+                for role in ("manager", "admin"):
+                    await push_message(db, to_role=role, kind="warn", text=dtext,
+                                       biz_type="po_arrival_overdue_digest", biz_id=digest_id)
+
     if notified:
         log.info("[scan_po_arrival_overdue] 推送 %d 条到期未到货提醒（共扫描 %d）", notified, len(items))
     return {"scanned": len(items), "notified": notified}
