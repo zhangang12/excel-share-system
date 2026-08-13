@@ -1,7 +1,7 @@
 """Pydantic 模型：API 请求 / 响应"""
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # ---------- 通用 ----------
@@ -20,8 +20,25 @@ class RoleOut(BaseModel):
 
 
 # ---------- 用户 ----------
+def _strip_username(v):
+    """用户名统一去掉首尾空白。
+
+    ⚠️ 2026-08-13 线上真事：建账号时用户名尾部粘了个空格（`liulonglong `），
+    存进去是 12 个字符。登录是**精确匹配** `username == 输入值`，
+    本人照正常拼写输入永远匹配不上，界面只报「用户名或密码错误」——
+    密码重置多少次都没用，因为压根不是密码的问题。
+    在 schema 层统一 strip：建账号、改账号、登录三条路都走到，从源头堵死。
+    全角空格(\u3000)一并处理——从表格里复制粘贴很容易带进来。
+    """
+    if isinstance(v, str):
+        return v.replace("\u3000", " ").strip()
+    return v
+
+
 class UserCreate(BaseModel):
     username: str = Field(min_length=2, max_length=64)
+
+    _v_username = field_validator("username", mode="before")(_strip_username)
     password: str = Field(min_length=6, max_length=128)
     full_name: Optional[str] = None
     email: Optional[str] = None
@@ -707,6 +724,10 @@ class ExportConfigOut(BaseModel):
 class LoginIn(BaseModel):
     username: str
     password: str
+
+    # 登录侧也 strip：存量脏数据（用户名带空格）修好之前，用户至少能正常登进来；
+    # 手机键盘长按空格、复制粘贴带尾空格也一并容错。密码**不 strip**（空格可能是密码的一部分）。
+    _v_username = field_validator("username", mode="before")(_strip_username)
     # 🆕 记住我：仅延长令牌有效期到 30 天，不在客户端保存密码
     remember: bool = False
 
