@@ -1456,8 +1456,16 @@ function applyPoPick() {
             <el-table-column label="建议采购" width="112" align="right">
               <template #default="{ row }"><span :class="{ bad: row.suggest_purchase > 0 }">{{ row.suggest_purchase }}</span></template>
             </el-table-column>
-            <el-table-column label="库存" width="90" align="center">
-              <template #default="{ row }"><StatusPill :text="row.in_stock ? '有货可出' : '需采购'" :variant="row.in_stock ? 'success' : 'warn'" /></template>
+            <!-- 🆕 反馈#393：原来是 `有货 ? 有货可出 : 需采购`，只看现存。
+                 料一领用出库，现存归 0 就跳「需采购」——可它明明已经领到项目上用了，
+                 旁边「已领用 2 / 需求 2」「建议采购 0」全都对得上，就这一列在喊要买，
+                 三个数自相矛盾。改成先看还差不差：领够了就是「已领完」。 -->
+            <el-table-column label="库存" width="94" align="center">
+              <template #default="{ row }">
+                <StatusPill v-if="demandRemain(row) <= 0" text="已领完" variant="muted" />
+                <StatusPill v-else-if="row.in_stock" text="有货可出" variant="success" />
+                <StatusPill v-else text="需采购" variant="warn" />
+              </template>
             </el-table-column>
             <el-table-column label="采购状态" width="100" align="center">
               <template #default="{ row }">

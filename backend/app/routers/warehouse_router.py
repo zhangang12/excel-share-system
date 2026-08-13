@@ -1325,7 +1325,12 @@ async def _demand_rows(db: AsyncSession, project_id: int, *, stock=None, mats=No
             if m:
                 bom_mat_ids.add(m.id)
             st = stock.get(m.id, 0) if m else 0
-            suggest = max(0, (demand or 0) - st)
+            # 🆕 反馈#393：建议采购要先扣掉**已经领用出库的量**。
+            #   原来是 `需求 − 现存`：领完之后现存归 0，就又叫人再买一遍需求量，
+            #   而这批料其实已经领到项目上用了。正确口径 = (还没领的需求) − 现存。
+            issued_q = (issued_map.get(m.id, 0) if m else 0)
+            remain = max(0, (demand or 0) - issued_q)
+            suggest = max(0, remain - st)
             pis = by_rec.get(rec.id, [])
             status = "未下单" if not pis else ("已到货" if all(p.arrival_date for p in pis) else "已下单")
             out.append(schemas.WarehouseDemandRow(

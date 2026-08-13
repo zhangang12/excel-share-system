@@ -25,7 +25,7 @@
 from datetime import datetime, timedelta, timezone, date as _date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Form, File, UploadFile
 from sqlalchemy import String, select, func, exists, or_, update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -599,6 +599,9 @@ async def _req_out(db: AsyncSession, req: models.OaRequest, current: models.User
         related_request_id=req.related_request_id, related_request_no=related_no,
         status=req.status, current_step_order=req.current_step_order,
         settle_amount=req.settle_amount, settle_note=req.settle_note, reject_reason=req.reject_reason,
+        # 🆕 #395 财务付款备注/时间。⚠️ schemas 里加了字段还得在这里赋值——
+        #   只加 schema 的话接口永远返回 None，写进库了前端也看不见（这次就先漏了这一步）。
+        pay_note=getattr(req, "pay_note", None), pay_at=getattr(req, "pay_at", None),
         created_at=req.created_at, updated_at=req.updated_at,
         steps=[schemas.OaRequestStepOut(
             id=s.id, step_order=s.step_order, approver_role=s.approver_role,
@@ -960,19 +963,36 @@ async def approve_request(
 @router.put("/requests/{rid}/mark-paid", response_model=schemas.OaRequestOut)
 async def mark_paid(
     rid: int,
+    pay_note: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
     current: models.User = Depends(require_roles("finance")),
     db: AsyncSession = Depends(get_db),
 ):
-    """财务把「待付款」的申请标记为已付款——跟审批通过分开操作，避免"批了=钱到账"的误解。"""
+    """财务把「待付款」的申请标记为已付款——跟审批通过分开操作，避免"批了=钱到账"的误解。
+
+    🆕 反馈#395（计梦蝶）：可同时写**付款备注**、上传**付款回单**。
+    原来这一步什么都不能填，回单只能事后另找地方传、发起人也不知道钱哪天走的哪个账户。
+    ⚠️ 备注写 `pay_note` 而不是 `settle_note`——后者是核定金额时写的（为什么只批这么多），
+    两件事挤一个字段，后写的会把当初核减的理由冲掉，月底对账查不出原因。
+    回单走既有的 `attachments(biz_type='oa_request')` 通道，和申请附件同一个列表，不新开表。
+    """
     req = await _fetch_request(db, rid)
     if not req:
         raise HTTPException(404, "申请不存在")
     if req.status != "pending_payment":
         raise HTTPException(400, "该申请当前不是待付款状态")
     req.status = "approved"
+    req.pay_note = (pay_note or "").strip() or None
+    req.pay_at = datetime.now(timezone.utc)
+    if file is not None and file.filename:
+        from .attachments_router import save_upload
+        await save_upload(db, file, biz_type="oa_request", biz_id=req.id,
+                          kind="pay_receipt", user=current)
     await db.commit()
+    note_tail = f"（备注：{req.pay_note}）" if req.pay_note else ""
     await push_message(db, to_user_id=req.requester_id, kind="info",
-                       text=f"【OA审批】你的申请 {req.request_no} 财务已付款", biz_type="oa_request", biz_id=req.id)
+                       text=f"【OA审批】你的申请 {req.request_no} 财务已付款{note_tail}",
+                       biz_type="oa_request", biz_id=req.id)
     req = await _fetch_request(db, rid)
     return await _req_out(db, req, current)
 

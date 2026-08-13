@@ -67,6 +67,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("mainboard_done_flag", "BOOLEAN DEFAULT FALSE"),
         ("wire_done_date",      "VARCHAR(10)"),
     ],
+    # 🆕 #395 财务标记已付款时的备注 + 付款时间（回单走 attachments/oa_request，不占列）
+    "oa_requests": [("pay_note", "TEXT"), ("pay_at", "TIMESTAMPTZ")],
     "aftersales": [("reject_reason", "TEXT"),
                    ("kind", "VARCHAR(16) DEFAULT 'aftersales'"),
                    ("project_name", "VARCHAR(128)"),  # 🆕 #98 驳回原因 + 需求一 登记类型 + #158 历史项目名

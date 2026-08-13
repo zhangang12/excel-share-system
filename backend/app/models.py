@@ -1030,6 +1030,11 @@ class OaRequest(Base):
     current_step_order: Mapped[Optional[int]] = mapped_column()
     settle_amount: Mapped[Optional[float]] = mapped_column()   # 财务等环节核定的实际金额（可与申请金额不同）
     settle_note: Mapped[Optional[str]] = mapped_column(Text)
+    # 🆕 反馈#395（计梦蝶）：财务标记已付款时的备注 + 付款回单。
+    #   ⚠️ 不要复用 settle_note——那是**核定金额**时写的（为什么只批这么多），
+    #   两件事挤一个字段，后写的会把前面的理由冲掉，月底对账查不出当初为什么核减。
+    pay_note: Mapped[Optional[str]] = mapped_column(Text)
+    pay_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     reject_reason: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

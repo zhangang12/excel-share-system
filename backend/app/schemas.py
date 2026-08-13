@@ -1855,6 +1855,9 @@ class OaRequestOut(BaseModel):
     current_step_order: Optional[int] = None
     settle_amount: Optional[float] = None
     settle_note: Optional[str] = None
+    # 🆕 #395 财务付款备注 / 付款时间（回单在附件列表里，kind=pay_receipt）
+    pay_note: Optional[str] = None
+    pay_at: Optional[datetime] = None
     reject_reason: Optional[str] = None
     created_at: datetime
     updated_at: datetime

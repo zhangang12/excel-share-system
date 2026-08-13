@@ -44,6 +44,10 @@ interface BoardRow {
 
 const auth = useAuthStore()
 const isMgr = computed(() => auth.isAdmin)
+// 🆕 反馈#394（王芹）「增加强制发货的功能」——功能 #367 就做了，**但当时只改了后端**：
+//   `logistics_router` 里 can_force 已含 logistics 角色，前端「强制」按钮却还挂着 v-if="isMgr"，
+//   物流的人根本看不见这个按钮，等于没做。改权限记得两边一起看。
+const canForce = computed(() => auth.isAdmin || auth.hasRole('logistics'))
 const loading = ref(false)
 const rows = ref<BoardRow[]>([])
 
@@ -324,7 +328,7 @@ async function confirmShip(force = false) {
             <el-tooltip v-else :content="`待部门完成：${row.gate_missing.join('、')}`" placement="top">
               <span>
                 <el-button size="small" disabled :icon="Clock">待部门完成</el-button>
-                <el-button v-if="isMgr" size="small" type="warning" plain @click="openShip(row)">强制</el-button>
+                <el-button v-if="canForce" size="small" type="warning" plain @click="openShip(row)">强制发货</el-button>
               </span>
             </el-tooltip>
           </template>
