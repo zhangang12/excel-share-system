@@ -187,11 +187,25 @@ const dispatchSmWid = ref<number | null>(null)
 const dispatchAsmWid = ref<number | null>(null)
 const dispatchSealWid = ref<number | null>(null)   // 🆕 反馈#209 封板组
 const dispatching = ref(false)
+// 🆕 反馈#399 的续：派发按钮原来**只在「待分派」页签**，单子一派出去就离开那个列表，
+//   漏派的组（2026-067 只派了钣金+封板、没派装配）此后**再也没有入口补**。
+//   后端 `dispatch_produce` 本来就是幂等的（已有的组改人、没有的组新建），
+//   所以只要把同一个弹窗挂到「任务跟踪」上就行，不用动后端。
+//   补派时把已派的人预填进去——不填的话保存会以为要改人，主管也看不出哪组已经派过。
+// 这张生产单还缺哪几组没派。三组不是都必须派（有的机器不用封板），
+// 所以只是提示"还有哪组没派"，不强制补齐——真要不要派主管自己判断。
+const PG_LABEL: Record<string, string> = { sheetmetal: '钣金', assembly: '装配', sealing: '封板' }
+function missingGroups(o: DeptOrder): string[] {
+  const has = new Set((o.produce_groups || []).map(g => g.group))
+  return Object.keys(PG_LABEL).filter(g => !has.has(g)).map(g => PG_LABEL[g])
+}
+
 async function openDispatch(o: DeptOrder) {
   dispatchOrder.value = o
-  dispatchSmWid.value = null
-  dispatchAsmWid.value = null
-  dispatchSealWid.value = null
+  const wid = (g: string) => (o.produce_groups || []).find(x => x.group === g)?.worker_id ?? null
+  dispatchSmWid.value = wid('sheetmetal')
+  dispatchAsmWid.value = wid('assembly')
+  dispatchSealWid.value = wid('sealing')
   dispatchVisible.value = true
   try { dispatchOpts.value = await produceApi.dispatchOptions() } catch { /* 忽略 */ }
 }
@@ -1359,8 +1373,19 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <el-button size="small" link type="primary" @click="openPack(row)">预览/下载</el-button>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="248" fixed="right" :show-overflow-tooltip="false">
+            <el-table-column label="操作" width="330" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
+                <!-- 🆕 反馈#399 的续：派发按钮原来只在「待分派」页签，单子一派出去就离开那个列表，
+                     漏派的组（2026-067 只派了钣金+封板、装配组漏了）此后再也没有入口补。
+                     后端 dispatch 本来就是幂等的（已有的组改人、缺的组新建），把同一个弹窗挂这儿即可。
+                     缺组时按钮标红提示，主管一眼看得出哪张单没派全。 -->
+                <template v-if="isProduce && !['done', 'voided'].includes(row.status)">
+                  <el-button size="small" :icon="Promotion"
+                             :type="missingGroups(row).length ? 'warning' : 'default'"
+                             @click="openDispatch(row)">
+                    {{ missingGroups(row).length ? `补派${missingGroups(row).join('/')}` : '改派分组' }}
+                  </el-button>
+                </template>
                 <el-button v-if="['assigned', 'in_progress'].includes(row.status) && !isProduce"
                            size="small" :icon="SwitchIcon" @click="openReassign(row)">换人</el-button>
                 <el-button v-if="row.status === 'done'" size="small" :icon="RefreshLeft" @click="doReopen(row)">改回</el-button>
@@ -1828,9 +1853,15 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     </el-dialog>
 
     <!-- ===== 🆕 生产派发弹窗（派给钣金组+装配组） ===== -->
-    <el-dialog v-model="dispatchVisible" :title="`🚀 派发生产任务 · ${dispatchOrder?.project_code || ''}`" width="460px">
+    <el-dialog v-model="dispatchVisible"
+               :title="`🚀 ${dispatchOrder && (dispatchOrder.produce_groups || []).length ? '补派 / 改派分组' : '派发生产任务'} · ${dispatchOrder?.project_code || ''}`"
+               width="460px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
                 title="钣金组、装配组、封板组可各自选派，至少选择一组；钣金/装配两组完成即视为生产完成（可发货），封板组为可选组，派了则也须完成。" />
+      <!-- 🆕 补派场景：已派的组把人预填出来了，动它就是改派；空的那组填上人就是补派 -->
+      <el-alert v-if="dispatchOrder && (dispatchOrder.produce_groups || []).length"
+                type="warning" :closable="false" show-icon style="margin-bottom: 14px"
+                :title="`这张单已派：${(dispatchOrder.produce_groups || []).map(g => g.name + '·' + (g.worker_name || '未指派')).join('，')}。下面已把人预填好，只补空着的那组即可；改动已有的人=改派。`" />
       <el-form label-position="top">
         <el-form-item label="派给 · 生产部-钣金组（可不选）">
           <el-select v-model="dispatchSmWid" placeholder="不派发钣金组则留空" clearable style="width: 100%">

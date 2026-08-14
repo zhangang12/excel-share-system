@@ -162,6 +162,9 @@ class ProduceGroupBrief(BaseModel):
     name: str                        # 钣金 / 装配
     due_date: Optional[str] = None   # 本组预计完成
     done_date: Optional[str] = None  # 本组完成日期
+    # 🆕 补派分组要预填已派的人（不预填的话主管看不出哪组已经派过，还容易误改人）
+    worker_id: Optional[int] = None
+    worker_name: Optional[str] = None
 
 
 class OrderOut(BaseModel):

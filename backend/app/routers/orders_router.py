@@ -364,11 +364,19 @@ async def list_orders(
     if produce_oids:
         gr = await db.execute(select(models.ProduceGroupTask).where(
             models.ProduceGroupTask.order_id.in_(produce_oids)))
-        for gt in gr.scalars().all():
+        _gts = list(gr.scalars().all())
+        # ⚠️ ProduceGroupTask 没有 worker 关系，逐行取名字就是 N+1；一次查完再映射
+        _wids = {g.worker_id for g in _gts if g.worker_id}
+        _wmap: dict[int, str] = {}
+        if _wids:
+            _wmap = {u.id: (u.full_name or u.username) for u in (await db.execute(
+                select(models.User).where(models.User.id.in_(_wids)))).scalars().all()}
+        for gt in _gts:
             pg_map.setdefault(gt.order_id, []).append(schemas.ProduceGroupBrief(
                 group=gt.group, name=_PG_NAME.get(gt.group, gt.group),
                 due_date=gt.due_date,
                 done_date=(gt.done_at + timedelta(hours=8)).strftime("%Y-%m-%d") if gt.done_at else None,
+                worker_id=gt.worker_id, worker_name=_wmap.get(gt.worker_id) if gt.worker_id else None,
             ))
     # 🆕 #6 各订单所属项目的「标准件清单」数据表 id（电工部只读引用用）
     std_map: dict[int, int] = {}
