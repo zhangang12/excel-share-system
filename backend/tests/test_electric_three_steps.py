@@ -137,7 +137,9 @@ async def main():
             lm = list((await db.execute(select(models.Message).where(
                 models.Message.to_user_id == uid["物流员"],
                 models.Message.biz_id == oid))).scalars().all())
-            chk(len(lm) >= 1 and "电路" in lm[0].text, f"2) 物流收到可发货通知: {[m.text for m in lm]}")
+            # 第二步的展示名 2026-08-14 按周瑞的反馈#400 从「电路」改成「安装调试」
+            chk(len(lm) >= 1 and "安装调试" in lm[0].text,
+                f"2) 物流收到可发货通知: {[m.text for m in lm]}")
 
         # ---------- 3. 电路图没传也能发货 ----------
         board = (await c.get("/api/logistics/board", headers=H,

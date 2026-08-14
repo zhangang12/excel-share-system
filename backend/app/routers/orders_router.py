@@ -1099,7 +1099,7 @@ async def mark_mainboard_done(
     if o.status != "in_progress":
         raise HTTPException(400, "仅进行中任务可操作")
     if o.mainboard_done_flag:
-        raise HTTPException(400, "主板已完成，请继续「电路完成」")
+        raise HTTPException(400, "主板已完成，请继续「安装调试完成」")
 
     cfg = DEPTS["electric"]
     today_s = date.today().isoformat()
@@ -1115,7 +1115,7 @@ async def mark_mainboard_done(
         await push_message(db, to_role="manager", kind="warn", text=text, biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="mainboard_done", target_type="dept_order",
                       target_id=o.id, detail=f"kpi_done eff={eff}% on_time={on_time}")
-    return schemas.Msg(message="主板完成，已计入考核。接下来「电路完成」，完成后本项目才可发货"
+    return schemas.Msg(message="主板完成，已计入考核。接下来「安装调试完成」，完成后本项目才可发货"
                        + (f"；逾期 {overdue_days} 天已提醒主管" if overdue_days else ""))
 
 
@@ -1154,12 +1154,12 @@ async def mark_electric_done(
     p = o.project
     # 完成通知物流（原两步流里由 /complete 发，三步流下 /complete 走不到，挪到这里）
     await push_message(db, to_role=cfg["notify_pool"], kind="wx",
-                       text=f"【电工部·{p.code}】{_uname(o.worker)} 已完成电路，可安排发货。",
+                       text=f"【电工部·{p.code}】{_uname(o.worker)} 已完成安装调试，可安排发货。",
                        biz_type="order", biz_id=o.id)
     await write_audit(db, user=current, action="electric_done", target_type="dept_order",
                       target_id=o.id, detail=f"wire_done={today_s}")
     has_circuit = await _has_output(db, o.id, "circuit")
-    msg = "电路完成，本项目发货闸门已放行。"
+    msg = "安装调试完成，本项目发货闸门已放行。"
     msg += "电路图已上传 ✅" if has_circuit else "⚠️ 电路图还没传，请尽快上传并推送物流（不影响发货）"
     return schemas.Msg(message=msg)
 

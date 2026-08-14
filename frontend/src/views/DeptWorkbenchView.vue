@@ -420,7 +420,7 @@ async function doElectricDone(o: DeptOrder) {
   markingElectricDone.value = o.id
   try {
     const r: any = await ordersApi.markElectricDone(o.id)
-    ElMessage.success(r?.message || '电路完成，本项目发货闸门已放行')
+    ElMessage.success(r?.message || '安装调试完成，本项目发货闸门已放行')
     await load()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
@@ -1150,7 +1150,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                   <div class="estep">
                     <span class="estep-i" :class="{ on: o.mainboard_done_flag }">1 主板</span>
                     <span class="estep-l"></span>
-                    <span class="estep-i" :class="{ on: o.electric_done_flag }">2 电路</span>
+                    <span class="estep-i" :class="{ on: o.electric_done_flag }">2 安装调试</span>
                     <span class="estep-l"></span>
                     <span class="estep-i" :class="{ on: o.has_circuit }">3 电路图</span>
                   </div>
@@ -1168,7 +1168,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                     </el-tag>
                     <el-button type="success" size="small" :icon="Check"
                                :loading="markingElectricDone === o.id"
-                               @click="doElectricDone(o)">电路完成</el-button>
+                               @click="doElectricDone(o)">安装调试完成</el-button>
                     <div class="tc-hint">
                       点完本项目才可发货；<b v-if="!o.has_circuit" style="color:var(--el-color-warning)">电路图还没传</b>
                       <span v-else>电路图已传 ✅</span>

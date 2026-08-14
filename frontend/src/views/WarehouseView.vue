@@ -462,6 +462,21 @@ const groupedRecv = computed<any[]>(() => {
     return r
   })
 })
+
+// 🆕 反馈#398（王利利）「卡的动都不动」：采购收货页已收货 1202 条、待收货 300 条，
+//   一次性全渲染。**后端不慢**（实测 0.04s / 0.09s），慢的是 el-table ——
+//   它不做虚拟滚动，1202 行 × 20 多列还要建父子树，浏览器直接卡住。
+//   数据本来就全在内存里（后端一次取完），所以只需在**渲染层**分页，
+//   搜索/筛选口径一点不动（那几个框仍然走后端，见 #330）。
+const recvPage = ref(1)
+const recvPageSize = ref(50)
+const pagedRecv = computed(() => {
+  const s = (recvPage.value - 1) * recvPageSize.value
+  return groupedRecv.value.slice(s, s + recvPageSize.value)
+})
+// 换页签 / 改筛选后行数会变，停在第 5 页会看到空白表——回到第 1 页
+watch([() => groupedRecv.value.length, recvReceived, recvPo, recvName, recvOrderMonth, recvSupplier],
+      () => { recvPage.value = 1 })
 async function loadReceiving() {
   recvLoading.value = true
   try {
@@ -1519,10 +1534,10 @@ function applyPoPick() {
               <el-alert v-if="recvTruncated" type="warning" show-icon :closable="false" style="width:100%"
                         :title="`当前${recvReceived ? '已收货' : '待收货'}共 ${recvReceived ? recvMeta.received_count : recvMeta.pending_count} 条，本页最多显示 ${recvMeta.limit} 条。用上面的供应商/单号/物料名筛选可搜全部（含更早的长周期订单）。`" />
             </div>
-            <el-table show-overflow-tooltip :data="groupedRecv" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
+            <el-table show-overflow-tooltip :data="pagedRecv" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
                       :key="recvExpandKey" :row-key="recvRowKey" :tree-props="{ children: 'children' }" :default-expand-all="recvExpandAll"
                       :row-class-name="grpRowClass"
-                      max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl">
+                      max-height="calc(100vh - 320px)" :scrollbar-always-on="true" class="compact-tbl">
               <el-table-column type="selection" width="40" :selectable="(row: any) => !row._isGroup" />
               <el-table-column prop="po_no" label="采购单号" width="205" :show-overflow-tooltip="false">
                 <template #default="{ row }">
@@ -1600,6 +1615,13 @@ function applyPoPick() {
                 </template>
               </el-table-column>
             </el-table>
+            <!-- 🆕 #398：分页只影响**渲染**，搜索/筛选仍然走后端全库（#330），
+                 所以翻页找不到的东西用上面的搜索框照样搜得到。 -->
+            <el-pagination v-if="groupedRecv.length > recvPageSize"
+                           v-model:current-page="recvPage" v-model:page-size="recvPageSize"
+                           :page-sizes="[50, 100, 200, 500]" :total="groupedRecv.length"
+                           layout="total, sizes, prev, pager, next, jumper" size="small"
+                           style="margin-top:10px;justify-content:flex-end" />
             <EmptyHint v-if="!recvLoading && !filteredRecv.length" :text="recvReceived ? '暂无已收货记录' : '暂无待收货物料'" size="sm" />
           </template>
         </el-tab-pane>

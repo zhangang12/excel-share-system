@@ -314,7 +314,13 @@ async function confirmShip(force = false) {
             <el-button v-else size="small" link type="primary" :icon="Edit" @click="openFreight(row)">录入</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="发货闸门" width="200" fixed="right">
+        <!-- ⚠️ 反馈#397（王芹）「更新了版本还是未看到强制发货的按钮」——按钮**一直都在**，
+             是被这一列挤掉了：表格开了全局 `show-overflow-tooltip`，本列 width=200，
+             「待部门完成」+「强制发货」两个按钮并排放不下，超出部分直接被省略号吃掉。
+             #394 我只改了 v-if 的权限判断，没发现渲染出来根本看不见，等于白改一轮。
+             操作列**永远不要**跟着表格吃 show-overflow-tooltip：按钮被截断是完全静默的，
+             用户只会以为功能没做。这里显式关掉 + 放宽 + 允许换行，三重保险。 -->
+        <el-table-column label="发货闸门" width="252" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <template v-if="row.status === 'shipped'">
               <el-button v-if="row.ship_doc_id" size="small" link type="success"
@@ -325,12 +331,14 @@ async function confirmShip(force = false) {
             <el-button v-else-if="row.can_ship" type="primary" size="small" :icon="Van" @click="openShip(row)">
               已发货（传发货单）
             </el-button>
-            <el-tooltip v-else :content="`待部门完成：${row.gate_missing.join('、')}`" placement="top">
-              <span>
-                <el-button size="small" disabled :icon="Clock">待部门完成</el-button>
+            <template v-else>
+              <div class="gate-cell">
+                <el-tooltip :content="`待部门完成：${row.gate_missing.join('、')}`" placement="top">
+                  <span><el-button size="small" disabled :icon="Clock">待部门完成</el-button></span>
+                </el-tooltip>
                 <el-button v-if="canForce" size="small" type="warning" plain @click="openShip(row)">强制发货</el-button>
-              </span>
-            </el-tooltip>
+              </div>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -413,6 +421,8 @@ async function confirmShip(force = false) {
 </template>
 
 <style scoped>
+/* 🆕 #397 发货闸门操作列：两个按钮放得下就并排，放不下自动换行，绝不被裁掉 */
+.gate-cell { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); font-size: 12.5px; }
 .fc { cursor: pointer; margin: 2px 4px 2px 0; }
