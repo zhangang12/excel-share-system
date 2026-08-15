@@ -16,7 +16,7 @@ from .config import settings
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401
 from .seed import seed
-from .data_migration import run_all as run_data_migrations, ensure_schema_columns
+from .data_migration import run_all as run_data_migrations, ensure_schema_columns, ensure_indexes
 from .routers import (
     auth_router, admin_router, projects_router, datasheets_router,
     excel_router, overview_router, field_perm_router, ws_router,
@@ -81,6 +81,7 @@ async def lifespan(app: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         await ensure_schema_columns(engine)  # 🆕 v3：给存量表补新增列（幂等）
+        await ensure_indexes(engine)         # 🆕 给存量表补 index=True 却没建的索引（幂等）
         async with SessionLocal() as db:
             await seed(db)
             await run_data_migrations(db)

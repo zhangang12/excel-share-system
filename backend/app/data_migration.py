@@ -211,6 +211,55 @@ async def ensure_schema_columns(engine: AsyncEngine) -> int:
     return added
 
 
+async def ensure_indexes(engine: AsyncEngine) -> int:
+    """给**存量表**补上模型里声明了 index=True、库里却没有的索引。幂等。
+
+    为什么需要：`Base.metadata.create_all` 只对**还不存在的表**建索引。给一张已经上线的
+    表新加 `index=True`，本地全新库跑出来一切正常（表是新建的），生产上那张表早就存在，
+    索引**永远不会被创建**——代码里写着有索引，线上其实全是顺序扫描，而且没有任何报错。
+    2026-08-15 查仓库性能时发现生产上这样缺了 23 个，包括 purchase_items.source_sheet_id
+    （物料需求每张清单都要按它查一次）和 wh_txns.purchase_item_id。
+
+    ⚠️ 逐个索引单开事务 + 各自 try：某一条建失败（最典型是**唯一索引撞上存量重复数据**）
+       只跳过它并告警，不能把整个启动流程带崩——启动挂了就是全站 502。
+    """
+    from sqlalchemy import inspect as sa_inspect
+    from .database import Base
+    from . import models  # noqa: F401  确保所有表都已注册到 metadata
+
+    def _missing(sync_conn) -> list:
+        insp = sa_inspect(sync_conn)
+        have_tables = set(insp.get_table_names())
+        out = []
+        for t in Base.metadata.sorted_tables:
+            if t.name not in have_tables:
+                continue   # 全新表，create_all 已经带上索引了
+            # 已有的"列组合"——唯一约束/主键也能顶替单列索引的作用，别重复建
+            covered = {tuple(i["column_names"]) for i in insp.get_indexes(t.name)}
+            covered.add(tuple(insp.get_pk_constraint(t.name).get("constrained_columns") or []))
+            for uc in insp.get_unique_constraints(t.name):
+                covered.add(tuple(uc["column_names"]))
+            for ix in t.indexes:
+                if tuple(c.name for c in ix.columns) not in covered:
+                    out.append(ix)
+        return out
+
+    async with engine.connect() as conn:
+        missing = await conn.run_sync(_missing)
+    created = 0
+    for ix in missing:
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(lambda sc, _ix=ix: _ix.create(sc, checkfirst=True))
+            created += 1
+            log.info("[ensure_indexes] 已补索引 %s", ix.name)
+        except Exception as e:   # noqa: BLE001  单个索引失败不能影响启动
+            log.warning("[ensure_indexes] 补索引 %s 失败（跳过）：%s", ix.name, e)
+    if created:
+        log.info("[ensure_indexes] 共补建 %d 个索引", created)
+    return created
+
+
 
 async def fix_oa_activated_at_tz(db: AsyncSession) -> dict:
     """把 oa_request_steps.activated_at 从「不带时区」改成 TIMESTAMPTZ（仅 Postgres）。

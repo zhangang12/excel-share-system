@@ -52,6 +52,17 @@ else
     docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
 fi
 
+# 4.5 重载 nginx 配置
+#   ⚠️ nginx/conf.d 是 **bind mount**，改了配置 `up -d` 不会重建 nginx 容器，
+#      也就不会生效——git pull 拉下来了、发版报成功，线上还是旧配置，无声无息。
+#      先 `nginx -t` 验证，语法错就不 reload（错配置 reload 下去会把整站打挂）。
+if docker exec pms2_nginx nginx -t >/dev/null 2>&1; then
+    docker exec pms2_nginx nginx -s reload >/dev/null 2>&1 && echo "  → nginx 配置已重载"
+else
+    echo "  ⚠ nginx 配置检查未通过，跳过 reload（线上继续跑旧配置）："
+    docker exec pms2_nginx nginx -t 2>&1 | sed 's/^/    /'
+fi
+
 # 5. 等启动 + 健康检查
 echo "[4/5] 等服务启动..."
 for i in $(seq 1 30); do

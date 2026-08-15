@@ -1078,6 +1078,30 @@ const shipSearch = ref('')
 const filteredShipPending = computed(() =>
   shipPending.value.filter((r: any) => kwHit(r, shipSearch.value, ['code', 'name'])))
 
+// ===== 渲染分页：el-table 没有虚拟滚动（#398 那次的老问题）=====
+// 数据本来就一次性全在内存里（后端一把取完），**搜索/筛选/合计口径一点不动**，
+// 慢的纯粹是建 DOM：物料主数据 863 行 × 12 列 ≈ 一万个单元格，一次铺出来浏览器就卡住。
+// 这里只在渲染层切一片出来。
+// ⚠️ 必须放在 materials / txns / filteredSummary 之后：usePager 里的 `watch(total,…)`
+//    会立刻求一次值，声明在前面就是 TDZ 报错、整页白屏（本文件已经踩过一次）。
+function usePager<T>(src: () => T[], size = 50) {
+  const page = ref(1)
+  const pageSize = ref(size)
+  const total = computed(() => src().length)
+  const rows = computed(() => {
+    const s = (page.value - 1) * pageSize.value
+    return src().slice(s, s + pageSize.value)
+  })
+  watch(total, () => { page.value = 1 })   // 换了筛选行数就变了，还停在第 8 页会看到一张空表
+  // 用 reactive 包一层：模板里直接写 `matPager.rows` / `v-model:current-page="matPager.page"`，
+  // 不用到处点 .value（对象上的 ref 在模板里是**不会**自动解包的）
+  return reactive({ page, pageSize, total, rows })
+}
+const ovPager = usePager(() => ovMaterials.value)
+const matPager = usePager(() => materials.value)   // 物料主数据的搜索走后端(kw)，这里不再过滤
+const sumPager = usePager(() => filteredSummary.value)
+const txnPager = usePager(() => txns.value)
+
 
 const preqSearch = ref('')
 const preqStatus = ref('')
@@ -1167,9 +1191,14 @@ function applyPoPick() {
     </div>
 
     <el-card shadow="never" v-loading="loading">
+      <!-- ⚠️ 每个 el-tab-pane 都必须带 `lazy`。Element Plus 的 lazy **默认是 false**，
+           意思是九个页签的表格在页面一挂载时就全部渲染成真 DOM（只是 display:none 藏着），
+           点都没点过的页签也照渲。生产上物料主数据 863 行 × 12 列、收发存汇总 863 行，
+           一进仓库就是一万多个单元格——白屏就是这么来的。
+           加了 lazy 之后只渲染当前页签，别的等点到了再建。-->
       <el-tabs v-model="tab" @tab-change="onTab">
         <!-- 总览 -->
-        <el-tab-pane v-if="tv('ov')" label="库存总览" name="ov">
+        <el-tab-pane lazy v-if="tv('ov')" label="库存总览" name="ov">
           <div class="kpi-grid">
             <div class="kpi"><div class="kpi-v">{{ ovMaterials.length }}</div><div class="kpi-l">物料种类</div></div>
             <div class="kpi"><div class="kpi-v">{{ totalStock }}</div><div class="kpi-l">库存总量</div></div>
@@ -1223,9 +1252,12 @@ function applyPoPick() {
           </div>
           <!-- 🆕 列宽整齐化：文本列(名称/规格/类别)用 min-width 填充空白；数字/短列用固定宽度右对齐，
                避免数字列被拉伸出大空隙（此前 #140 把数字列也设 min-width 导致宽屏爆宽） -->
-          <el-table show-overflow-tooltip :data="ovMaterials" stripe size="small" max-height="calc(100vh - 240px)"
+          <!-- ⚠️ 分页 + 勾选要一起看：row-key + reserve-selection 让勾过的行**翻页也不丢**，
+               否则「调至项目物料」翻一页勾选就清空了，人根本不知道自己刚才勾的没了 -->
+          <el-table show-overflow-tooltip :data="ovPager.rows" row-key="id" stripe size="small"
+                    max-height="calc(100vh - 290px)"
                     @selection-change="(v: WhMaterial[]) => ovSelected = v">
-            <el-table-column v-if="canWrite" type="selection" width="42" />
+            <el-table-column v-if="canWrite" type="selection" width="42" reserve-selection />
             <el-table-column prop="code" label="编码" width="120"><template #header><span>编码</span><el-tooltip placement="top" effect="dark"><template #content>物料编码 = 大类(1位) - 中类+细分(4位) - 流水号(4位)<br/>选「编码分类」到细分类时自动生成,如 1-0101-0001</template><el-icon style="vertical-align:-2px;margin-left:3px;color:var(--text-3);cursor:help;font-size:13px"><QuestionFilled /></el-icon></el-tooltip></template><template #default="{ row }"><span v-if="row.code" class="code">{{ fmtMatCode(row.code) }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="category_path" label="编码说明" min-width="150" show-overflow-tooltip><template #default="{ row }"><span v-if="row.category_path">{{ row.category_path }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
@@ -1244,6 +1276,11 @@ function applyPoPick() {
             <el-table-column prop="safety_stock" label="安全库存" width="90" align="right" />
             <el-table-column prop="location" label="库位" width="100"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
           </el-table>
+          <el-pagination v-if="ovPager.total > ovPager.pageSize"
+                         v-model:current-page="ovPager.page" v-model:page-size="ovPager.pageSize"
+                         :page-sizes="[50, 100, 200, 500]" :total="ovPager.total"
+                         layout="total, sizes, prev, pager, next, jumper" size="small"
+                         style="margin-top:10px;justify-content:flex-end" />
           <EmptyHint v-if="!materials.length" text="暂无物料，去「物料主数据」新增" size="sm" />
         </el-tab-pane>
 
@@ -1251,16 +1288,18 @@ function applyPoPick() {
         <!-- 「出入库登记」tab 已合并进「出入库 / 物料需求」(见 demand tab 顶部两个按钮) -->
 
         <!-- 收发存汇总 -->
-        <el-tab-pane v-if="tv('sum')" label="收发存汇总" name="sum">
+        <el-tab-pane lazy v-if="tv('sum')" label="收发存汇总" name="sum">
           <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
             <el-date-picker v-model="period" type="month" value-format="YYYY-MM" @change="loadSummary" />
             <el-input v-model="sumSearch" placeholder="搜物料/规格/单位" :prefix-icon="Search" clearable size="small" style="width:220px" />
             <span class="muted" style="font-size:12.5px" v-if="sumSearch">命中 {{ filteredSummary.length }} / {{ summary.length }}</span>
             <span class="muted small">期初 + 本期入 − 本期出 = 期末</span>
           </div>
-          <el-table show-overflow-tooltip :data="filteredSummary" stripe size="small" show-summary
+          <!-- 合计行本来就是拿全量 summary 自己算的（不是 el-table 默认的"当前数据求和"），
+               所以分页之后「合计」仍然是整月全部物料的合计，不会变成本页小计 -->
+          <el-table show-overflow-tooltip :data="sumPager.rows" stripe size="small" show-summary
                     :summary-method="(p:any) => ['合计','','', summary.reduce((s,r)=>s+r.opening,0), summary.reduce((s,r)=>s+r.in_qty,0), summary.reduce((s,r)=>s+r.out_qty,0), summary.reduce((s,r)=>s+r.closing,0)]"
-                    max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+                    max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
             <el-table-column prop="name" label="物料" min-width="120" />
             <el-table-column prop="spec" label="规格" min-width="100"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
             <el-table-column prop="unit" label="单位" width="60" />
@@ -1269,11 +1308,16 @@ function applyPoPick() {
             <el-table-column prop="out_qty" label="本期出" width="90" />
             <el-table-column prop="closing" label="期末" width="90"><template #default="{ row }"><b>{{ row.closing }}</b></template></el-table-column>
           </el-table>
+          <el-pagination v-if="sumPager.total > sumPager.pageSize"
+                         v-model:current-page="sumPager.page" v-model:page-size="sumPager.pageSize"
+                         :page-sizes="[50, 100, 200, 500]" :total="sumPager.total"
+                         layout="total, sizes, prev, pager, next, jumper" size="small"
+                         style="margin-top:10px;justify-content:flex-end" />
           <EmptyHint v-if="!summary.length" text="该月暂无收发存数据" size="sm" />
         </el-tab-pane>
 
         <!-- 流水 -->
-        <el-tab-pane v-if="tv('txn')" label="出入库流水" name="txn">
+        <el-tab-pane lazy v-if="tv('txn')" label="出入库流水" name="txn">
           <div style="margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <el-radio-group v-model="txnDir" @change="loadTxns" size="small">
               <el-radio-button value="">全部</el-radio-button>
@@ -1294,7 +1338,7 @@ function applyPoPick() {
               </template>
             </span>
           </div>
-          <el-table v-loading="txnLoading" show-overflow-tooltip :data="txns" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table v-loading="txnLoading" show-overflow-tooltip :data="txnPager.rows" stripe size="small" max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
             <el-table-column prop="ref_no" label="单号" width="140" />
             <el-table-column prop="biz_date" label="日期" width="110">
               <template #default="{ row }">{{ fmtDate(row.biz_date) }}</template>
@@ -1318,11 +1362,16 @@ function applyPoPick() {
               </template>
             </el-table-column>
           </el-table>
+          <el-pagination v-if="txnPager.total > txnPager.pageSize"
+                         v-model:current-page="txnPager.page" v-model:page-size="txnPager.pageSize"
+                         :page-sizes="[50, 100, 200, 500]" :total="txnPager.total"
+                         layout="total, sizes, prev, pager, next, jumper" size="small"
+                         style="margin-top:10px;justify-content:flex-end" />
           <EmptyHint v-if="!txns.length" :text="(txnSearch || txnRange) ? '没搜到，换个词或放宽日期试试' : '暂无出入库流水'" size="sm" />
         </el-tab-pane>
 
         <!-- 物料主数据 -->
-        <el-tab-pane v-if="tv('mat')" label="物料主数据" name="mat">
+        <el-tab-pane lazy v-if="tv('mat')" label="物料主数据" name="mat">
           <!-- 🆕 仓库反馈：物料主数据没搜索框，551 条只能一页页翻 -->
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
             <el-input v-model="kw" placeholder="搜名称/规格/编码/单位/库位/材质" :prefix-icon="Search"
@@ -1338,7 +1387,7 @@ function applyPoPick() {
             <el-button v-if="canConfigFields" :icon="Setting" size="small" @click="openFieldManager">字段设置</el-button>
             <el-button v-if="canClear" type="danger" plain :icon="Delete" size="small" @click="clearAll">一键清空</el-button>
           </div>
-          <el-table show-overflow-tooltip :data="materials" stripe size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="matPager.rows" stripe size="small" max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
             <el-table-column prop="code" label="编码" width="120"><template #header><span>编码</span><el-tooltip placement="top" effect="dark"><template #content>物料编码 = 大类(1位) - 中类+细分(4位) - 流水号(4位)<br/>选「编码分类」到细分类时自动生成,如 1-0101-0001</template><el-icon style="vertical-align:-2px;margin-left:3px;color:var(--text-3);cursor:help;font-size:13px"><QuestionFilled /></el-icon></el-tooltip></template><template #default="{ row }"><span v-if="row.code" class="code">{{ fmtMatCode(row.code) }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="category_path" label="编码说明" min-width="150" show-overflow-tooltip><template #default="{ row }"><span v-if="row.category_path">{{ row.category_path }}</span><span v-else class="muted">—</span></template></el-table-column>
             <el-table-column prop="name" label="名称" min-width="120" />
@@ -1355,12 +1404,17 @@ function applyPoPick() {
             </el-table-column>
             <el-table-column v-if="canWrite" label="操作" width="110" fixed="right" :show-overflow-tooltip="false"><template #default="{ row }"><el-button size="small" link type="primary" @click="openMat(row)">编辑</el-button><el-button size="small" link type="danger" @click="deleteMat(row)">删除</el-button></template></el-table-column>
           </el-table>
+          <el-pagination v-if="matPager.total > matPager.pageSize"
+                         v-model:current-page="matPager.page" v-model:page-size="matPager.pageSize"
+                         :page-sizes="[50, 100, 200, 500]" :total="matPager.total"
+                         layout="total, sizes, prev, pager, next, jumper" size="small"
+                         style="margin-top:10px;justify-content:flex-end" />
           <EmptyHint v-if="!materials.length" :text="(kw || matLoc || matLowOnly) ? '没搜到，换个词或清空条件试试' : '暂无物料主数据，点「新增物料」开始'" size="sm" />
         </el-tab-pane>
 
         <!-- 🆕 项目物料需求（清单→仓库）-->
         <!-- 🆕 库位管理:主数据维护(采购下单/物料/出入库共用取值) -->
-        <el-tab-pane v-if="tv('loc')" label="库位管理" name="loc">
+        <el-tab-pane lazy v-if="tv('loc')" label="库位管理" name="loc">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
             <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openLoc()">新增库位</el-button>
             <el-input v-model="locSearch" placeholder="搜库位/备注" :prefix-icon="Search" clearable size="small" style="width:200px" />
@@ -1402,7 +1456,7 @@ function applyPoPick() {
         </el-tab-pane>
 
         <!-- 🆕 出入库登记 + 物料需求 合并：顶部两个登记按钮(逻辑不变)，下方物料需求(按项目汇总在库物料+复选出库) -->
-        <el-tab-pane v-if="tv('demand')" label="出入库 / 物料需求" name="demand">
+        <el-tab-pane lazy v-if="tv('demand')" label="出入库 / 物料需求" name="demand">
           <!-- 顶部：出入库登记两个按钮，逻辑独立不变；可对任意物料手工登记（含非项目领用） -->
           <div v-if="canWrite" class="io-bar">
             <el-button type="primary" :icon="Plus" @click="openIo('in')">入库登记</el-button>
@@ -1502,7 +1556,7 @@ function applyPoPick() {
         </el-tab-pane>
 
         <!-- 🆕 采购收货 -->
-        <el-tab-pane v-if="tv('recv')" name="recv">
+        <el-tab-pane lazy v-if="tv('recv')" name="recv">
           <template #label>采购收货<span v-if="recvPendingCount" class="wh-tab-badge">{{ recvPendingCount > 99 ? '99+' : recvPendingCount }}</span></template>
           <EmptyHint v-if="!canWrite" text="仅仓库角色可确认收货" :icon="Lock" />
           <template v-else>
@@ -1627,7 +1681,7 @@ function applyPoPick() {
         </el-tab-pane>
 
         <!-- 发货清单目录：设计部下发 → 仓库核对备齐 → 通知物流 -->
-        <el-tab-pane v-if="tv('ship')" name="ship">
+        <el-tab-pane lazy v-if="tv('ship')" name="ship">
           <template #label>发货清单<span v-if="shipPendingCount" class="wh-tab-badge">{{ shipPendingCount > 99 ? '99+' : shipPendingCount }}</span></template>
           <EmptyHint v-if="!canWrite" text="仅仓库角色可查看发货清单目录" :icon="Lock" />
           <template v-else>
@@ -1691,7 +1745,7 @@ function applyPoPick() {
         </el-tab-pane>
 
         <!-- 🆕 #167 采购申请：仓库列出要买什么 → 提交到采购部 -->
-        <el-tab-pane v-if="tv('preq')" label="采购申请" name="preq">
+        <el-tab-pane lazy v-if="tv('preq')" label="采购申请" name="preq">
           <EmptyHint v-if="!canWrite" text="仅仓库角色可提采购申请" :icon="Lock" />
           <template v-else>
             <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
