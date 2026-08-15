@@ -1,6 +1,8 @@
 # 阿里云 ECS 部署指南
 
-> 本系统使用 Docker Compose 部署，包含 5 个容器：postgres / redis / backend / frontend / nginx
+> 本系统使用 Docker Compose 部署，包含 4 个容器：postgres / backend / frontend / nginx
+> （另有一个 redis 容器残留在部分服务器上，但 `docker-compose.prod.yml` 里**没有**它、
+>   代码里也从没 import 过 —— 2026-08-15 查生产：跑了 3 周、0 个键、0 次命中。别照着它规划容量。）
 > 推荐配置：**ECS 共享型 s6（2 核 4G）即可起步**；50 人以上日活建议 4 核 8G
 
 ---

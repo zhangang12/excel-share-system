@@ -33,11 +33,11 @@
                               └────────┘   │ FastAPI  │
                                            └─┬──┬─────┘
                                              │  │
-                                ┌────────────┘  └──────┐
-                                ▼                      ▼
-                          ┌─────────┐            ┌─────────┐
-                          │postgres │            │  redis  │
-                          └─────────┘            └─────────┘
+                                             │
+                                             ▼
+                                       ┌─────────┐
+                                       │postgres │
+                                       └─────────┘
 ```
 
 | 容器 | 端口（容器内） | 暴露 | 角色 |
@@ -46,12 +46,18 @@
 | frontend | 5173 | ✗ | Vue 静态资源（生产构建后由 nginx 直接服务） |
 | backend | 8000 | ✗ | FastAPI |
 | postgres | 5432 | ✗ | 数据库（仅容器内可达） |
-| redis | 6379 | ✗ | 缓存（仅容器内可达） |
+| ~~redis~~ | 6379 | ✗ | **实际没在用**，见下 |
+
+> ⚠️ **redis 是残留，不是这套系统的一部分**（2026-08-15 查证）：
+> 它不在 `docker-compose.prod.yml` 里（所以每次发版 compose 都报 orphan container 警告），
+> 代码里从头到尾没 import 过（只有 `config.py` 一行没人读的 `redis_url`）。
+> 线上实测：跑了 3 周、`DBSIZE=0`、`keyspace_hits=0`。
+> **排障时别去查它**，也别照着它规划内存。要不要删/要不要真用起来，见交接文档第三节。
 
 **关键路径：**
 - 项目目录：`/opt/pms/v2/`
 - 备份目录：`/backup/`（cron 默认）
-- 数据卷：`postgres_data` / `redis_data` / `uploads_data` / `nginx_logs`
+- 数据卷：`postgres_data` / `uploads_data` / `nginx_logs`
 - 日志：各容器 stdout（json-file driver，自动 100MB×3 滚动）
 
 ---
