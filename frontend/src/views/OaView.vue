@@ -56,10 +56,26 @@ type Scope = 'mine' | 'pending_me' | 'pending_pay' | 'cc_me' | 'dept' | 'all'
 const activeTab = ref<Scope>('mine')
 const rows = ref<OaRequest[]>([])
 const listLoading = ref(false)
+// 🆕 反馈#396（杨坛）：「待我审批」「待付款」页签上显示未处理数量、红色标示、处理一个就减一个。
+//   ⚠️ 不能拿 rows.length 算：rows 只装**当前页签**那一份数据，
+//      站在「待我审批」上时「待付款」根本没加载过，拿它算出来永远是 0 或者串台。
+//      所以两个角标各自独立取一次，并在每次动作后刷新。
+const pendingMeCount = ref(0)
+const pendingPayCount = ref(0)
+async function loadBadges() {
+  try { pendingMeCount.value = (await oaApi.listRequests({ scope: 'pending_me' })).length }
+  catch { /* 角标失败不该打断页面 */ }
+  if (canPay.value) {
+    try { pendingPayCount.value = (await oaApi.listRequests({ scope: 'pending_pay' })).length }
+    catch { /* 同上 */ }
+  }
+}
+
 async function loadList() {
   listLoading.value = true
   try { rows.value = await oaApi.listRequests({ scope: activeTab.value }) }
   finally { listLoading.value = false }
+  loadBadges()   // 批一个少一个：任何动作后都会走 loadList，角标跟着重算
 }
 function onTabChange(name: string | number) {
   if (['mine', 'pending_me', 'pending_pay', 'cc_me', 'dept', 'all'].includes(String(name))) {
@@ -192,6 +208,28 @@ const PAYMENT_TYPES = ['payment', 'payment_public', 'payment_cash']
 const showPaymentFields = computed(() => PAYMENT_TYPES.includes(subForm.doc_type))
 // ⚠️ 现金付款**没有银行账户**——照 #348 一刀切要求填账号开户行，只会逼人瞎填，比不填更糟
 const showBankFields = computed(() => subForm.doc_type !== 'payment_cash' && showPaymentFields.value)
+
+// 🆕 反馈#365：用过的收款账户。数据来自历史付款申请（后端 /oa/payee-accounts 抽的），
+//   不另建表——另起一张表就得管"改了账号谁去同步"，会出现历史单据和账户库两个版本。
+interface PayeeAcct { payee: string; account: string; bank: string; used: number }
+const payeeBook = ref<PayeeAcct[]>([])
+const payeeFilled = ref(false)   // 这次是不是自动带出来的（带出来就提示核对一眼）
+async function loadPayeeBook() {
+  try { payeeBook.value = (await http.get<PayeeAcct[]>('/oa/payee-accounts')).data }
+  catch { payeeBook.value = [] }   // 拿不到就退回纯手输，不挡提交
+}
+function onPayeePick(v: string) {
+  payeeFilled.value = false
+  const hit = payeeBook.value.find(a => a.payee === (v || '').trim())
+  if (!hit) return
+  // ⚠️ 只在两个字段都空的时候带：人已经手填过就别覆盖他，
+  //    偷偷改掉他填的账号是这类"智能填充"最容易闯的祸。
+  if (!subForm.p_account.trim() && !subForm.p_bank.trim()) {
+    subForm.p_account = hit.account
+    subForm.p_bank = hit.bank
+    payeeFilled.value = true
+  }
+}
 const PAYBACK_TYPES = ['预付款', '进度款', '到货款', '尾款', '质保金', '全款']
 // 单行提成（分转整，避免浮点误差）
 function rowCommission(r: CommissionItem) {
@@ -441,14 +479,32 @@ async function doWithdraw() {
     await refreshDetail(); await loadList()
   } catch { /* 全局拦截器已提示 */ }
 }
+// 🆕 反馈#395（计梦蝶）：「建议加一个备注，方便财务打完款上传回单」。
+//   原来「标记已付款」只是个确认框，什么都填不了——回单只能事后另找地方传，
+//   发起人也不知道钱哪天走的哪个账户。改成小弹窗：备注 + 回单一起提交。
 const markingPaid = ref(false)
+const payDlg = ref(false)
+const payNote = ref('')
+const payReceipt = ref<File | null>(null)
+function openMarkPaid() {
+  payNote.value = ''
+  payReceipt.value = null
+  payDlg.value = true
+}
+function pickPayReceipt() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.jpg,.jpeg,.png,.webp,.pdf,.xls,.xlsx'
+  input.onchange = () => { payReceipt.value = input.files?.[0] || null }
+  input.click()
+}
 async function doMarkPaid() {
   if (!detailReq.value) return
-  try { await ElMessageBox.confirm('确认这笔申请的款项已经付出去了？', '标记已付款', { type: 'warning' }) } catch { return }
   markingPaid.value = true
   try {
-    await oaApi.markPaid(detailReq.value.id)
+    await oaApi.markPaid(detailReq.value.id, payNote.value.trim(), payReceipt.value)
     ElMessage.success('已标记为已付款')
+    payDlg.value = false
     await refreshDetail(); await loadList()
   } catch { /* 全局拦截器已提示 */ }
   finally { markingPaid.value = false }
@@ -643,6 +699,7 @@ function onMainTabChange(name: string | number) {
 onMounted(async () => {
   await Promise.all([loadDepartments(), loadDocTypes()])
   await loadList()
+  loadPayeeBook()   // 🆕 #365 用过的收款账户（不阻塞首屏；拿不到就退回手输）
   // 管理层才配得了审批链；非管理层调 listUsers 会 403，所以只对管理层拉
   if (auth.hasRole('admin', 'manager')) loadApproverCandidates()
 })
@@ -684,7 +741,10 @@ onMounted(async () => {
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane label="待我审批" name="pending_me">
+      <el-tab-pane name="pending_me">
+        <template #label>
+          <span>待我审批<b v-if="pendingMeCount > 0" class="oa-badge">{{ pendingMeCount > 99 ? '99+' : pendingMeCount }}</b></span>
+        </template>
         <div class="toolbar"><el-button :icon="RefreshLeft" @click="loadList">刷新</el-button></div>
         <el-table show-overflow-tooltip :data="rows" v-loading="listLoading" stripe max-height="calc(100vh - 320px)">
           <el-table-column prop="request_no" label="单号" width="150" />
@@ -703,7 +763,10 @@ onMounted(async () => {
 
       <!-- 🆕 #238 待付款：末环节财务审批通过后单据转「待付款」且不再属于任何审批环节，
            以前哪个队列都不显示=单据"消失"。财务在这里付款收口。 -->
-      <el-tab-pane v-if="canPay" label="待付款" name="pending_pay">
+      <el-tab-pane v-if="canPay" name="pending_pay">
+        <template #label>
+          <span>待付款<b v-if="pendingPayCount > 0" class="oa-badge">{{ pendingPayCount > 99 ? '99+' : pendingPayCount }}</b></span>
+        </template>
         <div class="toolbar">
           <el-button :icon="RefreshLeft" @click="loadList">刷新</el-button>
           <span class="muted" style="font-size:12.5px;margin-left:10px">审批已走完、等财务实际付钱的单据。付完点「处理」里的标记已付款。</span>
@@ -1146,8 +1209,19 @@ onMounted(async () => {
           <template v-if="showPaymentFields">
             <el-col :xs="24" :sm="12">
               <el-form-item label="收款单位 *">
-                <el-input v-model="subForm.p_payee" placeholder="收款单位全称" />
+                <!-- 🆕 反馈#365（计梦蝶）：付同一个收款单位时，账号/开户行不用再手敲一遍。
+                     下拉列的是**历史付款申请里用过的**收款单位，选中自动带出上次的账号+开户行。
+                     allow-create：新单位照样直接输，不挡人。 -->
+                <el-select v-model="subForm.p_payee" filterable allow-create default-first-option clearable
+                           placeholder="收款单位全称（用过的可直接选，账号自动带出）"
+                           style="width:100%" @change="onPayeePick">
+                  <el-option v-for="a in payeeBook" :key="a.payee"
+                             :label="`${a.payee}　${a.account.slice(-6).padStart(8, '·')}`" :value="a.payee" />
+                </el-select>
                 <div class="fi-hint" v-if="showBankFields">要跟银行账户的户名一致，对不上银行会退回</div>
+                <div class="fi-hint" v-if="payeeFilled" style="color:var(--el-color-success)">
+                  已带出上次用的账号和开户行，付之前请再核一眼
+                </div>
               </el-form-item>
             </el-col>
             <el-col :xs="24" :sm="12"><el-form-item label="期望付款日期（选填）"><el-date-picker v-model="subForm.p_pay_date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" /></el-form-item></el-col>
@@ -1314,6 +1388,13 @@ onMounted(async () => {
           </el-table>
         </div>
         <div v-if="detailReq.reject_reason" class="reject-box">驳回原因：{{ detailReq.reject_reason }}</div>
+        <!-- 🆕 #395 财务付款备注：付了没、哪天付的、走的什么账户，发起人自己就能看到 -->
+        <div v-if="detailReq.pay_note || detailReq.pay_at" class="pay-box">
+          <b>财务已付款</b>
+          <span v-if="detailReq.pay_at" class="muted small" style="margin-left:8px">{{ fmtDateTime(detailReq.pay_at) }}</span>
+          <div v-if="detailReq.pay_note" style="margin-top:4px">{{ detailReq.pay_note }}</div>
+          <div class="muted small" style="margin-top:4px">付款回单见下方「附件」</div>
+        </div>
 
         <div class="form-section-title">审批进度</div>
         <el-steps direction="vertical" :active="99" style="margin-bottom:16px">
@@ -1362,12 +1443,31 @@ onMounted(async () => {
           </template>
           <template v-if="detailReq.can_mark_paid">
             <div class="muted small" style="margin-bottom:8px">已审批通过，等待财务实际付款；付款后点下面按钮标记，跟"审批通过"是两件事。</div>
-            <el-button type="primary" :icon="Check" :loading="markingPaid" @click="doMarkPaid">标记已付款</el-button>
+            <el-button type="primary" :icon="Check" @click="openMarkPaid">标记已付款</el-button>
           </template>
           <el-button v-if="detailReq.can_withdraw" type="warning" plain @click="doWithdraw" style="margin-top:8px">撤回申请</el-button>
         </div>
       </div>
     </el-drawer>
+
+    <!-- 🆕 #395 标记已付款：备注 + 付款回单一起提交 -->
+    <el-dialog v-model="payDlg" title="标记已付款" width="460px" append-to-body>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px"
+        title="确认这笔申请的款项已经付出去了。备注和回单会显示在申请详情里，发起人能看到。" />
+      <el-form label-position="top">
+        <el-form-item label="付款备注（选填，如：8/13 转账 建行尾号 6688）">
+          <el-input v-model="payNote" type="textarea" :rows="2" maxlength="200" show-word-limit />
+        </el-form-item>
+        <el-form-item label="付款回单（选填，图片 / PDF / Excel）">
+          <el-button :icon="Upload" @click="pickPayReceipt">选择回单</el-button>
+          <span v-if="payReceipt" class="muted small" style="margin-left:8px">{{ payReceipt.name }}</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="payDlg = false">取消</el-button>
+        <el-button type="primary" :loading="markingPaid" @click="doMarkPaid">确认已付款</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 🆕 #247 汇总报表下钻明细 -->
     <el-dialog v-model="sumDetailVisible" :title="`报表明细 · ${sumDetailTitle}`" width="720px" class="v3-scroll-dialog">
@@ -1416,6 +1516,16 @@ onMounted(async () => {
 .cm-foot { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; }
 .chain-step { display: inline-flex; align-items: center; }
 .chain-arrow { margin: 0 5px; color: var(--el-text-color-secondary); }
+/* 🆕 #396 待我审批 / 待付款 未处理数量红标 */
+.oa-badge {
+  display: inline-block; min-width: 17px; height: 17px; line-height: 17px;
+  padding: 0 5px; margin-left: 5px; border-radius: 999px;
+  background: var(--el-color-danger); color: #fff;
+  font-size: 11px; font-weight: 700; text-align: center; vertical-align: 1px;
+}
+/* 🆕 #395 财务付款备注块 */
+.pay-box { background: var(--el-color-success-light-9); color: var(--el-color-success); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
+.pay-box .muted { color: var(--el-text-color-secondary); }
 .reject-box { background: var(--el-color-danger-light-9); color: var(--el-color-danger); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
 .att-list { display: flex; flex-direction: column; gap: 4px; }
 .att-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--el-border-color-lighter); font-size: 13px; }

@@ -179,6 +179,110 @@ async def list_sent(
     return [await _todo_out(db, t, today) for t in res.scalars().all()]
 
 
+@router.put("/{todo_id}", response_model=schemas.MgmtTodoOut)
+async def update_todo(
+    todo_id: int,
+    body: schemas.MgmtTodoUpdate,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#366/#380：已下发的待办支持编辑。
+
+    为什么必须有：原来只有「撤销 + 重发」一条路。生产现场（2026-08-11）：
+    02:41 下发「买一个快装弯头」→ 02:42 撤销 → 02:43 重发「19的快装弯头 卡盘50.5」。
+    代价是收件人被打扰两次，而且**第一条上的回复、承诺完成时间、进度全部丢掉**。
+
+    ⚠️ 改收件人时**只增删差集**，不整批重建：
+       重建会把留下来那些人的回复/进度/完成状态一起清掉——
+       「我只是改个标题」不该让已经回复过的人重新来一遍。
+    ⚠️ 只给**新增**的收件人推通知；老收件人推一条「内容有变更」，
+       不重复推「请回复承诺完成时间」（他们可能早就回过了）。
+    """
+    res = await db.execute(
+        select(models.ManagementTodo).where(models.ManagementTodo.id == todo_id))
+    todo = res.scalar_one_or_none()
+    if not todo:
+        raise HTTPException(404, "待办不存在")
+
+    changed: list[str] = []
+    if body.title is not None:
+        t = body.title.strip()
+        if not t:
+            raise HTTPException(400, "标题不能为空")
+        if t != todo.title:
+            changed.append(f"标题「{todo.title}」→「{t}」")
+            todo.title = t
+    if body.content is not None:
+        c = (body.content or "").strip() or None
+        if c != todo.content:
+            changed.append("说明")
+            todo.content = c
+    if body.priority is not None:
+        p = "urgent" if body.priority == "urgent" else "normal"
+        if p != todo.priority:
+            changed.append("紧急程度→" + ("紧急" if p == "urgent" else "普通"))
+            todo.priority = p
+    if body.due_date is not None:
+        d = (body.due_date or "").strip() or None
+        if d:
+            try:
+                date.fromisoformat(d)
+            except (ValueError, TypeError):
+                raise HTTPException(400, "截止日期格式应为 YYYY-MM-DD")
+        if d != todo.due_date:
+            changed.append(f"截止日期 {todo.due_date or '无'} → {d or '无'}")
+            todo.due_date = d
+
+    added_ids: list[int] = []
+    if body.recipient_ids is not None:
+        want = list(dict.fromkeys(body.recipient_ids))
+        r = await db.execute(select(models.User).where(
+            models.User.id.in_(want), models.User.is_active == True))  # noqa: E712
+        ok = {u.id for u in r.scalars().all()}
+        want = [i for i in want if i in ok]
+        if not want:
+            raise HTTPException(400, "请选择有效的收件人")
+        tr = await db.execute(select(models.ManagementTodoTarget).where(
+            models.ManagementTodoTarget.todo_id == todo_id))
+        cur_targets = tr.scalars().all()
+        cur_ids = {t.user_id for t in cur_targets}
+        added_ids = [i for i in want if i not in cur_ids]
+        removed = [t for t in cur_targets if t.user_id not in set(want)]
+        for t in removed:
+            await db.delete(t)
+        for i in added_ids:
+            db.add(models.ManagementTodoTarget(todo_id=todo_id, user_id=i, status="pending"))
+        if added_ids or removed:
+            changed.append(f"收件人 +{len(added_ids)}/-{len(removed)}")
+
+    if not changed:
+        return await _get_todo_out(db, todo_id)
+
+    await db.commit()
+
+    tag = "【紧急】" if todo.priority == "urgent" else "【管理层待办】"
+    due_txt = f"（要求 {todo.due_date} 前完成）" if todo.due_date else ""
+    # 新加进来的人：走和新建一样的话术
+    for rid in added_ids:
+        await push_message(
+            db, to_user_id=rid, kind="warn",
+            text=f"{tag}{_uname(current)} 给你下达待办「{todo.title}」{due_txt}，请尽快回复承诺完成时间。",
+            biz_type="mgmt_todo", biz_id=todo.id)
+    # 原有的人：只告诉他"改了"，别再要一次承诺时间
+    tr = await db.execute(select(models.ManagementTodoTarget.user_id).where(
+        models.ManagementTodoTarget.todo_id == todo_id))
+    for (uid,) in tr.all():
+        if uid in set(added_ids):
+            continue
+        await push_message(
+            db, to_user_id=uid, kind="info",
+            text=f"{tag}待办「{todo.title}」有变更（{'；'.join(changed)}），请留意。",
+            biz_type="mgmt_todo", biz_id=todo.id)
+    await write_audit(db, user=current, action="update", target_type="management_todo",
+                      target_id=todo_id, detail=f"改待办「{todo.title}」：{'；'.join(changed)}")
+    return await _get_todo_out(db, todo_id)
+
+
 @router.delete("/{todo_id}", response_model=schemas.Msg)
 async def delete_todo(
     todo_id: int,

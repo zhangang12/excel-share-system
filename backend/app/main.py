@@ -16,7 +16,7 @@ from .config import settings
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401
 from .seed import seed
-from .data_migration import run_all as run_data_migrations, ensure_schema_columns
+from .data_migration import run_all as run_data_migrations, ensure_schema_columns, ensure_indexes
 from .routers import (
     auth_router, admin_router, projects_router, datasheets_router,
     excel_router, overview_router, field_perm_router, ws_router,
@@ -25,7 +25,7 @@ from .routers import (
     aftersales_router, finance_router, feedback_router, reports_router,
     warehouse_router, export_router, user_feedback_router,
     produce_router, leads_router, purchase_mgmt_router, oa_router,
-    hr_router, management_todo_router, agent_router, desktop_router,
+    hr_router, management_todo_router, personal_todo_router, agent_router, desktop_router,
 )
 from .errors import register_exception_handlers
 from .database import get_db
@@ -81,6 +81,7 @@ async def lifespan(app: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         await ensure_schema_columns(engine)  # 🆕 v3：给存量表补新增列（幂等）
+        await ensure_indexes(engine)         # 🆕 给存量表补 index=True 却没建的索引（幂等）
         async with SessionLocal() as db:
             await seed(db)
             await run_data_migrations(db)
@@ -185,6 +186,7 @@ def create_app() -> FastAPI:
     app.include_router(oa_router.router)
     app.include_router(hr_router.router)   # 🆕 人事部一期  # 🆕 OA 审批模块
     app.include_router(management_todo_router.router)  # 🆕 管理层待办
+    app.include_router(personal_todo_router.router)    # 🆕 #363/#381/#382 个人待办
     app.include_router(agent_router.router)  # 🆕 Agent 助手（只读问数 POC，admin/manager）
     app.include_router(desktop_router.router)  # 🆕 桌面客户端在线统计（只读，admin/manager）
     # 🆕 客户端故障上报：不挂鉴权——升级失败/启动崩溃都发生在登录之前，

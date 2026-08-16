@@ -60,9 +60,15 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "produce_group_tasks": [("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)")],  # 🆕 派给具体人 + 本组预计完成
     "dept_orders": [
         ("design_done_flag",   "BOOLEAN DEFAULT FALSE"),  # 🆕 设计完成第一步标记
-        ("electric_done_flag", "BOOLEAN DEFAULT FALSE"),  # 🆕 接线完成第一步标记
+        ("electric_done_flag", "BOOLEAN DEFAULT FALSE"),  # 电工三步流第二步：电路完成
         ("ship_prep_done",     "BOOLEAN DEFAULT FALSE"),  # 🆕 #5 设计部发货准备完成标记
+        # 🆕 电工部三步流：主板完成（结考核）+ 电路完成日
+        #   存量单子 mainboard_done_flag 默认 FALSE，见 backfill_electric_mainboard
+        ("mainboard_done_flag", "BOOLEAN DEFAULT FALSE"),
+        ("wire_done_date",      "VARCHAR(10)"),
     ],
+    # 🆕 #395 财务标记已付款时的备注 + 付款时间（回单走 attachments/oa_request，不占列）
+    "oa_requests": [("pay_note", "TEXT"), ("pay_at", "TIMESTAMPTZ")],
     "aftersales": [("reject_reason", "TEXT"),
                    ("kind", "VARCHAR(16) DEFAULT 'aftersales'"),
                    ("project_name", "VARCHAR(128)"),  # 🆕 #98 驳回原因 + 需求一 登记类型 + #158 历史项目名
@@ -203,6 +209,55 @@ async def ensure_schema_columns(engine: AsyncEngine) -> int:
                     await conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {col} DROP NOT NULL"))
                     log.info("[ensure_schema_columns] %s.%s 已去除 NOT NULL", table, col)
     return added
+
+
+async def ensure_indexes(engine: AsyncEngine) -> int:
+    """给**存量表**补上模型里声明了 index=True、库里却没有的索引。幂等。
+
+    为什么需要：`Base.metadata.create_all` 只对**还不存在的表**建索引。给一张已经上线的
+    表新加 `index=True`，本地全新库跑出来一切正常（表是新建的），生产上那张表早就存在，
+    索引**永远不会被创建**——代码里写着有索引，线上其实全是顺序扫描，而且没有任何报错。
+    2026-08-15 查仓库性能时发现生产上这样缺了 23 个，包括 purchase_items.source_sheet_id
+    （物料需求每张清单都要按它查一次）和 wh_txns.purchase_item_id。
+
+    ⚠️ 逐个索引单开事务 + 各自 try：某一条建失败（最典型是**唯一索引撞上存量重复数据**）
+       只跳过它并告警，不能把整个启动流程带崩——启动挂了就是全站 502。
+    """
+    from sqlalchemy import inspect as sa_inspect
+    from .database import Base
+    from . import models  # noqa: F401  确保所有表都已注册到 metadata
+
+    def _missing(sync_conn) -> list:
+        insp = sa_inspect(sync_conn)
+        have_tables = set(insp.get_table_names())
+        out = []
+        for t in Base.metadata.sorted_tables:
+            if t.name not in have_tables:
+                continue   # 全新表，create_all 已经带上索引了
+            # 已有的"列组合"——唯一约束/主键也能顶替单列索引的作用，别重复建
+            covered = {tuple(i["column_names"]) for i in insp.get_indexes(t.name)}
+            covered.add(tuple(insp.get_pk_constraint(t.name).get("constrained_columns") or []))
+            for uc in insp.get_unique_constraints(t.name):
+                covered.add(tuple(uc["column_names"]))
+            for ix in t.indexes:
+                if tuple(c.name for c in ix.columns) not in covered:
+                    out.append(ix)
+        return out
+
+    async with engine.connect() as conn:
+        missing = await conn.run_sync(_missing)
+    created = 0
+    for ix in missing:
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(lambda sc, _ix=ix: _ix.create(sc, checkfirst=True))
+            created += 1
+            log.info("[ensure_indexes] 已补索引 %s", ix.name)
+        except Exception as e:   # noqa: BLE001  单个索引失败不能影响启动
+            log.warning("[ensure_indexes] 补索引 %s 失败（跳过）：%s", ix.name, e)
+    if created:
+        log.info("[ensure_indexes] 共补建 %d 个索引", created)
+    return created
 
 
 
@@ -1362,12 +1417,21 @@ async def backfill_sales_ledger(db: AsyncSession) -> dict:
 
 
 async def backfill_shipments(db: AsyncSession) -> dict:
-    """🆕 v3 M08 存量回填：给「进行中」未删项目补发货待办行（已完成/已归档视为历史已交付不补）。
-    幂等：project_id 已有 shipment 跳过。收货信息留空待补。"""
+    """🆕 v3 M08 存量回填：给未删项目补发货待办行。幂等：已有 shipment 的跳过。
+
+    🆕 2026-08-11：**去掉「只补进行中项目」的限制**（原注释说"已完成视为历史已交付不补"）。
+    实际后果是：42 个项目（其中 37 个已完成）从来没有 Shipment 行，
+    而发货看板是从 Shipment 出发查的——这些项目在物流部**根本不存在**，
+    王芹想给它们录运费都无从下手（反馈#364「所有的项目编号应同步过来」）。
+    项目「已完成」并不代表系统里记过发货：这个状态是发货时自动置的，
+    也可能是人工标的、或者历史导入的——后两种就是这 37 个。
+    ⚠️ 补出来的行是 pending，会出现在看板「未发货」里。这是**如实反映**：
+       系统里确实没有它们的发货记录。侧边栏那个「待发货」角标不受影响，
+       它只数进行中项目（见 logistics_router.pending_count），仍然是真待办数。
+    """
     res = await db.execute(
         select(models.Project).where(
             models.Project.is_deleted == False,  # noqa: E712
-            models.Project.status == "进行中",
         )
     )
     projects = res.scalars().all()
@@ -1530,6 +1594,40 @@ async def route_pending_pm_feedbacks_to_design(db: AsyncSession) -> dict:
         await db.commit()
     log.info("[route_pending_pm_feedbacks_to_design] 转设计接收 %d 条", n)
     return {"routed": n}
+
+
+async def backfill_electric_mainboard(db: AsyncSession) -> dict:
+    """🆕 电工部三步流上线：把存量**已完成**的电工单补上第一步/第二步的标记。
+
+    三步流之前只有一个「接线完成」动作，一点就 done。这些老单子在新模型里
+    既没有 mainboard_done_flag 也没有 wire_done_date，界面会把它们显示成
+    「卡在主板完成之前」，报表里也会被当成没结考核的单子——都是假的。
+
+    回填口径：老单子的 done_date 既是考核日、也是实际完成日，两个字段都取它。
+    幂等：只补 flag 为假 / 日期为空的行，跑多少次都一样。
+    """
+    r = await db.execute(select(models.DeptOrder).where(
+        models.DeptOrder.dept == "electric",
+        models.DeptOrder.status == "done"))
+    orders = list(r.scalars().all())
+    n = 0
+    for o in orders:
+        touched = False
+        if not o.mainboard_done_flag:
+            o.mainboard_done_flag = True
+            touched = True
+        if not o.wire_done_date:
+            o.wire_done_date = o.done_date
+            touched = True
+        if not o.electric_done_flag:
+            o.electric_done_flag = True   # 老单子既然 done，电路当然也完成了
+            touched = True
+        if touched:
+            n += 1
+    if n:
+        await db.commit()
+        log.info("[backfill_electric_mainboard] 回填 %d 张存量电工完成单", n)
+    return {"backfilled": n}
 
 
 async def close_legacy_electric_done_orders(db: AsyncSession) -> dict:
@@ -2397,6 +2495,12 @@ async def run_all(db: AsyncSession) -> None:
         await close_legacy_electric_done_orders(db)   # 🆕 #197 止损:卡在旧二步流的电工单置完成
     except Exception as e:
         log.warning("close_legacy_electric_done_orders failed: %s", e)
+    try:
+        # ⚠️ 必须排在 close_legacy_electric_done_orders **之后**：那条会把卡住的单子置成 done，
+        #    回填只认 done 的单子，顺序反了这批就补不上标记。
+        await backfill_electric_mainboard(db)   # 🆕 电工三步流：存量完成单补主板/电路标记
+    except Exception as e:
+        log.warning("backfill_electric_mainboard failed: %s", e)
     try:
         await backfill_project_visibility_from_overview_names(db)
     except Exception as e:

@@ -243,9 +243,14 @@ async def approve(
             models.AfterSalesItem.aftersales_id == a.id,
             models.AfterSalesItem.invoice_file_id.is_(None)))).scalar() or 0
         warn = f"，其中 {miss} 行没传发票" if miss else ""
+        # 🆕 反馈#362：消息里必须写清**去哪办**。
+        #   现场教训：王芹一直收得到这条通知，但她的「财务部→安装/售后费用」tab 被隐藏了，
+        #   打开系统找不到在哪核对，3 单 ¥9,636 就这么卡了三天，系统一声不吭。
+        #   带上位置，至少人能照着找、找不到会问，而不是以为自己没这个活。
         await push_message(db, to_role="finance", kind="info",
                            text=(f"【{label}报销待核对】{disp} {label}费用 ¥{a.cost:,.0f} "
-                                 f"已经售后主管审批，请核对报销明细与发票{warn}"),
+                                 f"已经售后主管审批，请到「财务部 → 安装/售后费用」"
+                                 f"核对报销明细与发票后点「核对无误，安排报销」{warn}"),
                            biz_type="aftersales", biz_id=a.id)
     else:
         await push_message(db, to_role="finance", kind="info",
@@ -403,15 +408,20 @@ async def reimburse(
     current: models.User = Depends(require_roles("finance")),
     db: AsyncSession = Depends(get_db),
 ):
-    """财务核对无误 → 安排报销（这条支腿的终点）。"""
+    """财务核对无误 → 安排报销（这条支腿的终点）。
+
+    🆕 2026-08-13 业务要求：**取消「必须每行都有发票」的硬闸**。
+    现实里有的报销就是没票（差旅零星支出、个人垫付的小额件），
+    硬卡着财务只能一直退回、单子永远走不完——这条限制拦不住乱报，只拦住了正常报销。
+    改成：缺票不再拦，但把缺几张**写进审计留痕**，谁批的、批的时候缺几张一清二楚；
+    界面上也照旧标红提示。真要追责查审计日志即可。
+    """
     a = await _get_for_pay(db, aid)
     if a.pay_status != "checking":
         raise HTTPException(400, "只有待核对的记录能安排报销")
     miss = (await db.execute(select(func.count(models.AfterSalesItem.id)).where(
         models.AfterSalesItem.aftersales_id == a.id,
         models.AfterSalesItem.invoice_file_id.is_(None)))).scalar() or 0
-    if miss:
-        raise HTTPException(400, f"还有 {miss} 行没传发票，请先退回让登记人补齐")
     a.pay_status = "reimbursed"
     a.pay_note = (note or "").strip() or None
     a.pay_by = current.id
@@ -422,8 +432,10 @@ async def reimburse(
         await push_message(db, to_user_id=creator, kind="info",
                            text=f"【报销已安排】{disp} 报销 ¥{cost:,.0f} 财务已核对无误并安排报销",
                            biz_type="aftersales", biz_id=aid)
-    await write_audit(db, user=current, action="reimburse", target_type="aftersales", target_id=aid)
-    return schemas.Msg(message="已安排报销")
+    # 缺票不拦，但必须留痕：批的时候缺几张写进审计，日后要追责查得到
+    await write_audit(db, user=current, action="reimburse", target_type="aftersales",
+                      target_id=aid, detail=(f"缺 {miss} 张发票仍安排报销" if miss else "发票齐全"))
+    return schemas.Msg(message="已安排报销" + (f"（{miss} 行无发票，已记入审计）" if miss else ""))
 
 
 @router.post("/{aid}/finance-void", response_model=schemas.Msg)

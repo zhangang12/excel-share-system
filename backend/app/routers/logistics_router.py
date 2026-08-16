@@ -91,53 +91,46 @@ def _gate(orders: list[models.DeptOrder]) -> tuple[bool, list[str]]:
 @router.get("/board", response_model=List[BoardRow])
 async def board(
     year: Optional[str] = None,
+    ship_status: Optional[str] = None,
     proj_status: Optional[str] = None,
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """发货看板（物流/管理层；其它角色只读不限制——数据无敏感金额）。"""
+    """发货看板（物流/管理层；其它角色只读不限制——数据无敏感金额）。
 
-    if proj_status == "已完成":
-        # 🆕 2026-07-30 修筛选口径（举一反三排查）：「已完成」只看真实发货（Shipment.status==shipped）。
-        #   原逻辑把「项目手动置已完成」也并入——导致没发货的行在已完成筛选下显示「待齐/可发货」
-        #   且按钮被禁、 tooltip 为空（筛选与状态列对不上）。
-        #   历史存量兼容保留：从 Project 出发查再 LEFT 取 Shipment（不漏无 Shipment 记录的历史项目）。
-        proj_q = select(models.Project).where(models.Project.is_deleted == False)  # noqa: E712
-        if year:
-            proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
-        proj_q = proj_q.where(
-            models.Project.id.in_(
-                select(models.Shipment.project_id).where(models.Shipment.status == "shipped")
-            )
-        )
-        res = await db.execute(proj_q.order_by(models.Project.code.desc()).limit(300))
-        projects = [p for p in res.scalars().all()
-                    if not str((p.extra or {}).get("__o__销售") or "").startswith("备机")]
-        pids = [p.id for p in projects]
-        if not pids:
-            return []
-        # 获取这些项目的 Shipment（可能不存在）
-        res = await db.execute(select(models.Shipment).where(
-            models.Shipment.project_id.in_(pids)))
-        ships_by_pid: dict[int, models.Shipment] = {s.project_id: s for s in res.scalars().all()}
-    else:
-        ship_q = select(models.Shipment).join(models.Project).where(
-            models.Project.is_deleted == False)  # noqa: E712
-        if year:
-            ship_q = ship_q.where(models.Project.code.like(f"{year}-%"))
-        if proj_status == "进行中":
-            ship_q = ship_q.where(
-                models.Shipment.status == "pending",
-                models.Project.status != "已完成",
-            )
-        res = await db.execute(ship_q.order_by(models.Project.code.desc()).limit(300))
-        ships = [s for s in res.scalars().all()
-                 if not str((s.project.extra or {}).get("__o__销售") or "").startswith("备机")]
-        pids = [s.project_id for s in ships]
-        if not pids:
-            return []
-        ships_by_pid = {s.project_id: s for s in ships}
-        projects = None  # 非"已完成"路径不需要单独查 Project
+    🆕 2026-08-11 筛选口径改为**发货状态**（已发货 / 未发货 / 全部）。
+    这是发货看板，物流关心的是发没发货，不是项目立项状态。
+
+    ⚠️ 旧口径会漏单：原「进行中」= 未发货 **且** 项目状态≠已完成。
+       生产上有 27 张「未发货、但项目被手工标成了已完成」的单，
+       「进行中」和「已完成」两个筛选都看不到它们，只有「全部」才露出来——
+       而**运费就是在这张表上录的**，看不到就录不进成本（见反馈#364）。
+       新口径只看 `Shipment.status`，这 27 张回到「未发货」里。
+
+    `proj_status` 是旧客户端还在发的参数，映射到新口径后继续可用
+    （进行中→未发货、已完成→已发货）；不映射的话没升级的客户端筛选会**静默失效**。
+    """
+    if not ship_status and proj_status:
+        ship_status = {"进行中": "未发货", "已完成": "已发货"}.get(proj_status)
+
+    # 统一从 Shipment 出发。原来「已完成」单独走一条以 Project 为主的路径，
+    # 但它的 WHERE 要求项目必须有 shipped 的发货单，所以那条路径里
+    # 「项目没有 Shipment」的兜底分支永远走不到，纯属死代码，一并去掉。
+    ship_q = select(models.Shipment).join(models.Project).where(
+        models.Project.is_deleted == False)  # noqa: E712
+    if year:
+        ship_q = ship_q.where(models.Project.code.like(f"{year}-%"))
+    if ship_status == "已发货":
+        ship_q = ship_q.where(models.Shipment.status == "shipped")
+    elif ship_status == "未发货":
+        ship_q = ship_q.where(models.Shipment.status != "shipped")
+    res = await db.execute(ship_q.order_by(models.Project.code.desc()).limit(300))
+    ships = [s for s in res.scalars().all()
+             if not str((s.project.extra or {}).get("__o__销售") or "").startswith("备机")]
+    pids = [s.project_id for s in ships]
+    if not pids:
+        return []
+    ships_by_pid: dict[int, models.Shipment] = {s.project_id: s for s in ships}
 
     # 任务单批量
     res = await db.execute(select(models.DeptOrder).where(
@@ -182,60 +175,28 @@ async def board(
         doc_names = {a.id: a.name for a in res.scalars().all()}
 
     rows = []
-    if projects is not None:
-        # "已完成"路径：以 Project 列表为主，Shipment 数据按需补填
-        for p in projects:
-            s = ships_by_pid.get(p.id)
-            orders = orders_by_pid.get(p.id, [])
-            rows.append(BoardRow(
-                id=s.id if s else -p.id,           # 无 Shipment 用负 project_id 占位
-                project_id=p.id,
-                code=p.code, name=p.name,
-                status=s.status if s else "shipped",  # 无 Shipment 视为已发货
-                design_files=files_by_pid_dept.get((p.id, "design"), []),
-                electric_files=files_by_pid_dept.get((p.id, "electric"), []),
-                design_state=_dept_state(orders, "design"),
-                electric_state=_dept_state(orders, "electric"),
-                produce_state=_dept_state(orders, "produce"),
-                ship_list_files=shiplist_by_pid.get(p.id, []),
-                packlist_status=s.packlist_status if s else "none",
-                receiver_name=s.receiver_name if s else None,
-                receiver_company=s.receiver_company if s else None,
-                receiver_phone=s.receiver_phone if s else None,
-                receiver_addr=s.receiver_addr if s else None,
-                ship_doc_name=doc_names.get(s.ship_doc_file_id) if s else None,
-                ship_doc_id=s.ship_doc_file_id if s else None,
-                shipped_at=s.shipped_at if s else None,
-                freight_cost=s.freight_cost if s else None,
-                freight_payer=s.freight_payer if s else None,
-                freight_note=s.freight_note if s else None,
-                can_ship=False,
-                gate_missing=[],
-            ))
-    else:
-        # "进行中" / 全部 路径：以 Shipment 列表为主
-        for s in ships_by_pid.values():
-            orders = orders_by_pid.get(s.project_id, [])
-            can, missing = _gate(orders)
-            rows.append(BoardRow(
-                id=s.id, project_id=s.project_id,
-                code=s.project.code, name=s.project.name, status=s.status,
-                design_files=files_by_pid_dept.get((s.project_id, "design"), []),
-                electric_files=files_by_pid_dept.get((s.project_id, "electric"), []),
-                design_state=_dept_state(orders, "design"),
-                electric_state=_dept_state(orders, "electric"),
-                produce_state=_dept_state(orders, "produce"),
-                ship_list_files=shiplist_by_pid.get(s.project_id, []),
-                packlist_status=s.packlist_status,
-                receiver_name=s.receiver_name, receiver_company=s.receiver_company,
-                receiver_phone=s.receiver_phone, receiver_addr=s.receiver_addr,
-                ship_doc_name=doc_names.get(s.ship_doc_file_id),
-                ship_doc_id=s.ship_doc_file_id,
-                shipped_at=s.shipped_at,
-                freight_cost=s.freight_cost, freight_payer=s.freight_payer, freight_note=s.freight_note,
-                can_ship=(s.status == "pending" and can),
-                gate_missing=missing if s.status == "pending" else [],
-            ))
+    for s in ships_by_pid.values():
+        orders = orders_by_pid.get(s.project_id, [])
+        can, missing = _gate(orders)
+        rows.append(BoardRow(
+            id=s.id, project_id=s.project_id,
+            code=s.project.code, name=s.project.name, status=s.status,
+            design_files=files_by_pid_dept.get((s.project_id, "design"), []),
+            electric_files=files_by_pid_dept.get((s.project_id, "electric"), []),
+            design_state=_dept_state(orders, "design"),
+            electric_state=_dept_state(orders, "electric"),
+            produce_state=_dept_state(orders, "produce"),
+            ship_list_files=shiplist_by_pid.get(s.project_id, []),
+            packlist_status=s.packlist_status,
+            receiver_name=s.receiver_name, receiver_company=s.receiver_company,
+            receiver_phone=s.receiver_phone, receiver_addr=s.receiver_addr,
+            ship_doc_name=doc_names.get(s.ship_doc_file_id),
+            ship_doc_id=s.ship_doc_file_id,
+            shipped_at=s.shipped_at,
+            freight_cost=s.freight_cost, freight_payer=s.freight_payer, freight_note=s.freight_note,
+            can_ship=(s.status == "pending" and can),
+            gate_missing=missing if s.status == "pending" else [],
+        ))
     return rows
 
 
@@ -244,6 +205,11 @@ async def pending_count(
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # 角标口径 = 看板「未发货」筛选，两边必须是同一个数：
+    #   角标显示 96、点进去看到 96 行，人才信这个数。
+    #   曾经想过只数「进行中」项目（把补录的历史单排除在待办外），但那样角标和看板对不上，
+    #   更糟——用户看到角标 32、进去却是 96 行，会以为系统在骗人。
+    #   历史单确实多，但那是**真实欠账**：系统里没有它们的发货记录，本来就该被看见。
     res = await db.execute(
         select(func.count(models.Shipment.id)).join(models.Project).where(
             models.Shipment.status == "pending",
@@ -351,9 +317,16 @@ async def confirm_ship(
     res = await db.execute(select(models.DeptOrder).where(
         models.DeptOrder.project_id == s.project_id))
     can, missing = _gate(list(res.scalars().all()))
-    is_mgr = current.has_role("admin", "manager")
-    if not can and not (force and is_mgr):
+    # 🆕 反馈#367（赵仁辉）：强制发货放给物流负责人。
+    # ⚠️ 这一步的实际后果要清楚：本接口 require_roles("logistics")，能调它的本来就只有
+    #    物流 + 管理层。把 force 也放给 logistics 之后，**D5 闸门就不再拦任何人了**，
+    #    它从「硬闸」变成「提醒 + 留痕」。是有意为之，但补偿手段必须跟上：
+    #      ① 审计写清楚绕过时到底缺了什么（原来只写一个 FORCE，事后看不出漏了哪道工序）
+    #      ② 每次绕过都推给管理层——没人看得见的旁路等于没有旁路
+    can_force = current.has_role("admin", "manager", "logistics")
+    if not can and not (force and can_force):
         raise HTTPException(400, f"发货闸门未通过：{('、'.join(missing))} 未完成（D5：已下单任务须全部完成）")
+    forced = bool(force and not can)
 
     a = await save_upload(db, file, biz_type="ship_doc", biz_id=s.id,
                           project_id=s.project_id, user=current)
@@ -393,7 +366,17 @@ async def confirm_ship(
     await push_message(db, to_role="sales_lead", kind="info",
                        text=f"【已发货】{code} 已发货（{today_s}）。",
                        biz_type="shipment", biz_id=s.id)
-    await write_audit(db, user=current, action="ship", target_type="shipment",
-                      target_id=sid, detail=f"{code} {today_s}{' FORCE' if force and not can else ''}")
+    # 🆕 #367：绕过闸门必须让管理层看见——否则放开权限就等于把 D5 静悄悄关掉了
+    if forced:
+        who = current.full_name or current.username
+        for role in ("manager", "admin"):
+            await push_message(db, to_role=role, kind="warn",
+                               text=f"【强制发货】{code} 在闸门未通过的情况下由 {who} 发出"
+                                    f"（未完成：{'、'.join(missing)}）。",
+                               biz_type="shipment", biz_id=s.id,
+                               exclude_user_ids={current.id})
+    await write_audit(db, user=current, action="ship", target_type="shipment", target_id=sid,
+                      # 绕过时把缺了哪几道工序一并记下：原来只写 FORCE，事后看不出漏了什么
+                      detail=f"{code} {today_s}" + (f" FORCE 未完成：{'、'.join(missing)}" if forced else ""))
     tail = "，项目已自动标记为已完成" if proj_auto_done else ""
     return schemas.Msg(message=f"{code} 已发货，发货日期已回传销售台账{tail}")

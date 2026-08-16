@@ -9,6 +9,7 @@ import { ordersApi, type OptionUser } from '@/api/orders'
 import { http } from '@/api'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import AttachmentPreview from '@/components/AttachmentPreview.vue'   // 🆕 #369/#370 附图应用内预览
 
 const auth = useAuthStore()
 // 🆕 2026-07-20：提交权限由仅装配组放宽到 装配/钣金/封板 三组（直达设计师，不审批）
@@ -56,14 +57,17 @@ function pickImages() {
   input.click()
 }
 function removeImage(i: number) { fbImages.value.splice(i, 1) }
-// 查看附图：带鉴权取 blob 后新标签打开
-async function viewImage(img: { id: number; name: string }) {
-  try {
-    const r = await http.get(`/attachments/${img.id}/download`, { responseType: 'blob' })
-    const url = URL.createObjectURL(r.data as Blob)
-    window.open(url, '_blank')
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
-  } catch { ElMessage.error('图片打开失败') }
+// 查看附图 —— 🆕 反馈#369/#370（赵仁辉）「点不开」「不能预览」，根因在客户端：
+//   原来是 `window.open(URL.createObjectURL(blob))`，网页版好使，**桌面客户端必然点不开**。
+//   desktop/main.js 的 setWindowOpenHandler 是
+//       if (/^https?:\/\//i.test(url)) shell.openExternal(url);  return { action: 'deny' };
+//   `blob:` 开头的 URL 既不匹配 http(s) 交给系统浏览器、也不允许开新窗 → 直接 deny，
+//   点了**一点反应都没有**，连报错都没有，所以两次反馈都只能写「点不开」。
+//   改成走全站统一的 AttachmentPreview 应用内弹窗，网页和客户端都能开。
+//   ⚠️ 别再往这里加 window.open——客户端里凡是 blob:/data: 的新窗都是这个下场。
+const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
+function viewImage(img: { id: number; name: string }) {
+  previewRef.value?.open({ id: img.id, name: img.name })
 }
 const submitting = ref(false)
 async function submit() {
@@ -211,6 +215,9 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
         <el-button type="primary" :loading="assigning" @click="doAssign">确定指派</el-button>
       </template>
     </el-dialog>
+
+    <!-- 🆕 #369/#370 附图应用内预览（原来 window.open(blob:) 在客户端里被 deny，点了没反应） -->
+    <AttachmentPreview ref="previewRef" />
   </el-card>
 </template>
 

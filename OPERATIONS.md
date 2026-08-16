@@ -33,11 +33,11 @@
                               └────────┘   │ FastAPI  │
                                            └─┬──┬─────┘
                                              │  │
-                                ┌────────────┘  └──────┐
-                                ▼                      ▼
-                          ┌─────────┐            ┌─────────┐
-                          │postgres │            │  redis  │
-                          └─────────┘            └─────────┘
+                                             │
+                                             ▼
+                                       ┌─────────┐
+                                       │postgres │
+                                       └─────────┘
 ```
 
 | 容器 | 端口（容器内） | 暴露 | 角色 |
@@ -46,12 +46,53 @@
 | frontend | 5173 | ✗ | Vue 静态资源（生产构建后由 nginx 直接服务） |
 | backend | 8000 | ✗ | FastAPI |
 | postgres | 5432 | ✗ | 数据库（仅容器内可达） |
-| redis | 6379 | ✗ | 缓存（仅容器内可达） |
+| ~~redis~~ | 6379 | ✗ | **实际没在用**，见下 |
+
+> ⚠️ **redis 是残留，不是这套系统的一部分**（2026-08-15 查证）：
+> 它不在 `docker-compose.prod.yml` 里（所以每次发版 compose 都报 orphan container 警告），
+> 代码里从头到尾没 import 过（只有 `config.py` 一行没人读的 `redis_url`）。
+> 线上实测：跑了 3 周、`DBSIZE=0`、`keyspace_hits=0`。
+> **排障时别去查它**，也别照着它规划内存。要不要删/要不要真用起来，见交接文档第三节。
+
+> ## ⛔ 这台机器上**不要**敲 `docker system df` / `docker system df -v`
+>
+> 服务器只有 **3.5 GB 内存、没有 swap**。这条命令要遍历所有镜像层算体积，
+> dockerd 当场膨胀到 **2.4–3 GB**，直接触发 OOM，dockerd 被内核杀掉、全部容器重启，
+> 站点断一分钟左右。2026-08-15 晚实测踩过（21:32、21:33 连杀两次），
+> 7-18 那两次 dockerd 被杀也是同一个原因。
+>
+> 要看占用，用**不惊动 dockerd** 的办法：
+> ```bash
+> du -shx /var/lib/docker/* | sort -rh | head    # 磁盘
+> docker images -q | wc -l                       # 镜像个数（轻量）
+> ```
+>
+> ### 发版会堆镜像，定期清
+> 每次 `--build` 发版都留下一整套旧镜像，从不自动回收。2026-08-15 清理前
+> **446 个镜像里 437 个是悬空的**（只有 5 个在用）。清理办法——
+> **必须分批**，一次性 prune 几百个同样会把 dockerd 撑爆：
+> ```bash
+> while ids=$(docker images -f dangling=true -q | head -25); [ -n "$ids" ]; do
+>   docker rmi $ids >/dev/null 2>&1
+>   echo "剩 $(docker images -f dangling=true -q | wc -l)  可用内存 $(free -m | awk '/Mem:/{print $7}')MB"
+> done
+> ```
+>
+> ### ⚠️ overlay2 里的"孤儿层"：查清楚之前别删
+> 删完悬空镜像磁盘可能**一点不降**——空间压在 `/var/lib/docker/overlay2` 的层目录里
+> （2026-08-15：1074 个目录 27 GB，其中 529 个 / 21 GB 没有任何镜像或容器引用，
+> 多半是 dockerd 被 OOM 杀掉时留下的残骸）。
+> **别照着 `docker inspect` 算出来的"没人引用"就 `rm -rf`**：当时那样算出 1001 个孤儿，
+> 而 `/proc/mounts` 一查，其中 **465 个正被内核挂载着**，删了当场炸。
+> 要判活，三个来源缺一不可，取并集：
+> ① `docker inspect` 的 GraphDriver.Data ② `/proc/mounts` 里的完整层 id
+> ③ `/proc/mounts` 里 `overlay2/l/XXXX` 短链接**解析后**的目标目录（最容易漏的就是它）。
+> 磁盘不紧张（现在还剩 30 GB）就先放着，真要清请在维护窗口做、并先备份。
 
 **关键路径：**
 - 项目目录：`/opt/pms/v2/`
 - 备份目录：`/backup/`（cron 默认）
-- 数据卷：`postgres_data` / `redis_data` / `uploads_data` / `nginx_logs`
+- 数据卷：`postgres_data` / `uploads_data` / `nginx_logs`
 - 日志：各容器 stdout（json-file driver，自动 100MB×3 滚动）
 
 ---

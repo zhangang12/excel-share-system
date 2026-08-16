@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { fmtMoney } from '@/api/sales'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
+import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
 import EmptyHint from '@/components/EmptyHint.vue'
 import FilePicker from '@/components/FilePicker.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -43,6 +44,10 @@ interface BoardRow {
 
 const auth = useAuthStore()
 const isMgr = computed(() => auth.isAdmin)
+// 🆕 反馈#394（王芹）「增加强制发货的功能」——功能 #367 就做了，**但当时只改了后端**：
+//   `logistics_router` 里 can_force 已含 logistics 角色，前端「强制」按钮却还挂着 v-if="isMgr"，
+//   物流的人根本看不见这个按钮，等于没做。改权限记得两边一起看。
+const canForce = computed(() => auth.isAdmin || auth.hasRole('logistics'))
 const loading = ref(false)
 const rows = ref<BoardRow[]>([])
 
@@ -65,13 +70,14 @@ function openPack(row: BoardRow) {
 const curYear = String(new Date().getFullYear())
 const yearFilter = ref(curYear)
 const yearOptions = computed(() => { const y = parseInt(curYear); return [y - 1, y, y + 1].map(String) })
-const projStatusFilter = ref('进行中')
+// 🆕 筛选口径：发货状态（未发货 / 已发货 / 空=全部）。默认「未发货」——物流每天要处理的就是这批。
+const shipStatusFilter = ref('未发货')
 
 async function load() {
   loading.value = true
   try {
     rows.value = (await http.get<BoardRow[]>('/logistics/board', {
-      params: { year: yearFilter.value, proj_status: projStatusFilter.value || undefined }
+      params: { year: yearFilter.value, ship_status: shipStatusFilter.value || undefined }
     })).data
   } finally {
     loading.value = false
@@ -209,9 +215,12 @@ async function confirmShip(force = false) {
       <el-select v-model="yearFilter" size="large" style="width:100px" @change="load">
         <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
       </el-select>
-      <el-select v-model="projStatusFilter" size="large" style="width:100px" @change="load">
-        <el-option label="进行中" value="进行中" />
-        <el-option label="已完成" value="已完成" />
+      <!-- 🆕 筛选改成「发货状态」：这是发货看板，物流关心的是发没发货，不是项目立项状态。
+           旧的「进行中」= 未发货 且 项目状态≠已完成，把 27 张「未发货但项目被标已完成」
+           的单挡在两个筛选之外（只有「全部」才看得到），而运费就是在这张表上录的。 -->
+      <el-select v-model="shipStatusFilter" size="large" style="width:110px" @change="load">
+        <el-option label="未发货" value="未发货" />
+        <el-option label="已发货" value="已发货" />
         <el-option label="全部" value="" />
       </el-select>
       <PageRefresh :load="load" />
@@ -219,8 +228,13 @@ async function confirmShip(force = false) {
 
     <el-card shadow="never">
       <el-table show-overflow-tooltip :data="rows" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-        <el-table-column label="项目" width="110" fixed>
-          <template #default="{ row }"><b class="code">{{ row.code }}</b></template>
+        <!-- 🆕 #385 全流程进度同步到所有带项目编号的部门：物流看到一个编号，
+             想知道设计出图没有、仓库备齐没有，不用再挨个 tab 翻 -->
+        <el-table-column label="项目" width="150" fixed>
+          <template #default="{ row }">
+            <b class="code">{{ row.code }}</b>
+            <ProjectFlowButton :project-id="row.project_id" :code="row.code" />
+          </template>
         </el-table-column>
         <el-table-column prop="name" label="名称" min-width="130" show-overflow-tooltip />
         <el-table-column label="说明书/铭牌" min-width="120" align="center">
@@ -300,7 +314,13 @@ async function confirmShip(force = false) {
             <el-button v-else size="small" link type="primary" :icon="Edit" @click="openFreight(row)">录入</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="发货闸门" width="200" fixed="right">
+        <!-- ⚠️ 反馈#397（王芹）「更新了版本还是未看到强制发货的按钮」——按钮**一直都在**，
+             是被这一列挤掉了：表格开了全局 `show-overflow-tooltip`，本列 width=200，
+             「待部门完成」+「强制发货」两个按钮并排放不下，超出部分直接被省略号吃掉。
+             #394 我只改了 v-if 的权限判断，没发现渲染出来根本看不见，等于白改一轮。
+             操作列**永远不要**跟着表格吃 show-overflow-tooltip：按钮被截断是完全静默的，
+             用户只会以为功能没做。这里显式关掉 + 放宽 + 允许换行，三重保险。 -->
+        <el-table-column label="发货闸门" width="252" fixed="right" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <template v-if="row.status === 'shipped'">
               <el-button v-if="row.ship_doc_id" size="small" link type="success"
@@ -311,16 +331,18 @@ async function confirmShip(force = false) {
             <el-button v-else-if="row.can_ship" type="primary" size="small" :icon="Van" @click="openShip(row)">
               已发货（传发货单）
             </el-button>
-            <el-tooltip v-else :content="`待部门完成：${row.gate_missing.join('、')}`" placement="top">
-              <span>
-                <el-button size="small" disabled :icon="Clock">待部门完成</el-button>
-                <el-button v-if="isMgr" size="small" type="warning" plain @click="openShip(row)">强制</el-button>
-              </span>
-            </el-tooltip>
+            <template v-else>
+              <div class="gate-cell">
+                <el-tooltip :content="`待部门完成：${row.gate_missing.join('、')}`" placement="top">
+                  <span><el-button size="small" disabled :icon="Clock">待部门完成</el-button></span>
+                </el-tooltip>
+                <el-button v-if="canForce" size="small" type="warning" plain @click="openShip(row)">强制发货</el-button>
+              </div>
+            </template>
           </template>
         </el-table-column>
       </el-table>
-      <EmptyHint v-if="!loading && !rows.length" :text="projStatusFilter === '已完成' ? '暂无已发货项目' : '暂无待发货项目'" />
+      <EmptyHint v-if="!loading && !rows.length" :text="shipStatusFilter === '已发货' ? '暂无已发货项目' : shipStatusFilter === '未发货' ? '暂无未发货项目' : '暂无项目'" />
     </el-card>
 
     <!-- 收货信息 -->
@@ -373,8 +395,12 @@ async function confirmShip(force = false) {
                 :title="`${shipRow.receiver_name} ｜ ${shipRow.receiver_phone || '—'} ｜ ${shipRow.receiver_addr || '—'}`" />
       <el-alert v-else type="warning" :closable="false" style="margin-bottom: 12px"
                 title="⚠ 收货信息待完善，建议先在列表「收货信息」列填写" />
+      <!-- 反馈#367：强制发货放给了物流负责人。文案要说清两件事：缺什么、以及这一次会留痕，
+           不然人会以为「按钮能点=没问题」，闸门就真的白设了。 -->
       <el-alert v-if="shipRow && !shipRow.can_ship" type="error" :closable="false" style="margin-bottom: 12px"
-                :title="`闸门未通过（${shipRow.gate_missing.join('、')}未完成），管理层可强制发货`" />
+                :title="`闸门未通过：${shipRow.gate_missing.join('、')} 未完成`"
+                :description="'仍要发货的话，点「确认已发货」即为强制发货——会记入操作日志并通知管理层。'"
+                show-icon />
       <el-form label-position="top">
         <el-form-item label="发货单（PDF/图片，必传）" required>
           <FilePicker v-model="shipFile" accept=".pdf,.jpg,.jpeg,.png" placeholder="选择发货单（PDF/JPG/PNG）" />
@@ -395,6 +421,8 @@ async function confirmShip(force = false) {
 </template>
 
 <style scoped>
+/* 🆕 #397 发货闸门操作列：两个按钮放得下就并排，放不下自动换行，绝不被裁掉 */
+.gate-cell { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); font-size: 12.5px; }
 .fc { cursor: pointer; margin: 2px 4px 2px 0; }

@@ -75,7 +75,14 @@ services:
       - ./nginx/wecom-verify:/var/www/wecom:ro    # 🆕 企业微信「可信域名」验证文件目录
       - ./desktop-releases:/opt/pms/desktop:ro    # 🆕 桌面客户端更新包目录（desktop/release.sh 上传，nginx /desktop/ 对外）
       - ./h5-ota:/opt/pms/h5-ota:ro               # 🆕 手机 APP 前端热更新包目录（mobile/ship.sh 上传，nginx /h5-ota/ 对外）
-      - nginx_logs:/var/log/nginx
+      # 🆕 访问日志落盘到宿主机。原来这里挂的是**命名卷** nginx_logs——没用：
+      #   命名卷首次创建会拿镜像里的内容初始化，而镜像里 /var/log/nginx/access.log
+      #   是指向 /dev/stdout 的**软链**，卷里存的就是那两条软链，日志照样只进 docker logs。
+      #   而 docker logs 一发版重启容器就清零：2026-08-11 查三天前谁在用客户端登录，
+      #   日志已经没了，查不到（当时只能靠推断）。
+      #   换成 bind mount：目录是空的，nginx 会建真文件，重启/重建都还在。
+      #   轮转见 ops/setup-cron.sh 里的 /etc/logrotate.d/pms（daily，留 14 天，压缩）。
+      - ./nginx/logs:/var/log/nginx
     depends_on:
       - backend
       - frontend
@@ -83,4 +90,5 @@ services:
 volumes:
   postgres_data:
   uploads_data:
-  nginx_logs:
+  # nginx_logs 已废弃（2026-08-11）：换成 ./nginx/logs bind mount，见上面 nginx 服务的注释。
+  # 旧卷不在这里删——留着不占事，真要清理在服务器上 `docker volume rm <项目名>_nginx_logs`。

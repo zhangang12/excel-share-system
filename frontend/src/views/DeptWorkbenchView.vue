@@ -21,6 +21,7 @@ import FeedbackPanel from '@/components/FeedbackPanel.vue'
 import AttachmentPackDialog from '@/components/AttachmentPackDialog.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'
 import StockQueryDialog from '@/components/StockQueryDialog.vue'
+import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtDate } from '@/utils/format'
@@ -186,11 +187,25 @@ const dispatchSmWid = ref<number | null>(null)
 const dispatchAsmWid = ref<number | null>(null)
 const dispatchSealWid = ref<number | null>(null)   // 🆕 反馈#209 封板组
 const dispatching = ref(false)
+// 🆕 反馈#399 的续：派发按钮原来**只在「待分派」页签**，单子一派出去就离开那个列表，
+//   漏派的组（2026-067 只派了钣金+封板、没派装配）此后**再也没有入口补**。
+//   后端 `dispatch_produce` 本来就是幂等的（已有的组改人、没有的组新建），
+//   所以只要把同一个弹窗挂到「任务跟踪」上就行，不用动后端。
+//   补派时把已派的人预填进去——不填的话保存会以为要改人，主管也看不出哪组已经派过。
+// 这张生产单还缺哪几组没派。三组不是都必须派（有的机器不用封板），
+// 所以只是提示"还有哪组没派"，不强制补齐——真要不要派主管自己判断。
+const PG_LABEL: Record<string, string> = { sheetmetal: '钣金', assembly: '装配', sealing: '封板' }
+function missingGroups(o: DeptOrder): string[] {
+  const has = new Set((o.produce_groups || []).map(g => g.group))
+  return Object.keys(PG_LABEL).filter(g => !has.has(g)).map(g => PG_LABEL[g])
+}
+
 async function openDispatch(o: DeptOrder) {
   dispatchOrder.value = o
-  dispatchSmWid.value = null
-  dispatchAsmWid.value = null
-  dispatchSealWid.value = null
+  const wid = (g: string) => (o.produce_groups || []).find(x => x.group === g)?.worker_id ?? null
+  dispatchSmWid.value = wid('sheetmetal')
+  dispatchAsmWid.value = wid('assembly')
+  dispatchSealWid.value = wid('sealing')
   dispatchVisible.value = true
   try { dispatchOpts.value = await produceApi.dispatchOptions() } catch { /* 忽略 */ }
 }
@@ -397,19 +412,29 @@ async function doDesignDone(o: DeptOrder) {
   }
 }
 
-// 🆕 电工部两步完成流
+// 🆕 电工部三步完成流（2026-08-12 业务确认）：主板完成 → 电路完成 → 上传电路图
+//   第一步结考核（done_date/效率/逾期都按主板完成那天算，预计完成也是对着它定的）；
+//   第二步才 status=done、物流发货闸门放行；
+//   第三步电路图必传，但只在这里催，不拦第二步——忘传图不该把整个项目的发货顶住。
+const markingMainboardDone = ref<number | null>(null)
 const markingElectricDone = ref<number | null>(null)
-function canElectricDone(o: DeptOrder) {
-  return o.status === 'in_progress' && !o.electric_done_flag  // 🆕 #4 采购清单可选
-}
-function canElectricShipReady(o: DeptOrder) {
-  return o.electric_done_flag  // 🆕 #4 电路图可选，接线完成后即可完成
+async function doMainboardDone(o: DeptOrder) {
+  markingMainboardDone.value = o.id
+  try {
+    const r: any = await ordersApi.markMainboardDone(o.id)
+    ElMessage.success(r?.message || '主板完成，已计入考核')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  } finally {
+    markingMainboardDone.value = null
+  }
 }
 async function doElectricDone(o: DeptOrder) {
   markingElectricDone.value = o.id
   try {
     const r: any = await ordersApi.markElectricDone(o.id)
-    ElMessage.success(r?.message || '接线完成，已计入考核。可先在当前卡片上传电路图并推送物流，也可到「已完成」补传')
+    ElMessage.success(r?.message || '安装调试完成，本项目发货闸门已放行')
     await load()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
@@ -1133,21 +1158,35 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                       </div>
                     </div>
                   </div>
-                  <!-- 第一步：接线完成（采购清单已上传） -->
-                  <template v-if="!o.electric_done_flag">
+                  <!-- 🆕 电工三步流：主板完成 → 电路完成 → 上传电路图。
+                       原来那段「发货准备完成」是死代码（接线完成已经把单子置 done，
+                       那个分支只有存量老单能走到），一并删掉。 -->
+                  <div class="estep">
+                    <span class="estep-i" :class="{ on: o.mainboard_done_flag }">1 主板</span>
+                    <span class="estep-l"></span>
+                    <span class="estep-i" :class="{ on: o.electric_done_flag }">2 安装调试</span>
+                    <span class="estep-l"></span>
+                    <span class="estep-i" :class="{ on: o.has_circuit }">3 电路图</span>
+                  </div>
+                  <!-- 第一步：主板完成 = 结考核 -->
+                  <template v-if="!o.mainboard_done_flag">
                     <el-button type="primary" size="small" :icon="Check"
-                               :disabled="!canElectricDone(o)"
-                               :loading="markingElectricDone === o.id"
-                               @click="doElectricDone(o)">接线完成</el-button>
-                    <div v-if="!canElectricDone(o)" class="tc-hint">需上传采购清单</div>
+                               :loading="markingMainboardDone === o.id"
+                               @click="doMainboardDone(o)">主板完成</el-button>
+                    <div class="tc-hint">点了就按今天计考核（效率/逾期都按这一步算）</div>
                   </template>
-                  <!-- 第二步：发货准备（存量二步流单子；电路图上方卡片可继续补传/推送） -->
+                  <!-- 第二步：电路完成 = 部门完成、发货闸门放行 -->
                   <template v-else>
-                    <el-tag type="success" size="small" style="margin-bottom:8px">✅ 接线已完成</el-tag>
+                    <el-tag type="success" size="small" style="margin-bottom:8px">
+                      ✅ 主板已完成（{{ o.done_date }} 计考核）
+                    </el-tag>
                     <el-button type="success" size="small" :icon="Check"
-                               :disabled="!canElectricShipReady(o)"
-                               @click="openComplete(o)">发货准备完成</el-button>
-                    <div v-if="!canElectricShipReady(o)" class="tc-hint">需上传电路图</div>
+                               :loading="markingElectricDone === o.id"
+                               @click="doElectricDone(o)">安装调试完成</el-button>
+                    <div class="tc-hint">
+                      点完本项目才可发货；<b v-if="!o.has_circuit" style="color:var(--el-color-warning)">电路图还没传</b>
+                      <span v-else>电路图已传 ✅</span>
+                    </div>
                   </template>
                 </template>
                 <!-- 其他部门：原完成按钮 -->
@@ -1250,8 +1289,13 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
 
         <el-tab-pane v-if="isLead || isMgr" label="📋 任务跟踪" name="track">
           <el-table show-overflow-tooltip :data="trackingList" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
-            <el-table-column label="项目编号" min-width="112">
-              <template #default="{ row }"><b>{{ row.project_code }}</b></template>
+            <!-- 🆕 #385 全流程进度同步到所有带项目编号的部门：主管盯进度时最需要看
+                 上下游卡在哪一环，不用再切到销售台账去查 -->
+            <el-table-column label="项目编号" min-width="152">
+              <template #default="{ row }">
+                <b>{{ row.project_code }}</b>
+                <ProjectFlowButton :project-id="row.project_id" :code="row.project_code" />
+              </template>
             </el-table-column>
             <el-table-column prop="project_name" label="项目名称" min-width="180" show-overflow-tooltip />
             <el-table-column label="材料库位" min-width="120">
@@ -1329,8 +1373,19 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <el-button size="small" link type="primary" @click="openPack(row)">预览/下载</el-button>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="248" fixed="right" :show-overflow-tooltip="false">
+            <el-table-column label="操作" width="330" fixed="right" :show-overflow-tooltip="false">
               <template #default="{ row }">
+                <!-- 🆕 反馈#399 的续：派发按钮原来只在「待分派」页签，单子一派出去就离开那个列表，
+                     漏派的组（2026-067 只派了钣金+封板、装配组漏了）此后再也没有入口补。
+                     后端 dispatch 本来就是幂等的（已有的组改人、缺的组新建），把同一个弹窗挂这儿即可。
+                     缺组时按钮标红提示，主管一眼看得出哪张单没派全。 -->
+                <template v-if="isProduce && !['done', 'voided'].includes(row.status)">
+                  <el-button size="small" :icon="Promotion"
+                             :type="missingGroups(row).length ? 'warning' : 'default'"
+                             @click="openDispatch(row)">
+                    {{ missingGroups(row).length ? `补派${missingGroups(row).join('/')}` : '改派分组' }}
+                  </el-button>
+                </template>
                 <el-button v-if="['assigned', 'in_progress'].includes(row.status) && !isProduce"
                            size="small" :icon="SwitchIcon" @click="openReassign(row)">换人</el-button>
                 <el-button v-if="row.status === 'done'" size="small" :icon="RefreshLeft" @click="doReopen(row)">改回</el-button>
@@ -1420,10 +1475,10 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="钣金装配表" min-width="200" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
-                  <!-- 🆕 编辑装配表改图标按钮（悬停出文字），完成态保留绿勾 -->
-                  <el-tooltip content="编辑装配表" placement="top">
-                    <el-button link type="primary" :icon="EditPen" @click="viewSheet(row)" />
-                  </el-tooltip>
+                  <!-- 反馈#383/#384：原来是纯图标按钮（文字藏在悬停提示里），而隔壁「外协加工」列
+                       是「编辑外协加工表」文字——同一张表两种风格，一个要猜一个不用猜。
+                       统一成「编辑」+图标：一眼知道能点、点了干什么。完成态保留绿勾。 -->
+                  <el-button size="small" link type="primary" :icon="EditPen" @click="viewSheet(row)">编辑装配表</el-button>
                   <el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
                 </template>
                 <span v-else class="muted">—</span>
@@ -1499,10 +1554,8 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <el-table-column label="钣金装配表" min-width="180" align="center">
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
-                  <!-- 🆕 编辑装配表改图标按钮（悬停出文字） -->
-                  <el-tooltip content="编辑装配表" placement="top">
-                    <el-button link type="primary" :icon="EditPen" @click="viewSheet(row)" />
-                  </el-tooltip>
+                  <!-- 反馈#383/#384：统一成「编辑」+图标，与隔壁「外协加工」列一致（原来是纯图标） -->
+                  <el-button size="small" link type="primary" :icon="EditPen" @click="viewSheet(row)">编辑装配表</el-button>
                 </template>
                 <span v-else class="muted">—</span>
               </template>
@@ -1585,10 +1638,12 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             <!-- 🆕 反馈#287：封板组也可「编辑装配表」（同钣金组，复用同一 SheetmetalGrid 弹窗）；无编辑权限角色维持「查看」 -->
             <el-table-column label="钣金装配表" min-width="120" align="center">
               <template #default="{ row }">
-                <!-- 🆕 反馈#287：封板组也可「编辑装配表」（同钣金组，复用同一 SheetmetalGrid 弹窗）；无编辑权限角色维持「查看」；图标按钮悬停出文字 -->
-                <el-tooltip v-if="row.sheetmetal_datasheet_id" :content="canEditSheet ? '编辑装配表' : '查看'" placement="top">
-                  <el-button link type="primary" :icon="canEditSheet ? EditPen : View" @click="viewSheet(row)" />
-                </el-tooltip>
+                <!-- 反馈#287：封板组也可「编辑装配表」，无编辑权限角色维持「查看」。
+                     反馈#383/#384：文字不再藏在悬停提示里，统一成「文字+图标」。 -->
+                <el-button v-if="row.sheetmetal_datasheet_id" size="small" link type="primary"
+                           :icon="canEditSheet ? EditPen : View" @click="viewSheet(row)">
+                  {{ canEditSheet ? '编辑装配表' : '查看装配表' }}
+                </el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
@@ -1798,9 +1853,15 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     </el-dialog>
 
     <!-- ===== 🆕 生产派发弹窗（派给钣金组+装配组） ===== -->
-    <el-dialog v-model="dispatchVisible" :title="`🚀 派发生产任务 · ${dispatchOrder?.project_code || ''}`" width="460px">
+    <el-dialog v-model="dispatchVisible"
+               :title="`🚀 ${dispatchOrder && (dispatchOrder.produce_groups || []).length ? '补派 / 改派分组' : '派发生产任务'} · ${dispatchOrder?.project_code || ''}`"
+               width="460px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
                 title="钣金组、装配组、封板组可各自选派，至少选择一组；钣金/装配两组完成即视为生产完成（可发货），封板组为可选组，派了则也须完成。" />
+      <!-- 🆕 补派场景：已派的组把人预填出来了，动它就是改派；空的那组填上人就是补派 -->
+      <el-alert v-if="dispatchOrder && (dispatchOrder.produce_groups || []).length"
+                type="warning" :closable="false" show-icon style="margin-bottom: 14px"
+                :title="`这张单已派：${(dispatchOrder.produce_groups || []).map(g => g.name + '·' + (g.worker_name || '未指派')).join('，')}。下面已把人预填好，只补空着的那组即可；改动已有的人=改派。`" />
       <el-form label-position="top">
         <el-form-item label="派给 · 生产部-钣金组（可不选）">
           <el-select v-model="dispatchSmWid" placeholder="不派发钣金组则留空" clearable style="width: 100%">
@@ -2003,6 +2064,15 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
 .tc-dates .fd { flex: 1; }
 .tc-dates label { font-size: 12px; color: var(--el-text-color-secondary); display: block; margin-bottom: 4px; }
 .tc-hint { font-size: 11.5px; color: var(--el-text-color-placeholder); margin: 2px 0 8px; }
+/* 🆕 电工三步流进度条：一眼看出卡在哪一步 */
+.estep { display: flex; align-items: center; gap: 4px; margin: 4px 0 8px; }
+.estep-i {
+  font-size: 11px; padding: 2px 7px; border-radius: 999px;
+  background: var(--el-fill-color-light); color: var(--el-text-color-secondary);
+  border: 1px solid var(--el-border-color-lighter); white-space: nowrap;
+}
+.estep-i.on { background: #16a34a; border-color: #16a34a; color: #fff; }
+.estep-l { flex: 1; height: 1px; background: var(--el-border-color-lighter); min-width: 6px; }
 .tc-kv { font-size: 12.5px; color: var(--el-text-color-secondary); margin: 6px 0 10px; }
 .tc-kv b { color: var(--el-text-color-primary); }
 .up-sec {

@@ -1022,15 +1022,29 @@ def _stock_key(nm, sp):
 
 
 async def _build_stock_by_key(db: AsyncSession) -> dict:
-    """按 名称+规格 汇总实时库存（供 purchasable 类端点复用；跨项目聚合时只算一次）。"""
-    from .warehouse_router import _stock_map
+    """按 名称+规格 汇总实时库存（供 purchasable 类端点复用；跨项目聚合时只算一次）。
+
+    🆕 反馈#391（李新新）：「这个现有库存是库里有的（没有订单编号）还是我有订单已采购的？」
+    ——问到点子上了。原来这里给的是**全部库存**，其中大部分是别的项目已经买好、
+    动不得的料。生产实测：517 种有货物料里 **394 种挂着项目编号**（数量 1111/7709）。
+    采购看到「现有库存 5」就不下单，可那 5 个是别人项目的，等于**系统性少采**。
+
+    返回 {key: (可用, 项目占用)}：
+      可用     = 通用物料的库存，采购能自由支配的，**建议采购量按这个算**
+      项目占用 = 挂过项目编号的物料库存，只做提示，不参与建议采购
+    判据与仓库/财务同一个 `_project_material_ids`，三处口径不会各说各话。
+    """
+    from .warehouse_router import _stock_map, _project_material_ids
     mr = await db.execute(select(models.WhMaterial))
     mats = list(mr.scalars().all())
     stock_by_id = await _stock_map(db) if mats else {}
+    pm = await _project_material_ids(db) if mats else set()
     stock_by_key: dict = {}
     for m in mats:
         k = _stock_key(m.name, m.spec)
-        stock_by_key[k] = stock_by_key.get(k, 0) + stock_by_id.get(m.id, m.init_stock or 0)
+        free, held = stock_by_key.get(k, (0.0, 0.0))
+        s = stock_by_id.get(m.id, m.init_stock or 0)
+        stock_by_key[k] = (free, held + s) if m.id in pm else (free + s, held)
     return stock_by_key
 
 
@@ -1081,11 +1095,15 @@ async def _purchasable_rows(db: AsyncSession, ds: models.Datasheet, conf: tuple,
             continue
         spec = gv(spec_col)
         qty = _num(gv(qty_col)) if qty_col else None
-        stock = round(stock_by_key.get(_stock_key(name, spec), 0), 4)
+        # 🆕 #391：库存拆成「可用」与「项目占用」。建议采购量**只减可用**——
+        #   减总量的话，别的项目已经买好的料会被当成自己能用的，采购就不下单了。
+        free, held = stock_by_key.get(_stock_key(name, spec), (0.0, 0.0))
+        stock = round(free, 4)
         suggest = round(max(0.0, (qty or 0) - stock), 4) if qty is not None else 0
         out.append(schemas.PurchasableRow(
             sheet_id=ds.id, record_id=rec.id, item_name=name, spec=spec, brand=gv(brand_col),
             material=gv("材质"), drawing=gv("图纸名称"), qty=qty, stock=stock, suggest_purchase=suggest,
+            stock_project=round(held, 4),
             notes=gv("备注"), status=status,
             sheet_key=sheet_key, project_id=project_id,
             project_code=project_code, project_name=project_name))
@@ -1406,8 +1424,16 @@ async def _auto_stock_in(db: AsyncSession, item: models.PurchaseItem, current: m
     (直发对应项目，净库存过账为0)；备货(is_stock=True)只入库、留库存。幂等：同一采购明细只过账一次。"""
     if not item.qty or item.qty <= 0:
         return
+    # 幂等：同一采购明细只过账一次。
+    # ⚠️ 必须**同时**排除已被冲红的原单（reversed=True）——冲红的做法是保留原单、
+    #    另插一条反向单并把原单标 reversed（见 warehouse_router 的冲红接口）。
+    #    只滤 is_reversal 的话，原单仍然命中这个守卫：仓库把收错的入库冲红后再收一次，
+    #    接口照样返回成功，**库存却一动不动**，静默失败。
+    #    同文件删除明细那段(`_can_delete` 附近)两个条件都滤了，这里是漏写。
     ex = await db.execute(select(models.WhTxn).where(
-        models.WhTxn.purchase_item_id == item.id, models.WhTxn.is_reversal == False))  # noqa: E712
+        models.WhTxn.purchase_item_id == item.id,
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False))    # noqa: E712
     if ex.scalars().first():
         return
     spec = (item.spec or "").strip() or None
@@ -1448,15 +1474,43 @@ async def _sync_txn_amount(db: AsyncSession, item: models.PurchaseItem) -> None:
     qty×unit_price 会有分位差）；部分入库等其他情况退回 qty×单价。"""
     if item.unit_price is None and item.received_amount is None:
         return
+    # ⚠️ 同样要排除已冲红的原单：冲红后重新收货会留下两条非冲红流水（旧的已冲红 + 新的），
+    #    把旧单的金额也改了，它和对应的冲红单就对不上，净额永远差一截。只改**当前有效**的那条。
     tr = await db.execute(select(models.WhTxn).where(
         models.WhTxn.purchase_item_id == item.id,
-        models.WhTxn.is_reversal == False))  # noqa: E712
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False))    # noqa: E712
     for t in tr.scalars().all():
         t.unit_price = item.unit_price
         if item.received_amount is not None and item.qty and t.qty == item.qty:
             t.amount = round(item.received_amount, 4)
         elif item.unit_price is not None:
             t.amount = round((t.qty or 0) * item.unit_price, 4)
+
+
+async def _sync_txn_project(db: AsyncSession, item: models.PurchaseItem) -> None:
+    """订单编号改了 → 把已生成的入库流水的 project_id 一起改过来。
+
+    为什么必须有：入库流水上的 project_id 决定了这批料出现在**哪个项目的「物料需求」**里，
+    仓库才领得到、成本才落得上。而 `_auto_stock_in` 是幂等的，收货后再改订单编号
+    不会重新过账——不同步的话，采购明细上的编号改对了，流水还挂在旧项目（或压根没挂），
+    这批料在正确的项目里永远不出现，谁也领不到，成本永远归不上去。
+    补挂接口（reports_router）只认出库流水，入库这边没有别的补救口子。
+
+    编号查不到对应项目（如「备用」「车间耗材」这类非项目编号，或干脆打错了）→ 置空，
+    与 `_auto_stock_in` 同口径。
+    """
+    pid = None
+    code = (item.project_code or "").strip()
+    if code:
+        pr = await db.execute(select(models.Project.id).where(models.Project.code == code))
+        pid = pr.scalar_one_or_none()
+    tr = await db.execute(select(models.WhTxn).where(
+        models.WhTxn.purchase_item_id == item.id,
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False))    # noqa: E712
+    for t in tr.scalars().all():
+        t.project_id = pid
 
 
 # ==================== 采购历史数据 一键导入 ====================
@@ -1748,6 +1802,28 @@ async def import_suppliers(
     return {"message": msg, "created": created, "updated": updated, "errors": errors[:20]}
 
 
+def _ea_can_relock(u: models.User) -> bool:
+    """谁能改已经填过的预计到货：采购主管 / 管理层。"""
+    return u.has_role("buyer_lead", "admin", "manager")
+
+
+def _check_ea_locked(item: models.PurchaseItem, new_ea: Optional[str], u: models.User) -> None:
+    """🆕 反馈#378：预计到货**只让采购维护一次**，填过就不给自己改了。
+
+    为什么要锁：这个日期是逾期提醒和催货的唯一基准（见 agent_router 的到货预警）。
+    采购一路往后改，逾期就永远不会发生——提醒变成摆设，项目那头也永远等不到准信。
+    真要改（供应商确实改期）走采购主管/管理层，改动照旧推通知留痕。
+
+    只拦「已填 → 改成另一个值」。首次填、以及主管/管理层改，都放行。
+    """
+    old = (item.expected_arrival or "").strip() or None
+    new = (new_ea or "").strip() or None
+    if old and new != old and not _ea_can_relock(u):
+        raise HTTPException(
+            403, f"「{item.item_name}」的预计到货已填过（{old}），只能维护一次。"
+                 f"供应商确实改期请找采购主管改，会留痕通知管理层。")
+
+
 # 注意：本路由须在 PUT /items/{iid} 之前，否则 "batch-expected-arrival" 会被解析为 id 参数
 @router.put("/items/batch-expected-arrival")
 async def batch_expected_arrival(
@@ -1772,6 +1848,7 @@ async def batch_expected_arrival(
         old_ea = item.expected_arrival or None
         if old_ea == new_ea:
             continue
+        _check_ea_locked(item, new_ea, current)   # 🆕 #378 填过就不给采购自己改
         item.expected_arrival = new_ea
         if item.source_sheet_id and item.source_record_id:
             # 与单条编辑同一回写函数：保持项目详单「预计到货」列与采购明细一致
@@ -1780,10 +1857,17 @@ async def batch_expected_arrival(
         changed.append((item.id, item.po_no, item.item_name, old_ea))
     await db.commit()
     # 改期留痕通知（事务提交后再推，避免幻影通知）；排除操作人本人
+    # 🆕 #378 之后**首次填不推**：留痕针对的是"改期消音"，第一次填是正常下单动作，不是改期。
+    #   历史数据里 195 条通知有 84 条是「由 未填 改为」——占 43%，纯噪音。
+    #   而且 #378 已经把改期权收到采购主管/管理层，普通采购能做的只剩首次填，
+    #   不滤掉的话等于每建一条采购明细就 ping 一次主管和管理层。
+    #   （同 2026-07-26 收窄到货提醒的口径：信息太多等于没有信息。）
     uname = current.full_name or current.username
     for iid, po_no, item_name, old_ea in changed:
+        if not old_ea:
+            continue
         text = (f"【预计到货变更】采购单 {po_no or '（无单号）'}「{item_name}」预计到货日期"
-                f"由 {old_ea or '未填'} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
+                f"由 {old_ea} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
         for role in ("buyer_lead", "manager", "admin"):
             await push_message(db, to_role=role, kind="warn", text=text,
                                biz_type="po_expected_changed", biz_id=iid,
@@ -1812,6 +1896,8 @@ async def update_item(
     old_ea = item.expected_arrival or None
     ea_touched = "expected_arrival" in data
     new_ea = ((data.get("expected_arrival") or "").strip() or None) if ea_touched else old_ea
+    if ea_touched:
+        _check_ea_locked(item, new_ea, current)   # 🆕 #378 填过就不给采购自己改
     for k, v in data.items():
         setattr(item, k, v)
     if ("qty" in data or "unit_price" in data) and "received_amount" not in data:
@@ -1821,17 +1907,21 @@ async def update_item(
     #   PurchaseItem，收货时生成的 amount=NULL 的 wh_txn 永久无价，库存金额与项目材料成本双双偏低。
     if "qty" in data or "unit_price" in data or "received_amount" in data:
         await _sync_txn_amount(db, item)
+    # 🆕 采购在明细里改「订单编号」，同样要跟到已生成的入库流水上（见 _sync_txn_project）
+    if "project_code" in data:
+        await _sync_txn_project(db, item)
     if ea_touched and new_ea != old_ea and item.source_sheet_id and item.source_record_id:
         # 回写来源清单「预计到货」列，保持项目详单与采购单一致（清空日期则清空单元格）
         wb = {c: (new_ea or "") for c in _ALL_EXPECTED_ARRIVAL_COLS}
         await _writeback_sheet_row(db, item.source_sheet_id, item.source_record_id, wb)
     _maybe_auto_reconcile(item)
     await db.commit()
-    if ea_touched and new_ea != old_ea:
+    # 🆕 #378 之后**首次填不推**（old_ea 为空 = 正常下单动作，不是改期）。理由见批量接口那段。
+    if ea_touched and new_ea != old_ea and old_ea:
         # 改期留痕通知（事务提交后再推，避免幻影通知）；排除操作人本人
         uname = current.full_name or current.username
         text = (f"【预计到货变更】采购单 {item.po_no or '（无单号）'}「{item.item_name}」预计到货日期"
-                f"由 {old_ea or '未填'} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
+                f"由 {old_ea} 改为 {new_ea or '已清空'}（操作人：{uname}）。")
         for role in ("buyer_lead", "manager", "admin"):
             await push_message(db, to_role=role, kind="warn", text=text,
                                biz_type="po_expected_changed", biz_id=item.id,
@@ -2007,6 +2097,9 @@ async def _finish_receive(db: AsyncSession, item: models.PurchaseItem,
     # 🆕 #329 仓库在「已收货」页签点「修改」改价时，_auto_stock_in 幂等直接 return，流水金额会停在旧价；
     #   这里统一回写，保证「采购明细收货金额」与「库存/项目材料成本」始终同一个数。
     await _sync_txn_amount(db, item)
+    # 🆕 同理：仓库在收货弹窗里补/改「订单编号」，幂等的 _auto_stock_in 也不会重新过账，
+    #   流水的 project_id 会停在旧值——这批料就永远出现在错的项目（或哪个项目都不出现）。
+    await _sync_txn_project(db, item)
     _maybe_auto_reconcile(item)
 
 
@@ -2055,7 +2148,14 @@ async def receive_batch(
     """🆕 需求四：合并零件收货——一次收多条明细。两种填价方式：
     - 合并总价(total_amount)：按各行数量权重把总价分摊到 received_amount，单价=金额÷数量；
     - 逐行(lines)：各行分别填 单价/收货金额。
-    公共：填送货单号 + 到货日期 → 自动入库 + 回写清单。"""
+    公共：填送货单号 + 到货日期 → 自动入库 + 回写清单。
+
+    🆕 反馈#375/#376「合并收货会把不同项目编号的物料分派到对应项目吗」——**原来不会，
+    而且更糟**：整批一个 project_code 会把每一行原有的编号**全覆盖成同一个**
+    （同一供应商一车拉来三个项目的料，收完货全挂到一个项目上，另两个项目的料
+     在自己的物料需求里永远不出现、成本也永远归不上去）。
+    现在：逐行 `lines[].project_code` 优先；整批 `project_code` 只当**兜底**填空行，
+    不再覆盖已有编号。前端在弹窗里把每行的编号带出来、可逐行改。"""
     if not body.arrival_date:
         raise HTTPException(400, "请填写到货日期")
     if not body.item_ids:
@@ -2093,13 +2193,19 @@ async def receive_batch(
             elif it.qty and it.unit_price:
                 it.received_amount = round(it.qty * it.unit_price, 4)
     _loc = (body.stock_location or "").strip() or None   # 🆕 #204 整批一个库位,仓库收货时填
-    _pcode = (body.project_code or "").strip() or None    # 🆕 #253 整批一个订单编号
+    _pcode = (body.project_code or "").strip() or None    # 🆕 #253 整批订单编号(现在只兜底填空)
+    line_pcode = {ln.item_id: ln.project_code for ln in body.lines
+                  if ln.project_code is not None}         # 🆕 #376 逐行订单编号
     for it in ordered:
         it.delivery_note_no = body.delivery_note_no
         it.arrival_date = body.arrival_date
         if _loc:
             it.stock_location = _loc
-        if body.project_code is not None:
+        # 🆕 #376 分派优先级：逐行填的 > 明细上原有的 > 整批兜底。
+        #   ⚠️ 整批编号**只填空行**。老逻辑是无条件覆盖，一车三个项目的料收完全挂到一个项目上。
+        if it.id in line_pcode:
+            it.project_code = (line_pcode[it.id] or "").strip() or None
+        elif _pcode and not (it.project_code or "").strip():
             it.project_code = _pcode
         await _finish_receive(db, it, body.arrival_date, current)
     await db.commit()

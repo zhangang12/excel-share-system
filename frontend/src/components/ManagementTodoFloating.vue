@@ -6,9 +6,12 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useDraggableFab } from '@/composables/useDraggableFab'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { EditPen, Plus } from '@element-plus/icons-vue'   // 反馈#366/#380：发出列表的「编辑」按钮
+import { http } from '@/api'   // 🆕 #363 个人待办挂项目时取项目列表
 import { useAuthStore } from '@/stores/auth'
 import { adminApi } from '@/api/admin'
 import { managementTodoApi, type MyTodoRow, type MgmtTodo, type TodoAttachment } from '@/api/managementTodo'
+import { personalTodoApi, type PersonalTodo } from '@/api/personalTodo'   // 🆕 #363 个人待办
 import type { User } from '@/types'
 import { fmtRelative } from '@/utils/format'
 import AttachmentPreview from './AttachmentPreview.vue'   // 🆕 #311 待办附图在线预览
@@ -31,8 +34,12 @@ const auth = useAuthStore()
 const isMgr = computed(() => auth.isAdmin) // hasRole('admin','manager')
 
 const visible = ref(false)
-const activeTab = ref<'mine' | 'sent'>('mine')
-const myCount = ref(0)
+const activeTab = ref<'mine' | 'personal' | 'sent'>('mine')
+const myCount = ref(0)       // 别人交办我的（待回复 + 已逾期未完成）
+const psCount = ref(0)       // 🆕 #363 我自己记的（未完成）
+// 🆕 业务 2026-08-12 确认：角标 = 两者**合成一个数**。
+//   （我原本建议只数别人交办的，理由是自己记的事会把真正在等的淹掉；业务选了合计，按业务来。）
+const badgeCount = computed(() => myCount.value + psCount.value)
 let timer: number | undefined
 
 // ===== 我收到的 =====
@@ -46,15 +53,18 @@ async function loadMine() {
 async function refreshCount() {
   if (!auth.isLoggedIn) return
   try { myCount.value = await managementTodoApi.myCount() } catch { /* 静默 */ }
+  try { psCount.value = await personalTodoApi.count() } catch { /* 静默 */ }
 }
 
 function open() {
   visible.value = true
   activeTab.value = 'mine'
   loadMine()
+  loadPersonal()
 }
 function onTabChange(name: any) {
   if (name === 'sent') loadSent()
+  else if (name === 'personal') loadPersonal()   // 🆕 #363
   else loadMine()
 }
 
@@ -134,9 +144,26 @@ function pickCreateFiles() {
   input.click()
 }
 function removeCreateFile(i: number) { createFiles.value.splice(i, 1) }
+// 🆕 反馈#366/#380：编辑已下发的待办。复用同一个弹窗，editingId 非空即编辑态。
+//   原来只能「撤销 + 重发」：收件人被打扰两次，而且第一条上的回复/承诺时间/进度全丢。
+const editingId = ref<number | null>(null)
 async function openCreate() {
+  editingId.value = null
   createForm.value = { title: '', content: '', priority: 'normal', due_date: '', recipient_ids: [] }
   createFiles.value = []
+  createDlg.value = true
+  if (!users.value.length) {
+    try { users.value = await adminApi.listUsers() } catch { /* 静默 */ }
+  }
+}
+async function openEdit(t: MgmtTodo) {
+  editingId.value = t.id
+  createForm.value = {
+    title: t.title || '', content: t.content || '',
+    priority: t.priority || 'normal', due_date: t.due_date || '',
+    recipient_ids: (t.targets || []).map(x => x.user_id),
+  }
+  createFiles.value = []   // 编辑不动附图：附图是按待办 id 挂的，这里只改文字与收件人
   createDlg.value = true
   if (!users.value.length) {
     try { users.value = await adminApi.listUsers() } catch { /* 静默 */ }
@@ -146,6 +173,23 @@ const creating = ref(false)
 async function submitCreate() {
   if (!createForm.value.title.trim()) { ElMessage.warning('请填写待办标题'); return }
   if (!createForm.value.recipient_ids.length) { ElMessage.warning('请至少勾选一个收件人'); return }
+  if (editingId.value) {
+    creating.value = true
+    try {
+      await managementTodoApi.update(editingId.value, {
+        title: createForm.value.title.trim(),
+        content: createForm.value.content.trim(),
+        priority: createForm.value.priority,
+        due_date: createForm.value.due_date || '',
+        recipient_ids: createForm.value.recipient_ids,
+      })
+      ElMessage.success('已修改，收件人会收到变更通知')
+      createDlg.value = false
+      await loadSent()
+      refreshCount()
+    } finally { creating.value = false }
+    return
+  }
   creating.value = true
   try {
     const todo = await managementTodoApi.create({
@@ -210,6 +254,72 @@ function statusLabel(row: MyTodoRow): string {
   return STATUS_TXT[row.status] || row.status
 }
 
+// ===== 🆕 #363/#381 个人待办（右栏）=====
+// 录入成本决定这个功能的死活：一个输入框回车即建，不弹窗、不必填。
+// 要日期/项目/紧急的，建完再点行内的编辑按钮补。
+const psList = ref<PersonalTodo[]>([])
+const psLoading = ref(false)
+const psInput = ref('')
+const psShowDone = ref(false)
+const psProjects = ref<{ id: number; code: string; name: string }[]>([])
+
+async function loadPersonal() {
+  psLoading.value = true
+  try { psList.value = await personalTodoApi.list() } finally { psLoading.value = false }
+  psCount.value = psList.value.filter(t => !t.done).length
+}
+const psVisible = computed(() => psShowDone.value ? psList.value : psList.value.filter(t => !t.done))
+
+async function psAdd() {
+  const title = psInput.value.trim()
+  if (!title) return
+  psInput.value = ''
+  try { await personalTodoApi.create({ title }); await loadPersonal() }
+  catch { psInput.value = title }   // 失败把内容还回去，别让人白打一遍
+}
+async function psToggle(t: PersonalTodo) {
+  try { await personalTodoApi.toggle(t.id); await loadPersonal() } catch { /* 拦截器已提示 */ }
+}
+async function psDel(t: PersonalTodo) {
+  try {
+    await ElMessageBox.confirm(`删除「${t.title}」？`, '删除个人待办',
+      { type: 'warning', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' })
+  } catch { return }
+  try { await personalTodoApi.remove(t.id); ElMessage.success('已删除'); await loadPersonal() }
+  catch { /* 拦截器已提示 */ }
+}
+
+// 行内编辑：补日期 / 项目 / 紧急
+const psEditVisible = ref(false)
+const psEditing = ref<PersonalTodo | null>(null)
+const psForm = ref({ title: '', note: '', due_date: '' as string | null, priority: 'normal', project_id: null as number | null })
+async function psOpenEdit(t: PersonalTodo) {
+  psEditing.value = t
+  psForm.value = {
+    title: t.title, note: t.note || '', due_date: t.due_date || null,
+    priority: t.priority || 'normal', project_id: t.project_id ?? null,
+  }
+  psEditVisible.value = true
+  if (!psProjects.value.length) {
+    try { psProjects.value = (await http.get('/projects')).data.map((p: any) => ({ id: p.id, code: p.code, name: p.name })) }
+    catch { psProjects.value = [] }
+  }
+}
+async function psSaveEdit() {
+  const t = psEditing.value
+  if (!t) return
+  if (!psForm.value.title.trim()) { ElMessage.warning('待办内容不能为空'); return }
+  try {
+    await personalTodoApi.update(t.id, {
+      title: psForm.value.title.trim(), note: psForm.value.note,
+      due_date: psForm.value.due_date || null, priority: psForm.value.priority,
+      project_id: psForm.value.project_id ?? null,
+    })
+    psEditVisible.value = false
+    await loadPersonal()
+  } catch { /* 拦截器已提示 */ }
+}
+
 onMounted(() => {
   refreshCount()
   timer = window.setInterval(refreshCount, 60_000)
@@ -232,7 +342,8 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
       <line x1="7.6" y1="17.4" x2="16.5" y2="17.4" />
     </svg>
     <span class="mt-lbl">待办</span>
-    <span v-if="myCount > 0" class="mt-badge">{{ myCount > 99 ? '99+' : myCount }}</span>
+    <!-- 🆕 业务确认：角标 = 别人交办的 + 我自己记的，合成一个数 -->
+    <span v-if="badgeCount > 0" class="mt-badge">{{ badgeCount > 99 ? '99+' : badgeCount }}</span>
   </button>
 
   <el-dialog v-model="visible" title="🗒️ 管理层待办" width="720px"
@@ -277,6 +388,48 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
         </div>
       </el-tab-pane>
 
+      <!-- ============ 🆕 #363/#381 我自己的（个人待办）============
+           反馈原话是「单独开一列」——这里做成独立页签而不是左右分栏：
+           弹窗只有 720px，硬拆两栏每栏 350px，左边管理层待办那些卡片（标题+状态+
+           三个按钮）会挤到不能用；页签在手机上也不用另做一套堆叠布局。 -->
+      <el-tab-pane name="personal">
+        <template #label>
+          <span>我自己的<el-badge v-if="psCount > 0" :value="psCount" class="tab-badge" /></span>
+        </template>
+        <!-- 一个输入框回车即建：个人待办的成败全在录入成本，不弹窗、不必填 -->
+        <div class="ps-add">
+          <el-input v-model="psInput" placeholder="记一件事，回车即可添加（日期/项目/紧急建完再补）"
+                    clearable @keyup.enter="psAdd">
+            <template #append><el-button :icon="Plus" @click="psAdd">添加</el-button></template>
+          </el-input>
+        </div>
+        <div class="ps-bar">
+          <el-checkbox v-model="psShowDone" size="small">显示已完成</el-checkbox>
+          <span class="ps-hint">只有自己看得见；到期当天推一次企业微信，之后在这里标红不再打扰</span>
+        </div>
+        <div v-loading="psLoading" class="mine-wrap">
+          <div v-if="!psLoading && !psVisible.length" class="empty">还没有个人待办 ✍️</div>
+          <div v-for="t in psVisible" :key="t.id" class="ps-row" :class="{ done: t.done }">
+            <el-checkbox :model-value="t.done" @change="psToggle(t)" />
+            <div class="ps-main">
+              <div class="ps-title">
+                <el-tag v-if="t.priority === 'urgent' && !t.done" type="danger" size="small" effect="dark">紧急</el-tag>
+                <span :class="{ 'ps-done-txt': t.done }">{{ t.title }}</span>
+              </div>
+              <div class="ps-meta">
+                <span v-if="t.due_date" :class="{ 'ps-over': t.overdue }">
+                  {{ t.overdue ? '已逾期 ' : '' }}{{ t.due_date }}
+                </span>
+                <span v-if="t.project_code" class="ps-proj">{{ t.project_code }}</span>
+                <span v-if="t.note" class="ps-note">{{ t.note }}</span>
+              </div>
+            </div>
+            <el-button link size="small" :icon="EditPen" @click="psOpenEdit(t)">编辑</el-button>
+            <el-button link size="small" type="danger" @click="psDel(t)">删除</el-button>
+          </div>
+        </div>
+      </el-tab-pane>
+
       <!-- ============ 下发 / 监控（仅管理层）============ -->
       <el-tab-pane v-if="isMgr" name="sent" label="下发 / 监控">
         <div class="sent-bar">
@@ -296,6 +449,8 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                 <span v-if="t.pending_reply_count" class="pend"> · 待回复 {{ t.pending_reply_count }}</span>
               </span>
               <span class="tc-from">{{ t.creator_name }} · {{ fmtRelative(t.created_at) }}</span>
+              <!-- 反馈#366/#380：原来只能撤销重发，收件人被打扰两次、已有的回复和进度全丢 -->
+              <el-button type="primary" link size="small" :icon="EditPen" @click="openEdit(t)">编辑</el-button>
               <el-button type="danger" link size="small" @click="removeTodo(t)">撤销</el-button>
             </div>
             <div v-if="t.content" class="tc-content">{{ t.content }}</div>
@@ -370,7 +525,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
   </el-dialog>
 
   <!-- 新建待办（管理层） -->
-  <el-dialog v-model="createDlg" title="新建管理层待办" width="560px" append-to-body>
+  <el-dialog v-model="createDlg" :title="editingId ? '修改管理层待办' : '新建管理层待办'" width="560px" append-to-body>
     <el-form label-position="top">
       <el-form-item label="待办标题" required>
         <el-input v-model="createForm.title" maxlength="200" show-word-limit placeholder="要办的事" />
@@ -416,11 +571,65 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
     </template>
   </el-dialog>
 
+  <!-- 🆕 #363/#381 个人待办：补日期 / 项目 / 紧急（新建时一律不填，建完才来这里补） -->
+  <el-dialog v-model="psEditVisible" title="✏️ 编辑个人待办" width="460px" append-to-body>
+    <el-form label-position="top">
+      <el-form-item label="内容" required>
+        <el-input v-model="psForm.title" maxlength="200" show-word-limit />
+      </el-form-item>
+      <el-form-item label="备注（选填）">
+        <el-input v-model="psForm.note" type="textarea" :rows="2" />
+      </el-form-item>
+      <div style="display:flex;gap:12px">
+        <el-form-item label="截止日期（选填）" style="flex:1">
+          <el-date-picker v-model="psForm.due_date" type="date" value-format="YYYY-MM-DD"
+                          placeholder="不填=没期限" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="紧急程度" style="width:130px">
+          <el-select v-model="psForm.priority" style="width:100%">
+            <el-option label="普通" value="normal" />
+            <el-option label="紧急" value="urgent" />
+          </el-select>
+        </el-form-item>
+      </div>
+      <el-form-item label="关联项目（选填）">
+        <el-select v-model="psForm.project_id" filterable clearable placeholder="不关联" style="width:100%">
+          <el-option v-for="p in psProjects" :key="p.id" :label="`${p.code}　${p.name}`" :value="p.id" />
+        </el-select>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="psEditVisible = false">取消</el-button>
+      <el-button type="primary" @click="psSaveEdit">保存</el-button>
+    </template>
+  </el-dialog>
+
   <!-- 🆕 #311 附件在线预览 -->
   <AttachmentPreview ref="previewRef" />
 </template>
 
 <style scoped>
+/* 🆕 #363/#381 个人待办 */
+.ps-add { margin-bottom: 8px; }
+.ps-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.ps-hint { font-size: 12px; color: var(--el-text-color-secondary); }
+.ps-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px; margin-bottom: 6px;
+}
+.ps-row.done { opacity: .6; }
+.ps-main { flex: 1; min-width: 0; }
+.ps-title { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.ps-done-txt { text-decoration: line-through; color: var(--el-text-color-secondary); }
+.ps-meta {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 3px;
+  font-size: 12px; color: var(--el-text-color-secondary);
+}
+.ps-over { color: var(--el-color-danger); font-weight: 600; }
+.ps-proj { color: var(--primary, #2563eb); }
+.ps-note { flex: 1 1 100%; }
+
 /* 浮动挂件：置于「反馈」按钮上方 */
 .mt-fab {
   position: fixed; z-index: 2000;

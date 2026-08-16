@@ -23,6 +23,10 @@ const router = createRouter({
       meta: { public: true } },
     { path: '/', name: 'home', component: () => import('./H5HomeView.vue') },
     { path: '/chat', name: 'chat', component: () => import('./H5ChatView.vue') },
+    // 🆕 #382 个人待办同步到 APP。独立一页而不是塞进首页：
+    //   业务选「底部我的」而不是「首页」，意思就是别挤首页；H5 没有底部导航，
+    //   于是入口放首页顶栏，意图一样落到。
+    { path: '/todos', name: 'todos', component: () => import('./H5TodoView.vue') },
     { path: '/:rest(.*)', redirect: '/' },
   ],
 })

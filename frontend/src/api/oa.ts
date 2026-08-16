@@ -43,6 +43,8 @@ export interface OaRequest {
   related_request_id?: number | null; related_request_no?: string | null
   status: string; current_step_order?: number | null
   settle_amount?: number | null; settle_note?: string | null; reject_reason?: string | null
+  // 🆕 #395 财务付款备注/时间（回单在附件里，kind=pay_receipt）
+  pay_note?: string | null; pay_at?: string | null
   created_at: string; updated_at: string
   steps: OaRequestStep[]
   cc_users: OaCcUser[]   // 🆕 抄送人
@@ -115,7 +117,13 @@ export const oaApi = {
   reject: (id: number, reason: string) =>
     http.put<OaRequest>(`/oa/requests/${id}/reject`, { reason }).then(r => r.data),
   withdraw: (id: number) => http.put<{ message: string }>(`/oa/requests/${id}/withdraw`).then(r => r.data),
-  markPaid: (id: number) => http.put<OaRequest>(`/oa/requests/${id}/mark-paid`).then(r => r.data),
+  // 🆕 #395：标记已付款时可带备注 + 付款回单（回单进申请的附件列表，kind=pay_receipt）
+  markPaid: (id: number, payNote?: string, receipt?: File | null) => {
+    const fd = new FormData()
+    if (payNote) fd.append('pay_note', payNote)
+    if (receipt) fd.append('file', receipt)
+    return http.put<OaRequest>(`/oa/requests/${id}/mark-paid`, fd).then(r => r.data)
+  },
 
   summary: () => http.get<OaSummaryRow[]>('/oa/reports/summary').then(r => r.data),
   summaryDetail: (department_id: number, doc_type: string) =>

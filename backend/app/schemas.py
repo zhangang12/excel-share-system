@@ -1,7 +1,7 @@
 """Pydantic 模型：API 请求 / 响应"""
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # ---------- 通用 ----------
@@ -20,8 +20,25 @@ class RoleOut(BaseModel):
 
 
 # ---------- 用户 ----------
+def _strip_username(v):
+    """用户名统一去掉首尾空白。
+
+    ⚠️ 2026-08-13 线上真事：建账号时用户名尾部粘了个空格（`liulonglong `），
+    存进去是 12 个字符。登录是**精确匹配** `username == 输入值`，
+    本人照正常拼写输入永远匹配不上，界面只报「用户名或密码错误」——
+    密码重置多少次都没用，因为压根不是密码的问题。
+    在 schema 层统一 strip：建账号、改账号、登录三条路都走到，从源头堵死。
+    全角空格(\u3000)一并处理——从表格里复制粘贴很容易带进来。
+    """
+    if isinstance(v, str):
+        return v.replace("\u3000", " ").strip()
+    return v
+
+
 class UserCreate(BaseModel):
     username: str = Field(min_length=2, max_length=64)
+
+    _v_username = field_validator("username", mode="before")(_strip_username)
     password: str = Field(min_length=6, max_length=128)
     full_name: Optional[str] = None
     email: Optional[str] = None
@@ -145,6 +162,9 @@ class ProduceGroupBrief(BaseModel):
     name: str                        # 钣金 / 装配
     due_date: Optional[str] = None   # 本组预计完成
     done_date: Optional[str] = None  # 本组完成日期
+    # 🆕 补派分组要预填已派的人（不预填的话主管看不出哪组已经派过，还容易误改人）
+    worker_id: Optional[int] = None
+    worker_name: Optional[str] = None
 
 
 class OrderOut(BaseModel):
@@ -167,7 +187,11 @@ class OrderOut(BaseModel):
     overdue: bool = False              # 进行中且超预计 / 完成且逾期
     created_at: datetime
     design_done_flag:   bool = False  # 🆕 设计完成第一步标记
-    electric_done_flag: bool = False  # 🆕 接线完成第一步标记
+    # 🆕 电工三步流：主板完成(结考核) → 电路完成(status=done,发货放行) → 上传电路图(必传不卡)
+    mainboard_done_flag: bool = False
+    wire_done_date: Optional[str] = None   # 电路完成日（done_date 是主板完成日=考核日）
+    has_circuit: bool = False              # 第三步：电路图传了没（给界面催传用）
+    electric_done_flag: bool = False  # 电工三步流第二步：电路完成（旧名「接线完成」）
     ship_prep_done:     bool = False  # 🆕 #5 设计部发货准备完成标记
     packlist_status: Optional[str] = None  # 🆕 发货清单：none/requested/ready（仅设计部任务所属项目有意义）
     input_files: list[AttachmentOut] = []
@@ -476,6 +500,9 @@ class WhMaterialOut(BaseModel):
     # 🆕 出库反显：物料按项目入库时的关联项目(入库流水唯一项目才反显)
     project_id: Optional[int] = None
     project_code: Optional[str] = None
+    # 🆕 #373/#374：有过挂项目编号的入库 = 项目物料，不进「库存总览」「库存金额」，
+    #   它的钱已经在收货那一刻算进项目材料成本了（判据见 _project_material_ids）
+    is_project_material: bool = False
 
 
 class WhMaterialCustomFieldIn(BaseModel):
@@ -700,6 +727,10 @@ class ExportConfigOut(BaseModel):
 class LoginIn(BaseModel):
     username: str
     password: str
+
+    # 登录侧也 strip：存量脏数据（用户名带空格）修好之前，用户至少能正常登进来；
+    # 手机键盘长按空格、复制粘贴带尾空格也一并容错。密码**不 strip**（空格可能是密码的一部分）。
+    _v_username = field_validator("username", mode="before")(_strip_username)
     # 🆕 记住我：仅延长令牌有效期到 30 天，不在客户端保存密码
     remember: bool = False
 
@@ -1275,8 +1306,12 @@ class PurchasableRow(BaseModel):
     material: Optional[str] = None       # 🆕 材质（不锈钢下料单专有列，单独成列不再塞备注）
     drawing: Optional[str] = None        # 🆕 #159/#160 图纸名称（不锈钢下料单专有；下单折进 spec 带上采购单）
     qty: Optional[float] = None          # 清单需求量
-    stock: float = 0                      # 现有库存（按名称+规格匹配物料）
-    suggest_purchase: float = 0           # 建议采购量 = 需求 - 库存
+    # 🆕 #391：stock 现在是**可用库存**（不带订单编号的通用物料），不是全部库存。
+    #   挂了项目编号的料是别的项目已经买好的，采购动不得，只作提示放在 stock_project。
+    #   生产实测 517 种有货物料里 394 种是项目料——原来一起算，采购看到"有货"就不下单。
+    stock: float = 0                      # 可用库存（通用物料，按名称+规格匹配）
+    stock_project: float = 0              # 已挂项目编号的库存（只提示，不参与建议采购）
+    suggest_purchase: float = 0           # 建议采购量 = 需求 - 可用库存
     notes: Optional[str] = None
     status: str = "未下单"          # 未下单 / 已下单 / 已到货
     # 🆕 跨项目待下单聚合用（单项目 purchasable 不填）
@@ -1345,6 +1380,21 @@ class DemandIssueIn(BaseModel):
     lines: list[DemandIssueLine] = Field(default_factory=list)
 
 
+class WhTransferToProjectLine(BaseModel):
+    material_id: int
+    qty: float
+
+
+class WhTransferToProjectIn(BaseModel):
+    """🆕 #377：库位存量物料 → 调至项目物料（中转）。生成「无项目出库 + 挂项目入库」两笔流水，
+    净库存不变，物料随即进该项目的物料需求、退出库存总览。"""
+    project_id: int
+    lines: list[WhTransferToProjectLine] = Field(default_factory=list)
+    biz_date: Optional[str] = None
+    location: Optional[str] = None   # 转入库位（中转库），不填沿用物料当前库位
+    note: Optional[str] = None
+
+
 class WhClearIn(BaseModel):
     """🆕 需求十五：仓库一键清空确认（需输入确认词「清空仓库」）。"""
     confirm: str = ""
@@ -1400,6 +1450,9 @@ class BatchReceiveLine(BaseModel):
     item_id: int
     unit_price: Optional[float] = None
     received_amount: Optional[float] = None
+    # 🆕 #376：逐行订单编号。一次合并收货里各行本来就可能属于不同项目
+    #   （同一供应商一车拉来三个项目的料），整批一个编号会把它们全抹成一个。
+    project_code: Optional[str] = None
 
 
 class BatchReceiveIn(BaseModel):
@@ -1831,6 +1884,9 @@ class OaRequestOut(BaseModel):
     current_step_order: Optional[int] = None
     settle_amount: Optional[float] = None
     settle_note: Optional[str] = None
+    # 🆕 #395 财务付款备注 / 付款时间（回单在附件列表里，kind=pay_receipt）
+    pay_note: Optional[str] = None
+    pay_at: Optional[datetime] = None
     reject_reason: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -1877,6 +1933,58 @@ class MgmtTodoCreate(BaseModel):
     priority: str = "normal"                     # normal / urgent
     due_date: Optional[str] = None               # 🆕 #251 截止日期 YYYY-MM-DD（选填）
     recipient_ids: list[int] = Field(min_length=1)   # 勾选的收件人
+
+
+# ==================== 🆕 #363/#381/#382 个人待办 ====================
+class PersonalTodoIn(BaseModel):
+    """新建个人待办：只有 title 是必填——录入成本决定这个功能的死活。"""
+    title: str = Field(min_length=1, max_length=200)
+    note: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: str = "normal"
+    project_id: Optional[int] = None
+
+
+class PersonalTodoUpdate(BaseModel):
+    """改个人待办：只发要改的字段。project_id 显式传 null 可以摘掉项目。"""
+    title: Optional[str] = Field(default=None, max_length=200)
+    note: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: Optional[str] = None
+    project_id: Optional[int] = None
+
+
+class PersonalTodoOut(BaseModel):
+    id: int
+    title: str
+    note: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: str = "normal"
+    project_id: Optional[int] = None
+    project_code: Optional[str] = None
+    done: bool = False
+    done_at: Optional[datetime] = None
+    sort_order: int = 0
+    overdue: bool = False        # 未完成且已过截止日
+    created_at: datetime
+
+
+class PersonalTodoReorderIn(BaseModel):
+    ids: list[int] = Field(default_factory=list)   # 按新顺序排列的 id
+
+
+class MgmtTodoUpdate(BaseModel):
+    """🆕 反馈#366/#380：已下发的待办要能改。
+
+    原来只有「撤销 + 重发」一条路——赵仁辉 2026-08-11 02:41 下发「买一个快装弯头」、
+    02:42 撤销、02:43 重发「19的快装弯头 卡盘50.5」，收件人被打扰两次、
+    第一条的回复和进度全丢了。
+    只发要改的字段（未传的不动）；`recipient_ids` 传了才动收件人。"""
+    title: Optional[str] = Field(default=None, max_length=200)
+    content: Optional[str] = None
+    priority: Optional[str] = None
+    due_date: Optional[str] = None
+    recipient_ids: Optional[list[int]] = None
 
 
 class MgmtTodoReplyIn(BaseModel):

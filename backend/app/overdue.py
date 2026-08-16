@@ -42,7 +42,11 @@ async def scan_overdue(db: AsyncSession) -> dict:
             models.DeptOrder.due_date < today_s,
         )
     )
-    orders = list(r.scalars().all())
+    # 🆕 电工三步流：主板完成那一刻考核就结了（done_date 已写、效率已算、逾期已提醒过一次），
+    #   但 status 要等电路完成才置 done。不排掉的话，这批单子会被当成"进行中且超期"
+    #   **每天继续报逾期**——考核都结了还天天挨骂，提醒就废了。
+    orders = [o for o in r.scalars().all()
+              if not (o.dept == "electric" and getattr(o, "mainboard_done_flag", False))]
     notified = 0
     for o in orders:
         # 幂等：该任务今日是否已推过逾期提醒（查 messages biz_type=order_overdue 当日）
@@ -363,9 +367,80 @@ async def scan_po_arrival_overdue(db: AsyncSession) -> dict:
                                text=text, biz_type="po_arrival_overdue", biz_id=it.id)
             notified += 1
 
+    # 🆕 2026-08-12 用户要求「采购收货逾期推送给采购员和管理层」——管理层这一路走**每日一条汇总**，
+    #   不是逐条扇出。原因：当前命中 31 条 × (2 manager + 1 admin) = 每天 93 条，天天重复，
+    #   一周就把管理层的消息列表淹了，然后整个系统的通知一起被静音——2026-07-26 收窄正是因为这个。
+    #   汇总保住了"管理层要知道有多少单逾期、压在谁手上"，又不制造噪音。
+    #   要改回逐条：把下面这段换成在上面循环里对 manager/admin 各 push 一次即可。
+    if items:
+        digest_id = int(today_s.replace("-", ""))   # 幂等键：当天一条（biz_id 用 YYYYMMDD）
+        r3 = await db.execute(
+            select(models.Message.created_at).where(
+                models.Message.biz_type == "po_arrival_overdue_digest",
+                models.Message.biz_id == digest_id,
+            )
+        )
+        if not any(ts and _cn_date(ts) == today_s for (ts,) in r3.all()):
+            by_buyer: dict[str, list[int]] = {}
+            for it in items:
+                nm = (it.buyer.full_name or it.buyer.username) if it.buyer else "（无归属采购员）"
+                try:
+                    od = (today - date.fromisoformat(it.expected_arrival)).days
+                except (ValueError, TypeError):
+                    continue
+                by_buyer.setdefault(nm, []).append(max(od, 0))
+            if by_buyer:
+                parts = []
+                for nm, days in sorted(by_buyer.items(), key=lambda kv: -len(kv[1])):
+                    parts.append(f"{nm} {len(days)} 条（最久超期 {max(days)} 天）")
+                total = sum(len(v) for v in by_buyer.values())
+                dtext = (f"【采购逾期未到货汇总】共 {total} 条采购明细已过预计到货日仍未收货："
+                         f"{'；'.join(parts)}。明细见 采购管理 → 采购明细（按预计到货排序）。")
+                for role in ("manager", "admin"):
+                    await push_message(db, to_role=role, kind="warn", text=dtext,
+                                       biz_type="po_arrival_overdue_digest", biz_id=digest_id)
+
     if notified:
         log.info("[scan_po_arrival_overdue] 推送 %d 条到期未到货提醒（共扫描 %d）", notified, len(items))
     return {"scanned": len(items), "notified": notified}
+
+
+async def scan_personal_todos(db: AsyncSession) -> dict:
+    """🆕 反馈#363/#381/#382 个人待办到期提醒：**到期当天推一次**（业务 2026-08-12 确认）。
+
+    ⚠️ 刻意只推到期当天这一次，不做"逾期后天天推"。个人待办是自己给自己设的闹钟，
+    天天推会让人把整个系统的通知一起静音——采购到货提醒 2026-07-26 就栽在这上面。
+    过期没做完的在自己列表里标红即可（`PersonalTodoOut.overdue`），不再骚扰。
+
+    幂等键 =(biz_type='personal_todo_due', biz_id=todo.id, 当日)：同一条同一天只推一次。
+    """
+    today_s = datetime.now(_CN_TZ).date().isoformat()
+    r = await db.execute(
+        select(models.PersonalTodo).where(
+            models.PersonalTodo.done == False,          # noqa: E712
+            models.PersonalTodo.due_date == today_s,
+        )
+    )
+    todos = list(r.scalars().all())
+    notified = 0
+    for t in todos:
+        r2 = await db.execute(
+            select(models.Message.created_at).where(
+                models.Message.biz_type == "personal_todo_due",
+                models.Message.biz_id == t.id,
+            )
+        )
+        if any(ts and _cn_date(ts) == today_s for (ts,) in r2.all()):
+            continue
+        pj = f"（{t.project.code}）" if t.project else ""
+        urg = "【紧急】" if t.priority == "urgent" else ""
+        await push_message(db, to_user_id=t.user_id, kind="wx",
+                           text=f"{urg}【个人待办今天到期】{t.title}{pj}",
+                           biz_type="personal_todo_due", biz_id=t.id)
+        notified += 1
+    if notified:
+        log.info("[scan_personal_todos] 推送 %d 条个人待办到期提醒（共扫描 %d）", notified, len(todos))
+    return {"scanned": len(todos), "notified": notified}
 
 
 def _try_acquire_scheduler_lock():
@@ -427,4 +502,9 @@ async def overdue_scheduler(interval_hours: int = 12) -> None:
                 await scan_po_arrival_overdue(db)
         except Exception as e:  # noqa: BLE001
             log.warning("scan_po_arrival_overdue 失败: %s", e)
+        try:
+            async with SessionLocal() as db:
+                await scan_personal_todos(db)   # 🆕 #363 个人待办到期当天推一次
+        except Exception as e:  # noqa: BLE001
+            log.warning("scan_personal_todos 失败: %s", e)
         await asyncio.sleep(interval_hours * 3600)

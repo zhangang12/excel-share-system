@@ -245,7 +245,15 @@ class DeptOrder(Base):
     done_date: Mapped[Optional[str]] = mapped_column(String(10))
     notify_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     design_done_flag:   Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 设计完成第一步
-    electric_done_flag: Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 接线完成第一步
+    # 🆕 电工部三步流（2026-08-12 业务确认）：主板完成 → 电路完成 → 上传电路图
+    #   ⚠️ 两个日期不是一回事，别合并：
+    #     done_date       = **主板完成**日 → 考核（效率/按时/逾期）只认它，due_date 也对着它
+    #     wire_done_date  = **电路完成**日 → 这一刻才 status=done，物流 D5 闸门才放行
+    #   电路图(circuit 附件)是第三步、必传，但**只在界面上催，不参与 status**——
+    #   否则电工忘传图就会把整个项目的发货顶住（电工部现存 16 条逾期，最久 47 天）。
+    mainboard_done_flag: Mapped[bool] = mapped_column(Boolean, default=False)   # 第一步：主板完成（结考核）
+    wire_done_date: Mapped[Optional[str]] = mapped_column(String(10))           # 第二步：电路完成日
+    electric_done_flag: Mapped[bool] = mapped_column(Boolean, default=False)  # 第二步：电路完成（旧名「接线完成」）
     ship_prep_done:     Mapped[bool] = mapped_column(Boolean, default=False)  # 🆕 #5 设计部发货准备(说明书/铭牌)完成
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -1022,6 +1030,11 @@ class OaRequest(Base):
     current_step_order: Mapped[Optional[int]] = mapped_column()
     settle_amount: Mapped[Optional[float]] = mapped_column()   # 财务等环节核定的实际金额（可与申请金额不同）
     settle_note: Mapped[Optional[str]] = mapped_column(Text)
+    # 🆕 反馈#395（计梦蝶）：财务标记已付款时的备注 + 付款回单。
+    #   ⚠️ 不要复用 settle_note——那是**核定金额**时写的（为什么只批这么多），
+    #   两件事挤一个字段，后写的会把前面的理由冲掉，月底对账查不出当初为什么核减。
+    pay_note: Mapped[Optional[str]] = mapped_column(Text)
+    pay_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     reject_reason: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -1090,6 +1103,36 @@ class ManagementTodo(Base):
     creator: Mapped["User"] = relationship(foreign_keys=[created_by], lazy="joined")
     targets: Mapped[list["ManagementTodoTarget"]] = relationship(
         lazy="selectin", cascade="all, delete-orphan", back_populates="todo")
+
+
+class PersonalTodo(Base):
+    """🆕 反馈#363/#381/#382 个人待办：自己给自己记的事，只有自己看得见。
+
+    ⚠️ **刻意不与 `management_todos` 合表**。管理层待办的每一条都是有交代的管理动作，
+    它的「承诺完成时间 / 进度 / 延期审批」是留痕证据，删不得；个人待办随手记随手删。
+    合表的后果二选一：要么个人待办被迫填一堆用不上的字段（没人会用），
+    要么管理层待办的留痕被个人待办的随意删除污染。所以这里只有最少的字段，
+    没有收件人、没有承诺时间、没有进度、没有延期——加任何一个都是在把它变成第二个管理层待办。
+
+    业务已确认（2026-08-12）：要挂项目、要紧急档、到期当天推一次企微、
+    右下角角标 = 管理层待办未回复 + 个人待办未完成（合成一个数）。
+    """
+    __tablename__ = "personal_todos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # ⚠️ 每个接口都要 where(user_id == current.id)，不能只在列表接口过滤——
+    #    只滤列表、详情/改/删按 id 直接取，是最典型的越权口子（换个 id 就能改别人的）。
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    note: Mapped[Optional[str]] = mapped_column(Text)
+    due_date: Mapped[Optional[str]] = mapped_column(String(10))          # YYYY-MM-DD，空=没期限
+    priority: Mapped[str] = mapped_column(String(8), default="normal")   # normal/urgent
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), index=True)
+    done: Mapped[bool] = mapped_column(default=False, index=True)
+    done_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    sort_order: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    project: Mapped[Optional["Project"]] = relationship(lazy="joined")
 
 
 class ManagementTodoTarget(Base):

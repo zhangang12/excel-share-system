@@ -175,6 +175,16 @@ async def _order_or_404(db: AsyncSession, oid: int) -> models.DeptOrder:
     return o
 
 
+async def _has_output(db: AsyncSession, oid: int, kind: str) -> bool:
+    """该任务单是否已上传某个产物（如电工的 circuit 电路图）。
+    产物存在 attachments 里：biz_type=order_output / biz_id=任务单 id / kind=产物 key。"""
+    r = await db.execute(select(models.Attachment.id).where(
+        models.Attachment.biz_type == "order_output",
+        models.Attachment.biz_id == oid,
+        models.Attachment.kind == kind).limit(1))
+    return r.scalar_one_or_none() is not None
+
+
 def _uname(u: Optional[models.User]) -> Optional[str]:
     if not u:
         return None
@@ -255,6 +265,10 @@ def _order_to_out(o: models.DeptOrder, files: dict[str, list],
         on_time=on_time if o.status == "done" else None,
         overdue=overdue, created_at=o.created_at,
         design_done_flag=bool(getattr(o, "design_done_flag", False)),
+        # 🆕 电工三步流。has_circuit 直接从已取好的产物列表里判，不额外查库
+        mainboard_done_flag=bool(getattr(o, "mainboard_done_flag", False)),
+        wire_done_date=getattr(o, "wire_done_date", None),
+        has_circuit=any(f.kind == "circuit" for f in files.get("output", [])),
         electric_done_flag=bool(getattr(o, "electric_done_flag", False)),
         ship_prep_done=bool(getattr(o, "ship_prep_done", False)),
         input_files=files.get("input", []),
@@ -350,11 +364,19 @@ async def list_orders(
     if produce_oids:
         gr = await db.execute(select(models.ProduceGroupTask).where(
             models.ProduceGroupTask.order_id.in_(produce_oids)))
-        for gt in gr.scalars().all():
+        _gts = list(gr.scalars().all())
+        # ⚠️ ProduceGroupTask 没有 worker 关系，逐行取名字就是 N+1；一次查完再映射
+        _wids = {g.worker_id for g in _gts if g.worker_id}
+        _wmap: dict[int, str] = {}
+        if _wids:
+            _wmap = {u.id: (u.full_name or u.username) for u in (await db.execute(
+                select(models.User).where(models.User.id.in_(_wids)))).scalars().all()}
+        for gt in _gts:
             pg_map.setdefault(gt.order_id, []).append(schemas.ProduceGroupBrief(
                 group=gt.group, name=_PG_NAME.get(gt.group, gt.group),
                 due_date=gt.due_date,
                 done_date=(gt.done_at + timedelta(hours=8)).strftime("%Y-%m-%d") if gt.done_at else None,
+                worker_id=gt.worker_id, worker_name=_wmap.get(gt.worker_id) if gt.worker_id else None,
             ))
     # 🆕 #6 各订单所属项目的「标准件清单」数据表 id（电工部只读引用用）
     std_map: dict[int, int] = {}
@@ -1060,13 +1082,23 @@ async def mark_design_done(
                        + (f"；逾期 {overdue_days} 天已提醒主管" if overdue_days else ""))
 
 
-@router.post("/{oid}/electric_done", response_model=schemas.Msg)
-async def mark_electric_done(
+@router.post("/{oid}/mainboard_done", response_model=schemas.Msg)
+async def mark_mainboard_done(
     oid: int,
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """接线完成第一步：置 electric_done_flag。🆕 #4 放开采购清单必传校验（按需可选）。"""
+    """🆕 电工三步流第一步：**主板完成 → 结考核**（2026-08-12 业务确认）。
+
+    ⚠️ 这一步只结考核，**不置 status=done**：
+      · done_date = 今天 → 效率/按时/逾期全按它算，due_date 也是对着主板完成定的
+      · status 仍是 in_progress → 电路还没接完，部门不算完成，物流 D5 闸门不放行
+    这是本次改造唯一「考核日 ≠ 部门完成日」的地方，改动它之前先看 models.DeptOrder 的注释。
+
+    连带必须一致的两处（漏掉任何一处线上就会出怪事）：
+      · `overdue.scan_overdue` 要跳过已结考核的单子，否则考核结了还天天报逾期
+      · `reports_router._kpi_done` 要认这个标记，否则考核结了报表却不算已完成
+    """
     o = await _order_or_404(db, oid)
     if o.dept != "electric":
         raise HTTPException(400, "仅电工部任务可用")
@@ -1074,27 +1106,70 @@ async def mark_electric_done(
         raise HTTPException(403, "仅任务负责人可操作")
     if o.status != "in_progress":
         raise HTTPException(400, "仅进行中任务可操作")
+    if o.mainboard_done_flag:
+        raise HTTPException(400, "主板已完成，请继续「安装调试完成」")
 
-    # 🆕 #4 已放开：不再校验采购清单是否上传（按需可选）
-    # 🆕 #197：接线完成 = 直接完成计考核（与设计部「设计完成」一致）；
-    #   电路图上传/发货准备挪到完成后做，不再阻塞订单完成、不影响考核。
     cfg = DEPTS["electric"]
     today_s = date.today().isoformat()
-    o.electric_done_flag = True
-    o.status = "done"
-    o.done_date = today_s
+    o.mainboard_done_flag = True
+    o.done_date = today_s          # 考核日
     await db.commit()
     p = o.project
     eff, on_time, overdue_days = compute_efficiency(o.start_date, o.due_date, o.done_date)
     if overdue_days > 0:
-        text = (f"【逾期完成】电工 {p.code} {p.name}：预计 {o.due_date}，实际 {o.done_date}，"
+        text = (f"【逾期完成】电工·主板 {p.code} {p.name}：预计 {o.due_date}，实际 {o.done_date}，"
                 f"超 {overdue_days} 天，效率 {eff}%（负责人：{_uname(o.worker)}）")
         await push_message(db, to_role=cfg["lead_role"], kind="warn", text=text, biz_type="order", biz_id=o.id)
         await push_message(db, to_role="manager", kind="warn", text=text, biz_type="order", biz_id=o.id)
-    await write_audit(db, user=current, action="electric_done", target_type="dept_order",
-                      target_id=o.id, detail=f"done eff={eff}% on_time={on_time}")
-    return schemas.Msg(message="接线完成，已计入考核。可先在当前卡片上传电路图并推送物流，也可到「已完成」补传（不影响考核）"
+    await write_audit(db, user=current, action="mainboard_done", target_type="dept_order",
+                      target_id=o.id, detail=f"kpi_done eff={eff}% on_time={on_time}")
+    return schemas.Msg(message="主板完成，已计入考核。接下来「安装调试完成」，完成后本项目才可发货"
                        + (f"；逾期 {overdue_days} 天已提醒主管" if overdue_days else ""))
+
+
+@router.post("/{oid}/electric_done", response_model=schemas.Msg)
+async def mark_electric_done(
+    oid: int,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 电工三步流第二步：**电路完成 → 部门算完成**（status=done，物流 D5 闸门放行）。
+
+    ⚠️ 这一步**不再动 done_date**：考核在第一步「主板完成」已经结过了，
+    这里再改一次等于用电路完成日重算效率，把第一步的考核作废。
+    实际完成日单独记在 wire_done_date。
+
+    电路图（第三步）是必传产物，但**只在界面上催、不拦这一步**——
+    电工忘传图就把整个项目的发货顶住，代价太大（电工部现存 16 条逾期，最久 47 天）。
+    """
+    o = await _order_or_404(db, oid)
+    if o.dept != "electric":
+        raise HTTPException(400, "仅电工部任务可用")
+    if not (_is_mgr(current) or o.worker_id == current.id):
+        raise HTTPException(403, "仅任务负责人可操作")
+    if o.status != "in_progress":
+        raise HTTPException(400, "仅进行中任务可操作")
+    if not o.mainboard_done_flag:
+        raise HTTPException(400, "请先点「主板完成」")
+
+    cfg = DEPTS["electric"]
+    today_s = date.today().isoformat()
+    o.electric_done_flag = True
+    o.wire_done_date = today_s
+    o.status = "done"
+    # ⚠️ 刻意不碰 o.done_date —— 它是主板完成日（考核口径）
+    await db.commit()
+    p = o.project
+    # 完成通知物流（原两步流里由 /complete 发，三步流下 /complete 走不到，挪到这里）
+    await push_message(db, to_role=cfg["notify_pool"], kind="wx",
+                       text=f"【电工部·{p.code}】{_uname(o.worker)} 已完成安装调试，可安排发货。",
+                       biz_type="order", biz_id=o.id)
+    await write_audit(db, user=current, action="electric_done", target_type="dept_order",
+                      target_id=o.id, detail=f"wire_done={today_s}")
+    has_circuit = await _has_output(db, o.id, "circuit")
+    msg = "安装调试完成，本项目发货闸门已放行。"
+    msg += "电路图已上传 ✅" if has_circuit else "⚠️ 电路图还没传，请尽快上传并推送物流（不影响发货）"
+    return schemas.Msg(message=msg)
 
 
 @router.post("/{oid}/complete", response_model=schemas.Msg)
@@ -1186,6 +1261,10 @@ async def reopen_order(
     #    迁移按 in_progress+electric_done_flag 识别"卡在旧二步流的存量单"）
     o.design_done_flag = False
     o.electric_done_flag = False
+    # 🆕 电工三步流：返工要把三步全部清掉。漏清 mainboard_done_flag 的话，
+    #   改回进行中之后「主板完成」按钮点不了（接口拦"主板已完成"），单子直接卡死。
+    o.mainboard_done_flag = False
+    o.wire_done_date = None
     p = o.project
     if cfg["writeback_done"]:
         _writeback_overview(p, cfg["writeback_done"], None)

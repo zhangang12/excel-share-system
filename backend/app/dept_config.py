@@ -58,7 +58,9 @@ DEPTS: dict[str, dict] = {
         ],
         "notify_pool": "logistics",
         "notify_label": "完成后通知物流部人员",
-        "start_label": "接线开始", "end_label": "预计完成", "done_label": "接线完成",
+        # 🆕 电工三步流（2026-08-12）：主板完成(结考核) → 电路完成(status=done,发货放行) → 上传电路图
+        #   end_label「预计完成」对着的是**主板完成**——考核和预计日期一起走第一步。
+        "start_label": "接线开始", "end_label": "预计完成（主板）", "done_label": "安装调试完成",
         "writeback_worker": "电工", "writeback_start": None, "writeback_done": None,
     },
     "produce": {

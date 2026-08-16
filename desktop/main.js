@@ -169,6 +169,18 @@ function revealMainWindow() {
 // 前端挂载信号到首帧绘制完成差一口气，延迟 300ms 再亮窗，避免闪一下白屏
 ipcMain.on('pms-desktop:app-ready', () => setTimeout(() => revealMainWindow(), 300));
 
+// 🆕 反馈#360：下载目录相关的最小 IPC，供页面内使用。
+//   为什么要有：菜单栏是 autoHideMenuBar 隐藏的，「下载位置…」那个菜单项**用户根本找不到**，
+//   于是既不知道文件存哪、也不知道能改。把这两件事搬进页面里。
+ipcMain.on('pms-desktop:show-in-folder', (_e, p) => {
+  if (p) { try { shell.showItemInFolder(p); } catch (_) { /* 文件被挪走/删了，忽略 */ } }
+});
+ipcMain.handle('pms-desktop:download-dir', () => dlBaseDir());
+ipcMain.handle('pms-desktop:pick-download-dir', () => {
+  if (pickDownloadDir()) buildMenu();   // 菜单标题带着路径，改完要重建
+  return dlBaseDir();
+});
+
 // ---- 设备 ID：userData 下存 JSON，首次启动生成 uuid（前端统计请求头用）----
 // 🆕 服务端「客户端设备限制」按这个 ID 放行，所以它**必须能持久化**：
 //   写失败时每次启动都会生成新 ID，那台机器就永远不在名单里，批了也没用，
@@ -355,6 +367,25 @@ function buildMenu() {
   if (process.platform === 'darwin') {
     template.push({ role: 'appMenu' }); // macOS 保留应用菜单（关于/退出等）
   }
+  // ⚠️ 「编辑」菜单不能省——Electron 的 Ctrl+C/V/X/A/Z 是**靠应用菜单里的这些 role 注册**的。
+  //   自定义菜单时漏掉它，输入框里按 Ctrl+V 就是没反应（用户报「客户端不能粘贴文字」）。
+  //   菜单栏本身是 autoHideMenuBar 隐藏的，看不见不影响快捷键生效——注册了就有用。
+  //   另外配了右键菜单（见 setupContextMenu），键盘不灵时还有一条路。
+  template.push({
+    label: '编辑',
+    submenu: [
+      { role: 'undo', label: '撤销' },
+      { role: 'redo', label: '重做' },
+      { type: 'separator' },
+      { role: 'cut', label: '剪切' },
+      { role: 'copy', label: '复制' },
+      { role: 'paste', label: '粘贴' },
+      { role: 'pasteAndMatchStyle', label: '粘贴为纯文本' },
+      { role: 'delete', label: '删除' },
+      { type: 'separator' },
+      { role: 'selectAll', label: '全选' },
+    ],
+  });
   template.push({
     label: '操作',
     submenu: [
@@ -379,6 +410,24 @@ function buildMenu() {
     ],
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** 右键菜单：复制/粘贴/全选。
+ *  菜单栏是隐藏的（autoHideMenuBar），用户找不到「编辑」菜单；键盘快捷键虽然已经能用了，
+ *  但很多人习惯右键粘贴——尤其是从微信/邮件里拷一段收货地址过来的时候。 */
+function setupContextMenu(win) {
+  win.webContents.on('context-menu', (_e, props) => {
+    const canEdit = props.isEditable;
+    const hasSel = !!(props.selectionText || '').trim();
+    if (!canEdit && !hasSel) return;   // 空白处右键不弹，免得挡着页面
+    const items = [];
+    if (canEdit) items.push({ role: 'undo', label: '撤销' }, { type: 'separator' });
+    if (hasSel) items.push({ role: 'copy', label: '复制' });
+    if (canEdit && hasSel) items.push({ role: 'cut', label: '剪切' });
+    if (canEdit) items.push({ role: 'paste', label: '粘贴' });
+    if (canEdit) items.push({ type: 'separator' }, { role: 'selectAll', label: '全选' });
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
 }
 
 // ---- 下载偏好：目录 + 是否每次询问，存 userData/download-prefs.json ----
@@ -460,6 +509,18 @@ function setupDownloadHandler() {
       } else {
         new Notification({ title: '下载失败', body: path.basename(savePath) }).show();
       }
+      // 🆕 反馈#360（赵仁辉）：「下载有问题，不知道下载到哪里了」。
+      //   上面那个系统通知是唯一的反馈——而 Windows 通知一旦被静音/勾了免打扰，
+      //   人就完全看不到任何提示，文件明明下好了却以为没下成。
+      //   再往页面里推一条，前端弹应用内提示并给「打开文件夹」，不依赖系统通知。
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('pms-desktop:download-done', {
+          ok: state === 'completed',
+          name: path.basename(savePath),
+          dir: path.dirname(savePath),
+          path: savePath,
+        });
+      }
     });
   });
 }
@@ -494,6 +555,7 @@ function createWindow() {
   const indexHtml = path.join(__dirname, 'app', 'index.html');
   // 兜底：前端因故没发 app-ready（如老版本内置页），10s 后也要亮窗
   setTimeout(() => revealMainWindow(), 10000);
+  setupContextMenu(mainWindow);   // 右键复制/粘贴（菜单栏隐藏，右键是很多人的第一反应）
   // ⚠️ 这里原来只 revealMainWindow()，等于「加载失败就把一个空窗口亮给用户」——
   //    那正是 #343 用户看到的一整片深蓝。真身是前端 401 后 location.href='/login'
   //    在 file:// 下解析成 file:///login（不存在），前端已修；这里再加一道兜底：

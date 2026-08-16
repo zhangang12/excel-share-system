@@ -25,7 +25,7 @@
 from datetime import datetime, timedelta, timezone, date as _date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Form, File, UploadFile
 from sqlalchemy import String, select, func, exists, or_, update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -127,6 +127,43 @@ async def list_doc_types(_: models.User = Depends(get_current_user), db: AsyncSe
              "category_label": _OA_CATEGORY_LABELS.get(d.category, d.category),
              "label": d.label, "sort_order": d.sort_order, "enabled": d.enabled}
             for d in await _doc_types(db)]
+
+
+@router.get("/payee-accounts")
+async def list_payee_accounts(
+    _: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#365（计梦蝶）：「建议使用过的收款账户有保存功能，下次付款同一收款单位的话较为便捷」。
+
+    从历史付款申请里把「收款单位 → 收款账号/开户行」抽出来，前端选到同一个收款单位时自动带出。
+    不单独建表：这些数据本来就在 OaRequest.detail 里，另起一张表就得考虑改了账号谁去同步，
+    反而会出现「历史单据上的账号」和「账户库里的账号」两个版本。
+
+    同一收款单位换过账号时**以最近一次为准**（按 id 倒序，后写的覆盖先写的），
+    并把用过几次带上——前端可以标出来，让人一眼看出哪个是常用的、哪个只用过一次。
+    """
+    r = await db.execute(
+        select(models.OaRequest.detail)
+        .where(models.OaRequest.doc_type.in_(PAYMENT_BANK_DOC_TYPES))
+        .order_by(models.OaRequest.id.desc())
+        .limit(500)
+    )
+    out: dict[str, dict] = {}
+    for (detail,) in r.all():
+        d = detail or {}
+        payee = str(d.get("payee") or "").strip()
+        acct = str(d.get("payee_account") or "").strip()
+        bank = str(d.get("payee_bank") or "").strip()
+        if not payee or not acct:
+            continue
+        hit = out.get(payee)
+        if hit is None:
+            # 第一次遇到 = 最近一次用的（已按 id 倒序），账号以它为准
+            out[payee] = {"payee": payee, "account": acct, "bank": bank, "used": 1}
+        else:
+            hit["used"] += 1
+    return sorted(out.values(), key=lambda x: (-x["used"], x["payee"]))
 
 
 @router.post("/doc-types", response_model=schemas.OaDocTypeOut)
@@ -562,6 +599,9 @@ async def _req_out(db: AsyncSession, req: models.OaRequest, current: models.User
         related_request_id=req.related_request_id, related_request_no=related_no,
         status=req.status, current_step_order=req.current_step_order,
         settle_amount=req.settle_amount, settle_note=req.settle_note, reject_reason=req.reject_reason,
+        # 🆕 #395 财务付款备注/时间。⚠️ schemas 里加了字段还得在这里赋值——
+        #   只加 schema 的话接口永远返回 None，写进库了前端也看不见（这次就先漏了这一步）。
+        pay_note=getattr(req, "pay_note", None), pay_at=getattr(req, "pay_at", None),
         created_at=req.created_at, updated_at=req.updated_at,
         steps=[schemas.OaRequestStepOut(
             id=s.id, step_order=s.step_order, approver_role=s.approver_role,
@@ -923,19 +963,36 @@ async def approve_request(
 @router.put("/requests/{rid}/mark-paid", response_model=schemas.OaRequestOut)
 async def mark_paid(
     rid: int,
+    pay_note: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
     current: models.User = Depends(require_roles("finance")),
     db: AsyncSession = Depends(get_db),
 ):
-    """财务把「待付款」的申请标记为已付款——跟审批通过分开操作，避免"批了=钱到账"的误解。"""
+    """财务把「待付款」的申请标记为已付款——跟审批通过分开操作，避免"批了=钱到账"的误解。
+
+    🆕 反馈#395（计梦蝶）：可同时写**付款备注**、上传**付款回单**。
+    原来这一步什么都不能填，回单只能事后另找地方传、发起人也不知道钱哪天走的哪个账户。
+    ⚠️ 备注写 `pay_note` 而不是 `settle_note`——后者是核定金额时写的（为什么只批这么多），
+    两件事挤一个字段，后写的会把当初核减的理由冲掉，月底对账查不出原因。
+    回单走既有的 `attachments(biz_type='oa_request')` 通道，和申请附件同一个列表，不新开表。
+    """
     req = await _fetch_request(db, rid)
     if not req:
         raise HTTPException(404, "申请不存在")
     if req.status != "pending_payment":
         raise HTTPException(400, "该申请当前不是待付款状态")
     req.status = "approved"
+    req.pay_note = (pay_note or "").strip() or None
+    req.pay_at = datetime.now(timezone.utc)
+    if file is not None and file.filename:
+        from .attachments_router import save_upload
+        await save_upload(db, file, biz_type="oa_request", biz_id=req.id,
+                          kind="pay_receipt", user=current)
     await db.commit()
+    note_tail = f"（备注：{req.pay_note}）" if req.pay_note else ""
     await push_message(db, to_user_id=req.requester_id, kind="info",
-                       text=f"【OA审批】你的申请 {req.request_no} 财务已付款", biz_type="oa_request", biz_id=req.id)
+                       text=f"【OA审批】你的申请 {req.request_no} 财务已付款{note_tail}",
+                       biz_type="oa_request", biz_id=req.id)
     req = await _fetch_request(db, rid)
     return await _req_out(db, req, current)
 

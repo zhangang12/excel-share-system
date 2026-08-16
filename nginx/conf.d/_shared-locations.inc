@@ -26,6 +26,21 @@
 
     client_max_body_size 50M;
 
+    # 🆕 gzip 压缩。2026-08-15 之前**整站没开**，实测明文过网：
+    #      index.js 2.2MB · index.css 890KB · /api/wh/materials 334KB(863 个物料)
+    #    这三样每次打开系统都要重下一遍，办公室外网上就是十几秒白屏。
+    #    ⚠️ `gzip_proxied any` 是关键：本站所有内容（前端和 API）都是 proxy_pass 上来的，
+    #       而 gzip_proxied 默认 off = **代理来的响应一律不压**，只写 `gzip on` 等于没开。
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 5;          # 5 是 CPU/压缩比的常用平衡点，再高收益很小
+    gzip_min_length 1024;       # 小响应压了反而更大（还多一次 CPU）
+    gzip_types
+        text/plain text/css text/xml text/javascript
+        application/javascript application/json application/xml
+        application/wasm image/svg+xml;
+
     # 前端
     location / {
         proxy_pass http://frontend:80;
@@ -60,6 +75,7 @@
         proxy_cache off;
         chunked_transfer_encoding on;
         proxy_read_timeout 300;
+        gzip off;   # ⚠️ 流式必须关压缩：gzip 会攒够一块才吐，又把流式变回"等半天一次性出现"
     }
 
     # 后端 API
