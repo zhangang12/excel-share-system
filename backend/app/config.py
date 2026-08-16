@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     wecom_agent_id: str = ""
     wecom_secret: str = ""
 
+    # 🆕 企微内嵌：对外可访问的站点根地址（用于拼消息里的链接和 OAuth 回调）。
+    # ⚠️ **必须是 https 且必须是企微后台配的「可信域名」**，否则：
+    #    · http 的链接企微客户端会拦
+    #    · 域名对不上，网页授权直接报 redirect_uri 不合法
+    # 留空 = 消息退回纯文本、OAuth 关闭（不影响现有推送）。
+    public_base_url: str = ""
+    # 企微 OAuth 静默登录开关。⚠️ 默认关：域名验证没做完就打开，
+    # 用户点进来只会看到企微的报错页，比没有链接更糟。
+    wecom_oauth_enabled: bool = False
+
     # 🆕 v3 M16：导出审批开关（默认关闭=所有导出行为与现状完全一致；
     # 上线灰度后由管理层确认再打开，符合"动老页面用可逆开关"红线）
     export_approval_enabled: bool = False

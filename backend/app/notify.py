@@ -102,6 +102,55 @@ async def _wecom_token() -> str:
     return data["access_token"]
 
 
+async def wecom_userid_by_code(code: str) -> str:
+    """企微网页授权 code → 企业内 UserId。拿不到返回空串。
+
+    ⚠️ 复用 `_wecom_token()` 的缓存：这是**应用级** access_token，
+       和推送用的是同一个，不要另开一套缓存——两套缓存互相不知道对方
+       刷新了 token，会来回把对方的顶掉（企微同一应用只认最新签发的那个）。
+    """
+    token = await _wecom_token()
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{_WECOM_BASE}/auth/getuserinfo",
+                             params={"access_token": token, "code": code})
+        data = r.json()
+    if data.get("errcode") in (40014, 42001):
+        _wecom_token_cache["token"] = ""
+    if data.get("errcode", 0) != 0:
+        raise RuntimeError(f"企微 getuserinfo 失败: errcode={data.get('errcode')}")
+    # 企业成员返回 UserId；外部联系人返回 OpenId（没有 UserId）——后者不给登录
+    return str(data.get("UserId") or data.get("userid") or "")
+
+
+def h5_url() -> str:
+    """企微里点开消息该去哪。空字符串 = 没配可信域名，消息退回纯文本。"""
+    base = (settings.public_base_url or "").rstrip("/")
+    return f"{base}/h5/" if base else ""
+
+
+def _wecom_payload(wxids: list[str], text: str) -> dict:
+    """拼企微应用消息体。配了 public_base_url 就发**可点的卡片**，否则发纯文本。
+
+    ⚠️ 为什么非要可点：消息本身只是一句话（「2026-060A 还剩 5 天」），
+       看完还得自己开电脑找。textcard 带 url 直接落到 H5 首页，
+       这才是「手机版应用」和「一条通知」的区别。
+
+    ⚠️ textcard 的 description 支持的标签很有限，且**整体有长度上限**；
+       这里只做截断，不塞 HTML —— 业务文案里带 `<` `&` 的话塞标签必然裂开。
+    """
+    common = {"touser": "|".join(wxids[:1000]),     # 企微单次最多 1000 人
+              "agentid": int(settings.wecom_agent_id), "safe": 0}
+    url = h5_url()
+    if not url:
+        return {**common, "msgtype": "text", "text": {"content": text[:2000]}}
+    body = (text or "").strip()
+    # 第一行当标题：业务文案基本都是「【xx】yy」开头，正好是摘要
+    title = body.split("\n", 1)[0][:36] or "项目管理系统"
+    return {**common, "msgtype": "textcard",
+            "textcard": {"title": title, "description": body[:500],
+                         "url": url, "btntxt": "打开"}}
+
+
 async def _send_wecom(db: AsyncSession, user_ids: list[int], text: str) -> None:
     """企微应用消息外发：取已绑 wxid 的用户 → gettoken → message/send 文本消息。
     凭证/网络/IP白名单等问题由调用方捕获降级（不阻塞站内消息）。"""
@@ -117,13 +166,7 @@ async def _send_wecom(db: AsyncSession, user_ids: list[int], text: str) -> None:
         log.warning("企微 agent_id 未配置，跳过外发（仅站内）")
         return
     token = await _wecom_token()
-    payload = {
-        "touser": "|".join(wxids[:1000]),     # 企微单次最多 1000 人
-        "msgtype": "text",
-        "agentid": int(settings.wecom_agent_id),
-        "text": {"content": text[:2000]},
-        "safe": 0,
-    }
+    payload = _wecom_payload(wxids, text)
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(f"{_WECOM_BASE}/message/send",
                               params={"access_token": token}, json=payload)
