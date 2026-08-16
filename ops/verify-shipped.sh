@@ -48,9 +48,19 @@ CH_VER=$($SSH "grep -m1 '^version:' '$REMOTE_DIR/desktop-releases/latest.yml' 2>
 printf "  仓库 %s   更新通道 %s  " "$REPO_VER" "${CH_VER:-取不到}"
 if [[ "$REPO_VER" == "$CH_VER" ]]; then echo -e "${OK}一致${OFF}"; else echo -e "${BAD}通道上不是最新的，要跑 desktop/ship.sh${OFF}"; fail=1; fi
 # ⚠️ 客户端加载的是**打进安装包的前端**，不是服务器上的。
-#    所以任何前端改动都要重新发客户端，光发网页版客户端用户看不到。
-NEWER=$(git log --oneline "$(git log --oneline -1 --format=%H --grep="客户端 $REPO_VER" || echo HEAD)"..HEAD -- frontend/ 2>/dev/null | wc -l | tr -d ' ')
-[[ "$NEWER" -gt 0 ]] && { echo -e "  ${BAD}客户端打包之后还有 $NEWER 个提交动了前端——客户端用户看不到这些改动${OFF}"; fail=1; }
+#    所以前端改动要重新发客户端，光发网页版客户端用户看不到。
+# ⚠️ 但**只算网页版**（`.github/workflows/desktop-build.yml` 里是
+#    `npm run build` + `cp -R frontend/dist desktop/app`，只打 dist/）。
+#    `frontend/src/h5/` 是 H5 助手端，走的是 dist-h5/ 和手机 APP 的 OTA 通道，
+#    跟安装包无关——不排掉的话，改一行 H5 就报「客户端落后」，
+#    逼着白发一版客户端（2026-08-10 误报过一次）。
+NEWER=$(git log --oneline "$(git log --oneline -1 --format=%H --grep="客户端 $REPO_VER" || echo HEAD)"..HEAD \
+        -- frontend/ ':(exclude)frontend/src/h5/' 2>/dev/null | wc -l | tr -d ' ')
+[[ "$NEWER" -gt 0 ]] && { echo -e "  ${BAD}客户端打包之后还有 $NEWER 个提交动了网页版前端——客户端用户看不到这些改动${OFF}"; fail=1; }
+# H5 改动单独提醒：它进不了安装包，但要发**手机 APP 的热更新**（mobile/ship.sh）
+H5NEW=$(git log --oneline "$(git log --oneline -1 --format=%H --grep="客户端 $REPO_VER" || echo HEAD)"..HEAD \
+        -- frontend/src/h5/ 2>/dev/null | wc -l | tr -d ' ')
+[[ "$H5NEW" -gt 0 ]] && echo -e "  ${DIM}（另有 $H5NEW 个提交动了 H5：网页版 /h5/ 已随本次发版生效；手机 APP 要跑 mobile/ship.sh）${OFF}"
 
 if [[ $# -gt 0 ]]; then
   echo -e "${BOLD}── 功能是否真在线上包里 ──${OFF}"
