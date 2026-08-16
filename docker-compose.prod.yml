@@ -45,6 +45,13 @@ services:
       WECOM_CORP_ID: ${WECOM_CORP_ID:-}
       WECOM_AGENT_ID: ${WECOM_AGENT_ID:-}
       WECOM_SECRET: ${WECOM_SECRET:-}
+      # 🆕 企微内嵌：对外 https 根地址 + 静默登录开关。
+      # ⚠️ 两个都**必须在这里透传**——只写进 .env.prod 是不够的，
+      #    compose 不声明的变量根本进不了容器（配了半天没反应就是这个原因）。
+      # PUBLIC_BASE_URL 留空 = 消息退回纯文本、OAuth 关闭，与开通前完全一致。
+      # 前置条件：该域名已在企微后台配成「OAuth2.0 网页授权回调域名」并完成归属认证。
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      WECOM_OAUTH_ENABLED: ${WECOM_OAUTH_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy
