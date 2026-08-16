@@ -756,6 +756,11 @@ class GateVerifyIn(BaseModel):
     remember: bool = False
 
 
+class WecomLoginIn(BaseModel):
+    """🆕 企微内嵌静默登录：只收网页授权回来的 code（一次性、5 分钟过期）。"""
+    code: str
+
+
 class GateConfigIn(BaseModel):
     enabled: bool
     cidrs: list[str] = []

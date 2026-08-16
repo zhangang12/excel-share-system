@@ -1,4 +1,5 @@
-"""认证：登录 / me / 改密 / 登出"""
+"""认证：登录 / me / 改密 / 登出 / 🆕 企微静默登录"""
+import logging
 from datetime import datetime, timezone
 from typing import Union
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,8 +9,11 @@ from sqlalchemy import select
 from ..database import get_db
 from .. import models, schemas, gate
 from ..auth import verify_password, hash_password, create_access_token
+from ..config import settings
 from ..deps import get_current_user
 from ..utils import write_audit
+
+log = logging.getLogger("auth")
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
@@ -107,6 +111,86 @@ async def login(data: schemas.LoginIn, request: Request, db: AsyncSession = Depe
                 gate_required=True, pre_token=pre_token,
                 message="已通知管理层，请联系管理层获取验证码")
     return await _issue_token(db, u, ip=ip, remember=bool(data.remember))
+
+
+# ==================== 🆕 企业微信内嵌：静默登录 ====================
+
+_WECOM_OAUTH_AUTHORIZE = "https://open.weixin.qq.com/connect/oauth2/authorize"
+
+
+def wecom_authorize_url(redirect_uri: str, state: str = "pms") -> str:
+    """拼企微网页授权地址（snsapi_base = 静默，用户无感，不弹授权页）。"""
+    from urllib.parse import quote
+    return (f"{_WECOM_OAUTH_AUTHORIZE}?appid={settings.wecom_corp_id}"
+            f"&redirect_uri={quote(redirect_uri, safe='')}"
+            f"&response_type=code&scope=snsapi_base&state={state}"
+            f"#wechat_redirect")
+
+
+@router.get("/wecom/entry")
+async def wecom_entry():
+    """企微工作台/消息卡片的入口：302 跳到企微授权，授权完带 code 回 /h5/。
+
+    ⚠️ 为什么要服务端拼这个跳转，而不是前端自己拼：`corpid` 是配置项，
+       烧进前端就意味着改一次要重发客户端；而且前端还得知道 https 根地址，
+       它在企微内嵌、浏览器、APP 三种壳里各不相同。
+    """
+    from fastapi.responses import RedirectResponse
+    base = (settings.public_base_url or "").rstrip("/")
+    if not (settings.wecom_oauth_enabled and base and settings.wecom_corp_id):
+        # 没开就退回普通登录页——**不能报错**：这个地址是配在企微工作台上的，
+        # 报错等于整个应用打不开。
+        return RedirectResponse(f"{base}/h5/#/login" if base else "/h5/#/login")
+    return RedirectResponse(wecom_authorize_url(f"{base}/h5/"))
+
+
+@router.post("/wecom", response_model=schemas.TokenOut)
+async def wecom_login(data: schemas.WecomLoginIn, request: Request,
+                      db: AsyncSession = Depends(get_db)):
+    """拿企微授权 code 换 token。前端在企微内嵌里发现 URL 带 code 就调这里。
+
+    流程：code → 企微 getuserinfo 拿 UserId → 按 `users.wxid` 找人 → 签 token。
+
+    ⚠️ **不走外网验证码闸门**，这是有意的，理由必须写清楚：
+       现在的闸门是「输密码 → 把 6 位码**推到企微** → 再输码」，
+       也就是说**「能看到企微」本来就是现行的第二因子**。
+       走到这个接口的人，已经在企业微信客户端里通过了企业的身份认证，
+       用的是同一个信任锚点，只是省掉了打字。`gate.desktop_exempt`
+       （桌面客户端免闸）是同一类先例。
+       ⚠️ 前提是 **corpid/secret 只在服务端**、code 只能用一次且 5 分钟过期——
+       这两条任何一条破了，这个豁免就不成立了。
+
+    ⚠️ 找不到人时**只说「未绑定」，绝不自动建账号**：企微通讯录里
+       会有访客、外部联系人，自动建号等于给系统开后门。
+    """
+    if not settings.wecom_oauth_enabled:
+        raise HTTPException(403, "企微登录未开启")
+    code = (data.code or "").strip()
+    if not code:
+        raise HTTPException(400, "缺少 code")
+    from ..notify import wecom_userid_by_code
+    try:
+        wxid = await wecom_userid_by_code(code)
+    except Exception as e:  # noqa: BLE001 —— 企微侧异常统一转 401，不外泄细节
+        log.warning("企微 code 换 userid 失败: %s", e)
+        raise HTTPException(401, "企业微信身份校验失败，请重新打开") from e
+    if not wxid:
+        raise HTTPException(401, "没拿到企业微信身份（可能是外部联系人）")
+
+    res = await db.execute(select(models.User).where(models.User.wxid == wxid))
+    u = res.scalar_one_or_none()
+    if not u:
+        raise HTTPException(403, "这个企业微信账号还没绑定系统用户，请找管理员在「企微绑定」里绑一下")
+    if not u.is_active:
+        raise HTTPException(403, "账号已停用")
+
+    ip = _client_ip(request)
+    u.last_login = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(u)
+    await write_audit(db, user=u, action="login_wecom", ip=ip or None)
+    # remember=True：企微里没人愿意一天登好几次，且这条路径本来就靠企微身份兜底
+    return await _issue_token(db, u, ip=ip, remember=True)
 
 
 @router.post("/login/verify-gate", response_model=schemas.TokenOut)

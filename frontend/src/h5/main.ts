@@ -13,6 +13,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import App from './H5App.vue'
 import { isLoggedIn } from './session'
 import { notifyReady, notifyFailed } from './native'
+import { tryWecomLogin } from './wecom'
 import '../styles/h5-tokens.css'
 
 const router = createRouter({
@@ -30,9 +31,23 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+/**
+ * 🆕 企微静默登录只在**第一次**导航时试一次。
+ *
+ * ⚠️ 不能每次导航都试：code 是一次性的，第二次必然失败，还白搭一个来回。
+ * ⚠️ 也不能放到 mount 之前 await：那会让所有非企微用户（绝大多数）
+ *    干等一次网络往返才看到界面。放在守卫里，没 code 就立刻放行。
+ */
+let wecomTried = false
+
+router.beforeEach(async (to) => {
   if (to.meta.public) return true
-  return isLoggedIn.value ? true : { name: 'login' }
+  if (isLoggedIn.value) return true
+  if (!wecomTried) {
+    wecomTried = true
+    if (await tryWecomLogin()) return true
+  }
+  return { name: 'login' }
 })
 
 const app = createApp(App)
