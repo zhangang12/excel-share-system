@@ -29,7 +29,9 @@ const limits = ref({ max_tiles: 12, max_label: 10, max_question: 120 })
 const loading = ref(true)
 // 今天该管的 3 件事：进来就看见，不用先想「该问什么」。
 // 后端 /agent/briefing/me 已经排过序、带了「为什么是它」。
-interface BriefItem { title: string; why: string; action: string; card: string; ref: number }
+interface BriefItem { title: string; why: string; action: string; card: string; ref: number
+  /** 没有 card 的条目（比如仓库缺料）点了要问什么。见 briefing.py 的 "ask" */
+  ask?: string }
 const brief = ref<{ items: BriefItem[]; rest: number } | null>(null)
 const editing = ref(false)
 const saving = ref(false)
@@ -47,7 +49,12 @@ const approveTile = computed(() => tiles.value.find((t) => t.kind === 'approve')
 const gridTiles = computed(() => tiles.value.filter((t) => t.kind !== 'approve'))
 /** 目录里还没摆上门户的 */
 function openBrief(it: BriefItem) {
-  router.push({ path: '/chat', query: { card: it.card } })
+  // ⚠️ card 为 null 时不能照跳：H5ChatView 要求 card 是**非空串**才走卡片通道，
+  //    跳过去等于什么也不发生 —— 首页「补货 ›」以前就是这么一个死链
+  //    （2026-08-18 用户点出来的）。没有 card 就走对话，把问题带过去。
+  if (it.card) return router.push({ path: '/chat', query: { card: it.card } })
+  if (it.ask) return router.push({ name: 'chat', query: { q: it.ask } })
+  router.push({ name: 'chat', query: { q: it.title } })
 }
 
 const addable = computed(() => {
