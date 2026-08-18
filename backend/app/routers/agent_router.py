@@ -1478,8 +1478,16 @@ def _has_detail_lines(text: str) -> bool:
 
 
 def _join_parts(*parts: str) -> str:
-    """结论 + 表格 + 图，空的段落直接跳过（别留出空行把手机屏撑开）。"""
-    return "\n\n".join(p.strip() for p in parts if p and p.strip()).strip()
+    """结论 + 表格 + 图，空的段落直接跳过（别留出空行把手机屏撑开）。
+
+    ⚠️ **第一段只 rstrip，不许 lstrip**。流式那边是按「已经推给用户多少个字」
+       做切片再补发尾巴的（`final[streamed:]`）；把开头的空白也剥掉会让整段左移，
+       切片就切进正文里 —— 表现是图或表格开头缺几个字符、整块渲染不出来。
+    """
+    kept = [p for p in parts if p and p.strip()]
+    if not kept:
+        return ""
+    return "\n\n".join([kept[0].rstrip()] + [p.strip() for p in kept[1:]])
 
 
 def apply_render(reply: str, last_result: dict | None, want_list: bool = False) -> str:
@@ -1498,6 +1506,11 @@ def apply_render(reply: str, last_result: dict | None, want_list: bool = False) 
     """
     from ..agent import render as _rd
     text = reply or ""
+    # ⚠️ 图**独立于表格**。以前是跟在表格后面拼的，于是「模型只写了结论」
+    #    和「模型自己打了明细行」这两种最常见的情况直接走 early return，
+    #    图一次都出不来 —— 用户反馈「手机的图没有渲染出来」就是这个。
+    #    图是**工具声明**的，跟模型写没写编排块无关，所以先算出来，每条路径都带上。
+    chart = _rd.chart_block(last_result) if isinstance(last_result, dict) else ""
     m = _RENDER_RE.search(text)
 
     if m:
@@ -1509,20 +1522,21 @@ def apply_render(reply: str, last_result: dict | None, want_list: bool = False) 
             if not isinstance(plan, dict):
                 # 合法 JSON 但不是对象（模型偶尔直接写个数组）——照样当坏块处理。
                 # 不挡这一下，下面 plan.get() 直接抛异常，整条请求 500。
-                return body
+                return _join_parts(body, chart)
         except (ValueError, TypeError):
             # ⚠️ 模型给了坏 JSON 就**只删块、不渲染**。
             #    这时它的意图（排序/挑哪些字段）已经丢了，硬用默认编排铺一堆行，
             #    等于把一段读不懂的东西塞给用户。宁可只留结论。
-            return body
+            #    ⚠️ 但**图照画**：图的口径来自工具，跟模型这个坏块没关系。
+            return _join_parts(body, chart)
         detail = _rd.table(last_result, plan=plan)
-        return _join_parts(body, detail, _rd.chart_block(last_result))
+        return _join_parts(body, detail, chart)
 
     # 没有编排块：只有「用户要清单 + 有可渲染结果 + 模型自己没写明细」三者同时成立才补
     if not (want_list and isinstance(last_result, dict) and not _has_detail_lines(text)):
-        return text
+        return _join_parts(text, chart)          # ← 不出表格也要出图
     detail = _rd.table(last_result, plan=_rd.default_plan(last_result))
-    return _join_parts(text, detail, _rd.chart_block(last_result))
+    return _join_parts(text, detail, chart)
 
 
 def _fallback_reason(e: Exception) -> str:
