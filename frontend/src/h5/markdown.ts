@@ -60,11 +60,91 @@ function tonePlugin(md: MarkdownIt): void {
   })
 }
 
+/* ══════════════════════════════ 图 ══════════════════════════════
+ *
+ * 后端发 ```pmschart 围栏 + 一段**纯数据 JSON**，SVG 在这里拼。
+ *
+ * ⚠️ 为什么不让后端直接吐 SVG：同上面那条红线。后端一旦开始吐标签，
+ *    `html:false` 就形同虚设 —— 而工具数据里带着用户自由填的备注、
+ *    物料名、OA 详情，`<img src=x onerror=…>` 完全可能混在里面。
+ *    这里 SVG 的**结构由代码写死**，来自数据的只有数字和文字，
+ *    文字一律走 esc() 转义。
+ *
+ * ⚠️ JSON 解析失败/字段不对 → **什么都不画**，绝不把原文回吐。
+ *    半张图比没有图更让人困惑，露出 JSON 更糟。
+ */
+const CHART_TONES: Record<string, string> = {
+  danger: 'var(--h5-danger)', warn: 'var(--h5-warn)',
+  good: 'var(--h5-good)', muted: 'var(--h5-ink-4)',
+}
+
+interface ChartRow { label: string; value: number; text: string; tone: string }
+
+/** SVG 里出现的每一段文字都必须过这里 */
+function esc(s: string): string {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
+}
+
+/**
+ * 发散条形图：中线是今天，左边超期、右边还剩。
+ * 「哪些项目快到期了」这问题，一张图比十几行数字快得多。
+ */
+function barChart(data: { title?: string; zero?: string; rows: ChartRow[] }): string {
+  const rows = data.rows.filter(
+    (r) => r && typeof r.value === 'number' && Number.isFinite(r.value))
+  if (rows.length < 2) return ''
+  const W = 320, LAB = 84, VAL = 62, ROW = 26, PAD = 8
+  const mid = LAB + (W - LAB - VAL) / 2
+  const half = (W - LAB - VAL) / 2 - 4
+  const max = Math.max(...rows.map((r) => Math.abs(r.value)), 1)
+  const top = data.title ? 20 : 4
+  const H = top + rows.length * ROW + PAD
+
+  const parts: string[] = []
+  if (data.title) {
+    parts.push(`<text x="0" y="12" class="pc-title">${esc(data.title)}</text>`)
+  }
+  // 中线（今天）
+  parts.push(`<line x1="${mid}" y1="${top - 2}" x2="${mid}" y2="${H - PAD + 2}" class="pc-axis"/>`)
+  rows.forEach((r, i) => {
+    const y = top + i * ROW
+    const w = Math.max(2, (Math.abs(r.value) / max) * half)
+    const neg = r.value < 0
+    const x = neg ? mid - w : mid
+    const fill = CHART_TONES[r.tone] || CHART_TONES.muted
+    parts.push(
+      `<text x="0" y="${y + 14}" class="pc-lab">${esc(r.label)}</text>`,
+      `<rect x="${x.toFixed(1)}" y="${y + 5}" width="${w.toFixed(1)}" height="12" rx="3" fill="${fill}"/>`,
+      `<text x="${W}" y="${y + 15}" class="pc-val" fill="${fill}">${esc(r.text)}</text>`)
+  })
+  if (data.zero) {
+    parts.push(`<text x="${mid}" y="${H - 1}" class="pc-zero">${esc(data.zero)}</text>`)
+  }
+  return `<div class="pmschart"><svg viewBox="0 0 ${W} ${H + (data.zero ? 6 : 0)}" `
+       + `role="img" aria-label="${esc(data.title || '图')}">${parts.join('')}</svg></div>`
+}
+
+function chartPlugin(md: MarkdownIt): void {
+  const fallback = md.renderer.rules.fence!
+  md.renderer.rules.fence = (tokens, idx, opts, env, self) => {
+    const t = tokens[idx]
+    if ((t.info || '').trim() !== 'pmschart') return fallback(tokens, idx, opts, env, self)
+    try {
+      const data = JSON.parse(t.content)
+      if (!data || !Array.isArray(data.rows)) return ''
+      return barChart(data)          // 目前只有 bar 一种；不认的 kind 就不画
+    } catch {
+      return ''                      // ⚠️ 坏数据什么都不画，绝不回吐原文
+    }
+  }
+}
+
 const md = new MarkdownIt({
   html: false,      // ← 与 H5ChatView 里的 v-html 成对，不要单独改
   linkify: false,   // H5 里不做自动链接：模型给的 URL 不该可点（原则三）
   breaks: true,     // 单换行即换行，符合聊天场景的书写习惯
-}).use(tonePlugin)
+}).use(tonePlugin).use(chartPlugin)
 
 export function renderMd(text: string): string {
   return md.render(text || '')

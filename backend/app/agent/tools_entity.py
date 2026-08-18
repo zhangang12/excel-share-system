@@ -699,6 +699,11 @@ async def project_progress(db: AsyncSession, current: models.User,
         # ⚠️ 明确声明表格该显示哪三列。不声明的话渲染层按全局优先级挑，
         #    会挑到「客户 / 合同额」——这个场景要看的是**还剩多久、卡在哪**。
         "columns": ["project", "days_left", "blocked_at"],
+        # 🆕 配一张发散条形图：中线是今天，左边超期、右边还剩。
+        #    「哪些项目快到期了」这个问题，一张图比十几行数字快得多——
+        #    这也是杨坛/赵仁辉两人都会点的「交期看板」。
+        "chart": {"kind": "bar", "label": "project", "value": "days_left",
+                  "title": "距交货日"},
         "summary": {
             "in_progress_total": len(ps),
             # ⚠️ overdue 只统计**还在做**的。已发货待收尾的单独一档 ——
