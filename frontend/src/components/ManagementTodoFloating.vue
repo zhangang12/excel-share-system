@@ -121,6 +121,19 @@ async function submitExtend() {
 // ===== 管理层：新建 / 监控 =====
 const sentList = ref<MgmtTodo[]>([])
 const sentLoading = ref(false)
+// 🆕 反馈#403（赵仁辉）：下发过的待办越堆越多，一屏全是卡片，分不清哪些已经办完了。
+//   判定用后端已经算好的 done_count/total（收件人全部完成才算这条完成），
+//   不在前端遍历 targets 自己数——那样"完成 2/3"和筛选结果会对不上。
+type SentFilter = 'all' | 'open' | 'done'
+const sentFilter = ref<SentFilter>('open')   // 默认「未完成」：进来就是要看还没办完的
+function sentIsDone(t: MgmtTodo) { return (t.total || 0) > 0 && (t.done_count || 0) >= (t.total || 0) }
+const sentOpenCount = computed(() => sentList.value.filter(t => !sentIsDone(t)).length)
+const sentDoneCount = computed(() => sentList.value.filter(t => sentIsDone(t)).length)
+const sentShown = computed(() => {
+  if (sentFilter.value === 'open') return sentList.value.filter(t => !sentIsDone(t))
+  if (sentFilter.value === 'done') return sentList.value.filter(t => sentIsDone(t))
+  return sentList.value
+})
 async function loadSent() {
   sentLoading.value = true
   try { sentList.value = await managementTodoApi.listSent() } finally { sentLoading.value = false }
@@ -434,17 +447,27 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
       <el-tab-pane v-if="isMgr" name="sent" label="下发 / 监控">
         <div class="sent-bar">
           <el-button type="primary" @click="openCreate">＋ 新建待办</el-button>
+          <!-- 🆕 #403：默认只看未完成；办完的收进「已完成」，不再堆在眼前 -->
+          <el-radio-group v-model="sentFilter" size="small">
+            <el-radio-button value="open">未完成 ({{ sentOpenCount }})</el-radio-button>
+            <el-radio-button value="done">已完成 ({{ sentDoneCount }})</el-radio-button>
+            <el-radio-button value="all">全部 ({{ sentList.length }})</el-radio-button>
+          </el-radio-group>
           <span class="sent-tip">下发给勾选的收件人；到承诺日仍未完成，系统每日推送逾期提醒。</span>
         </div>
         <div v-loading="sentLoading">
           <div v-if="!sentLoading && !sentList.length" class="empty">还没有下发过待办</div>
-          <div v-for="t in sentList" :key="t.id" class="sent-card">
+          <div v-else-if="!sentLoading && !sentShown.length" class="empty">
+            {{ sentFilter === 'open' ? '下发的待办都办完了' : '还没有已完成的待办' }}
+          </div>
+          <div v-for="t in sentShown" :key="t.id" class="sent-card" :class="{ 'is-done': sentIsDone(t) }">
             <div class="tc-head">
               <el-tag v-if="t.priority === 'urgent'" type="danger" size="small" effect="dark">紧急</el-tag>
               <span class="tc-title">{{ t.title }}</span>
               <el-tag v-if="t.due_date" size="small" type="warning" effect="plain">截止 {{ t.due_date }}</el-tag>
               <span class="sent-sum">
-                完成 {{ t.done_count }}/{{ t.total }}
+                <span v-if="sentIsDone(t)" class="ok">✓ 已完成</span>
+                <template v-else>完成 {{ t.done_count }}/{{ t.total }}</template>
                 <span v-if="t.overdue_count" class="over"> · 逾期 {{ t.overdue_count }}</span>
                 <span v-if="t.pending_reply_count" class="pend"> · 待回复 {{ t.pending_reply_count }}</span>
               </span>
@@ -691,11 +714,16 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 .att-x:hover { color: #dc2626; }
 .att-picker { display: flex; align-items: center; gap: 10px; }
 
-.sent-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+/* 🆕 #403 加了筛选按钮，一行放不下就换行，别把「新建待办」挤出去 */
+.sent-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .sent-tip { color: var(--text-3, #9ca3af); font-size: 12.5px; }
 .sent-sum { font-size: 12.5px; color: #374151; }
 .sent-sum .over { color: #dc2626; }
 .sent-sum .pend { color: #d97706; }
+.sent-sum .ok { color: #16a34a; font-weight: 600; }
+/* 已完成的卡片压低存在感——「全部」视图里一眼能分出哪些是办完的 */
+.sent-card.is-done { opacity: .72; }
+.sent-card.is-done .tc-title { text-decoration: line-through; text-decoration-color: #9ca3af; }
 
 .tg-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
 .tg-table th, .tg-table td { border-bottom: 1px solid #f0f1f3; padding: 6px 8px; text-align: left; vertical-align: top; }

@@ -145,6 +145,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "purchase_requests": [
         ("buyer_id", "INTEGER"),                   # 🆕 #2 采购申请指定采购员（存量表补列）
+        ("need_date", "VARCHAR(10)"),              # 🆕 #401 需求时间（采购据此排期/凑单）
     ],
     "wh_txns": [                                   # 🆕 库存金额/成本 + 采购收货自动入库来源
         ("unit_price", "FLOAT"),
@@ -2129,6 +2130,9 @@ async def backfill_oa_doc_types(db: AsyncSession) -> dict:
         #    顺带解决 #348 的别扭：现金付款根本没有银行账户，却被要求填账号和开户行。
         ("payment_public", "business", "对公付款申请"),
         ("payment_cash", "business", "现金付款申请"),
+        # 🆕 反馈#402（李昌奇）：只有对公和现金，付给个人（劳务费/私账代付/个人报销转账）
+        #   没有对应的单子，只能挂到对公里，收款单位填个人名字——财务和审计都不好看。
+        ("payment_private", "business", "对私付款申请"),
     ]
     r = await db.execute(select(models.OaDocTypeDict.key))
     existing = {k for (k,) in r.all()}
@@ -2142,6 +2146,33 @@ async def backfill_oa_doc_types(db: AsyncSession) -> dict:
         await db.commit()
         log.info("[backfill_oa_doc_types] 新增默认单据类型 %d 个", added)
     return {"added": added}
+
+
+async def seed_payment_private_flow(db: AsyncSession) -> dict:
+    """🆕 #402 对私付款申请：把对公付款的审批链复制一份给它（幂等）。
+
+    ⚠️ 光在字典里加一个类型是不够的：新类型没有审批链，用户一提交就撞
+       「『XX部』的『对私付款申请』尚未配置审批流程」——功能上线即不可用。
+       这是 2026-08-07 拆对公/现金时踩过的同一个坑（见 split_payment_doc_type）。
+    复制**对公**而不是现金：对私同样是转账、同样要走账号，金额和风险量级更接近对公；
+    要短流程财务再去【审批流程设置】里自己调。
+    """
+    exists = (await db.execute(select(func.count(models.OaApprovalStep.id))
+                               .where(models.OaApprovalStep.doc_type == "payment_private"))).scalar() or 0
+    if exists:
+        return {"skipped": "已有审批链"}
+    src = list((await db.execute(select(models.OaApprovalStep)
+                                 .where(models.OaApprovalStep.doc_type == "payment_public"))).scalars().all())
+    if not src:   # 对公也没配（全新库），等管理层自己配，别凭空造一条
+        return {"skipped": "对公付款还没有审批链，无可复制"}
+    for st in src:
+        db.add(models.OaApprovalStep(
+            department_id=st.department_id, doc_type="payment_private", step_order=st.step_order,
+            approver_role=st.approver_role, approver_user_id=st.approver_user_id,
+            step_label=st.step_label, enabled=st.enabled))
+    await db.commit()
+    log.info("[seed_payment_private_flow] 从对公付款复制审批链 %d 条到对私付款", len(src))
+    return {"copied": len(src)}
 
 
 async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
@@ -2551,7 +2582,13 @@ async def run_all(db: AsyncSession) -> None:
         #    放前面的话它什么也不做，而且不会报错——是个静默失效。
         await split_payment_doc_type(db)
     except Exception as e:
-        log.warning("backfill_oa_doc_types failed: %s", e)
+        log.warning("split_payment_doc_type failed: %s", e)
+    try:
+        # ⚠️ 同样必须排在 backfill_oa_doc_types 之后（理由同上）：
+        #    它要从**对公付款**的审批链复制一份给对私，前面那步得先把类型建出来。
+        await seed_payment_private_flow(db)
+    except Exception as e:
+        log.warning("seed_payment_private_flow failed: %s", e)
     try:
         await split_mixed_supplier_po(db)
     except Exception as e:

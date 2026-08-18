@@ -1546,6 +1546,7 @@ class PurchaseRequestLineIn(BaseModel):
 
 class PurchaseRequestCreate(BaseModel):
     buyer_id: Optional[int] = None   # 🆕 #2 指定采购员（推送给他）
+    need_date: Optional[str] = None  # 🆕 #401 需求时间 YYYY-MM-DD（选填；采购据此排期/凑单）
     notes: Optional[str] = None
     lines: list[PurchaseRequestLineIn] = Field(default_factory=list)
     # 🆕 #245/#246 二选一：可不填明细行，改为直接上传文件（先传 /attachments 拿 id 再带进来）
@@ -1562,6 +1563,8 @@ class PurchaseRequestOut(BaseModel):
     requester_name: Optional[str] = None
     buyer_id: Optional[int] = None            # 🆕 #2 指定采购员
     buyer_name: Optional[str] = None
+    need_date: Optional[str] = None           # 🆕 #401 需求时间
+    need_days: Optional[int] = None           # 🆕 #401 距今天几天（负=已过期）；前端标红用，别在前端各算各的
     status: str = "pending"       # pending/done/rejected
     notes: Optional[str] = None
     handler_name: Optional[str] = None

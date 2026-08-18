@@ -116,7 +116,12 @@ const DETAIL_FIELD_LABELS: Record<string, string> = {
   // 🆕 反馈#348（杨坛）：批完还得回头问收款账户，钱才付得出去
   payee_account: '收款账号', payee_bank: '开户行',
 }
-function detailFieldLabel(k: string): string { return DETAIL_FIELD_LABELS[k] || k }
+// 🆕 #402 看单据详情时，对私付款的 payee 要显示成「收款人」而不是「收款单位」。
+//   docType 来自正在看的那张单，不是当前表单——详情弹窗和新建表单不是一回事。
+function detailFieldLabel(k: string, docType?: string): string {
+  if (k === 'payee' && docType === 'payment_private') return '收款人'
+  return DETAIL_FIELD_LABELS[k] || k
+}
 // 🆕 #236 详情里提成明细的「总计」行：只对回款金额/提成两列求和
 function commissionSummary({ columns, data }: { columns: any[]; data: any[] }) {
   return columns.map((_c, i) => {
@@ -204,10 +209,15 @@ const showCommissionFields = computed(() => subForm.doc_type === 'sales_commissi
 // 🆕 反馈#285 付款申请：收款单位/付款金额/付款事由(必填) + 期望付款日期(选填)
 // 🆕 反馈 2026-08-07（杨坛）：付款申请拆成对公/现金（审批流不一样）。
 // payment 是拆分前的旧类型，已停用；这里仍然认它，免得存量草稿/旧客户端选到它时表单变空白。
-const PAYMENT_TYPES = ['payment', 'payment_public', 'payment_cash']
+// 🆕 反馈#402（李昌奇）：加对私付款——付给个人（劳务费、私账代付），走个人账户
+const PAYMENT_TYPES = ['payment', 'payment_public', 'payment_cash', 'payment_private']
 const showPaymentFields = computed(() => PAYMENT_TYPES.includes(subForm.doc_type))
 // ⚠️ 现金付款**没有银行账户**——照 #348 一刀切要求填账号开户行，只会逼人瞎填，比不填更糟
 const showBankFields = computed(() => subForm.doc_type !== 'payment_cash' && showPaymentFields.value)
+// 对私收的是**个人**：整张单子把"收款单位"改口叫"收款人"。
+// 一张付给张三的单子却处处写着"收款单位"，人会以为自己选错了单据类型。
+const isPrivatePay = computed(() => subForm.doc_type === 'payment_private')
+const payeeLabel = computed(() => (isPrivatePay.value ? '收款人' : '收款单位'))
 
 // 🆕 反馈#365：用过的收款账户。数据来自历史付款申请（后端 /oa/payee-accounts 抽的），
 //   不另建表——另起一张表就得管"改了账号谁去同步"，会出现历史单据和账户库两个版本。
@@ -342,7 +352,7 @@ async function submitNew() {
     }
   } else if (showPaymentFields.value) {
     // 🆕 反馈#285 付款申请：收款单位/付款金额/付款事由必填，期望付款日期选填（服务端同口径校验）
-    if (!subForm.p_payee.trim()) { ElMessage.warning('请填写收款单位'); return }
+    if (!subForm.p_payee.trim()) { ElMessage.warning(`请填写${payeeLabel.value}`); return }
     if (!subForm.amount || Number(subForm.amount) <= 0) { ElMessage.warning('请填写付款金额'); return }
     if (!subForm.p_reason.trim()) { ElMessage.warning('请填写付款事由'); return }
     // 🆕 #348：账号和开户行都必填——少一样财务照样打不出款，这张单还得再问一轮。
@@ -1208,17 +1218,19 @@ onMounted(async () => {
           <!-- 🆕 反馈#285 付款申请专属字段（不走业务类通用字段块） -->
           <template v-if="showPaymentFields">
             <el-col :xs="24" :sm="12">
-              <el-form-item label="收款单位 *">
+              <el-form-item :label="payeeLabel + ' *'">
                 <!-- 🆕 反馈#365（计梦蝶）：付同一个收款单位时，账号/开户行不用再手敲一遍。
                      下拉列的是**历史付款申请里用过的**收款单位，选中自动带出上次的账号+开户行。
                      allow-create：新单位照样直接输，不挡人。 -->
                 <el-select v-model="subForm.p_payee" filterable allow-create default-first-option clearable
-                           placeholder="收款单位全称（用过的可直接选，账号自动带出）"
+                           :placeholder="isPrivatePay ? '收款人姓名（用过的可直接选，账号自动带出）' : '收款单位全称（用过的可直接选，账号自动带出）'"
                            style="width:100%" @change="onPayeePick">
                   <el-option v-for="a in payeeBook" :key="a.payee"
                              :label="`${a.payee}　${a.account.slice(-6).padStart(8, '·')}`" :value="a.payee" />
                 </el-select>
-                <div class="fi-hint" v-if="showBankFields">要跟银行账户的户名一致，对不上银行会退回</div>
+                <div class="fi-hint" v-if="showBankFields">
+                  {{ isPrivatePay ? '要跟本人银行卡的户名一致，对不上银行会退回' : '要跟银行账户的户名一致，对不上银行会退回' }}
+                </div>
                 <div class="fi-hint" v-if="payeeFilled" style="color:var(--el-color-success)">
                   已带出上次用的账号和开户行，付之前请再核一眼
                 </div>
@@ -1227,10 +1239,10 @@ onMounted(async () => {
             <el-col :xs="24" :sm="12"><el-form-item label="期望付款日期（选填）"><el-date-picker v-model="subForm.p_pay_date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" /></el-form-item></el-col>
             <!-- 🆕 反馈#348（杨坛）：批完还得回头问收款账户，钱才付得出去。
                  账号和开户行都必填——少一样财务照样打不出款。 -->
-            <el-col v-if="showBankFields" :xs="24" :sm="12"><el-form-item label="收款账号 *"><el-input v-model="subForm.p_account" placeholder="银行卡号 / 对公账号" /></el-form-item></el-col>
+            <el-col v-if="showBankFields" :xs="24" :sm="12"><el-form-item label="收款账号 *"><el-input v-model="subForm.p_account" :placeholder="isPrivatePay ? '本人银行卡号' : '银行卡号 / 对公账号'" /></el-form-item></el-col>
             <el-col v-if="showBankFields" :xs="24" :sm="12"><el-form-item label="开户行 *"><el-input v-model="subForm.p_bank" placeholder="如 工商银行无锡分行营业部" /></el-form-item></el-col>
             <el-col v-else :span="24">
-              <el-alert type="info" :closable="false" title="现金付款不需要填银行账户；如果对方要走银行转账，请改选「对公付款申请」。" />
+              <el-alert type="info" :closable="false" title="现金付款不需要填银行账户；如果对方要走银行转账，公司账户选「对公付款申请」，个人账户选「对私付款申请」。" />
             </el-col>
             <el-col :span="24"><el-form-item label="付款事由 *"><el-input v-model="subForm.p_reason" type="textarea" :rows="2" placeholder="为什么付这笔钱" /></el-form-item></el-col>
           </template>
@@ -1351,7 +1363,7 @@ onMounted(async () => {
           <!-- 明细数组单独用表格渲染(见下)，平铺这里跳过 -->
           <div v-for="(v, k) in detailReq.detail" :key="k"
                v-show="v && k !== 'expense_items' && k !== 'commission_items'">
-            <span class="muted">{{ detailFieldLabel(k) }}</span>：{{ v }}
+            <span class="muted">{{ detailFieldLabel(k, detailReq.doc_type) }}</span>：{{ v }}
           </div>
         </div>
         <!-- 🆕 #236：销售提成明细（按月多项目）+ 总计 -->

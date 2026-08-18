@@ -235,9 +235,10 @@ COST_CENTERS = ["销售成本", "售后成本", "制造费用", "管理费用"]
 
 # 🆕 付款类单据。payment 是拆分前的旧类型，已停用但**在途旧单还要走完**，
 #    所以校验里仍然认它（按对公口径，原来就是这么校验的）。
-PAYMENT_DOC_TYPES = ("payment", "payment_public", "payment_cash")
-# 需要银行账户的：现金付款没有账号和开户行，不在此列
-PAYMENT_BANK_DOC_TYPES = ("payment", "payment_public")
+# 🆕 反馈#402：再加对私付款（付给个人，走个人账户）。
+PAYMENT_DOC_TYPES = ("payment", "payment_public", "payment_cash", "payment_private")
+# 需要银行账户的：现金付款没有账号和开户行，不在此列；对私是转账，照样要账号+开户行
+PAYMENT_BANK_DOC_TYPES = ("payment", "payment_public", "payment_private")
 
 
 def _norm_cost_center(v) -> Optional[str]:
@@ -679,8 +680,11 @@ async def create_request(
     #       照 #348 的口径一刀切要求填，只会逼人瞎填一个，比不填更糟。
     if body.doc_type in PAYMENT_DOC_TYPES:
         _d = body.detail or {}
+        # 🆕 #402 对私付款收的是**个人**，报错文案跟着变——一张付给张三的单子
+        #    却提示"请填写收款单位"，人会以为自己选错了单据类型。
+        _payee_label = "收款人" if body.doc_type == "payment_private" else "收款单位"
         if not str(_d.get("payee") or "").strip():
-            raise HTTPException(400, "请填写收款单位")
+            raise HTTPException(400, f"请填写{_payee_label}")
         if body.amount is None or float(body.amount) <= 0:
             raise HTTPException(400, "请填写付款金额")
         if not str(_d.get("reason") or "").strip():
@@ -695,6 +699,8 @@ async def create_request(
                 raise HTTPException(400, "请填写收款账号")
             if not str(_d.get("payee_bank") or "").strip():
                 raise HTTPException(400, "请填写开户行")
+            # 🆕 #402 对私必须留个人收款账户的户名核对线索：账号是个人卡，
+            #    收款人写公司名字（或反过来）财务照样打不出去，早拦比事后再问一轮强。
     # ⚠️ 单号是"读最大值再 +1"，两个人同时提交会读到同一个 max → 撞唯一约束。
     #    这里带重试：撞了就回滚重算一次。不重试的话并发提交会直接给用户
     #    「数据已存在，不能重复」，而他什么也没做错。

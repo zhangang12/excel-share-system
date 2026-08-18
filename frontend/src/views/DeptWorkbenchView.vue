@@ -824,6 +824,7 @@ const stockVisible = ref(false)
 // ===== 🆕 设计师请购单（与仓库采购申请同一后端流程/推送）=====
 interface PreqLine { item_name: string; spec: string; qty: number | null; project_code: string; notes: string }
 interface PreqRow { id: number; status: string; notes?: string | null; created_at: string
+  need_date?: string | null; need_days?: number | null   // 🆕 #401 需求时间
   buyer_name?: string | null; handler_name?: string | null; reject_reason?: string | null
   lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[]
   attachments?: { id: number; name: string }[] }   // 🆕 #245/#246 直传文件
@@ -838,7 +839,7 @@ async function loadPurchReqs() {
 function blankPreqLine(): PreqLine { return { item_name: '', spec: '', qty: null, project_code: '', notes: '' } }
 const preqVisible = ref(false)
 const preqSaving = ref(false)
-const preqForm = reactive({ buyer_id: '' as number | '', notes: '', lines: [blankPreqLine()] as PreqLine[] })
+const preqForm = reactive({ buyer_id: '' as number | '', need_date: '', notes: '', lines: [blankPreqLine()] as PreqLine[] })
 // 🆕 #245/#246 请购单二选一：'lines'=逐行填明细，'file'=直接上传文件（电气清单等）
 const preqMode = ref<'lines' | 'file'>('lines')
 const preqFiles = ref<{ id: number; name: string }[]>([])
@@ -849,7 +850,7 @@ async function loadPreqBuyers() {
   catch { preqBuyers.value = [] }
 }
 function openPurchReq() {
-  preqForm.buyer_id = ''; preqForm.notes = ''; preqForm.lines = [blankPreqLine()]
+  preqForm.buyer_id = ''; preqForm.need_date = ''; preqForm.notes = ''; preqForm.lines = [blankPreqLine()]
   preqMode.value = 'lines'; preqFiles.value = []
   if (!preqBuyers.value.length) loadPreqBuyers()
   preqVisible.value = true
@@ -877,7 +878,8 @@ function pickPreqFile() {
 }
 function removePreqFile(i: number) { preqFiles.value.splice(i, 1) }
 async function submitPurchReq() {
-  const payload: any = { buyer_id: preqForm.buyer_id || null, notes: preqForm.notes || null, lines: [], attachment_ids: [] }
+  const payload: any = { buyer_id: preqForm.buyer_id || null, need_date: preqForm.need_date || null,
+                        notes: preqForm.notes || null, lines: [], attachment_ids: [] }
   if (preqMode.value === 'file') {
     if (!preqFiles.value.length) { ElMessage.error('请先上传采购文件'); return }
     payload.attachment_ids = preqFiles.value.map(f => f.id)
@@ -1989,11 +1991,21 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     <!-- 🆕 设计师提请购单弹窗 -->
     <el-dialog v-model="preqVisible" title="提请购单" width="min(880px, 96vw)" top="5vh">
       <el-form label-position="top" style="margin-bottom:6px">
-        <el-form-item label="指定采购员（推送给他；不选则通知全体采购员）">
-          <el-select v-model="preqForm.buyer_id" filterable clearable placeholder="选择采购员" style="width:320px">
-            <el-option v-for="b in preqBuyers" :key="b.id" :label="b.name" :value="b.id" />
-          </el-select>
-        </el-form-item>
+        <div style="display:flex;gap:18px;flex-wrap:wrap">
+          <el-form-item label="指定采购员（推送给他；不选则通知全体采购员）">
+            <el-select v-model="preqForm.buyer_id" filterable clearable placeholder="选择采购员" style="width:320px">
+              <el-option v-for="b in preqBuyers" :key="b.id" :label="b.name" :value="b.id" />
+            </el-select>
+          </el-form-item>
+          <!-- 🆕 反馈#401（李新新）：没有需求时间，采购不知道你急不急，也没法凑单 -->
+          <el-form-item label="需求时间（什么时候要用）">
+            <el-date-picker v-model="preqForm.need_date" type="date" value-format="YYYY-MM-DD"
+                            placeholder="选择日期（选填）" style="width:200px" />
+            <div class="muted small" style="line-height:1.5;margin-top:2px">
+              填了采购好安排：不急的可以攒一起凑单，急的优先下单
+            </div>
+          </el-form-item>
+        </div>
       </el-form>
       <!-- 🆕 #245/#246 二选一：逐行填 或 直接上传文件 -->
       <el-radio-group v-model="preqMode" style="margin-bottom:10px">
