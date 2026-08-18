@@ -124,6 +124,56 @@ def test_块里绝不含任何标签():
     assert p["rows"][0]["label"].startswith("<img"), "数据原样保留，转义是前端的事"
 
 
+def test_图不依赖表格_四种模型输出都要有图():
+    """🐛 回归：用户反馈「手机的图没有渲染出来」。
+
+    图原来是**跟在表格后面**拼的，于是这两种最常见的情况直接走 early return，
+    图一次都出不来：
+      · 模型只写了结论（没给 ```render 块，用户也没说「清单」）
+      · 模型自己打了明细行（它被「务必简短」和「别自己打明细」两头约束，常这么偷懒）
+
+    图是**工具声明**的，跟模型写没写编排块无关 —— 每条路径都必须带上。
+    """
+    from app.routers.agent_router import apply_render
+
+    result = {"count": 3, "shown": 3,
+              "columns": ["project", "days_left"],
+              "chart": _SPEC,
+              "items": [{"project": "2026-071A", "days_left": -12},
+                        {"project": "2026-070", "days_left": 3},
+                        {"project": "2026-077", "days_left": 40}]}
+
+    cases = [
+        ("给了编排块", '**结论。**\n\n```render\n{"sort":"days_left"}\n```', False),
+        ("只写结论", "**结论。**", False),
+        ("要了清单", "**结论。**", True),
+        ("自己打了明细行", "**结论。**\n- 2026-071A 已过 12 天\n- 2026-070 剩 3 天", True),
+    ]
+    for name, reply, want_list in cases:
+        out = apply_render(reply, result, want_list)
+        assert "pmschart" in out, f"「{name}」这条路径没有图"
+        assert "```render" not in out, f"「{name}」把编排块漏出去了"
+
+
+def test_没声明chart的结果不会凭空长出图():
+    """反向：图只在工具声明时出现，不是每条回答都配图。"""
+    from app.routers.agent_router import apply_render
+    r = {"count": 1, "items": [{"project": "A", "days_left": 3}]}   # 没有 chart 键
+    assert "pmschart" not in apply_render("**结论。**", r, True)
+
+
+def test_开头空白不许被剥掉():
+    """⚠️ 流式那边按「已推给用户多少字」切片补发尾巴（final[streamed:]）。
+
+    拼接时若把第一段**开头**的空白也 strip 掉，整段会左移，
+    切片就切进正文里 —— 表现正是「图渲染不出来」。第一段只能 rstrip。
+    """
+    from app.routers.agent_router import _join_parts
+    out = _join_parts("\n\n结论。  \n", "表格", "图")
+    assert out.startswith("\n\n结论。"), repr(out[:10])
+    assert out == "\n\n结论。\n\n表格\n\n图"
+
+
 def test_非天数场景用通用格式():
     p = _payload([{"supplier": "甲", "over_days": 12},
                   {"supplier": "乙", "over_days": 3}],
