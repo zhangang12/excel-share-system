@@ -838,6 +838,10 @@ class PurchaseRequest(Base):
     requester_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
     buyer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)  # 🆕 #2 指定的采购员
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/done/rejected
+    # 🆕 反馈#401（李新新）：请购单上没有需求时间，采购不知道对方急不急，也没法凑单。
+    #   YYYY-MM-DD，选填——不强制是因为仓库低库存一键提的单本来就没有具体日期，
+    #   强制填只会逼人瞎选一个，反而让"有日期"这件事不可信。
+    need_date: Mapped[Optional[str]] = mapped_column(String(10), index=True)
     notes: Mapped[Optional[str]] = mapped_column(Text)
     handled_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     handled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

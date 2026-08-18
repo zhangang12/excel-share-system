@@ -931,6 +931,7 @@ async function fetchMatSuggestions(q: string, cb: (list: MatSuggest[]) => void) 
 }
 interface PreqLine { item_name: string; spec: string; qty: number | null; project_code: string; notes: string }
 interface PreqRow { id: number; status: string; notes?: string | null; created_at: string
+  need_date?: string | null; need_days?: number | null   // 🆕 #401 需求时间（need_days 由后端算，负=已过期）
   handler_name?: string | null; reject_reason?: string | null
   lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[]
   attachments?: { id: number; name: string }[] }   // 🆕 #245/#246 直传文件
@@ -945,7 +946,7 @@ async function loadPurchReqs() {
 function blankPreqLine(): PreqLine { return { item_name: '', spec: '', qty: null, project_code: '', notes: '' } }
 const preqVisible = ref(false)
 const preqSaving = ref(false)
-const preqForm = reactive({ buyer_id: '' as number | '', notes: '', lines: [blankPreqLine()] as PreqLine[] })
+const preqForm = reactive({ buyer_id: '' as number | '', need_date: '', notes: '', lines: [blankPreqLine()] as PreqLine[] })
 // 🆕 #245/#246 二选一：逐行填 或 直接上传文件
 const preqMode = ref<'lines' | 'file'>('lines')
 const preqFiles = ref<{ id: number; name: string }[]>([])
@@ -957,6 +958,7 @@ async function loadPreqBuyers() {
 }
 function openPurchReq(presetLines?: PreqLine[], presetNote?: string) {
   preqForm.buyer_id = ''
+  preqForm.need_date = ''
   preqForm.notes = presetNote || ''
   // 🆕 反馈 2026-08-07（杨坛）：「低于安全库存的物料要能展开清单，并且能直接递交采购申请」。
   //    缺料清单可以直接带进来，不用再一行行手抄。
@@ -1002,7 +1004,8 @@ function pickPreqFile() {
 }
 function removePreqFile(i: number) { preqFiles.value.splice(i, 1) }
 async function submitPurchReq() {
-  const payload: any = { buyer_id: preqForm.buyer_id || null, notes: preqForm.notes || null, lines: [], attachment_ids: [] }
+  const payload: any = { buyer_id: preqForm.buyer_id || null, need_date: preqForm.need_date || null,
+                        notes: preqForm.notes || null, lines: [], attachment_ids: [] }
   if (preqMode.value === 'file') {
     if (!preqFiles.value.length) { ElMessage.error('请先上传采购文件'); return }
     payload.attachment_ids = preqFiles.value.map(f => f.id)
@@ -1788,6 +1791,16 @@ function applyPoPick() {
               </template></el-table-column>
               <el-table-column label="状态" width="100" align="center"><template #default="{ row }"><StatusPill :text="PREQ_STATUS[row.status] || row.status" :variant="preqStatusVariant(row.status)" /></template></el-table-column>
               <el-table-column label="处理" min-width="140"><template #default="{ row }"><span v-if="row.status === 'done'" class="muted small">{{ row.handler_name }} 已处理</span><span v-else-if="row.status === 'rejected'" class="danger small">驳回：{{ row.reject_reason || '—' }}</span><span v-else class="muted small">等待采购部处理</span></template></el-table-column>
+              <!-- 🆕 #401 需求时间：过期标红、当天标橙，自己也能一眼看出哪张还压着 -->
+              <el-table-column label="需求时间" width="120"><template #default="{ row }">
+                <span v-if="!row.need_date" class="muted">—</span>
+                <span v-else :class="row.need_days != null && row.need_days < 0 ? 'danger' : (row.need_days != null && row.need_days <= 2 ? 'warn' : '')">
+                  {{ row.need_date }}
+                  <span v-if="row.need_days != null && row.status === 'pending'" class="small">
+                    （{{ row.need_days < 0 ? `已过期 ${-row.need_days} 天` : (row.need_days === 0 ? '就是今天' : `还剩 ${row.need_days} 天`) }}）
+                  </span>
+                </span>
+              </template></el-table-column>
               <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
               <el-table-column label="操作" width="70" align="center" fixed="right" :show-overflow-tooltip="false"><template #default="{ row }"><el-button size="small" link type="danger" @click="deletePurchReq(row)">删除</el-button></template></el-table-column>
               <template #empty><EmptyHint text="暂无采购申请，点「提采购申请」开始" size="sm" /></template>
@@ -1800,11 +1813,21 @@ function applyPoPick() {
     <!-- 🆕 #167 提采购申请弹窗 -->
     <el-dialog v-model="preqVisible" title="提采购申请" width="min(880px, 96vw)" top="5vh">
       <el-form label-position="top" style="margin-bottom:6px">
-        <el-form-item label="指定采购员（推送给他；不选则通知全体采购员）">
-          <el-select v-model="preqForm.buyer_id" filterable clearable placeholder="选择采购员" style="width:320px">
-            <el-option v-for="b in preqBuyers" :key="b.id" :label="b.name" :value="b.id" />
-          </el-select>
-        </el-form-item>
+        <div style="display:flex;gap:18px;flex-wrap:wrap">
+          <el-form-item label="指定采购员（推送给他；不选则通知全体采购员）">
+            <el-select v-model="preqForm.buyer_id" filterable clearable placeholder="选择采购员" style="width:320px">
+              <el-option v-for="b in preqBuyers" :key="b.id" :label="b.name" :value="b.id" />
+            </el-select>
+          </el-form-item>
+          <!-- 🆕 反馈#401（李新新）：没有需求时间，采购不知道你急不急，也没法凑单 -->
+          <el-form-item label="需求时间（什么时候要用）">
+            <el-date-picker v-model="preqForm.need_date" type="date" value-format="YYYY-MM-DD"
+                            placeholder="选择日期（选填）" style="width:200px" />
+            <div class="muted small" style="line-height:1.5;margin-top:2px">
+              填了采购好安排：不急的可以攒一起凑单，急的优先下单
+            </div>
+          </el-form-item>
+        </div>
       </el-form>
       <!-- 🆕 #245/#246 二选一：逐行填 或 直接上传文件 -->
       <el-radio-group v-model="preqMode" style="margin-bottom:10px">
@@ -2294,6 +2317,11 @@ function applyPoPick() {
   text-align: center; vertical-align: middle; }
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }
+/* ⚠️ `.danger` 本文件里一直没定义，模板却在用（如「驳回：xxx」那处），
+   scoped 样式又不会去别的组件里找 —— 也就是说那段红字从来没红过。
+   #401 的需求时间要靠它标过期，顺手把这两个补上。 */
+.danger { color: var(--el-color-danger); }
+.warn { color: var(--el-color-warning); }
 .frow { display: flex; gap: 12px; flex-wrap: wrap; }
 .frow > * { flex: 1; min-width: 140px; }
 .ship-pending-title { font-weight: 600; font-size: 14px; margin-bottom: 10px; color: var(--el-text-color-primary); }

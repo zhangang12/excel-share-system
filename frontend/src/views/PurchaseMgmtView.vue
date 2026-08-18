@@ -1950,6 +1950,7 @@ async function resubmitPayReq(row: PaymentRequestOut) {
 
 // 🆕 #167 采购申请处理（仓库提 → 采购部处理/驳回）
 interface IncomingReq { id: number; status: string; notes?: string | null; created_at: string
+  need_date?: string | null; need_days?: number | null   // 🆕 #401 需求时间（need_days 后端算好，负=已过期）
   requester_name?: string | null; buyer_name?: string | null; handler_name?: string | null; reject_reason?: string | null
   lines: { item_name: string; spec?: string | null; qty?: number | null; project_code?: string | null; notes?: string | null }[]
   attachments?: { id: number; name: string }[] }   // 🆕 #245/#246 直传文件
@@ -1962,6 +1963,22 @@ async function loadIncomingReqs() {
   finally { incomingLoading.value = false }
 }
 const incomingPending = computed(() => incomingReqs.value.filter(r => r.status === 'pending').length)
+// 🆕 反馈#401（李新新）：「没有时间我也不知道他们着不着急，耽误事情就不好了」。
+//   待处理的按需求时间从早到晚排在最前面，最急的一眼就看见；没填日期的排在有日期的之后
+//   （不是排最后——没填不等于不急，只是不知道，扔到最底下会被彻底忽略）。
+//   已处理/已驳回的沉到下面，仍按提交时间倒序。
+const incomingSorted = computed(() => {
+  const rank = (r: IncomingReq) => (r.status === 'pending' ? 0 : 1)
+  return [...incomingReqs.value].sort((a, b) => {
+    if (rank(a) !== rank(b)) return rank(a) - rank(b)
+    if (rank(a) === 0) {
+      const da = a.need_date || '', db = b.need_date || ''
+      if (!!da !== !!db) return da ? -1 : 1               // 填了日期的排在没填的前面
+      if (da && db && da !== db) return da < db ? -1 : 1  // 都填了：日期早的（更急）在前
+    }
+    return (b.created_at || '') < (a.created_at || '') ? -1 : 1
+  })
+})
 async function handleIncoming(row: IncomingReq) {
   try { await ElMessageBox.confirm(`把采购申请 #${row.id} 标记为「已处理」（已按此下单）？`, '处理确认', { type: 'info' }) } catch { return }
   await http.put(`/purchase-mgmt/purchase-requests/${row.id}/handle`)
@@ -2227,7 +2244,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-button :icon="Refresh" size="small" @click="loadIncomingReqs">刷新</el-button>
             <span class="muted small">仓库提交的采购申请汇到这里。核对后「已处理」（表示已按此下单）或「驳回」；仓库会收到通知。</span>
           </div>
-          <el-table show-overflow-tooltip :data="incomingReqs" v-loading="incomingLoading" stripe size="small" max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="compact-tbl">
+          <el-table show-overflow-tooltip :data="incomingSorted" v-loading="incomingLoading" stripe size="small" max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="compact-tbl">
             <el-table-column type="expand" width="36">
               <template #default="{ row }">
                 <!-- 🆕 #245/#246 直传文件（可下载） -->
@@ -2254,6 +2271,16 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <span v-else class="muted">—</span>
             </template></el-table-column>
             <el-table-column label="状态" width="90" align="center"><template #default="{ row }"><el-tag :type="preqStatusTag(row.status)" size="small">{{ PREQ_STATUS[row.status] || row.status }}</el-tag></template></el-table-column>
+            <!-- 🆕 #401 需求时间：待处理的按它排序（最急的在最上面），过期标红、三天内标橙 -->
+            <el-table-column label="需求时间" width="150" :show-overflow-tooltip="false"><template #default="{ row }">
+              <span v-if="!row.need_date" class="muted small">未填</span>
+              <span v-else :class="row.status === 'pending' && row.need_days != null ? (row.need_days < 0 ? 'danger' : (row.need_days <= 2 ? 'warn' : '')) : ''">
+                <b>{{ row.need_date }}</b>
+                <div v-if="row.status === 'pending' && row.need_days != null" class="small">
+                  {{ row.need_days < 0 ? `已过期 ${-row.need_days} 天` : (row.need_days === 0 ? '就是今天' : `还剩 ${row.need_days} 天`) }}
+                </div>
+              </span>
+            </template></el-table-column>
             <el-table-column label="提交时间" width="110"><template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template></el-table-column>
             <!-- 🆕 反馈#241：原 width=230 装不下「查看/打印+已处理+驳回」，驳回被裁成「…」采购员找不到——加宽；
                  🆕 反馈#280：再加「生成采购单」，加宽到 400 -->

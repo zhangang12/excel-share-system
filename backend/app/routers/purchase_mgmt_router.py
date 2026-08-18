@@ -557,12 +557,17 @@ def _render_preq_pdf(pr: models.PurchaseRequest, requester_name: str, buyer_name
     meta = [
         [P("申请编号"), P(no), P("申请日期"), P(created)],
         [P("申请人"), P(requester_name or ""), P("指定采购员"), P(buyer_name or "（未指定）")],
+        # 🆕 #401 需求时间也要印在纸上——打印出来给供应商/领导看的那份不能少这一项
+        [P("需求时间"), P(pr.need_date or "（未填）"), "", ""],
         [P("备注"), P(pr.notes or ""), "", ""],
     ]
     meta_tbl = Table(meta, colWidths=[22 * mm, 60 * mm, 24 * mm, 58 * mm])
     meta_tbl.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+        # ⚠️ 加了「需求时间」行之后，备注从第 2 行挪到第 3 行——两行都要 SPAN，
+        #    漏一个的话表格会多出两个空格子，打出来是歪的
         ("SPAN", (1, 2), (3, 2)),
+        ("SPAN", (1, 3), (3, 3)),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f2f2f2")),
         ("BACKGROUND", (2, 0), (2, 1), colors.HexColor("#f2f2f2")),
@@ -3204,10 +3209,28 @@ _PREQ_VIEW = _PREQ_WAREHOUSE + ("buyer", "buyer_lead", "buyer_standard", "buyer_
                                 "finance", "finance_lead")
 
 
+_CN_TZ = timezone(_td(hours=8))   # 服务器/容器是 UTC，业务日期一律按中国时间算
+
+
+def _need_days(need_date: Optional[str]) -> Optional[int]:
+    """🆕 #401 需求时间距今天几天（负数=已过期）。
+
+    ⚠️ 在**服务端**算，不要让前端各算各的：客户端时区/时钟不一定准，
+       而"还剩几天"直接决定这行标不标红——三个页面各写一份迟早对不上。"""
+    if not need_date:
+        return None
+    try:
+        d = datetime.strptime(need_date[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+    return (d - datetime.now(_CN_TZ).date()).days
+
+
 def _preq_out(pr: models.PurchaseRequest, atts: Optional[list[dict]] = None) -> schemas.PurchaseRequestOut:
     return schemas.PurchaseRequestOut(
         id=pr.id, requester_id=pr.requester_id, requester_name=_uname(pr.requester),
         buyer_id=pr.buyer_id, buyer_name=_uname(pr.buyer),
+        need_date=pr.need_date, need_days=_need_days(pr.need_date),
         status=pr.status, notes=pr.notes, handler_name=_uname(pr.handler),
         handled_at=pr.handled_at, reject_reason=pr.reject_reason, created_at=pr.created_at,
         lines=[schemas.PurchaseRequestLineOut(
@@ -3299,6 +3322,7 @@ async def create_purchase_request(
     if not lines and not body.attachment_ids:
         raise HTTPException(400, "请至少填写一行要采购的物料，或上传采购文件")
     pr = models.PurchaseRequest(requester_id=current.id, buyer_id=body.buyer_id,
+                                need_date=(body.need_date or "").strip() or None,
                                 status="pending", notes=body.notes)
     db.add(pr)
     await db.flush()
@@ -3327,13 +3351,15 @@ async def create_purchase_request(
                 models.User.id == body.buyer_id))).scalar_one_or_none()
             bname = _uname(bu) if bu else None
         uids: set = set()
+        # 🆕 #401 需求时间进推送正文：采购在企微上一眼就知道急不急，不用点进系统才看到
+        nd = f"，需求时间 {pr.need_date}" if pr.need_date else ""
         if body.buyer_id:
             # 指定了采购员：只推给他一人
-            text = f"采购申请：{_uname(current)} 提交 {len(lines)} 项，指派给你，请处理"
+            text = f"采购申请：{_uname(current)} 提交 {len(lines)} 项{nd}，指派给你，请处理"
             uids = {body.buyer_id}
         else:
             # 未指定：推给全体采购员/主管（主/副角色并集去重——含以副角色持有 buyer 的用户）
-            text = f"采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料，请处理"
+            text = f"采购申请：{_uname(current)} 提交 {len(lines)} 项待采购物料{nd}，请处理"
             rids = [r for (r,) in (await db.execute(select(models.Role.id).where(
                 models.Role.code.in_(("buyer", "buyer_lead", "buyer_standard", "buyer_outsource"))))).all()]
             if rids:
