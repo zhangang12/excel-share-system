@@ -72,7 +72,10 @@ async def _customer_profile(db: AsyncSession, user: models.User, message: str) -
     if not cands:
         return {"text": f"系统里没有叫「{name}」的客户台账。名字可能对不上，"
                         f"到销售台账页面确认一下准确写法。"}
-    c = await _te.get_customer(db, user, cands[0]["name"])
+    # ⚠️ 键名是 `customer` 不是 `name`（2026-08-18 起）：渲染层按 `customer`
+    #    才能把表头认成「客户」，叫 `name` 会退化成「名称」。改键名时漏了这里，
+    #    技能直接 KeyError。取值兜一层，别再因为键名挪动把整条技能打挂。
+    c = await _te.get_customer(db, user, cands[0].get("customer") or cands[0].get("name", ""))
     if not c.get("found"):
         return {"text": f"没查到「{name}」的台账。"}
 

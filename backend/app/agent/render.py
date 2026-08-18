@@ -45,6 +45,8 @@ _FIELD_ORDER = [
     ("supplier", "", False, "供应商"), ("customer", "", False, "客户"),
     ("name", "", False, "名称"), ("item_name", "", False, "物料"),
     ("material", "", False, "物料"), ("spec", "", False, "规格"),
+    # find_entity 按客户命中时用它：这家客户有几行台账
+    ("ledger_rows", "", False, "台账行"),
     # ── ② 多少钱 / 多少个 ──
     ("amount", "", True, "金额"), ("contract", "合同 ", True, "合同额"),
     ("ship_receivable", "发货款 ", True, "发货款"), ("balance", "尾款 ", True, "尾款"),

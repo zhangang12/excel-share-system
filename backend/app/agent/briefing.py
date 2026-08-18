@@ -195,9 +195,19 @@ async def _stock_items(db: AsyncSession, current: models.User) -> list[dict]:
         if stock >= safety:
             continue
         short = safety - stock
+        # ⚠️ **必须带规格**。生产上「丝攻」有 6 条主数据（M6/M8/M10/M12/M18/M22），
+        #    只显示 name 的话首页会出现两行一模一样的「丝攻 库存 0」——
+        #    「今天该管的」总共就 3 个名额，被同一个名字占掉俩，
+        #    ¥22 万那条应收差点被挤下去（2026-08-18 截图实证）。
+        full = f"{m.name} {m.spec}".strip() if m.spec else m.name
         out.append({
-            "cat": "stock", "card": None, "ref": m.id,
-            "title": f"{m.name} 库存 {stock:g}，低于安全线 {safety:g}",
+            "cat": "stock",
+            # ⚠️ card 给 None 的话前端 openBrief() 会跳 /chat?card=null，
+            #    而 H5ChatView 要求 card 是非空串才走卡片通道 → 点了什么也不发生。
+            #    这里改成把问题本身带过去，点「补货」= 直接问 AI 这个料的来龙去脉。
+            "card": None, "ask": f"{full} 库存不够了，谁在管、之前从哪家买的",
+            "ref": m.id,
+            "title": f"{full} 库存 {stock:g}，低于安全线 {safety:g}",
             "why": f"缺 {short:g}{m.unit or ''}，" + (f"库位 {m.location}" if m.location else "还没定库位"),
             "action": "补货", "amount": 0.0,
             # 缺口占安全线的比例越大越急；没有金额可比，用缺口率

@@ -107,6 +107,36 @@ async def _match_projects(db: AsyncSession, code: str,
 
 # ══════════════════════════════ find ══════════════════════════════
 
+_KIND_CN = {"project": "项目", "customer": "客户", "supplier": "供应商", "material": "物料"}
+# 每一类该看哪几列。第一列由渲染层把「编号+名称」并成一格，所以这里可以多写一个。
+_KIND_COLS = {
+    "project":  ["code", "name", "status", "customer"],
+    "customer": ["customer", "ledger_rows"],
+    "supplier": ["supplier"],
+    "material": ["item_name", "spec"],
+}
+
+
+def _find_items(hits: dict) -> tuple[list[dict], list[str]]:
+    """把候选摊成可渲染的表。
+
+    ⚠️ **只铺命中最多的那一类**，其余留在 `matches` 里让模型在结论句里带一句。
+       混着铺的话，项目要「状态/客户」、物料要「规格」、客户要「台账行数」，
+       列对不上，只能退化成一个「名称」列——那还不如不出表。
+       实际用法也支持这么做：问「200L的设备」时命中的几乎全是项目。
+    """
+    if not hits:
+        return [], []
+    # 并列时项目优先——问「XXX是哪个编号」时想要的一定是项目
+    kind = max(hits, key=lambda k: (len(hits[k]), k == "project"))
+    rows = list(hits[kind])
+    if kind == "project":
+        # 在建的排前面。「5L的设备有几台」这类问法，已完成的那些只是背景，
+        # 手机上一屏就几行，让已完成的占着前排等于把要紧的挤下去。
+        rows.sort(key=lambda r: r.get("status") == "已完成")
+    return rows, _KIND_COLS.get(kind, [])
+
+
 async def find_entity(db: AsyncSession, current: models.User, q: str,
                       kind: str | None = None) -> dict:
     """模糊词 → 候选实体。这是「南京那个项目」能被理解的前提。
@@ -126,7 +156,19 @@ async def find_entity(db: AsyncSession, current: models.User, q: str,
             .where(models.Project.is_deleted == False,  # noqa: E712
                    or_(models.Project.code.ilike(like), models.Project.name.ilike(like)))
             .order_by(models.Project.id.desc()).limit(_FIND_MAX))).scalars().all()
-        out["project"] = [{"id": p.id, "code": p.code, "name": p.name} for p in rows]
+        # ⚠️ 带上 status 和客户。杨坛最高频的问法是「200L 的设备有哪几个编号」
+        #    「5L 的设备有几台」——他真正要分的是**在建还是已完成**，
+        #    以及是哪家的货。只给编号+名称，他还得再问一轮。
+        cust: dict[int, str] = {}
+        if rows:
+            for pid, c in (await db.execute(
+                    select(models.SalesLedger.project_id, models.SalesLedger.customer)
+                    .where(models.SalesLedger.project_id.in_([p.id for p in rows]),
+                           models.SalesLedger.customer != ""))).all():
+                cust.setdefault(pid, c)
+        out["project"] = [{"id": p.id, "code": p.code, "name": p.name,
+                           "status": p.status, "customer": cust.get(p.id, "")}
+                          for p in rows]
 
     if kind in (None, "customer"):
         # 客户在台账上是自由文本，没有独立主数据表 —— 只能去重取名
@@ -136,13 +178,13 @@ async def find_entity(db: AsyncSession, current: models.User, q: str,
                          models.SalesLedger.customer != ""))
             .group_by(models.SalesLedger.customer)
             .order_by(func.count().desc()).limit(_FIND_MAX))).all()
-        out["customer"] = [{"name": r[0], "ledger_rows": r[1]} for r in rows]
+        out["customer"] = [{"customer": r[0], "ledger_rows": r[1]} for r in rows]
 
     if kind in (None, "supplier"):
         rows = (await db.execute(
             select(models.Supplier).where(models.Supplier.name.ilike(like))
             .limit(_FIND_MAX))).scalars().all()
-        out["supplier"] = [{"id": s.id, "name": s.name} for s in rows]
+        out["supplier"] = [{"id": s.id, "supplier": s.name} for s in rows]
 
     if kind in (None, "material"):
         rows = (await db.execute(
@@ -151,12 +193,20 @@ async def find_entity(db: AsyncSession, current: models.User, q: str,
                        models.WhMaterial.name.ilike(like),
                        models.WhMaterial.spec.ilike(like)))
             .limit(_FIND_MAX))).scalars().all()
-        out["material"] = [{"id": m.id, "code": m.code, "name": m.name,
+        out["material"] = [{"id": m.id, "code": m.code, "item_name": m.name,
                             "spec": m.spec} for m in rows]
 
     hits = {k: v for k, v in out.items() if v}
     total = sum(len(v) for v in hits.values())
+    items, cols = _find_items(hits)
     return {"query": text, "total": total, "matches": hits,
+            # ⚠️ items/columns/count 是给渲染层的。没有它们的时候，
+            #    「200L 的设备有哪几个编号」只能由模型一行行打字——实测 7 次问答
+            #    里 6 次 rendered=false，全是文字墙。count 也必须给：
+            #    以前不给，审计日志把答对了的问答统统记成「查到 0 条」，
+            #    看日志的人会以为这个场景是坏的。
+            "items": items, "columns": cols,
+            "count": total, "shown": len(items),
             "hint": "一个都没找到，换个说法或直接给编号" if not total else None}
 
 
