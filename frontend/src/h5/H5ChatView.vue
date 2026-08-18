@@ -575,6 +575,24 @@ onMounted(() => {
 .md :deep(.h5-tone--warn)   { color: var(--h5-warn) }
 .md :deep(.h5-tone--good)   { color: var(--h5-good) }
 .md :deep(.h5-tone--muted)  { color: var(--h5-ink-4); font-weight: 400 }
+
+/* 🆕 图（markdown.ts 的 chartPlugin 拼出来的 SVG）。
+   宽度跟着气泡走 —— viewBox 固定 320，靠 width:100% 自适应，
+   手机横竖屏都不会溢出。 */
+.md :deep(.pmschart) { margin: 10px 0 2px }
+/* ⚠️ **必须封顶**。viewBox 是 320 宽，靠 width:100% 自适应 —— 手机上正好铺满，
+   但容器一宽（网页版 /h5/ 在电脑上开、平板、企微 iPad 端）SVG 就等比放大：
+   实测 981px 视口下放大 2.55 倍，图里 11px 的字变成 28px，
+   旁边表格还是 12.5px，一大一小很难看。封到 340 就不会再撑。 */
+.md :deep(.pmschart svg) {
+  width: 100%; max-width: 340px; height: auto; display: block; overflow: visible;
+}
+.md :deep(.pc-title) { font-size: 11px; fill: var(--h5-ink-3) }
+.md :deep(.pc-lab)   { font-size: 11px; fill: var(--h5-ink-2) }
+/* 数值贴右边缘，所以右对齐 */
+.md :deep(.pc-val)   { font-size: 11px; text-anchor: end; font-weight: 600 }
+.md :deep(.pc-zero)  { font-size: 9px; fill: var(--h5-ink-4); text-anchor: middle }
+.md :deep(.pc-axis)  { stroke: var(--h5-ink-5); stroke-width: 1; stroke-dasharray: 2 2 }
 .md :deep(blockquote) {
   margin: 6px 0; padding-left: 10px; border-left: 3px solid rgba(43,110,246,.3);
   color: var(--h5-ink-3);

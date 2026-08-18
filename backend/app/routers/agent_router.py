@@ -1477,6 +1477,11 @@ def _has_detail_lines(text: str) -> bool:
     return n >= 2
 
 
+def _join_parts(*parts: str) -> str:
+    """结论 + 表格 + 图，空的段落直接跳过（别留出空行把手机屏撑开）。"""
+    return "\n\n".join(p.strip() for p in parts if p and p.strip()).strip()
+
+
 def apply_render(reply: str, last_result: dict | None, want_list: bool = False) -> str:
     """把明细交给代码渲染。
 
@@ -1511,13 +1516,13 @@ def apply_render(reply: str, last_result: dict | None, want_list: bool = False) 
             #    等于把一段读不懂的东西塞给用户。宁可只留结论。
             return body
         detail = _rd.table(last_result, plan=plan)
-        return (body + "\n\n" + detail).strip() if detail else body
+        return _join_parts(body, detail, _rd.chart_block(last_result))
 
     # 没有编排块：只有「用户要清单 + 有可渲染结果 + 模型自己没写明细」三者同时成立才补
     if not (want_list and isinstance(last_result, dict) and not _has_detail_lines(text)):
         return text
     detail = _rd.table(last_result, plan=_rd.default_plan(last_result))
-    return (text.rstrip() + "\n\n" + detail).strip() if detail else text
+    return _join_parts(text, detail, _rd.chart_block(last_result))
 
 
 def _fallback_reason(e: Exception) -> str:

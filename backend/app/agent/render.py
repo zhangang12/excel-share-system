@@ -25,6 +25,7 @@
 ⚠️ 代价：明细排版变成固定格式，模型不再自由发挥。这是**刻意的取舍** ——
    固定格式可测、可比、不会今天一个样明天一个样。
 """
+import json
 from typing import Any
 
 # 每类工具结果怎么摆一行。顺序即优先级，取前几个存在的字段。
@@ -429,3 +430,84 @@ def compose(conclusion: str, result: dict, plan: dict | None = None) -> str:
     if body:
         parts.append(body)
     return "\n\n".join(parts)
+
+
+# ══════════════════════════════ 图 ══════════════════════════════
+#
+# ⚠️⚠️ **后端只吐数据，SVG 由前端拼。** 这条和 `[[danger:…]]` 语义着色是同一条纪律：
+#    H5 的 markdown 是 `html: false` + `v-html` 成对的，后端一旦开始吐 HTML/SVG，
+#    XSS 防线当场归零 —— 而工具数据里带着用户自由填写的备注、OA 详情、物料名，
+#    `<img src=x onerror=…>` 完全可能出现在里面。
+#    所以这里发出去的是一段**纯 JSON 数据**，前端照着数据画（见 h5/markdown.ts）。
+#
+# ⚠️ 前端老包遇到 ```pmschart 会**原样显示一段 JSON**。取舍同语义着色：
+#    宁可露一段丑字符，也不放开 html。H5 与后端同一次部署，APP 侧走热更新。
+
+_CHART_MAX = 8         # 手机上一屏能看清的条数；再多人就开始滚动找
+
+
+def _chart_text(v: float, spec: dict) -> str:
+    """条子末尾那行字。天数要说人话 —— 「-5 天」没人看得懂是过期还是还剩。"""
+    unit = spec.get("unit") or ""
+    if spec.get("value") == "days_left":
+        n = int(v)
+        if n < 0:
+            return f"已过 {abs(n)} 天"
+        return "今天到期" if n == 0 else f"{n} 天"
+    return f"{v:g}{unit}"
+
+
+def _chart_tone(v: float, spec: dict) -> str:
+    if spec.get("value") == "days_left":
+        return "danger" if v < 0 else ("warn" if v <= 7 else "good")
+    return "good"
+
+
+def _chart_rows(items: list, spec: dict) -> list:
+    """按 spec 把明细摊成 {label, value, text, tone}。取不到数的行直接丢。"""
+    lab_key = spec.get("label") or "project"
+    val_key = spec.get("value") or "days_left"
+    rows = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        v = it.get(val_key)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        # 图上的标签必须短：条子左边只有 84px。项目编号（2026-070）本来就够短，
+        # 万一取到的是设备全名，切到 10 个字并去掉括号补充说明。
+        label = str(it.get(lab_key) or "").split("（")[0].split("(")[0].strip()
+        if not label:
+            continue
+        rows.append({"label": label[:10], "value": float(v),
+                     "text": _chart_text(v, spec), "tone": _chart_tone(v, spec)})
+    return rows[:_CHART_MAX]
+
+
+def chart_block(result: dict) -> str:
+    """结果里声明了 `chart` 就画一张。没声明就不画 —— 不是所有答案都该配图。
+
+    ⚠️ 由**工具**声明而不是模型决定。跟「明细该不该出表格」是同一个判断：
+       实测模型不会主动 opt-in（它同时被「务必简短」和「别自己打明细」约束着），
+       而工具最清楚自己这份数据有没有可比的量纲。
+    """
+    if not isinstance(result, dict):
+        return ""
+    spec = result.get("chart")
+    if not isinstance(spec, dict):
+        return ""
+    items = None
+    for k in ("items", "suppliers", "rows"):
+        if isinstance(result.get(k), list) and result[k]:
+            items = result[k]
+            break
+    if not items:
+        return ""
+    rows = _chart_rows(items, spec)
+    if len(rows) < 2:              # 一根条子不成图，白占半屏
+        return ""
+    payload = {"kind": spec.get("kind") or "bar",
+               "title": spec.get("title") or "", "rows": rows}
+    if spec.get("value") == "days_left":
+        payload["zero"] = "今天"   # 发散条：中线是今天，左超期右还剩
+    return "```pmschart\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
