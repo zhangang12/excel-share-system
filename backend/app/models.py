@@ -1251,6 +1251,32 @@ class LoginGateCode(Base):
     fail_count: Mapped[int] = mapped_column(default=0)                        # 错码次数（仅计数，不锁定；2026-07-28 起）
 
 
+# ---------- 🆕 智能体草稿：模型只能拟，写库要人点 ----------
+class AgentDraft(Base):
+    """智能体拟好、**等人点确认**才执行的写操作。
+
+    为什么要落库而不是在对话里传令牌：**工具结果不进跨轮 history**。
+    单轮 ReAct 里工具返回会以 role=tool 回灌给模型，但下一轮前端只传
+    user/assistant 的文本，工具返回全丢。所以任何「这一轮给模型一个凭据、
+    下一轮让它带回来」的设计都行不通——2026-08-19 就是这么做出一个死循环：
+    用户点了两次「确认」，模型每次都只能重新拟一份草稿，一条都发不出去。
+
+    改成草稿落库 + 卡片按钮：模型**只能拟**，真正的写由用户点按钮打业务端点。
+    这与请款审批、销售订单审批走的是同一条路（原则：模型不在写的链路里）。
+
+    表由 Base.metadata.create_all 自动创建，无需迁移脚本。
+    """
+    __tablename__ = "agent_drafts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    action: Mapped[str] = mapped_column(String(32), index=True)   # mgmt_todo_send / ...
+    payload: Mapped[dict] = mapped_column(PortableJSON(), default=dict)
+    # 已经执行过的不再出卡，也不能重复执行（防止同一张卡被点两次发两条）
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 # ---------- 🆕 AI 助手对话审计日志（记录用户/问题/模型输出，agent_router._log_chat 写入） ----------
 class AgentChatLog(Base):
     """🆕 AI 助手审计日志：每次 /api/agent/chat 问答一行（LLM 与规则降级两条路径都记）。

@@ -24,7 +24,7 @@ import json
 import logging
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -534,20 +534,16 @@ TOOL_SCHEMAS += [
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "mgmt_todo_send",
-        "description": "下发一条管理层待办给某个人。**两步走**："
-                       "第一次不要传 confirm，工具返回草稿和 confirm_token；"
-                       "把草稿念给用户听、用提问卡让他确认；"
-                       "用户确认后再调一次，把 confirm_token 原样传进 confirm。"
-                       "⚠️ 绝不要自己跳过确认那一步——发出去收件人立刻收到企微通知，撤不回来。",
+        "description": "给某个人拟一条管理层待办的**草稿**。"
+                       "⚠️ 它不会发出去——调完之后前端会渲染一张卡片，"
+                       "用户点「确认发出」才真发。你没有别的办法发送，也不要说「已发送」。",
         "parameters": {"type": "object", "properties": {
             "title": {"type": "string", "description": "这条待办是什么事，用户原话即可（如「压料机密封圈」）"},
             "to": {"type": "string", "description": "派给谁，人名"},
             "due_date": {"type": "string", "description": "要求哪天前完成，YYYY-MM-DD。不知道就先问"},
             "urgent": {"type": "boolean", "description": "是否紧急，默认否"},
             "note": {"type": "string", "description": "补充说明，可不填"},
-            "confirm": {"type": "string",
-                        "description": "第一次调用**不要传**。用户确认后，把上一步返回的 "
-                                       "confirm_token 原样传进来才会真发出"}},
+            },
             "required": ["title", "to"]}}},
     {"type": "function", "function": {
         "name": "mgmt_todo_watch",
@@ -724,7 +720,7 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
         "mgmt_todo_send": lambda: _te.mgmt_todo_send(
             db, current, title=args.get("title", ""), to=args.get("to", ""),
             due_date=args.get("due_date"), urgent=bool(args.get("urgent")),
-            note=args.get("note"), confirm=args.get("confirm")),
+            note=args.get("note")),
         "mgmt_todo_watch": lambda: _te.mgmt_todo_watch(
             db, current, limit=int(args.get("limit") or 30)),
         "project_progress": lambda: _te.project_progress(
@@ -857,7 +853,7 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
 4. 用户说"全部/都列出来/完整清单/所有"时，**重新调用工具并传 limit=200**，然后**全部列完**，
    这种情况不受下面的条数与字数限制。
 5. **除了下发待办，一律只读。**用户要改别的数据时明确拒绝，并说清该去哪个页面改。
-   唯一能写的是 `mgmt_todo_send`（下发管理层待办），而且必须走两步确认，见下面一节。
+   唯一沾写的是 `mgmt_todo_send`，而它**也只是拟草稿**——真正发出去要用户点卡片按钮。
 
 # 📌 发待办：缺什么问什么，让他点、别让他打
 管理层说一件事但没说清给谁、什么时候要时，**不要猜，也不要让他重打一遍**：
@@ -865,12 +861,14 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
 1. 先调 `mgmt_todo_peers` 拿他最近派过的人，用**提问卡**列成可点的选项问「派给谁」。
 2. 再用提问卡问「什么时候要」，选项固定给这四个：明天 / 后天 / 本周内 / 自己填
    （实测他 87% 的截止日在 5 天内，明天和后天占了一半还多）。
-3. 齐了就调 `mgmt_todo_send`（**这次不要传 confirm**），把返回的草稿念一遍：
-   派给谁、什么事、哪天前、急不急，再用提问卡让他确认。
-4. 他确认后，再调一次 `mgmt_todo_send`，把上一步的 `confirm_token` **原样**传进 `confirm`。
+3. 齐了就调 `mgmt_todo_send`。它**只是拟一份草稿**，不会发出去。
+4. 然后你只要说一句「草稿如下，确认无误点下面的『确认发出』」就够了。
+   **下面会自动出一张卡片，用户点按钮才真发。**
 
-- ⚠️ **绝不要自己跳过第 3、4 步直接发。**发出去收件人立刻收到企微通知，撤不回来。
-  同样一句「压料机密封圈」，可能是要派给人办，也可能是问库存——猜错就是凭空塞给人一条任务。
+- ⚠️ **你没有任何办法把待办发出去，也不要试。**别再调工具、别说「已发送」——
+  没点按钮之前它就是一份草稿。说成已发会让他以为交代完了，其实对方什么都没收到。
+- ⚠️ 同样一句「压料机密封圈」，可能是要派给人办，也可能是问库存——
+  猜错就是凭空塞给人一条任务，而且收件人立刻收到企微通知、撤不回来。
 - ⚠️ 拿不准他到底是要派活还是查东西时，用提问卡问一句
   「这是要派给人做，还是你想查一下？」——两个按钮，比猜可靠。
 - 补充说明**不要主动问**：实测 30 条里 6 条根本没写正文。他想补会自己说。
@@ -1807,6 +1805,86 @@ async def list_cards_by_type(
     return out
 
 
+def _stale(dt: datetime, cutoff: datetime) -> bool:
+    """dt 是否早于 cutoff。
+
+    ⚠️ **开发是 SQLite、生产是 Postgres**：同一个 `created_at`，SQLite 取出来是
+       naive、Postgres 是 aware，直接相比会 `TypeError: can't compare offset-naive
+       and offset-aware datetimes` —— 本地测得好好的，一上生产就 500（反过来也一样）。
+       统一按 UTC 补齐时区再比。
+    """
+    d = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    c = cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=timezone.utc)
+    return d < c
+
+
+@router.post("/drafts/{draft_id}/send")
+async def send_draft(
+    draft_id: int,
+    current: models.User = Depends(require_admin_or_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 把智能体拟好的待办草稿真发出去。**这是唯一会写待办的入口。**
+
+    模型只能拟草稿（`tools_entity.mgmt_todo_send` 写一行 `AgentDraft`），
+    发不发由人点卡片上的按钮决定 —— 和请款审批、销售订单审批同一条路。
+
+    ⚠️ 别把这个端点做成「拿参数建待办」。参数一旦来自请求体，模型就能
+       自己拼一个请求（它写不了 HTTP，但下一版有人给它加个 http 工具就穿了）。
+       这里只认**草稿 id**，内容全部取自库里那一行。
+    """
+    from ..agent.cards import mgmt_send as _mgmt_send
+    from ..notify import push_message
+
+    dft = await db.get(models.AgentDraft, draft_id)
+    if dft is None or dft.action != "mgmt_todo_send":
+        raise HTTPException(404, "草稿不存在")
+    # ⚠️ 三道都要：别人的草稿不能点、用过的不能再点、过期的不认
+    if dft.user_id != current.id:
+        raise HTTPException(403, "这不是你的草稿")
+    if dft.used_at is not None:
+        raise HTTPException(400, "这条草稿已经发过了")
+    if dft.created_at and _stale(dft.created_at, _mgmt_send._fresh_after()):
+        raise HTTPException(400, "草稿已过期，重新说一遍要发什么")
+
+    p = dft.payload or {}
+    title = str(p.get("title") or "").strip()
+    uid = int(p.get("uid") or 0)
+    if not title or not uid:
+        raise HTTPException(400, "草稿内容不完整，重新说一遍")
+    worker = await db.get(models.User, uid)
+    if worker is None or not worker.is_active:
+        raise HTTPException(400, "收件人已停用，发了也收不到")
+
+    due = str(p.get("due") or "").strip() or None
+    todo = models.ManagementTodo(
+        title=title, content=str(p.get("note") or "").strip() or None,
+        priority="urgent" if p.get("urgent") else "normal",
+        due_date=due, created_by=current.id)
+    todo.targets = [models.ManagementTodoTarget(user_id=uid, status="pending")]
+    db.add(todo)
+    # ⚠️ 同一个事务里标记草稿已用：分两次提交的话，中间挂掉就会留下一张
+    #    「还能再点一次」的卡，点了就发两条。
+    dft.used_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(todo)
+
+    # 文案与 management_todo_router.create_todo 保持一致 —— 收件人不该因为
+    # 「管理层是在电脑上发的还是手机上发的」收到两种不同的通知
+    who = worker.full_name or worker.username
+    sender = _uname(current)
+    tag = "【紧急】" if todo.priority == "urgent" else "【管理层待办】"
+    due_txt = f"（要求 {due} 前完成）" if due else ""
+    await push_message(
+        db, to_user_id=uid, kind="warn",
+        text=f"{tag}{sender} 给你下达待办「{title}」{due_txt}，请尽快回复承诺完成时间。",
+        biz_type="mgmt_todo", biz_id=todo.id)
+    await write_audit(db, user=current, action="create", target_type="management_todo",
+                      target_id=todo.id, detail=f"（智能体）下发待办「{title}」给 {who}")
+    return {"ok": True, "todo_id": todo.id, "worker": who, "title": title,
+            "message": f"已发给 {who}，等他回复承诺完成时间。"}
+
+
 class CardActionIn(BaseModel):
     type: str
     ref: int
@@ -2030,6 +2108,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
     """流式主循环。yield (事件类型, 数据)。DB session 自己开——
     StreamingResponse 的生成器在请求处理函数返回之后才跑，Depends 给的 session 那时已关。"""
     tool_names: list[str] = []
+    draft_ids: list[int] = []          # 本轮拟出来的草稿，收尾时渲染成可点的卡片
     roles = "、".join(sorted(user.role_codes)) if getattr(user, "role_codes", None) else "—"
     # ── v2 阶段四/七：别名展开 + 口径召回 + 会话焦点 ──
     from ..agent import memory as _mem, skills as _sk
@@ -2141,6 +2220,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
             # rounds / last_result / rendered 只给审计用（见 _log_chat）：
             # 没有它们就看不出「跑了几轮」「查出 46 条只给了 20 条」「明细到底出没出」
             yield "done", {"text": final, "tools": tool_names, "ask": ask,
+                           "draft_ids": draft_ids,
                            "rounds": rnd + 1, "last_result": last_result,
                            "rendered": final != text}
             return
@@ -2179,6 +2259,11 @@ async def _chat_stream(message: str, history: list[dict], model: str,
             if isinstance(result, dict) and any(
                     isinstance(result.get(k), list) for k in ("items", "suppliers", "rows")):
                 last_result = result
+            # 🆕 本轮拟了草稿 → 收尾时把卡片一并推给前端。
+            #    没有这一步的话，模型拟完了却没有「确认发出」的按钮可点，
+            #    用户只能干看着一份草稿——第一版就是卡在这（连同确认码那个死循环）。
+            if isinstance(result, dict) and result.get("draft_id"):
+                draft_ids.append(int(result["draft_id"]))
             messages.append({"role": "tool", "tool_call_id": tc["id"],
                              "content": json.dumps(result, ensure_ascii=False, default=str)})
 
@@ -2231,6 +2316,7 @@ async def chat_stream(
                 return
             allowed = _allowed_tools(current)
             reply, tools, via, ask = "", [], "llm", None
+            draft_cards: list[dict] = []
 
             # ── v2 阶段三：Skill 命中就不进 ReAct ──
             # 可预测性来自固定编排，不来自模型即兴发挥。省一次规划、答案稳定、能写测试。
@@ -2267,6 +2353,15 @@ async def chat_stream(
                     else:
                         reply, tools = payload["text"], payload["tools"]
                         ask = payload.get("ask")
+                        # 🆕 本轮拟了草稿 → 装配成卡片随 done 一起发过去，
+                        #    用户点「确认发出」才真发。模型没有别的发送途径。
+                        for _did in (payload.get("draft_ids") or []):
+                            try:
+                                from ..agent import cards as _cards_m
+                                draft_cards += await _cards_m.assemble_send_cards(
+                                    db, current, refs=[_did])
+                            except Exception as e:      # noqa: BLE001
+                                log.warning("[agent] 草稿卡装配失败: %s", e)
                         st["rounds"] = payload.get("rounds")
                         st["result"] = payload.get("last_result")
                         st["rendered"] = payload.get("rendered")
@@ -2287,6 +2382,7 @@ async def chat_stream(
                 "sources": [TOOL_LABELS[n] for n in tools],
                 "suggestions": _suggestions_for(tools, allowed),
                 "ask": ask,
+                "cards": draft_cards,
             })
           finally:
             # ⚠️ **必须落在 finally 里**：用户划走 / 关页面 / 断网时，这个生成器会被

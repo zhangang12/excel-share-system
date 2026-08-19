@@ -11,6 +11,7 @@ import { http, errText } from './http'
 import { api } from './apiBase'
 import { clearSession, displayName } from './session'
 import { renderMd } from './markdown'
+import { useViewportHeight } from './useViewport'
 import { useSpeech } from './useSpeech'
 import H5ApproveCard from './H5ApproveCard.vue'
 import { isKnownCard, cardTitle, type AgentCard } from './cardRegistry'
@@ -42,6 +43,9 @@ const input = ref('')
 const thinking = ref(false)
 const toolHint = ref('')   // 「正在查 xxx…」，工具轮次不流正文，给个状态别让人以为卡住了
 const scroller = ref<HTMLElement>()
+/** 🆕 输入法（尤其是拼音候选框）弹出时用可视视口驱动高度，
+ *  否则输入框会被候选框盖住看不见。见 useViewport.ts */
+const panel = ref<HTMLElement>()
 const pending = ref<{ count: number; amount_total: number; blocked: number }>(
   { count: 0, amount_total: 0, blocked: 0 })
 const suggestions = ref<string[]>(['这月销售额多少？', '哪些供应商老迟到？', '待我审批的请款单'])
@@ -231,6 +235,12 @@ async function streamChat(q: string, history: { role: string; content: string }[
         }
         bubble.sources = d.sources
         if (d.ask?.options?.length) bubble.ask = d.ask
+        // 🆕 本轮模型拟了待办草稿 → 渲染成卡片，点「确认发出」才真发。
+        //    模型自己发不出去（见 agent_router.send_draft），这张卡是唯一的出口。
+        if (d.cards?.length) {
+          const cs = (d.cards as AgentCard[]).filter((c) => isKnownCard(c.type))
+          if (cs.length) msgs.value.push({ kind: 'cards', cards: cs })
+        }
         if (d.suggestions?.length) suggestions.value = d.suggestions
         toolHint.value = ''
       } else if (ev === 'error') {
@@ -275,6 +285,14 @@ function logout() {
   router.replace('/login')
 }
 
+// 🆕 输入法弹出（含拼音候选框）时把可视区高度同步到面板上，
+// 并把消息列表顶到底 —— 否则最后一条消息会被顶出可视区，
+// 用户一边打字一边看不见自己刚发的那句。
+useViewportHeight(panel, () => {
+  const el = scroller.value
+  if (el) el.scrollTop = el.scrollHeight
+})
+
 onMounted(() => {
   loadPending()
   // 从门户点卡片进来：带着问题直接发，用户不用打字
@@ -289,7 +307,7 @@ onMounted(() => {
 
 <template>
   <div class="wrap">
-    <div class="panel">
+    <div class="panel" ref="panel">
       <!-- 顶栏 -->
       <header class="hd">
         <button class="back" @click="router.push({ name: 'home' })" aria-label="返回">‹</button>

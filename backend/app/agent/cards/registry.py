@@ -25,6 +25,10 @@ CARD_TYPES: dict[str, set[str]] = {
     #    ⚠️ ref 是 **target_id**（某人对某条待办的处理行），不是 todo_id。
     #       一条待办发给多个人时每人一行，各自独立申请顺延。
     "mgmt_todo_extend": {"approve", "reject"},
+    # 🆕 下发待办·草稿确认：打 POST /agent/drafts/{draft_id}/send
+    #    ⚠️ ref 是 **草稿 id**（agent_drafts.id），不是待办 id ——
+    #       点这一下之前，待办还不存在。
+    "mgmt_todo_send": {"send"},
 }
 
 
