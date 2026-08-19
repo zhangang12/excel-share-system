@@ -35,13 +35,14 @@ async function clearAll() {
   try {
     const r = await whApi.clearAll(word)
     ElMessage.success(r.message || '已清空')
-    await Promise.all([loadMaterials(), loadTxns(), loadBadgeCounts()])
+    await Promise.all([loadMaterials(), loadMatList(), loadTxns(), loadBadgeCounts()])
   } catch { /* 拦截器已提示 */ }
 }
 
 const tab = ref('ov')
 const loading = ref(false)
-const materials = ref<WhMaterial[]>([])
+const materials = ref<WhMaterial[]>([])   // 全量（库存总览 + 出入库下拉），永远不带筛选
+const matList = ref<WhMaterial[]>([])    // 物料主数据页签的结果，带 kw/库位/只看缺料
 const lowCount = ref(0)
 const kw = ref('')
 // 🆕 仓库反馈：551 个物料只能按名称/规格找。加库位筛选和"只看缺料"，
@@ -52,14 +53,33 @@ const matTotal = ref(0)
 let matTimer: ReturnType<typeof setTimeout> | null = null
 function onMatSearch() {
   if (matTimer) clearTimeout(matTimer)
-  matTimer = setTimeout(loadMaterials, 300)
+  matTimer = setTimeout(loadMatList, 300)   // ⚠️ 只刷物料主数据那张表，别动全量 materials
 }
 function resetMatFilter() {
   kw.value = ''; matLoc.value = ''; matLowOnly.value = false
-  loadMaterials()
+  loadMatList()
 }
 
+// ⚠️⚠️ 反馈#404（王利利）：「收货完了，都不会及时更新，出库的时候啥也找不到，
+//   都要从新点一下项目目录，在点出库，才有东西」——根因是**一个数组喂了三个地方**：
+//   物料主数据的表格、库存总览的表格和 KPI、出入库登记的物料下拉，全都读同一个 `materials`。
+//   而物料主数据的搜索是**走服务端**的（kw 传给后端），一搜就把这个共享数组换成了命中的那几条。
+//   后果：
+//     · 在物料主数据里搜过「轴承」，再去开出库登记 → 下拉里只剩 35 条，刚收的货根本不在里面
+//     · 「只看缺料」勾上更狠：下拉里只剩缺料的
+//     · 收货后 refreshAfterReceive 调 loadMaterials，又把同一个 kw 带上去查 → 刷了等于没刷
+//     · 切到别的菜单再回来，组件重挂载、kw 归空 → 又好了（这就是她说的"点项目目录再点出库"）
+//   所以拆成两个数组，各管各的：
+//     `materials`  = **全量、不带任何筛选**，给库存总览和出入库下拉用
+//     `matList`    = 物料主数据页签自己的结果，带 kw/库位/只看缺料
 async function loadMaterials() {
+  // 全量：任何筛选都不带。库存总览的 KPI 和出库下拉都靠它，掺进筛选就是上面那串 bug。
+  const j = await whApi.materials({})
+  materials.value = j.materials
+}
+
+async function loadMatList() {
+  // 物料主数据页签专用：搜索/库位/只看缺料走服务端（全库都能搜到，见早期反馈）
   loading.value = true
   try {
     const j = await whApi.materials({
@@ -67,7 +87,10 @@ async function loadMaterials() {
       location: matLoc.value || undefined,
       low_only: matLowOnly.value || undefined,
     })
-    materials.value = j.materials; lowCount.value = j.low_count; matTotal.value = j.total
+    matList.value = j.materials; matTotal.value = j.total
+    // ⚠️ 跟 matTotal 同口径（都是**筛选后**的）。一个取筛选后、一个取全量，
+    //    就会出现「共 35 条，其中 120 条低于安全库存」这种自相矛盾的话。
+    lowCount.value = j.low_count
   } finally { loading.value = false }
 }
 // ===== 🆕 库位管理（主数据;采购下单/物料/出入库共用取值） =====
@@ -107,18 +130,31 @@ async function deleteLoc(row: WhLocation) {
   } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '删除失败') }
 }
 
-onMounted(() => { loadMaterials(); loadMatDict(); loadCustomFields(); loadBadgeCounts(); loadLocations() })
+onMounted(() => { loadMaterials(); loadMatList(); loadMatDict(); loadCustomFields(); loadBadgeCounts(); loadLocations() })
 
 // 🆕 反馈#373/#374：「库存总览」只列**通用物料**。买给具体项目的料（收货时填了订单编号的）
 //   归「出入库 / 物料需求」那个 tab 管，混在这里既看不出公司真正备了多少货，
 //   也让人以为那些料还能随便领。改之前生产上 745 个物料里 511 个是项目料，
 //   库存金额 ¥148,099 中 ¥116,718(79%) 其实早已名花有主。
 //   ⚠️ 只过滤这个 tab：materials 同时喂着「物料主数据」和出库选料，那两处必须还是全量。
-const ovMaterials = computed(() => materials.value.filter(m => !m.is_project_material))
+const ovSearch = ref('')
+// 本页签的全量通用物料：KPI 卡片、低库存清单都用它。
+// ⚠️ **不受搜索框影响**——「库存总价」是管理层当公司库存值看的数，
+//    敲个搜索词它就变成 ¥806,236，读的人不会意识到那只是命中那几条的合计。
+//    低库存清单同理：「一键提采购申请」要提的是全部缺料，不是搜出来的那几条。
+const ovAll = computed(() => materials.value.filter(m => !m.is_project_material))
+// 表格用的：在上面这份里做本地过滤（数据本来就全在内存，不用再打一趟后端）
+const ovMaterials = computed(() => {
+  const k = ovSearch.value.trim().toLowerCase()
+  if (!k) return ovAll.value
+  return ovAll.value.filter(m => [
+    m.name, m.spec, m.code, m.location, m.material_grade, m.unit,
+  ].some(f => (f || '').toLowerCase().includes(k)))
+})
 const projMatCount = computed(() => materials.value.filter(m => m.is_project_material).length)
-const totalStock = computed(() => ovMaterials.value.reduce((s, m) => s + m.stock, 0))
-const totalValue = computed(() => ovMaterials.value.reduce((s, m) => s + (m.stock_value || 0), 0))  // 🆕 需求三：库存总价
-const lowList = computed(() => ovMaterials.value.filter(m => m.low))
+const totalStock = computed(() => ovAll.value.reduce((s, m) => s + m.stock, 0))
+const totalValue = computed(() => ovAll.value.reduce((s, m) => s + (m.stock_value || 0), 0))  // 🆕 需求三：库存总价
+const lowList = computed(() => ovAll.value.filter(m => m.low))
 
 // ===== 出入库登记 =====
 const ioVisible = ref(false)
@@ -164,7 +200,7 @@ async function submitIo() {
       }).then(res => res.data)
       ElMessage.success(r.message || '已登记')
       ioVisible.value = false
-      await Promise.all([loadMaterials(), loadTxns()])
+      await Promise.all([loadMaterials(), loadMatList(), loadTxns()])
     } catch { /* 超量/行错误由拦截器提示（后端指明第几行） */ } finally { ioSubmitting.value = false }
     return
   }
@@ -175,7 +211,7 @@ async function submitIo() {
     const r: any = await whApi.createTxn({ ...ioForm })
     ElMessage.success(r.message || '已登记')
     ioVisible.value = false
-    await Promise.all([loadMaterials(), loadTxns()])
+    await Promise.all([loadMaterials(), loadMatList(), loadTxns()])
   } catch { /* 超量等错误由拦截器提示 */ } finally { ioSubmitting.value = false }
 }
 function matLabel(m: WhMaterial) { return `${m.name}${m.spec ? '·' + m.spec : ''}（现存 ${m.stock}）${m.project_code ? ' 【' + m.project_code + '】' : ''}` }
@@ -324,7 +360,7 @@ function openMat(m?: WhMaterial) {
 // 🆕 删除物料（有出入库流水的后端会拦截）
 async function deleteMat(m: WhMaterial) {
   try { await ElMessageBox.confirm(`删除物料「${m.name}${m.spec ? '·' + m.spec : ''}」？删除后不可恢复。\n（有出入库流水的物料不能删除）`, '删除物料', { type: 'warning', confirmButtonText: '删除' }) } catch { return }
-  try { await whApi.deleteMaterial(m.id); ElMessage.success('物料已删除'); await loadMaterials() } catch { /* 拦截器已提示 */ }
+  try { await whApi.deleteMaterial(m.id); ElMessage.success('物料已删除'); await Promise.all([loadMaterials(), loadMatList()]) } catch { /* 拦截器已提示 */ }
 }
 const matSubmitting = ref(false)
 async function submitMat() {
@@ -575,7 +611,8 @@ async function uploadReceipt(itemId: number, file: File) {
 //   注：ws 实时只有 datasheet/overview 房间的 cell_changed/presence 事件，没有仓库域广播机制，
 //   收货接口又在采购域——跨客户端推送需另立 ws 事件，本次只做本机刷新。
 function refreshAfterReceive() {
-  loadMaterials()
+  loadMaterials()   // 全量：出库下拉要立刻能选到刚收的货（#404）
+  loadMatList()     // 物料主数据那张表按它自己的筛选条件刷
   if (txns.value.length) loadTxns()
   if (demandProj.value) loadDemand()
   else if (demandOverview.value.length) loadDemandOverview()
@@ -873,7 +910,7 @@ async function submitTransfer() {
     ElMessage.success(r.data.message)
     transferVisible.value = false
     ovSelected.value = []
-    await Promise.all([loadMaterials(), loadTxns()])
+    await Promise.all([loadMaterials(), loadMatList(), loadTxns()])
   } catch { /* 拦截器已提示 */ } finally { transferSaving.value = false }
 }
 
@@ -1101,7 +1138,7 @@ function usePager<T>(src: () => T[], size = 50) {
   return reactive({ page, pageSize, total, rows })
 }
 const ovPager = usePager(() => ovMaterials.value)
-const matPager = usePager(() => materials.value)   // 物料主数据的搜索走后端(kw)，这里不再过滤
+const matPager = usePager(() => matList.value)   // 物料主数据页签：搜索走后端(kw)，切片只管渲染
 const sumPager = usePager(() => filteredSummary.value)
 const txnPager = usePager(() => txns.value)
 
@@ -1190,7 +1227,7 @@ function applyPoPick() {
         <div class="desc">物料主数据 + 出入库（自动单号·超库存拦截）+ 收发存汇总 + 流水（冲红）+ 发货清单</div>
       </div>
       <div class="spacer"></div>
-      <PageRefresh :load="() => { loadMaterials(); loadMatDict(); loadBadgeCounts(); loadLocations(); onTab(tab) }" />
+      <PageRefresh :load="() => { loadMaterials(); loadMatList(); loadMatDict(); loadBadgeCounts(); loadLocations(); onTab(tab) }" />
     </div>
 
     <el-card shadow="never" v-loading="loading">
@@ -1203,7 +1240,7 @@ function applyPoPick() {
         <!-- 总览 -->
         <el-tab-pane lazy v-if="tv('ov')" label="库存总览" name="ov">
           <div class="kpi-grid">
-            <div class="kpi"><div class="kpi-v">{{ ovMaterials.length }}</div><div class="kpi-l">物料种类</div></div>
+            <div class="kpi"><div class="kpi-v">{{ ovAll.length }}</div><div class="kpi-l">物料种类</div></div>
             <div class="kpi"><div class="kpi-v">{{ totalStock }}</div><div class="kpi-l">库存总量</div></div>
             <div v-if="isManager" class="kpi"><div class="kpi-v">{{ fmtMoney(totalValue) }}</div><div class="kpi-l">库存总价</div></div>
             <!-- ⚠️ 这里用 lowList.length 而不是后端的 low_count：后端那个是全量口径，
@@ -1245,7 +1282,10 @@ function applyPoPick() {
             </el-table>
           </div>
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center">
-            <el-input v-model="kw" placeholder="搜索物料" :prefix-icon="Search" clearable style="width:240px" @change="loadMaterials" />
+            <!-- ⚠️ #404：这个框以前绑的是物料主数据那个 kw，一搜就把全量 materials 换成命中的那几条——
+                 出库下拉、库存总览的 KPI 全跟着变。改成本页签自己的本地过滤，不碰共享数组。 -->
+            <el-input v-model="ovSearch" placeholder="搜索物料/规格/库位" :prefix-icon="Search" clearable style="width:240px" />
+            <span v-if="ovSearch" class="muted small">命中 {{ ovMaterials.length }} / {{ ovAll.length }}（上面的合计仍是全部）</span>
             <!-- 🆕 #377：库里躺着的通用料确定要给某个项目用了，在这里调过去。
                  调完它就进那个项目的物料需求（项目上的人才看得到有货），后面统一领料出库。 -->
             <el-button v-if="canWrite && ovSelected.length" type="primary" :icon="Sort" @click="openTransfer">
@@ -1378,11 +1418,11 @@ function applyPoPick() {
           <!-- 🆕 仓库反馈：物料主数据没搜索框，551 条只能一页页翻 -->
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
             <el-input v-model="kw" placeholder="搜名称/规格/编码/单位/库位/材质" :prefix-icon="Search"
-                      clearable size="small" style="width:280px" @input="onMatSearch" @clear="loadMaterials" />
-            <el-select v-model="matLoc" placeholder="库位(全部)" clearable size="small" style="width:150px" @change="loadMaterials">
+                      clearable size="small" style="width:280px" @input="onMatSearch" @clear="loadMatList" />
+            <el-select v-model="matLoc" placeholder="库位(全部)" clearable size="small" style="width:150px" @change="loadMatList">
               <el-option v-for="l in enabledLocations" :key="l.id" :label="l.name" :value="l.name" />
             </el-select>
-            <el-checkbox v-model="matLowOnly" size="small" @change="loadMaterials">只看低于安全库存</el-checkbox>
+            <el-checkbox v-model="matLowOnly" size="small" @change="loadMatList">只看低于安全库存</el-checkbox>
             <el-button v-if="kw || matLoc || matLowOnly" size="small" @click="resetMatFilter">清空条件</el-button>
             <span class="muted" style="font-size:12.5px">共 {{ matTotal }} 条<template v-if="lowCount">，其中 {{ lowCount }} 条低于安全库存</template></span>
             <div style="flex:1"></div>
@@ -1412,7 +1452,7 @@ function applyPoPick() {
                          :page-sizes="[50, 100, 200, 500]" :total="matPager.total"
                          layout="total, sizes, prev, pager, next, jumper" size="small"
                          style="margin-top:10px;justify-content:flex-end" />
-          <EmptyHint v-if="!materials.length" :text="(kw || matLoc || matLowOnly) ? '没搜到，换个词或清空条件试试' : '暂无物料主数据，点「新增物料」开始'" size="sm" />
+          <EmptyHint v-if="!matList.length" :text="(kw || matLoc || matLowOnly) ? '没搜到，换个词或清空条件试试' : '暂无物料主数据，点「新增物料」开始'" size="sm" />
         </el-tab-pane>
 
         <!-- 🆕 项目物料需求（清单→仓库）-->
