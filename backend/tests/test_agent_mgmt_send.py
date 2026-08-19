@@ -197,6 +197,20 @@ async def main():
         chk((await te.mgmt_todo_send(db, boss, title="x", to="夏锟",
                                      due_date=d(-1))).get("error"), "截止日在过去要反问")
 
+        # 🐛 回归：头一回发待办的人拿不到快捷人选（生产实测 admin 就是这样），
+        #    模型只能退化成「你要派给谁？直接说名字」——引导又变回打字。
+        #    ⚠️ 要用**没有自己历史**的那位来验（boss 这时已经发过了）。
+        fresh = (await db.execute(select(models.User).where(
+            models.User.username == "boss2"))).scalars().first()
+        peers = await te.mgmt_todo_peers(db, fresh)
+        chk(peers.get("count", 0) > 0,
+            f"**没自己的历史也要给候选**（拿全公司派过活的人兜底）：{peers}")
+        chk(peers.get("from_my_history") is False, "标明这是兜底来的，不是他自己派过的")
+        chk("夏锟" in [x["worker"] for x in peers["recent"]], "候选里有真被派过活的人")
+
+        mine = await te.mgmt_todo_peers(db, boss)
+        chk(mine.get("from_my_history") is True, "自己派过的人优先，不走兜底")
+
         u = (await db.execute(select(models.User).where(
             models.User.username == "xiakun"))).scalars().first()
         role = (await db.execute(select(models.Role).where(

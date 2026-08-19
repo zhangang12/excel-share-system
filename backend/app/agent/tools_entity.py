@@ -946,21 +946,35 @@ async def mgmt_todo_peers(db: AsyncSession, current: models.User) -> dict:
     """
     if not current.has_role("admin", "manager"):
         return {"error": "只有管理层能下发待办"}
-    rows = (await db.execute(
-        select(models.User.id, models.User.full_name, models.User.username,
-               func.max(models.ManagementTodo.created_at).label("last"))
-        .join(models.ManagementTodoTarget,
-              models.ManagementTodoTarget.user_id == models.User.id)
-        .join(models.ManagementTodo,
-              models.ManagementTodo.id == models.ManagementTodoTarget.todo_id)
-        .where(models.ManagementTodo.created_by == current.id,
-               models.User.is_active == True)   # noqa: E712
-        .group_by(models.User.id, models.User.full_name, models.User.username)
-        .order_by(func.max(models.ManagementTodo.created_at).desc())
-        .limit(_RECENT_WORKERS))).all()
+    def _q(mine: bool):
+        q = (select(models.User.id, models.User.full_name, models.User.username,
+                    func.max(models.ManagementTodo.created_at).label("last"))
+             .join(models.ManagementTodoTarget,
+                   models.ManagementTodoTarget.user_id == models.User.id)
+             .join(models.ManagementTodo,
+                   models.ManagementTodo.id == models.ManagementTodoTarget.todo_id)
+             .where(models.User.is_active == True)   # noqa: E712
+             .group_by(models.User.id, models.User.full_name, models.User.username)
+             .order_by(func.max(models.ManagementTodo.created_at).desc())
+             .limit(_RECENT_WORKERS))
+        return q.where(models.ManagementTodo.created_by == current.id) if mine else q
+
+    rows = (await db.execute(_q(True))).all()
+    mine = True
+    if not rows:
+        # ⚠️ 头一回发待办的人（或刚换的管理层）没有自己的历史，
+        #    原来这里直接返回空 → 模型只能说「你要派给谁？直接说名字」，
+        #    引导退化成打字，正是这个功能想避免的（生产实测：admin 就是这样）。
+        #    退一步用**全公司派过活的人**兜底：这 11 个人就是真实的候选池。
+        rows = (await db.execute(_q(False))).all()
+        mine = False
     recent = [{"worker": (r[1] or r[2])} for r in rows]
-    return {"recent": recent, "count": len(recent),
-            "hint": "这几个是你最近派过的；要派给别人就说名字"}
+    if not recent:
+        return {"recent": [], "count": 0,
+                "hint": "系统里还没有人派过待办。这条派给谁？说个名字。"}
+    return {"recent": recent, "count": len(recent), "from_my_history": mine,
+            "hint": ("这几个是你最近派过的；要派给别人就说名字" if mine
+                     else "你还没派过待办，这几个是公司里最近被派活的人；要派给别人就说名字")}
 
 
 async def _resolve_worker(db: AsyncSession, name: str) -> tuple[models.User | None, list[str]]:
