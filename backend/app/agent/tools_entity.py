@@ -835,3 +835,90 @@ async def get_material(db: AsyncSession, current: models.User, q: str) -> dict:
                          "party": t.party, "project_id": t.project_id, "ref_no": t.ref_no}
                         for t in txns[:_DETAIL_MAX]],
     }
+
+
+# ══════════════════════ 管理层下发的待办 ══════════════════════
+
+_MTODO_CN = {"pending": "还没回复", "committed": "承诺了没做完", "done": "已完成"}
+
+
+async def mgmt_todo_watch(db: AsyncSession, current: models.User,
+                          limit: int = 30) -> dict:
+    """管理层：我发出去的待办，谁没回、谁超期、谁申请顺延。
+
+    **为什么值得单独做一个工具**：生产实测这是两位管理层唯一在持续用的管理动作
+    （赵仁辉 30 条 / 杨坛 5 条，29 条填了截止日、9 条标了紧急）。
+    但闭环断在三处：**7 条顺延申请挂着没批**、5 条承诺日已过、3 条根本没人回。
+    这些散在电脑端的列表里，手机上一句话问不到。
+
+    ⚠️ **只看自己发的**。不是权限问题（管理层本来互相可见），是相关性问题：
+       赵仁辉的 30 条混进杨坛的 5 条里，两个人打开都得先筛一遍。
+    """
+    me = current.id
+    rows = list((await db.execute(
+        select(models.ManagementTodoTarget, models.ManagementTodo, models.User)
+        .join(models.ManagementTodo,
+              models.ManagementTodo.id == models.ManagementTodoTarget.todo_id)
+        .join(models.User, models.User.id == models.ManagementTodoTarget.user_id)
+        .where(models.ManagementTodo.created_by == me)
+        .order_by(models.ManagementTodo.created_at.desc()))).all())
+
+    today = date.today()
+    items: list[dict] = []
+    n_extend = n_overdue = n_silent = 0
+    for tgt, todo, who in rows:
+        if tgt.status == "done":
+            continue                      # 做完的不用管，别占屏
+        name = who.full_name or who.username
+        # ⚠️ 逾期以**承诺日**为准；没承诺过才退回管理层设的截止日。
+        #    反过来用会把「已经承诺了更晚日期」的人误报成超期。
+        ref_date = tgt.committed_at or todo.due_date
+        over = None
+        if ref_date:
+            try:
+                over = (today - date.fromisoformat(ref_date)).days
+            except (ValueError, TypeError):
+                over = None
+        pending_extend = tgt.extend_status == "pending" and bool(tgt.extend_to)
+        if pending_extend:
+            n_extend += 1
+            state = f"申请顺延到 {tgt.extend_to}"
+        elif tgt.status == "pending":
+            n_silent += 1
+            state = "还没回复"
+        elif over is not None and over > 0:
+            n_overdue += 1
+            state = f"超 {over} 天"
+        else:
+            state = _MTODO_CN.get(tgt.status, tgt.status)
+        items.append({
+            "worker": name,
+            # ⚠️ 键叫 todo 不叫 name：`name` 在渲染层的 _NAME_KEYS 里，
+            #    会被当成「主体」并进第一列 —— 表头成了「名称」、人被挤到第二列。
+            #    催人这个场景第一眼要看的是**谁**。
+            "todo": _short(todo.title or "")[:20],
+            "status": state,
+            # target_id：批顺延、催办都按它走（**不是 todo_id**）
+            "target_id": tgt.id,
+            "over_days": over if (over or 0) > 0 else None,
+            "due_date": ref_date,
+            "urgent": todo.priority == "urgent",
+        })
+
+    # 要管的排前面：申请顺延 > 超期越久 > 没回复 > 其余
+    def _rank(it: dict) -> tuple:
+        return (0 if "顺延" in it["status"] else 1,
+                -(it["over_days"] or 0),
+                0 if it["status"] == "还没回复" else 1)
+
+    items.sort(key=_rank)
+    shown = items[:max(1, min(limit, 200))]
+    return {
+        "count": len(items), "shown": len(shown), "truncated": len(items) > len(shown),
+        "summary": {"pending_extend": n_extend, "overdue": n_overdue,
+                    "no_reply": n_silent, "open_total": len(items)},
+        # 谁 · 什么事 · 什么状态 —— 催人时要的就这三样
+        "columns": ["worker", "todo", "status"],
+        "items": shown,
+        "hint": (f"有 {n_extend} 条顺延申请等你批" if n_extend else None),
+    }

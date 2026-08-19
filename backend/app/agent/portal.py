@@ -72,6 +72,21 @@ CATALOG: list[dict] = [
     {"key": "delivery_watch", "label": "交期看板",
      "desc": "在建项目还剩几天交货、哪些已过期、每个卡在哪一环",
      "glyph": "期", "tone": "danger", "q": "项目进度跟进", "tool": "project_progress"},
+
+    # ── 🆕 第四批：管理层下发的待办 ──
+    # 生产数据：35 条待办（赵仁辉 30 / 杨坛 5），闭环断在三处 ——
+    # **7 条顺延申请挂着一条没批**、5 条承诺日已过、3 条根本没回复。
+    # ⚠️ 不做「手动催办」：系统每天已经在自动催（overdue.scan_mgmt_todo，
+    #    同人同待办一天一次），实测推了 289 条、261 条已读（90%）。
+    #    再加个手动按钮就是在一条已经有人看的通道上重复打扰。
+    {"key": "mgmt_todo_watch", "label": "我发的待办",
+     "desc": "我发下去的待办谁没回、谁超期、谁申请顺延",
+     "glyph": "派", "tone": "warn", "q": "我发的待办怎么样了", "tool": "mgmt_todo_watch"},
+    {"key": "mgmt_todo_extend", "label": "顺延申请",
+     "desc": "收件人申请把承诺日往后挪，等你同意或驳回",
+     "glyph": "延", "tone": "danger", "q": "待批的顺延申请",
+     # 点进去直接出卡片，能当场同意/驳回
+     "tool": "mgmt_todo_watch", "card": "mgmt_todo_extend"},
 ]
 _BY_KEY = {c["key"]: c for c in CATALOG}
 
@@ -93,13 +108,23 @@ _DEFAULTS: dict[str, list[str]] = {
     # admin 与 manager 同一套：`_all_view` 里 `_is_mgr` 本来就把 admin 和 manager
     # 一起放行，工具与卡片都是全量可见。但 _ROLE_ORDER 早先漏了 admin，
     # 导致 admin 落到 _FALLBACK 那组采购向的通用配置——跟他实际能看到的东西对不上。
-    "admin": ["approvals", "delivery_watch", "receivable_blind", "shipment_receiver",
-              "morning_report", "ledger_incomplete", "overdue_orders"],
+    # 🆕 顺延申请进默认门户：生产上挂着 7 条一条没批，而这两位管理层
+    #    **收到过通知**（request_extend 会推给下达人，7 条消息对上 7 条申请）——
+    #    也就是说不是没看见，是看见了没地方顺手批。门户上给个入口就是为了这个。
+    # ⚠️ admin 与 manager **必须完全一致**（test_agent_tools_sales 锁着这条）：
+    #    `_all_view` 里 admin 和 manager 一起放行，工具和卡片都是全量可见；
+    #    早先 _ROLE_ORDER 漏了 admin，他落到采购向的 _FALLBACK，跟实际能看到的对不上。
+    #    给 manager 加磁贴时这里要同步加，否则那条不变量当场就断。
+    "admin": ["approvals", "mgmt_todo_extend", "mgmt_todo_watch", "delivery_watch",
+              "receivable_blind", "shipment_receiver", "morning_report",
+              "ledger_incomplete", "overdue_orders"],
     # 杨坛(manager)：按「他做过多少 × 此刻还有多少在等」排——
     #   请款审批 40 次/2 笔在等、盯不住的应收 36 次/63 笔在等、收货人 34 次/49 单在等、
     #   晨报他 3 次会话每次都调。采购三件套一张不进（两个月 0 次操作）。
-    "manager": ["approvals", "delivery_watch", "receivable_blind", "shipment_receiver",
-                "morning_report", "ledger_incomplete", "overdue_orders"],
+    # 赵仁辉(manager)：35 条待办他发了 30 条，「我发的待办」对他比对谁都重要
+    "manager": ["approvals", "mgmt_todo_extend", "mgmt_todo_watch", "delivery_watch",
+                "receivable_blind", "shipment_receiver", "morning_report",
+                "ledger_incomplete", "overdue_orders"],
     "finance_lead": ["approvals", "receivable_blind", "balance_due",
                      "invoice_pending", "morning_report"],
     "finance": ["approvals", "balance_due", "invoice_pending", "morning_report"],
