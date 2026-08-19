@@ -372,6 +372,8 @@ TOOL_LABELS = {
     "get_supplier": "供应商画像",
     "get_material": "物料全景",
     "mgmt_todo_watch": "我发的待办",
+    "mgmt_todo_peers": "常派给谁",
+    "mgmt_todo_send": "下发待办",
 }
 
 # 🆕 每个工具一句人话说明：给用户看的（门户小字、能力清单），也给模型当选型依据。
@@ -384,6 +386,8 @@ TOOL_DESC = {
     "get_supplier": "这家供应商准时率多少、平均拖几天、现在还欠几批货",
     "get_material": "这个物料还有多少库存、低不低于安全线、最近进出了多少",
     "mgmt_todo_watch": "我发下去的待办谁没回、谁超期、谁申请顺延",
+    "mgmt_todo_peers": "最近都派给了谁——发待办时用来快速挑人",
+    "mgmt_todo_send": "下发一条待办给某个人（先出草稿，确认后才真发）",
     "morning_report": "把今天要盯的事聚成一条：采购超期、尾款到期、部门逾期、人事到期",
     "po_arrival_overdue": "预计到货日已过、货还没到的采购明细",
     "po_arriving": "未来几天预计能到的料，用来提前安排生产",
@@ -523,6 +527,29 @@ TOOL_SCHEMAS += [
                                    "用户问「采购/物料/还有什么没到」时传 purchase"}),
             "required": ["code"]}}},
     {"type": "function", "function": {
+        "name": "mgmt_todo_peers",
+        "description": "发待办前问「派给谁」时用：拿最近派过的几个人当快捷选项。"
+                       "用户说了一个事项名但没说给谁时，先调这个，"
+                       "再用提问卡把这几个人列成可点的选项。",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "mgmt_todo_send",
+        "description": "下发一条管理层待办给某个人。**两步走**："
+                       "第一次不要传 confirm，工具返回草稿和 confirm_token；"
+                       "把草稿念给用户听、用提问卡让他确认；"
+                       "用户确认后再调一次，把 confirm_token 原样传进 confirm。"
+                       "⚠️ 绝不要自己跳过确认那一步——发出去收件人立刻收到企微通知，撤不回来。",
+        "parameters": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "这条待办是什么事，用户原话即可（如「压料机密封圈」）"},
+            "to": {"type": "string", "description": "派给谁，人名"},
+            "due_date": {"type": "string", "description": "要求哪天前完成，YYYY-MM-DD。不知道就先问"},
+            "urgent": {"type": "boolean", "description": "是否紧急，默认否"},
+            "note": {"type": "string", "description": "补充说明，可不填"},
+            "confirm": {"type": "string",
+                        "description": "第一次调用**不要传**。用户确认后，把上一步返回的 "
+                                       "confirm_token 原样传进来才会真发出"}},
+            "required": ["title", "to"]}}},
+    {"type": "function", "function": {
         "name": "mgmt_todo_watch",
         "description": "我（管理层）下发的待办现在什么情况：谁还没回复承诺时间、"
                        "谁承诺了但已经超期、谁申请了顺延等着批。"
@@ -603,6 +630,8 @@ def _allowed_tools(user: models.User) -> set[str]:
     #       工具的门必须和端点的门一致，否则模型调得到、接口拒绝，白跑一轮还报错。
     if user.has_role("admin", "manager"):
         out.add("mgmt_todo_watch")
+        out.add("mgmt_todo_peers")
+        out.add("mgmt_todo_send")
     # 🆕 v2：找实体是所有纵深查询的入口，任何能查数的人都该有
     if out:
         out.add("find_entity")
@@ -691,6 +720,11 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
                                                 detail=args.get("detail") or "blockers"),
         "sales_summary": lambda: _te.sales_summary(
             db, current, months=int(args.get("months") or 6)),
+        "mgmt_todo_peers": lambda: _te.mgmt_todo_peers(db, current),
+        "mgmt_todo_send": lambda: _te.mgmt_todo_send(
+            db, current, title=args.get("title", ""), to=args.get("to", ""),
+            due_date=args.get("due_date"), urgent=bool(args.get("urgent")),
+            note=args.get("note"), confirm=args.get("confirm")),
         "mgmt_todo_watch": lambda: _te.mgmt_todo_watch(
             db, current, limit=int(args.get("limit") or 30)),
         "project_progress": lambda: _te.project_progress(
@@ -822,7 +856,24 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
    **绝不允许**给了 5 条却让人以为那就是全部。
 4. 用户说"全部/都列出来/完整清单/所有"时，**重新调用工具并传 limit=200**，然后**全部列完**，
    这种情况不受下面的条数与字数限制。
-5. 只读。用户要改数据时明确拒绝，并说清该去哪个页面改。
+5. **除了下发待办，一律只读。**用户要改别的数据时明确拒绝，并说清该去哪个页面改。
+   唯一能写的是 `mgmt_todo_send`（下发管理层待办），而且必须走两步确认，见下面一节。
+
+# 📌 发待办：缺什么问什么，让他点、别让他打
+管理层说一件事但没说清给谁、什么时候要时，**不要猜，也不要让他重打一遍**：
+
+1. 先调 `mgmt_todo_peers` 拿他最近派过的人，用**提问卡**列成可点的选项问「派给谁」。
+2. 再用提问卡问「什么时候要」，选项固定给这四个：明天 / 后天 / 本周内 / 自己填
+   （实测他 87% 的截止日在 5 天内，明天和后天占了一半还多）。
+3. 齐了就调 `mgmt_todo_send`（**这次不要传 confirm**），把返回的草稿念一遍：
+   派给谁、什么事、哪天前、急不急，再用提问卡让他确认。
+4. 他确认后，再调一次 `mgmt_todo_send`，把上一步的 `confirm_token` **原样**传进 `confirm`。
+
+- ⚠️ **绝不要自己跳过第 3、4 步直接发。**发出去收件人立刻收到企微通知，撤不回来。
+  同样一句「压料机密封圈」，可能是要派给人办，也可能是问库存——猜错就是凭空塞给人一条任务。
+- ⚠️ 拿不准他到底是要派活还是查东西时，用提问卡问一句
+  「这是要派给人做，还是你想查一下？」——两个按钮，比猜可靠。
+- 补充说明**不要主动问**：实测 30 条里 6 条根本没写正文。他想补会自己说。
 
 # ⚡ 明细不要你打字（这条优先级最高）
 调完工具、需要列明细时，**不要自己一行一行写数据**。改成在正文末尾附一个编排块：

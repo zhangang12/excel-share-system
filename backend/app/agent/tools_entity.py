@@ -922,3 +922,165 @@ async def mgmt_todo_watch(db: AsyncSession, current: models.User,
         "items": shown,
         "hint": (f"有 {n_extend} 条顺延申请等你批" if n_extend else None),
     }
+
+
+# ── 发待办：问出来，别指望一句话说全 ──────────────────────────────
+#
+# 生产数据决定了这个流程的形状：赵仁辉 30 条待办的标题**平均 8.1 字**，
+# 最短 2 字（就是「采购」两个字）。他打的是**事项名**——没有人、没有时间，
+# 常常连动词都没有。所以不做「一句话解析」，改成缺什么问什么、让他点。
+#
+# 快捷项也不是拍脑袋，是按他真实发过的 30 条定的：
+#   · 收件人：11 个人分布很平（5/5/4/3/3…），没有压倒性常用人 →
+#     按**最近派过**排比按派得最多排准
+#   · 截止日：87% 在 5 天内，其中明天 11 条、后天 8 条，占一半还多
+
+_RECENT_WORKERS = 4        # 快捷人选给几个；手机上一屏点得完
+
+
+async def mgmt_todo_peers(db: AsyncSession, current: models.User) -> dict:
+    """发待办前先问「派给谁」——给最近派过的几个人当快捷选项。
+
+    ⚠️ 只返回**在职**的人。给一个已停用的人当选项，点下去创建接口会把他滤掉，
+       表现是「发了但没人收到」，比报错还难查。
+    """
+    if not current.has_role("admin", "manager"):
+        return {"error": "只有管理层能下发待办"}
+    rows = (await db.execute(
+        select(models.User.id, models.User.full_name, models.User.username,
+               func.max(models.ManagementTodo.created_at).label("last"))
+        .join(models.ManagementTodoTarget,
+              models.ManagementTodoTarget.user_id == models.User.id)
+        .join(models.ManagementTodo,
+              models.ManagementTodo.id == models.ManagementTodoTarget.todo_id)
+        .where(models.ManagementTodo.created_by == current.id,
+               models.User.is_active == True)   # noqa: E712
+        .group_by(models.User.id, models.User.full_name, models.User.username)
+        .order_by(func.max(models.ManagementTodo.created_at).desc())
+        .limit(_RECENT_WORKERS))).all()
+    recent = [{"worker": (r[1] or r[2])} for r in rows]
+    return {"recent": recent, "count": len(recent),
+            "hint": "这几个是你最近派过的；要派给别人就说名字"}
+
+
+async def _resolve_worker(db: AsyncSession, name: str) -> tuple[models.User | None, list[str]]:
+    """人名 → 用户。**匹配不到或匹配到多个都不猜**，返回候选让上层问。"""
+    nm = (name or "").strip()
+    if not nm:
+        return None, []
+    base = select(models.User).where(models.User.is_active == True)  # noqa: E712
+    exact = (await db.execute(base.where(
+        or_(models.User.full_name == nm, models.User.username == nm)))).scalars().all()
+    if len(exact) == 1:
+        return exact[0], []
+    if len(exact) > 1:
+        return None, [u.full_name or u.username for u in exact]
+    fuzzy = (await db.execute(base.where(
+        or_(models.User.full_name.ilike(f"%{nm}%"),
+            models.User.username.ilike(f"%{nm}%"))).limit(6))).scalars().all()
+    if len(fuzzy) == 1:
+        return fuzzy[0], []
+    return None, [u.full_name or u.username for u in fuzzy]
+
+
+async def mgmt_todo_send(db: AsyncSession, current: models.User, *,
+                         title: str, to: str, due_date: str | None = None,
+                         urgent: bool = False, note: str | None = None,
+                         confirm: str | None = None) -> dict:
+    """下发一条待办。**两步：先出草稿，拿到确认码再真发。**
+
+    ⚠️⚠️ 不给「一步发出」的路径。发出去是**不可撤回**的——收件人当场收到企微通知。
+       风险不在技术在语义：「压料机密封圈」既可能是要派给夏锟去办，
+       也可能是问「这东西库存还有没有」。猜错就是凭空给人塞一条任务。
+       所以第一次调用只返回草稿 + `confirm_token`，模型必须把它原样带回来才写库。
+       令牌是 HMAC 且绑内容（见 agent/confirm.py），模型编不出来、也改不了内容。
+    """
+    from . import confirm as _cf
+
+    if not current.has_role("admin", "manager"):
+        return {"error": "只有管理层能下发待办"}
+    t = (title or "").strip()
+    if not t:
+        return {"error": "这条待办是什么事？给个名字就行"}
+    if len(t) > 200:
+        return {"error": "标题太长了（最多 200 字），把细节写进说明里"}
+
+    worker, cands = await _resolve_worker(db, to)
+    if worker is None:
+        if cands:
+            return {"error": f"「{to}」对应到 {len(cands)} 个人，是哪一个？",
+                    "candidates": cands}
+        return {"error": f"系统里没找到叫「{to}」的在职人员，名字对吗？"}
+
+    due = (due_date or "").strip() or None
+    if due:
+        try:
+            date.fromisoformat(due)
+        except (ValueError, TypeError):
+            return {"error": "截止日期要写成 2026-08-20 这种格式"}
+        if (date.fromisoformat(due) - date.today()).days < 0:
+            return {"error": f"{due} 已经过去了，要哪天完成？"}
+
+    payload = {"title": t, "uid": worker.id, "due": due or "",
+               "urgent": bool(urgent), "note": (note or "").strip()}
+    who = worker.full_name or worker.username
+
+    # ── 第一步：只出草稿，不写库 ──
+    if not confirm:
+        return {
+            "draft": True,
+            "worker": who, "title": t,
+            "due_date": due, "urgent": bool(urgent),
+            "note": payload["note"] or None,
+            "confirm_token": _cf.issue("mgmt_todo_send", current.id, payload),
+            "hint": f"确认要发给 {who} 吗？确认后他会收到企微通知。",
+        }
+
+    # ── 第二步：核对确认码再写 ──
+    ok, why = _cf.verify(confirm, "mgmt_todo_send", current.id, payload)
+    if not ok:
+        return {"error": why}
+
+    # ⚠️ 防重发。确认码 10 分钟有效，而 `_run_tool` 的去重只在**本轮**生效——
+    #    下一轮模型拿着同一个码再调一次，就会凭空多出一条一模一样的待办，
+    #    收件人也再收一条通知。同人同事同收件人 10 分钟内已经发过就直接认为是重复。
+    dup = (await db.execute(
+        select(models.ManagementTodo.id)
+        .join(models.ManagementTodoTarget,
+              models.ManagementTodoTarget.todo_id == models.ManagementTodo.id)
+        .where(models.ManagementTodo.created_by == current.id,
+               models.ManagementTodo.title == t,
+               models.ManagementTodoTarget.user_id == worker.id,
+               models.ManagementTodo.created_at
+               >= datetime.now(timezone.utc) - timedelta(minutes=10))
+        .limit(1))).scalar_one_or_none()
+    if dup:
+        return {"sent": False, "duplicate": True, "todo_id": dup,
+                "error": f"刚刚已经把「{t}」发给 {worker.full_name or worker.username} 了"
+                         f"（#{dup}），没有重复发。"}
+
+    todo = models.ManagementTodo(
+        title=t, content=payload["note"] or None,
+        priority="urgent" if urgent else "normal",
+        due_date=due, created_by=current.id)
+    todo.targets = [models.ManagementTodoTarget(user_id=worker.id, status="pending")]
+    db.add(todo)
+    await db.commit()
+    await db.refresh(todo)
+
+    # 文案与 management_todo_router.create_todo 保持一致 —— 收件人不该因为
+    # 「管理层是在电脑上发的还是在手机上发的」收到两种不同的通知
+    from ..notify import push_message
+    from ..utils import write_audit
+    tag = "【紧急】" if todo.priority == "urgent" else "【管理层待办】"
+    due_txt = f"（要求 {due} 前完成）" if due else ""
+    sender = current.full_name or current.username
+    await push_message(
+        db, to_user_id=worker.id, kind="warn",
+        text=f"{tag}{sender} 给你下达待办「{t}」{due_txt}，请尽快回复承诺完成时间。",
+        biz_type="mgmt_todo", biz_id=todo.id)
+    await write_audit(db, user=current, action="create", target_type="management_todo",
+                      target_id=todo.id, detail=f"（智能体）下发待办「{t}」给 {who}")
+    return {"sent": True, "todo_id": todo.id, "worker": who, "title": t,
+            "due_date": due, "urgent": bool(urgent),
+            "hint": f"已发给 {who}，等他回复承诺完成时间。"}
