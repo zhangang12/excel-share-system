@@ -82,6 +82,26 @@ export const CARD_REGISTRY: Record<string, CardDef> = {
     },
   },
 
+  // 🆕 管理层待办·顺延申请。⚠️ ref 是 **target_id**（某人对某条待办的处理行），
+  //    不是 todo_id —— 一条待办发给多人时每人一行，各自独立申请顺延。
+  mgmt_todo_extend: {
+    title: '顺延申请',
+    glyph: '延',
+    actions: {
+      approve: {
+        label: '同意顺延',
+        run: (ref) => http.post(`/management-todos/${ref}/extend/decide`, { approve: true }),
+      },
+      reject: {
+        label: '不同意',
+        danger: true,
+        needsReason: true,
+        run: (ref, reason) => http.post(`/management-todos/${ref}/extend/decide`,
+          { approve: false, note: reason || '' }),
+      },
+    },
+  },
+
   pay_req_approve: {
     title: '请款审批',
     glyph: '￥',

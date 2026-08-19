@@ -21,6 +21,10 @@ CARD_TYPES: dict[str, set[str]] = {
     "ledger_settle": {"settle_ship", "settle_balance"},
     # 🆕 销售订单审批：打 POST /sales/ledger/{id}/order-approve|order-reject
     "sales_order_approve": {"approve", "reject"},
+    # 🆕 管理层待办·顺延申请：打 POST /mgmt-todos/{target_id}/extend/decide
+    #    ⚠️ ref 是 **target_id**（某人对某条待办的处理行），不是 todo_id。
+    #       一条待办发给多个人时每人一行，各自独立申请顺延。
+    "mgmt_todo_extend": {"approve", "reject"},
 }
 
 

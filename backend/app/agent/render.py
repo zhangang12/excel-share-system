@@ -63,6 +63,8 @@ _FIELD_ORDER = [
     ("order_state", "", False, "订单"), ("purchase_pending", "待到货 ", False, "待到货"),
     # ── ⑤ 谁负责（要催人时比日期有用）──
     ("worker", "", False, "负责人"), ("buyer", "", False, "采购员"),
+    # 管理层下发的待办：事项名。刻意不叫 name —— 见 tools_entity.mgmt_todo_watch
+    ("todo", "", False, "事项"),
     ("dept_name", "", False, "部门"),
     # ── ⑥ 具体哪天（最后）──
     ("deliver_date", "交货 ", False, "交货日"),

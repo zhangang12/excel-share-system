@@ -371,6 +371,7 @@ TOOL_LABELS = {
     "sales_summary": "销售额统计",
     "get_supplier": "供应商画像",
     "get_material": "物料全景",
+    "mgmt_todo_watch": "我发的待办",
 }
 
 # 🆕 每个工具一句人话说明：给用户看的（门户小字、能力清单），也给模型当选型依据。
@@ -382,6 +383,7 @@ TOOL_DESC = {
     "sales_summary": "按月看销售额（合同额），本月/上月对比；按签订日期归月",
     "get_supplier": "这家供应商准时率多少、平均拖几天、现在还欠几批货",
     "get_material": "这个物料还有多少库存、低不低于安全线、最近进出了多少",
+    "mgmt_todo_watch": "我发下去的待办谁没回、谁超期、谁申请顺延",
     "morning_report": "把今天要盯的事聚成一条：采购超期、尾款到期、部门逾期、人事到期",
     "po_arrival_overdue": "预计到货日已过、货还没到的采购明细",
     "po_arriving": "未来几天预计能到的料，用来提前安排生产",
@@ -521,6 +523,13 @@ TOOL_SCHEMAS += [
                                    "用户问「采购/物料/还有什么没到」时传 purchase"}),
             "required": ["code"]}}},
     {"type": "function", "function": {
+        "name": "mgmt_todo_watch",
+        "description": "我（管理层）下发的待办现在什么情况：谁还没回复承诺时间、"
+                       "谁承诺了但已经超期、谁申请了顺延等着批。"
+                       "回答「我发的待办怎么样了」「谁还没做完」「有没有人申请顺延」"
+                       "「哪些待办超期了」用它。**只看当前用户自己发的**。",
+        "parameters": {"type": "object", "properties": dict(_LIM_PROP), "required": []}}},
+    {"type": "function", "function": {
         "name": "project_progress",
         "description": "在建项目交期看板：每个项目还剩几天交货、已过期几天、**卡在哪一环**"
                        "（设计/电工/生产/采购未到货/待发货）以及交期风险。"
@@ -588,6 +597,12 @@ def _allowed_tools(user: models.User) -> set[str]:
         out.add("project_status")
         out.add("get_project")
         out.add("project_progress")
+    # 🆕 管理层下发的待办：只有能发的人才有得看。
+    #    ⚠️ 用角色判而不是菜单键——这个功能没有独立菜单键，
+    #       而它的端点（/api/management-todos/sent）就是 require_admin_or_manager。
+    #       工具的门必须和端点的门一致，否则模型调得到、接口拒绝，白跑一轮还报错。
+    if user.has_role("admin", "manager"):
+        out.add("mgmt_todo_watch")
     # 🆕 v2：找实体是所有纵深查询的入口，任何能查数的人都该有
     if out:
         out.add("find_entity")
@@ -676,6 +691,8 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
                                                 detail=args.get("detail") or "blockers"),
         "sales_summary": lambda: _te.sales_summary(
             db, current, months=int(args.get("months") or 6)),
+        "mgmt_todo_watch": lambda: _te.mgmt_todo_watch(
+            db, current, limit=int(args.get("limit") or 30)),
         "project_progress": lambda: _te.project_progress(
             db, current, within_days=args.get("within_days"),
             limit=int(args.get("limit") or 200)),
