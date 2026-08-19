@@ -985,18 +985,18 @@ async def _resolve_worker(db: AsyncSession, name: str) -> tuple[models.User | No
 
 async def mgmt_todo_send(db: AsyncSession, current: models.User, *,
                          title: str, to: str, due_date: str | None = None,
-                         urgent: bool = False, note: str | None = None,
-                         confirm: str | None = None) -> dict:
-    """下发一条待办。**两步：先出草稿，拿到确认码再真发。**
+                         urgent: bool = False, note: str | None = None) -> dict:
+    """拟一条待办草稿。**这个工具永远只拟，不发。**
 
-    ⚠️⚠️ 不给「一步发出」的路径。发出去是**不可撤回**的——收件人当场收到企微通知。
-       风险不在技术在语义：「压料机密封圈」既可能是要派给夏锟去办，
-       也可能是问「这东西库存还有没有」。猜错就是凭空给人塞一条任务。
-       所以第一次调用只返回草稿 + `confirm_token`，模型必须把它原样带回来才写库。
-       令牌是 HMAC 且绑内容（见 agent/confirm.py），模型编不出来、也改不了内容。
+    ⚠️⚠️ 没有 `confirm` 参数，也不该有。2026-08-19 第一版做成「工具返回一个
+       确认码、下一轮让模型带回来」——**当场死循环**：用户点了两次「确认」，
+       每次都只是重新拟一份草稿，一条都没发出去。
+       根因是**工具结果不进跨轮 history**（前端只回传 user/assistant 的文本），
+       模型下一轮根本看不见那个码。
+
+    改法：草稿落库（`AgentDraft`），前端渲染成卡片，**用户点按钮**才打业务端点写。
+    模型不在写的链路里 —— 和请款审批、销售订单审批是同一条路。
     """
-    from . import confirm as _cf
-
     if not current.has_role("admin", "manager"):
         return {"error": "只有管理层能下发待办"}
     t = (title or "").strip()
@@ -1015,72 +1015,37 @@ async def mgmt_todo_send(db: AsyncSession, current: models.User, *,
     due = (due_date or "").strip() or None
     if due:
         try:
-            date.fromisoformat(due)
+            if (date.fromisoformat(due) - date.today()).days < 0:
+                return {"error": f"{due} 已经过去了，要哪天完成？"}
         except (ValueError, TypeError):
             return {"error": "截止日期要写成 2026-08-20 这种格式"}
-        if (date.fromisoformat(due) - date.today()).days < 0:
-            return {"error": f"{due} 已经过去了，要哪天完成？"}
 
-    payload = {"title": t, "uid": worker.id, "due": due or "",
-               "urgent": bool(urgent), "note": (note or "").strip()}
     who = worker.full_name or worker.username
+    # ⚠️ 同一个人同一件事重复拟：把旧草稿作废，只留最新一份。
+    #    否则卡片列表里会堆出好几张一模一样的「确认发出」，点哪张都行——
+    #    点两张就发两条。
+    for old in (await db.execute(
+            select(models.AgentDraft).where(
+                models.AgentDraft.user_id == current.id,
+                models.AgentDraft.action == "mgmt_todo_send",
+                models.AgentDraft.used_at.is_(None)))).scalars().all():
+        if (old.payload or {}).get("uid") == worker.id and \
+                (old.payload or {}).get("title") == t:
+            await db.delete(old)
 
-    # ── 第一步：只出草稿，不写库 ──
-    if not confirm:
-        return {
-            "draft": True,
-            "worker": who, "title": t,
-            "due_date": due, "urgent": bool(urgent),
-            "note": payload["note"] or None,
-            "confirm_token": _cf.issue("mgmt_todo_send", current.id, payload),
-            "hint": f"确认要发给 {who} 吗？确认后他会收到企微通知。",
-        }
-
-    # ── 第二步：核对确认码再写 ──
-    ok, why = _cf.verify(confirm, "mgmt_todo_send", current.id, payload)
-    if not ok:
-        return {"error": why}
-
-    # ⚠️ 防重发。确认码 10 分钟有效，而 `_run_tool` 的去重只在**本轮**生效——
-    #    下一轮模型拿着同一个码再调一次，就会凭空多出一条一模一样的待办，
-    #    收件人也再收一条通知。同人同事同收件人 10 分钟内已经发过就直接认为是重复。
-    dup = (await db.execute(
-        select(models.ManagementTodo.id)
-        .join(models.ManagementTodoTarget,
-              models.ManagementTodoTarget.todo_id == models.ManagementTodo.id)
-        .where(models.ManagementTodo.created_by == current.id,
-               models.ManagementTodo.title == t,
-               models.ManagementTodoTarget.user_id == worker.id,
-               models.ManagementTodo.created_at
-               >= datetime.now(timezone.utc) - timedelta(minutes=10))
-        .limit(1))).scalar_one_or_none()
-    if dup:
-        return {"sent": False, "duplicate": True, "todo_id": dup,
-                "error": f"刚刚已经把「{t}」发给 {worker.full_name or worker.username} 了"
-                         f"（#{dup}），没有重复发。"}
-
-    todo = models.ManagementTodo(
-        title=t, content=payload["note"] or None,
-        priority="urgent" if urgent else "normal",
-        due_date=due, created_by=current.id)
-    todo.targets = [models.ManagementTodoTarget(user_id=worker.id, status="pending")]
-    db.add(todo)
+    draft = models.AgentDraft(
+        user_id=current.id, action="mgmt_todo_send",
+        payload={"title": t, "uid": worker.id, "worker": who,
+                 "due": due or "", "urgent": bool(urgent),
+                 "note": (note or "").strip()})
+    db.add(draft)
     await db.commit()
-    await db.refresh(todo)
-
-    # 文案与 management_todo_router.create_todo 保持一致 —— 收件人不该因为
-    # 「管理层是在电脑上发的还是在手机上发的」收到两种不同的通知
-    from ..notify import push_message
-    from ..utils import write_audit
-    tag = "【紧急】" if todo.priority == "urgent" else "【管理层待办】"
-    due_txt = f"（要求 {due} 前完成）" if due else ""
-    sender = current.full_name or current.username
-    await push_message(
-        db, to_user_id=worker.id, kind="warn",
-        text=f"{tag}{sender} 给你下达待办「{t}」{due_txt}，请尽快回复承诺完成时间。",
-        biz_type="mgmt_todo", biz_id=todo.id)
-    await write_audit(db, user=current, action="create", target_type="management_todo",
-                      target_id=todo.id, detail=f"（智能体）下发待办「{t}」给 {who}")
-    return {"sent": True, "todo_id": todo.id, "worker": who, "title": t,
-            "due_date": due, "urgent": bool(urgent),
-            "hint": f"已发给 {who}，等他回复承诺完成时间。"}
+    await db.refresh(draft)
+    return {
+        "draft": True, "draft_id": draft.id,
+        "worker": who, "title": t, "due_date": due, "urgent": bool(urgent),
+        "note": (note or "").strip() or None,
+        # 给模型看的：别再自己想办法「确认」，卡片上有按钮
+        "hint": f"草稿已拟好，发给 {who}。**下面卡片上点「确认发出」才会真发**，"
+                f"你不要再调用任何工具去发。",
+    }

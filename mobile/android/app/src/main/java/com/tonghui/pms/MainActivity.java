@@ -10,8 +10,13 @@ import android.webkit.URLUtil;
 import android.webkit.WebView;
 import android.widget.Toast;
 
+import android.view.View;
+
 import androidx.activity.OnBackPressedCallback;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.PluginHandle;
@@ -55,9 +60,37 @@ public class MainActivity extends BridgeActivity {
         // WebView 拿到的 env(safe-area-inset-*) 全是 0 —— H5 里那套安全区适配等于白写。
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
 
+        setupImeInsets();
         setupDownloads();
         setupBackButton();
         armTrialTimeout();
+    }
+
+    /**
+     * 输入法弹出时把页面顶上来。
+     *
+     * ⚠️ 上面那句 `setDecorFitsSystemWindows(false)` **会让清单里的
+     *    `adjustResize` 失效** —— 沉浸式模式下窗口不再为输入法缩小，
+     *    系统认为「你自己处理 insets」。于是键盘、尤其是中文输入法的
+     *    **候选条**，直接盖在页面底部的输入框上：用户在打拼音，
+     *    却看不见自己打的是什么（2026-08-19 实测反馈）。
+     *
+     * ⚠️ 用 `Type.ime()` 而不是 `systemBars()`：ime() 给的是**整个输入法窗口**
+     *    的高度，候选条算在里面；只看键盘高度会短一截，正好差那条候选栏。
+     *
+     * ⚠️ 还要减掉 `navigationBars()`：导航栏那块 H5 已经用
+     *    `env(safe-area-inset-bottom)` 垫过了，不减就会多垫一次。
+     */
+    private void setupImeInsets() {
+        final View content = getWindow().getDecorView().findViewById(android.R.id.content);
+        if (content == null) return;
+        ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
+            Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
+            Insets nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars());
+            int bottom = Math.max(0, ime.bottom - nav.bottom);
+            v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), bottom);
+            return insets;
+        });
     }
 
     /** 前端报平安。撤掉超时，顺便查一次更新（这时首屏已经出来，不跟它抢带宽）。 */

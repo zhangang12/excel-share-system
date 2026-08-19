@@ -82,6 +82,19 @@ export const CARD_REGISTRY: Record<string, CardDef> = {
     },
   },
 
+  // 🆕 下发待办·草稿确认。⚠️ ref 是**草稿 id**（agent_drafts.id），不是待办 id ——
+  //    点这一下之前，待办还不存在。模型只能拟草稿，发不发由这一下决定。
+  mgmt_todo_send: {
+    title: '确认发出',
+    glyph: '派',
+    actions: {
+      send: {
+        label: '确认发出',
+        run: (ref) => http.post(`/agent/drafts/${ref}/send`, {}),
+      },
+    },
+  },
+
   // 🆕 管理层待办·顺延申请。⚠️ ref 是 **target_id**（某人对某条待办的处理行），
   //    不是 todo_id —— 一条待办发给多人时每人一行，各自独立申请顺延。
   mgmt_todo_extend: {
