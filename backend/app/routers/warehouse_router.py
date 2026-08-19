@@ -78,7 +78,7 @@ async def _category_path_map(db: AsyncSession) -> dict[int, str]:
 def _mat_out(m: models.WhMaterial, stock: float, cat_path: Optional[str] = None,
              proj: Optional[tuple] = None, is_proj_mat: bool = False) -> schemas.WhMaterialOut:
     up = m.unit_price
-    pid, pcode = proj if proj else (None, None)
+    pid, pcode, pcodes = proj if proj else (None, None, [])
     return schemas.WhMaterialOut(
         id=m.id, code=m.code, category_id=m.category_id, category_path=cat_path,
         name=m.name, spec=m.spec, category=m.category,
@@ -88,15 +88,22 @@ def _mat_out(m: models.WhMaterial, stock: float, cat_path: Optional[str] = None,
         stock_value=round(stock * up, 2) if up is not None else None,  # 🆕 需求三：库存总价
         low=stock < (m.safety_stock or 0),
         custom_values=m.custom_values or {},
-        project_id=pid, project_code=pcode,   # 🆕 出库反显关联项目
+        project_id=pid, project_code=pcode,   # 🆕 出库反显关联项目（只在单一项目时给）
+        project_codes=pcodes,                 # 🆕 全部项目编号：出库下拉据此标出"这是别人项目的料"
         is_project_material=is_proj_mat,      # 🆕 #373/#374 项目物料不进库存总览/库存金额
     )
 
 
 async def _material_projects(db: AsyncSession, material_ids: Optional[list[int]]) -> dict[int, tuple]:
-    """🆕 出库反显：物料的关联项目(取入库流水的 project_id)。
-    仅当该物料的所有入库(非冲红)都指向**同一个**项目时才反显该项目——
-    多项目/无项目入库的物料不反显,走现有手填逻辑。返回 {material_id: (project_id, project_code)}。
+    """物料关联了哪些项目（取挂项目的入库流水）。返回 {material_id: (project_id, project_code, [全部编号])}。
+
+    两个用途，别搞混：
+      · **出库反显**（前两项）：只有"所有入库都指向同一个项目"时才给 project_id/project_code，
+        多项目的给 None——反显要么准要么别反显，猜一个填进去比不填更糟。
+      · **出库下拉的标识**（第三项）：把**全部**项目编号都带上。
+        🆕 反馈 2026-08-19：出库下拉里项目料本来带【项目编号】，但只有单一项目的才显示；
+        生产上 399 个有货的项目料里 **135 个是多项目收过货的**，一个标签都没有，
+        跟公司备货长得一模一样——仓库看不出这是别人项目上的料。
 
     material_ids=None 表示**全部物料**（不拼 IN，见 list_materials 的说明）；
     传空列表则是"一个都不要"，直接返回空。"""
@@ -112,13 +119,21 @@ async def _material_projects(db: AsyncSession, material_ids: Optional[list[int]]
     by_mat: dict[int, set] = {}
     for mid, pid in rows:
         by_mat.setdefault(mid, set()).add(pid)
-    single = {mid: next(iter(pids)) for mid, pids in by_mat.items() if len(pids) == 1}
-    if not single:
+    if not by_mat:
         return {}
+    all_pids = {p for pids in by_mat.values() for p in pids}
     pr = (await db.execute(select(models.Project.id, models.Project.code)
-          .where(models.Project.id.in_(set(single.values()))))).all()
+          .where(models.Project.id.in_(all_pids)))).all()
     code_by_pid = {i: c for i, c in pr}
-    return {mid: (pid, code_by_pid.get(pid)) for mid, pid in single.items()}
+    out: dict[int, tuple] = {}
+    for mid, pids in by_mat.items():
+        codes = sorted(c for c in (code_by_pid.get(p) for p in pids) if c)
+        if len(pids) == 1:
+            pid = next(iter(pids))
+            out[mid] = (pid, code_by_pid.get(pid), codes)
+        else:
+            out[mid] = (None, None, codes)   # 多项目：不反显，但编号全带上供标识用
+    return out
 
 
 # ==================== 物料主数据 ====================

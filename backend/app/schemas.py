@@ -500,6 +500,10 @@ class WhMaterialOut(BaseModel):
     # 🆕 出库反显：物料按项目入库时的关联项目(入库流水唯一项目才反显)
     project_id: Optional[int] = None
     project_code: Optional[str] = None
+    # 🆕 2026-08-19：这个料被哪些项目收过货（全部编号）。出库下拉靠它标出「这是别人项目的料」——
+    #   只靠上面那个 project_code 的话，多项目收过货的（生产上 399 个有货项目料里占 135 个）
+    #   一个标签都没有，跟公司备货长得一模一样。
+    project_codes: list[str] = Field(default_factory=list)
     # 🆕 #373/#374：有过挂项目编号的入库 = 项目物料，不进「库存总览」「库存金额」，
     #   它的钱已经在收货那一刻算进项目材料成本了（判据见 _project_material_ids）
     is_project_material: bool = False

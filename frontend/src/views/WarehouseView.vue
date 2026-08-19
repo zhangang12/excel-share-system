@@ -214,7 +214,25 @@ async function submitIo() {
     await Promise.all([loadMaterials(), loadMatList(), loadTxns()])
   } catch { /* 超量等错误由拦截器提示 */ } finally { ioSubmitting.value = false }
 }
-function matLabel(m: WhMaterial) { return `${m.name}${m.spec ? '·' + m.spec : ''}（现存 ${m.stock}）${m.project_code ? ' 【' + m.project_code + '】' : ''}` }
+// 出库下拉的每一行。⚠️ **项目料必须一眼看得出来**：它是买给某个项目的，
+//   仓库拿它去出给别的项目/别的用途之前，起码得知道自己在动谁的料。
+//   原来只有"只挂过一个项目"的才显示编号——生产上 399 个有货的项目料里
+//   有 135 个是多项目收过货的，一个标签都没有，跟公司备货长得一模一样。
+function matProjTag(m: WhMaterial): string {
+  if (!m.is_project_material) return ''
+  if (m.project_code) return `【${m.project_code}】`
+  const n = (m.project_codes || []).length
+  return n > 1 ? `【项目料·${n} 个项目】` : '【项目料】'
+}
+function matLabel(m: WhMaterial) {
+  return `${m.name}${m.spec ? '·' + m.spec : ''}（现存 ${m.stock}）${matProjTag(m) ? ' ' + matProjTag(m) : ''}`
+}
+// 鼠标移上去看具体是哪几个项目（多项目时标签只写个数，写全了一行放不下）
+function matProjTitle(m: WhMaterial): string {
+  const cs = m.project_codes || []
+  if (!cs.length) return ''
+  return cs.length === 1 ? `收货时挂的项目：${cs[0]}` : `这个料被这些项目收过货：${cs.join('、')}`
+}
 
 // ===== 流水 =====
 const txns = ref<WhTxn[]>([])
@@ -1971,7 +1989,9 @@ function applyPoPick() {
         <el-form-item v-if="ioForm.direction === 'out'" label="物料（逐行选择，数量填在行内；一次提交每行各生成一张出库单）" required>
           <div v-for="(ln, i) in ioLines" :key="i" style="display:flex;gap:8px;width:100%;margin-bottom:8px">
             <el-select v-model="ln.material_id" filterable placeholder="选择物料" style="flex:1">
-              <el-option v-for="m in materials" :key="m.id" :label="matLabel(m)" :value="m.id" />
+              <el-option v-for="m in materials" :key="m.id" :label="matLabel(m)" :value="m.id">
+                <span :title="matProjTitle(m)">{{ matLabel(m) }}</span>
+              </el-option>
             </el-select>
             <el-input-number v-model="ln.qty" :min="1" :controls="false" placeholder="数量" style="width:110px" />
             <el-button :icon="Delete" circle plain type="danger" :disabled="ioLines.length <= 1" @click="removeIoLine(i)" />
@@ -1983,7 +2003,9 @@ function applyPoPick() {
         </el-form-item>
         <el-form-item v-else label="物料" required>
           <el-select v-model="ioForm.material_id" filterable placeholder="选择物料" style="width:100%">
-            <el-option v-for="m in materials" :key="m.id" :label="matLabel(m)" :value="m.id" />
+            <el-option v-for="m in materials" :key="m.id" :label="matLabel(m)" :value="m.id">
+              <span :title="matProjTitle(m)">{{ matLabel(m) }}</span>
+            </el-option>
           </el-select>
         </el-form-item>
         <div class="frow">
