@@ -192,6 +192,7 @@ interface PaymentRequestOut {
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
   po_nos?: string[]
   project_codes?: string[]   // 🆕 后端 _pr_out 一直在下发，只是前端没声明；#406 搜索要用
+  can_cancel?: boolean       // 🆕 #405 能不能自助撤销（=待审 且 本人发起），后端算好下发
   items: Array<{ item_id: number; item_name: string; allocated_amount: number; po_no?: string | null; spec?: string | null; project_code?: string | null; received_amount?: number }>
 }
 interface PurchaseKPI { month_amount: number; quarter_amount: number; year_amount: number; total_outstanding: number; pending_requests: number }
@@ -1958,6 +1959,30 @@ async function resubmitPayReq(row: PaymentRequestOut) {
   } finally { resubmittingId.value = null }
 }
 
+// 🆕 反馈#405（李新新）：「已经请款了，但是又临时不买了」——自己把还没人审的请款撤掉，
+//   不用再去求审批人驳回。只有待审 + 本人发起的才有这个按钮（后端下发 can_cancel）。
+const cancellingId = ref<number | null>(null)
+async function selfCancelPayReq(row: PaymentRequestOut) {
+  try {
+    await ElMessageBox.confirm(
+      `确认撤销这笔请款？\n供应商：${row.supplier_name}　金额：${fmtMoney(row.requested_amount)}\n\n` +
+      '撤销后这张请款单会被删除，关联的采购明细回到「未付款」——' +
+      '需要的话可以重新发起请款，不买了也可以直接把采购明细删掉。',
+      '撤销请款', { type: 'warning', confirmButtonText: '确认撤销', confirmButtonClass: 'el-button--warning' },
+    )
+  } catch { return }
+  cancellingId.value = row.id
+  try {
+    const r: any = await http.delete(`/purchase-mgmt/payment-requests/${row.id}/self-cancel`)
+    ElMessage.success(r?.data?.message || '已撤销')
+  } finally {
+    cancellingId.value = null
+    // ⚠️ 成功失败都要刷。失败多半是"财务刚好批了"——不刷的话她看到的还是那个撤销按钮，
+    //    再点还是报错，只会以为系统坏了。（本文件 resubmitPayReq 就是只在成功时刷，别照抄。）
+    await loadPayReqs()
+  }
+}
+
 // 🆕 #167 采购申请处理（仓库提 → 采购部处理/驳回）
 interface IncomingReq { id: number; status: string; notes?: string | null; created_at: string
   need_date?: string | null; need_days?: number | null   // 🆕 #401 需求时间（need_days 后端算好，负=已过期）
@@ -2716,6 +2741,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <template #default="{ row }">
                 <el-button v-if="row.status === 'rejected'" size="small" type="primary" plain
                            :loading="resubmittingId === row.id" @click="resubmitPayReq(row)">重新提交</el-button>
+                <!-- 🆕 #405 自助撤销。显隐用后端下发的 can_cancel，不在前端另写一遍判据 -->
+                <el-button v-else-if="row.can_cancel" size="small" type="warning" plain
+                           :loading="cancellingId === row.id" @click="selfCancelPayReq(row)">撤销</el-button>
                 <span v-else class="muted small">—</span>
               </template>
             </el-table-column>

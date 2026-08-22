@@ -2554,7 +2554,22 @@ async def export_supplier_statement(
 
 # ==================== 请款流程 ====================
 
-async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
+def _can_self_cancel(pr: models.PaymentRequest, current: Optional[models.User]) -> bool:
+    """能不能自助撤销。**端点和前端按钮共用这一个判据**，两边各写一份迟早漂移。
+
+    只认两条，刻意最小：
+      · 只有**待审**能撤——已批意味着财务已经答应付这笔钱，撤它要动资金口径，
+        而且系统里唯一那道防重复付款闸门（#177）正是靠 pending/approved 挡着；
+        已付更不用说，钱出去了。这两种仍旧走财务（withdraw-approval / 财务删除）。
+      · 只有**发起人本人**能撤。不按"关联明细都是我的"来判：主管可以引用别人的明细建单，
+        那样算的话下级就能撤掉主管发起、财务已经批过的单；空明细单还会让集合判空退化成放行。
+        生产实测 92 张单的 requester 与明细采购员 100% 一致，用 requester_id 足够且没有歧义。
+    """
+    return bool(current) and pr.status == "pending" and pr.requester_id == current.id
+
+
+async def _pr_out(db: AsyncSession, pr_id: int,
+                  current: Optional[models.User] = None) -> schemas.PaymentRequestOut:
     r = await db.execute(select(models.PaymentRequest).where(models.PaymentRequest.id == pr_id))
     pr = r.scalar_one()
     ri = await db.execute(
@@ -2622,6 +2637,7 @@ async def _pr_out(db: AsyncSession, pr_id: int) -> schemas.PaymentRequestOut:
         project_codes=project_codes,
         earliest_due=earliest_due, due_in_days=due_in_days,
         created_at=pr.created_at,
+        can_cancel=_can_self_cancel(pr, current),   # 🆕 自助撤销：与 /self-cancel 端点同一判据
         items=item_rows,
     )
 
@@ -2681,7 +2697,7 @@ async def create_payment_request(
                        text=f"【请款待审批】{_uname(current)} 发起请款 ¥{body.requested_amount:.2f}（供应商：{sup_name}），请及时审批。",
                        biz_type="payment_request", biz_id=pr.id,
                        exclude_user_ids={current.id})
-    return await _pr_out(db, pr.id)
+    return await _pr_out(db, pr.id, current)
 
 
 @router.get("/payment-requests", response_model=List[schemas.PaymentRequestOut])
@@ -2709,7 +2725,7 @@ async def list_payment_requests(
         )
         stmt = stmt.where(models.PaymentRequest.id.in_(mine))
     r = await db.execute(stmt)
-    return [await _pr_out(db, pr.id) for pr in r.scalars().all()]
+    return [await _pr_out(db, pr.id, current) for pr in r.scalars().all()]
 
 
 @router.put("/payment-requests/{prid}/approve")
@@ -2862,6 +2878,80 @@ async def resubmit_payment_request(
     await write_audit(db, user=current, action="payment_request_resubmit",
                       target_type="payment_request", target_id=prid)
     return {"ok": True}
+
+
+@router.delete("/payment-requests/{prid}/self-cancel", response_model=schemas.Msg)
+async def self_cancel_payment_request(
+    prid: int,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#405（李新新）：「已经请款了，但是又临时不买了，需要审批人驳回，
+    如果我们申请的有个撤销功能，就再方便不过了」——发起人自己把**还没人审**的请款单撤掉。
+
+    **为什么是物理删除而不是加一个 cancelled 状态**：她说的"临时不买了"意味着那条采购明细
+    通常也要跟着删。而 `delete_item`(见本文件「删除采购明细」) 的校验是**数关联行、不看状态**，
+    留一个软状态的话关联行还在 → 她撤完照样删不掉明细，报错还把她指回请款记录，死循环，
+    比现在求财务硬删更糟。删掉关联行，明细自然回到「未付款」，#177 防重复请款也自动放行。
+    代价是列表里不留痕，只有审计日志记着——与财务现在的删除口径一致，先按最小改动做。
+
+    ⚠️ **只允许待审**。已批意味着财务已经答应付这笔钱：撤它会动 13 周资金排程，
+    还会捅穿 #177 这道系统里唯一的防重复付款闸门（撤掉重提 = 同一批明细可能付两次），
+    更别提出纳可能已经在网银上操作了。已批/已付仍旧走财务（withdraw-approval / 财务删除）。
+
+    ⚠️ **并发**：生产跑 4 个 worker，全后端没有一处行锁。财务点「通过」和她点「撤销」
+    可能同时发生，"先查状态再删"这种写法会把一张**已被批准**的单删掉。所以真正的闸门是
+    下面那条 `DELETE ... WHERE id AND status='pending'` + rowcount 判定：
+    审批先落库的话这条删除就匹配 0 行，她收到的是「已被审批」而不是单子凭空消失。
+    前面那次 SELECT 只用来生成人话报错，不承担校验职责。
+    """
+    pr = (await db.execute(select(models.PaymentRequest).where(
+        models.PaymentRequest.id == prid))).scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "请款单不存在")
+    if pr.requester_id != current.id:
+        raise HTTPException(403, "只能撤销自己发起的请款单")
+    if pr.status != "pending":
+        raise HTTPException(400, {
+            "approved": "这张单财务已经批准，撤销请联系财务（他们可以撤回审批）",
+            "paid": "这张单已经付款，不能撤销",
+            "rejected": "这张单已被驳回，无需撤销",
+        }.get(pr.status, f"当前状态（{pr.status}）不能撤销"))
+
+    sup_name = (await db.execute(select(models.Supplier.name).where(
+        models.Supplier.id == pr.supplier_id))).scalar_one_or_none() or "—"
+    amount = pr.requested_amount or 0
+    n_items = (await db.execute(select(func.count(models.PaymentRequestItem.id)).where(
+        models.PaymentRequestItem.request_id == prid))).scalar() or 0
+
+    # ⚠️ 真正的校验在这里：带 status 条件的删除 + rowcount。
+    #    审批若在这一刻之前落了库，这条就匹配 0 行 —— 宁可让她重试，也不能删掉已批的单。
+    res = await db.execute(delete(models.PaymentRequest).where(
+        models.PaymentRequest.id == prid,
+        models.PaymentRequest.status == "pending"))
+    if res.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(409, "这张单的状态刚刚变了（可能财务正在审批），请刷新后再看")
+    # 关联行显式删：Postgres 上父行删除会级联，但 SQLite 默认不强制外键，
+    # 留下孤儿行的话 delete_item 那个「数关联行」的校验会把明细永久锁死。
+    await db.execute(delete(models.PaymentRequestItem).where(
+        models.PaymentRequestItem.request_id == prid))
+    await db.commit()
+
+    # 建单时给财务主管推过「请款待审批」，而系统没有消息撤回机制——不补一条，
+    # 财务点进那条通知只会看到一张已经不存在的单。推给 finance（会扇出到 finance_lead），
+    # 出纳和审批人一起覆盖到。
+    await push_message(db, to_role="finance", kind="info",
+                       text=f"【请款已撤销】{_uname(current)} 撤回了自己发起的请款 "
+                            f"¥{amount:.2f}（供应商：{sup_name}），无需再审批。",
+                       biz_type="payment_request", biz_id=prid,
+                       exclude_user_ids={current.id})
+    # 单子物理删掉之后，审计是唯一还留着"这笔钱曾经被请过又撤了"的地方，写全一点
+    await write_audit(db, user=current, action="payment_request_self_cancel",
+                      target_type="payment_request", target_id=prid,
+                      detail=f"发起人自助撤销待审请款单：供应商={sup_name} 金额=¥{amount:.2f} "
+                             f"关联明细={n_items} 条")
+    return {"message": f"已撤销这笔请款（¥{amount:.2f}），关联的 {n_items} 条采购明细已回到「未付款」"}
 
 
 @router.put("/payment-requests/{prid}/pay")

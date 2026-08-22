@@ -1692,6 +1692,9 @@ class PaymentRequestOut(BaseModel):
     po_nos: list[str] = Field(default_factory=list)
     # 🆕 反馈#298：请款单关联采购明细的项目编号（去重排序；财务请款审批列表「项目编号」列用）
     project_codes: list[str] = Field(default_factory=list)
+    # 🆕 自助撤销：能不能由当前用户撤（=待审 且 本人发起）。纯出参，由 _can_self_cancel 算，
+    #   前端按钮显隐直接用它——判据写两份必然漂移。财务侧不传 current，恒 False。
+    can_cancel: bool = False
     # 🆕 盈利改善2·应付账期利用：最早到期日=min(到货日)+供应商账期天数;距到期天数(负=已逾期)。
     #   供应商未维护 credit_days 或明细未到货时为 None。
     earliest_due: Optional[str] = None
