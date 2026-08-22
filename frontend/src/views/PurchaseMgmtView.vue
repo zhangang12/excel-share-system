@@ -191,6 +191,7 @@ interface PaymentRequestOut {
   pay_voucher_file_id?: number | null; pay_voucher_name?: string | null   // 🆕 #276 付款凭证（申请人可看/下载）
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
   po_nos?: string[]
+  project_codes?: string[]   // 🆕 后端 _pr_out 一直在下发，只是前端没声明；#406 搜索要用
   items: Array<{ item_id: number; item_name: string; allocated_amount: number; po_no?: string | null; spec?: string | null; project_code?: string | null; received_amount?: number }>
 }
 interface PurchaseKPI { month_amount: number; quarter_amount: number; year_amount: number; total_outstanding: number; pending_requests: number }
@@ -1918,6 +1919,15 @@ function stmtSummary() {
 const payReqs = ref<PaymentRequestOut[]>([])
 const prLoading = ref(false)
 const prStatusFilter = ref('')   // #165：改成显示条(客户端筛选),'' = 全部
+// 🆕 反馈#406（王芹）：「我想看俊帆的请款记录直接搜索俊帆下面就会显示俊帆的请款记录」。
+//   本地过滤，**不下沉后端**：payReqs 同时供着四个页签的计数和表格，
+//   把 keyword 塞进请求会让计数静默变成"搜索结果内计数"——就是 #404 那个形态。
+//   字段口径照抄财务侧 FinanceView 的 paySearch（#300 已实现），两边行为一致。
+const prKeyword = ref('')
+// ⚠️ 一开始搜索就跳回「全部」。prStatusFilter 是普通 ref，会停在上次选的页签上；
+//    搜出来的结果如果恰好不在那个状态里，表格就是空的——用户只会以为"搜索坏了/记录没了"，
+//    而不会想到是几天前自己点过「已批」。生产实况：待审/已驳长期为 0，踩中的概率很高。
+watch(prKeyword, (v) => { if (v.trim()) prStatusFilter.value = '' })
 async function loadPayReqs() {
   prLoading.value = true
   try {
@@ -2026,13 +2036,29 @@ async function viewPreqPdf(prid: number) {
 function preqStatusTag(s: string): 'warning' | 'success' | 'danger' | 'info' {
   return s === 'done' ? 'success' : s === 'rejected' ? 'danger' : 'warning'
 }
+// #406：关键字先收窄，状态页签在其上叠加。
+//   计数**跟着关键字一起收窄**是刻意的——否则搜「俊帆」会看到「已付 (89)」但表格只有 11 行，
+//   那才是真正的对不上。#404 的教训是"不能静默"，所以旁边显示「命中 X / 全部 N」。
+const kwPayReqs = computed(() => {
+  const kw = prKeyword.value.trim().toLowerCase()
+  if (!kw) return payReqs.value
+  return payReqs.value.filter(r =>
+    String(r.id).includes(kw)
+    || (r.supplier_name || '').toLowerCase().includes(kw)
+    || (r.requester_name || '').toLowerCase().includes(kw)
+    || (r.project_codes || []).join(' ').toLowerCase().includes(kw)
+    || (r.po_nos || []).join(' ').toLowerCase().includes(kw)
+    || String(r.requested_amount ?? '').includes(kw)
+    || String(r.paid_amount ?? '').includes(kw)
+    || (r.notes || '').toLowerCase().includes(kw))
+})
 const prCounts = computed(() => {
-  const c: Record<string, number> = { '': payReqs.value.length, pending: 0, approved: 0, paid: 0, rejected: 0 }
-  for (const r of payReqs.value) c[r.status] = (c[r.status] || 0) + 1
+  const c: Record<string, number> = { '': kwPayReqs.value.length, pending: 0, approved: 0, paid: 0, rejected: 0 }
+  for (const r of kwPayReqs.value) c[r.status] = (c[r.status] || 0) + 1
   return c
 })
 const filteredPayReqs = computed(() =>
-  prStatusFilter.value ? payReqs.value.filter(r => r.status === prStatusFilter.value) : payReqs.value)
+  prStatusFilter.value ? kwPayReqs.value.filter(r => r.status === prStatusFilter.value) : kwPayReqs.value)
 
 // 🆕 报表小表合计
 function trendSummary() {
@@ -2634,10 +2660,19 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-radio-button value="paid">已付 ({{ prCounts.paid }})</el-radio-button>
               <el-radio-button value="rejected">已驳 ({{ prCounts.rejected }})</el-radio-button>
             </el-radio-group>
+            <!-- 🆕 #406（王芹）：搜供应商就能只看那家的请款记录 -->
+            <el-input v-model="prKeyword" placeholder="搜供应商/采购单号/项目编号/备注/金额"
+                      clearable size="small" style="width:280px" />
             <el-tooltip content="刷新" placement="top">
               <el-button :icon="Refresh" @click="loadPayReqs" />
             </el-tooltip>
-            <span class="muted">发起请款后在这里跟进财务审批进度，被驳回会显示原因；点行首箭头看关联明细</span>
+            <el-tooltip placement="top">
+              <template #content>发起请款后在这里跟进财务审批进度<br/>被驳回会显示原因；点行首箭头看关联明细</template>
+              <el-icon class="muted" style="cursor:help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+            <span v-if="prKeyword.trim()" class="muted small">
+              命中 {{ kwPayReqs.length }} / 全部 {{ payReqs.length }}（页签上的数也是命中范围内的）
+            </span>
           </div>
           <el-table show-overflow-tooltip :data="filteredPayReqs" stripe v-loading="prLoading"
                     max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="compact-tbl">
@@ -2705,7 +2740,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column prop="notes" label="备注" min-width="110">
               <template #default="{ row }">{{ row.notes || '—' }}</template>
             </el-table-column>
-            <template #empty><EmptyHint text="暂无请款记录：在采购明细勾选行后点「发起请款」" size="sm" /></template>
+            <!-- 搜不到时别再教人「怎么发起请款」——她要的是"我搜的东西哪去了"的答案 -->
+            <template #empty>
+              <EmptyHint v-if="prKeyword.trim()" size="sm"
+                         :text="`没有匹配「${prKeyword.trim()}」的请款记录，换个词试试（可搜供应商/采购单号/项目编号/备注）`" />
+              <EmptyHint v-else text="暂无请款记录：在采购明细勾选行后点「发起请款」" size="sm" />
+            </template>
           </el-table>
         </el-tab-pane>
 
