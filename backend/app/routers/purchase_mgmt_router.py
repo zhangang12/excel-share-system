@@ -2344,10 +2344,30 @@ async def set_invoice_no(
     # #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（前端也拦，这里兜底）
     if len({i.supplier_id for i in items}) > 1:
         raise HTTPException(400, "跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商）")
-    # #2：未收货(收货金额<=0)的零件不能参与合并开票——必须先全部收货
-    unrecv = [i for i in items if not (i.received_amount and i.received_amount > 0)]
-    if unrecv:
-        raise HTTPException(400, f"有 {len(unrecv)} 项尚未收货（收货金额为0），请先全部收货后再合并开票")
+    # #2：收货金额为 0 的零件不能参与合并开票（发票总额必须 = Σ收货金额）。
+    # 🆕 反馈#407：老文案说「尚未收货」，但生产上更常见的是**已到货、只是没填金额**
+    #    （全库 156 条，其中 155 条连单价都没有），提出人签收过、看到"尚未收货"只会觉得系统在胡说。
+    #    而且只报个数不报是哪几项——她一次勾 22 条跨 6 张单，根本找不出来。
+    #    这里跟前端同口径：分清两种、点名到具体零件。
+    def _label(i: models.PurchaseItem) -> str:
+        tail = i.project_code or i.po_no or "无编号"
+        return f"{i.item_name}{('·' + i.spec) if i.spec else ''}（{tail}）"
+
+    no_amount = [i for i in items
+                 if (i.arrival_date or "").strip() and not (i.received_amount and i.received_amount > 0)]
+    not_arrived = [i for i in items
+                   if not (i.arrival_date or "").strip() and not (i.received_amount and i.received_amount > 0)]
+    if no_amount or not_arrived:
+        segs = []
+        if no_amount:
+            segs.append(f"{len(no_amount)} 项已到货但没填收货金额（去这几行「编辑」补单价或收货金额）："
+                        + "、".join(_label(i) for i in no_amount[:8])
+                        + (f" 等 {len(no_amount)} 项" if len(no_amount) > 8 else ""))
+        if not_arrived:
+            segs.append(f"{len(not_arrived)} 项还没收货（先去「采购收货」收掉）："
+                        + "、".join(_label(i) for i in not_arrived[:8])
+                        + (f" 等 {len(not_arrived)} 项" if len(not_arrived) > 8 else ""))
+        raise HTTPException(400, "；".join(segs))
     # #2：合并开票金额(发票总额)必须与Σ勾选零件收货金额一致（≤1分误差）才放行
     recv_total = round(sum(i.received_amount or 0 for i in items), 2)
     if body.invoice_amount is not None and abs(round(body.invoice_amount, 2) - recv_total) > 0.01:

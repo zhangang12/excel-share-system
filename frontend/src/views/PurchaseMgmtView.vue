@@ -1660,9 +1660,35 @@ function openBatchInvoiceNo() {
   if (!leaves.length) { ElMessage.warning('请先勾选要维护开票号的明细（可勾选合并行=自动含其下全部零件）'); return }
   // #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（与请款一致）
   if (!selSameSupplier.value) { ElMessage.error('跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商），请只勾选同一供应商的明细'); return }
-  // #2：未收货(收货金额为0/空)的零件不能参与合并开票，必须先全部收货
-  const unrecv = leaves.filter(i => !(i.received_amount && i.received_amount > 0))
-  if (unrecv.length) { ElMessage.error(`所选含 ${unrecv.length} 项尚未收货（收货金额为0），请先全部收货后再合并开票`); return }
+  // #2：收货金额为 0 的零件不能参与合并开票（发票总额必须= Σ收货金额，0 的行没法算进去）。
+  // 🆕 反馈#407（李新新）：「这个怎么不能整单维护，都已经签收，已经填写价格，核对过」——
+  //   她没说错，那 2 项**到货日期确实填了**，缺的是收货金额（连单价都是空的）。
+  //   老提示两个毛病，缺一不可修：
+  //     ① 说「尚未收货」——她签收过，看到这四个字只会觉得系统在胡说，压根不会想到是金额没填；
+  //     ② 只报个数不报是哪几项。她一次勾 22 条、跨 6 张采购单、要翻屏，根本找不出是哪两条。
+  //   所以：分清「没到货」和「到货了但没金额」（一个该去收货、一个该去补金额，动作完全不同），
+  //   并且把名字、规格、项目编号点出来。生产上这两种分别有 156 条和 299 条，都不罕见。
+  const notArrived = leaves.filter(i => !(i.arrival_date || '').trim() && !(i.received_amount > 0))
+  const noAmount = leaves.filter(i => (i.arrival_date || '').trim() && !(i.received_amount > 0))
+  if (notArrived.length || noAmount.length) {
+    const label = (i: PurchaseItemOut) =>
+      `${i.item_name}${i.spec ? '·' + i.spec : ''}（${i.project_code || i.po_no || '无编号'}）`
+    const listOf = (arr: PurchaseItemOut[]) =>
+      arr.slice(0, 8).map(i => '· ' + label(i)).join('<br/>') +
+      (arr.length > 8 ? `<br/>…… 等 ${arr.length} 项` : '')
+    const parts: string[] = []
+    if (noAmount.length) {
+      parts.push(`<b>${noAmount.length} 项已到货、但没填收货金额</b>（没有金额就算不出发票总额）：` +
+                 `<br/>${listOf(noAmount)}<br/>→ 点这几行的「编辑」补上单价或收货金额`)
+    }
+    if (notArrived.length) {
+      parts.push(`<b>${notArrived.length} 项还没收货</b>：<br/>${listOf(notArrived)}<br/>→ 先去「采购收货」把货收掉`)
+    }
+    ElMessageBox.alert(parts.join('<br/><br/>'), '这几项还不能合并开票', {
+      dangerouslyUseHTMLString: true, confirmButtonText: '知道了',
+    }).catch(() => {})
+    return
+  }
   // #154：仅当所勾选明细已是同一个开票号时才预填(编辑场景)，否则一律留空，避免残留上次输入
   const nos = new Set(leaves.map(i => i.invoice_no).filter(Boolean))
   invoiceNoForm.invoice_no = nos.size === 1 ? String([...nos][0]) : ''
