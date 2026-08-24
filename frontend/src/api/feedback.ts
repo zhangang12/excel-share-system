@@ -31,7 +31,10 @@ export const FB_STATUS_TAG: Record<string, any> = {
 }
 
 export const feedbackApi = {
-  mine: () => http.get<Feedback[]>('/feedbacks', { params: { mine: true } }).then((r) => r.data),
+  // includeDone=true 连已处理的一起取（#409：办完的原来就从工作台消失了，界面上再没入口）
+  mine: (includeDone = false) =>
+    http.get<Feedback[]>('/feedbacks', { params: { mine: true, include_done: includeDone || undefined } })
+      .then((r) => r.data),
   byProject: (pid: number) => http.get<Feedback[]>('/feedbacks', { params: { project_id: pid } }).then((r) => r.data),
   myProjects: () => http.get<{ id: number; code: string; name: string }[]>('/feedbacks/projects').then((r) => r.data),
   // 🆕 #193 multipart：可附现场照片(多张,选填)

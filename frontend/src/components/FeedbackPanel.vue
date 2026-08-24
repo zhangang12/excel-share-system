@@ -25,12 +25,25 @@ const canAssign = computed(() => isDesignLead.value || isMgr.value)
 
 const list = ref<Feedback[]>([])
 const loading = ref(false)
+// 🆕 反馈#409（赵仁辉）「之前反馈的问题都看不到了」——他没说错：
+//   这个面板原来只取「**待**我处理」的，设计师一接收/驳回，那条就从工作台彻底消失，
+//   界面上再没有任何入口。线上 11 条反馈里 10 条是这个状态，他只看得见 1 条。
+//   加一个「已处理」开关，范围不变、只放宽状态（后端 include_done 同口径）。
+const showDone = ref(false)
 async function load() {
   loading.value = true
-  try { list.value = await feedbackApi.mine() }
+  try { list.value = await feedbackApi.mine(showDone.value) }
   finally { loading.value = false }
 }
 onMounted(load)
+// 待处理的那几条永远排在前面——翻历史的时候别把要办的事埋掉
+const PENDING_ST = ['pending_design', 'pending_pm']
+const shownList = computed(() => {
+  if (!showDone.value) return list.value
+  const rank = (f: Feedback) => (PENDING_ST.includes(f.status) ? 0 : 1)
+  return [...list.value].sort((a, b) => rank(a) - rank(b) || b.id - a.id)
+})
+const doneCount = computed(() => list.value.filter(f => !PENDING_ST.includes(f.status)).length)
 
 const title = computed(() => {
   if (canSubmit.value) return '📝 我的问题反馈'
@@ -129,13 +142,18 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
     <template #header>
       <div class="fb-head">
         <span>{{ title }} <el-tag v-if="list.length" size="small" type="warning">{{ list.length }}</el-tag></span>
+        <!-- 🆕 #409：办完的反馈原来直接从这块消失、界面上再没入口。勾上能翻历史。 -->
+        <el-checkbox v-model="showDone" size="small" style="margin-left:12px" @change="load">
+          看已处理的<span v-if="showDone && doneCount" class="muted small">（{{ doneCount }} 条）</span>
+        </el-checkbox>
+        <span style="flex:1"></span>
         <el-button v-if="canSubmit" size="small" type="primary" :icon="Plus" @click="openSubmit">提交反馈</el-button>
       </div>
     </template>
 
-    <EmptyHint v-if="!loading && !list.length"
-              :text="canSubmit ? '暂无反馈，可对在手项目提交问题' : '暂无待处理反馈'" />
-    <el-table v-else :data="list" v-loading="loading" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+    <EmptyHint v-if="!loading && !shownList.length"
+              :text="showDone ? '连历史一起都没有反馈' : (canSubmit ? '暂无反馈，可对在手项目提交问题' : '暂无待处理反馈；勾上「看已处理的」可翻历史')" />
+    <el-table v-else :data="shownList" v-loading="loading" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
       <el-table-column label="项目" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
       <el-table-column prop="content" label="问题内容" min-width="220" show-overflow-tooltip />
       <el-table-column label="附图" width="120">
@@ -223,7 +241,9 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
 
 <style scoped>
 .fb-card { margin-top: 14px; }
-.fb-head { display: flex; align-items: center; justify-content: space-between; }
+/* ⚠️ 加了「看已处理的」勾选框之后不能再用 space-between：
+   那样三个元素会被平均撑开，勾选框飘到中间。改成 gap + 一个 flex:1 的占位。 */
+.fb-head { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }

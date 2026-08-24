@@ -13,7 +13,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Form, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, true as sa_true
 
 from ..database import get_db
 from .. import models, schemas
@@ -75,10 +75,21 @@ async def _rows(db: AsyncSession, items: list[models.Feedback]) -> list[schemas.
 async def list_feedbacks(
     project_id: Optional[int] = Query(None),
     mine: bool = Query(False),
+    include_done: bool = Query(False, description="mine=true 时连已处理的一起返回（看历史）"),
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """协作 tab 存档（按 project_id）/ 工作台卡片（mine=按角色取待我处理的）。"""
+    """协作 tab 存档（按 project_id）/ 工作台卡片（mine=按角色取待我处理的）。
+
+    🆕 反馈#409（赵仁辉）「之前反馈的问题都看不到了」——他没说错：
+       `mine` 原来只取「**待**我处理」的（设计师看 pending_design、管理层同样只看 pending_design），
+       一旦设计师接收或驳回，那条就从工作台上彻底消失，**界面上再没有任何入口**。
+       线上 11 条反馈里 10 条是这个状态，他只看得见 1 条。
+       `include_done=true` 时保持**同样的可见范围**、只放宽状态——不是给谁开权限口子：
+         · 设计师   → 仍然只看指派给自己的（designer_uid == 我），但不限状态
+         · 生产三组 → 仍然只看自己提交的（本来就不限状态，不变）
+         · 设计负责人/管理层 → 看全部（他们本来就是全局视角）
+    """
     q = select(models.Feedback)
     if project_id:
         # 🆕 越权修复(#31)：协作存档(按 project_id)与项目详单同源闸门——
@@ -93,18 +104,25 @@ async def list_feedbacks(
         if codes & {"admin", "manager"}:
             # 🆕 管理层全量：与 require_roles(admin/manager 始终放行) 口径对齐，
             #   否则设计部工作台的反馈面板对管理层永远空白
-            conds.append(models.Feedback.status == "pending_design")
+            conds.append(sa_true() if include_done else
+                         (models.Feedback.status == "pending_design"))
         if codes & {"assembler", "sheetmetal", "sealing"}:
             # 🆕 2026-07-20 生产三组(装配/钣金/封板)都能看自己提交的反馈
+            #    （本来就不分状态，include_done 对他们没区别）
             conds.append(models.Feedback.created_by == current.id)
         if "pm_lead" in codes:
-            conds.append(models.Feedback.status == "pending_pm")
+            conds.append(sa_true() if include_done else
+                         (models.Feedback.status == "pending_pm"))
         if "designer" in codes:
-            conds.append(and_(models.Feedback.status == "pending_design",
+            # ⚠️ 看历史时**只放宽状态、不放宽范围**：仍然限定指派给本人的，
+            #    否则设计师能翻到同事名下的全部反馈。
+            conds.append(models.Feedback.designer_uid == current.id if include_done else
+                         and_(models.Feedback.status == "pending_design",
                               models.Feedback.designer_uid == current.id))
         if "design_lead" in codes:
             # 🆕 #29 设计负责人看「待接收但无在岗设计师(死信)」的反馈，可指派
-            conds.append(and_(models.Feedback.status == "pending_design",
+            conds.append(sa_true() if include_done else
+                         and_(models.Feedback.status == "pending_design",
                               models.Feedback.designer_uid.is_(None)))
         if not conds:
             return []
