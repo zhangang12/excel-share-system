@@ -6,7 +6,7 @@
 import json
 import logging
 import re
-from sqlalchemy import func, select, inspect, text
+from sqlalchemy import func, select, inspect, text, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine
 
 from . import models
@@ -2175,6 +2175,31 @@ async def seed_payment_private_flow(db: AsyncSession) -> dict:
     return {"copied": len(src)}
 
 
+async def backfill_oa_paid_status(db: AsyncSession) -> dict:
+    """🆕 #412：把「已经付过款但状态还写着 approved」的 OA 单回刷成 paid。幂等。
+
+    背景：`mark_paid` 原来把状态写回 `approved`（而不是 paid），于是**付过款的单和
+    只是批过的单在列表上一模一样**——杨坛看到的全是「已通过」，判断不了钱走没走。
+    2026-08-25 线上：44 单已经填了付款时间(pay_at)，状态却都是 approved。
+
+    ⚠️ 判据用 `pay_at IS NOT NULL` 是安全的：全库只有 `mark_paid` 一处写 OaRequest.pay_at
+       （aftersales 那两处写的是 AfterSales.pay_at，不同的表）。填了这个时间 = 真走过付款那一步。
+    ⚠️ 回刷**不会改变任何报表的数字**：本次已经把 paid 加进 `_OA_DONE_STATUS` /
+       `_OA_COST_STATUS` / 财务支出总览三处白名单，approved 和 paid 都算进去。
+       （要是没加就回刷，44 单的钱会当场从财务报表里消失——这一步的顺序不能反。）
+    """
+    r = await db.execute(
+        sa_update(models.OaRequest)
+        .where(models.OaRequest.pay_at.isnot(None),
+               models.OaRequest.status == "approved")
+        .values(status="paid"))
+    n = r.rowcount or 0
+    if n:
+        await db.commit()
+        log.info("[backfill_oa_paid_status] %d 单已付款的 OA 申请回刷为 paid", n)
+    return {"updated": n}
+
+
 async def backfill_order_type_and_dept_orders(db: AsyncSession) -> dict:
     """🆕 2026-06-20（幂等）：给存量 SalesLedger 补 order_type（默认工厂制作订单，2026-008 为调货订单）。
     注：原"为进行中项目补建 design/electric/produce 任务单"已于 2026-06-23 停用——它每次启动都跑、
@@ -2589,6 +2614,12 @@ async def run_all(db: AsyncSession) -> None:
         await seed_payment_private_flow(db)
     except Exception as e:
         log.warning("seed_payment_private_flow failed: %s", e)
+    try:
+        # ⚠️ 必须排在「paid 已加进各报表白名单」之后（那是代码改动，随本次一起上线）：
+        #   先回刷再改白名单的话，44 单的钱会当场从财务报表里消失。
+        await backfill_oa_paid_status(db)
+    except Exception as e:
+        log.warning("backfill_oa_paid_status failed: %s", e)
     try:
         await split_mixed_supplier_po(db)
     except Exception as e:

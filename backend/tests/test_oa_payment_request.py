@@ -3,7 +3,8 @@
 2. 配好审批链后可提交：金额/收款单位/付款事由/期望付款日期落入 detail，标题默认取类型名；
 3. 服务端必填校验：缺收款单位/金额缺失或≤0/缺付款事由（含纯空白）均 400；
 4. 列表可见：scope=mine 可见、doc_type=payment_public 过滤生效；
-5. 通用待付款闭环（不为新类型单独开路）：末环节 finance 审批通过→待付款→标记已付款。
+5. 通用待付款闭环（不为新类型单独开路）：末环节 finance 审批通过→待付款→标记已付款(paid)。
+   ⚠️ 2026-08-25 起（#412）：对公必须传付款凭证；标记后状态留在 paid，不再写回 approved。
 
 ⚠️ 2026-08-07 起「付款申请」按反馈拆成 对公(payment_public) / 现金(payment_cash)——
    审批流程不一样。旧的 payment 已停用（在途旧单仍走完），所以本用例整体迁到
@@ -110,9 +111,19 @@ async def main():
             f"末环节finance批准→待付款: {r.status_code} {r.json().get('status')}")
         r = await c.get("/api/oa/requests", headers=H, params={"scope": "pending_pay"})
         chk(any(x["id"] == rid for x in r.json()), "待付款队列可见")
+        # ⚠️ 2026-08-25（反馈#412）这一步的口径变了两处，本用例跟着改：
+        #   ① 对公付款**必须传付款凭证**（现金/对私不强制）——财务月底要凭它对账；
+        #   ② 标记之后状态留在 **paid**，不再写回 approved。
+        #      原来写回 approved 的后果：付过款的单和只是批过的单在列表上一模一样，
+        #      杨坛看到的全是「已通过」，判断不了钱走没走（线上 44 单就是这个样子）。
         r = await c.put(f"/api/oa/requests/{rid}/mark-paid", headers=H)
-        chk(r.status_code == 200 and r.json()["status"] == "approved",
-            f"标记已付款→已通过: {r.status_code} {r.json().get('status')}")
+        chk(r.status_code == 400,
+            f"对公付款不传凭证要被拦: {r.status_code} {str(r.json())[:70]}")
+        import io as _io
+        r = await c.put(f"/api/oa/requests/{rid}/mark-paid", headers=H,
+                        files={"file": ("回单.pdf", _io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")})
+        chk(r.status_code == 200 and r.json()["status"] == "paid",
+            f"标记已付款→已付款(paid，不再写回已通过): {r.status_code} {r.json().get('status')}")
 
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES")

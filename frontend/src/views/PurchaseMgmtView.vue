@@ -2009,6 +2009,33 @@ async function selfCancelPayReq(row: PaymentRequestOut) {
   }
 }
 
+// 🆕 反馈#411（李新新）：新建采购单的「名称」「规格型号」两列要能联想仓库已有物料。
+//   为什么重要：她手打的名称/规格只要和仓库里的差一个字，收货时就会**按新料建档**——
+//   这正是 #410（王利利）看到的重复物料的来源。线上采购明细 1962 条里有 200 条
+//   的「名称+规格」在物料主数据里对不上，而仓库里已经攒出 10 组
+//   「同名、一条规格空一条有」的重复。堵在下单这一步，比事后清理便宜得多。
+//   ⚠️ el-autocomplete 的 item.value 必须等于它绑定的那个字段，所以名称列和规格列
+//     要各用一个取数函数——共用一个的话，在规格列里选中会把规格写成名称。
+interface MatSug { value: string; name: string; spec?: string | null }
+async function fetchMatSug(q: string): Promise<MatSug[]> {
+  if (!q.trim()) return []
+  try {
+    const r = await http.get<{ name: string; spec?: string | null }[]>(
+      '/wh/materials/suggest', { params: { q } })
+    return r.data.map(m => ({ value: m.name, name: m.name, spec: m.spec }))
+  } catch { return [] }
+}
+async function sugByName(q: string, cb: (l: MatSug[]) => void) { cb(await fetchMatSug(q)) }
+async function sugBySpec(q: string, cb: (l: MatSug[]) => void) {
+  // 规格列：value 换成规格本身；没规格的物料在这一列没意义，滤掉
+  cb((await fetchMatSug(q)).filter(m => m.spec).map(m => ({ ...m, value: m.spec as string })))
+}
+function onPickMat(row: any, it: MatSug) {
+  // 选中就把名称和规格一起补齐——两边都对上，收货才认得是同一个料
+  if (it.name) row.item_name = it.name
+  if (it.spec) row.spec = it.spec
+}
+
 // 🆕 #167 采购申请处理（仓库提 → 采购部处理/驳回）
 interface IncomingReq { id: number; status: string; notes?: string | null; created_at: string
   need_date?: string | null; need_days?: number | null   // 🆕 #401 需求时间（need_days 后端算好，负=已过期）
@@ -3200,11 +3227,29 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </div>
         <el-table show-overflow-tooltip :data="orderForm.lines" size="small" border :scrollbar-always-on="true" max-height="max(240px, 40vh)" class="order-lines">
           <el-table-column type="index" label="#" width="44" align="center" />
+          <!-- 🆕 #411：两列都联想仓库已有物料，选中把名称+规格一起带上，
+               避免手打出仓库里没有的写法、收货时又建出一条重复物料（#410） -->
           <el-table-column label="名称 *" min-width="150">
-            <template #default="{ row }"><el-input v-model="row.item_name" placeholder="零件名称" /></template>
+            <template #default="{ row }">
+              <el-autocomplete v-model="row.item_name" :fetch-suggestions="sugByName"
+                               placeholder="零件名称（可搜仓库已有）" style="width:100%"
+                               @select="(it: any) => onPickMat(row, it)">
+                <template #default="{ item }">
+                  <span>{{ item.name }}</span><span v-if="item.spec" class="muted small"> · {{ item.spec }}</span>
+                </template>
+              </el-autocomplete>
+            </template>
           </el-table-column>
           <el-table-column label="规格型号" min-width="150">
-            <template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template>
+            <template #default="{ row }">
+              <el-autocomplete v-model="row.spec" :fetch-suggestions="sugBySpec"
+                               placeholder="规格/型号（可搜仓库已有）" style="width:100%"
+                               @select="(it: any) => onPickMat(row, it)">
+                <template #default="{ item }">
+                  <span>{{ item.spec }}</span><span class="muted small"> · {{ item.name }}</span>
+                </template>
+              </el-autocomplete>
+            </template>
           </el-table-column>
           <el-table-column label="订单编号" width="150">
             <template #default="{ row }">

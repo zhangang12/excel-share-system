@@ -240,6 +240,12 @@ PAYMENT_DOC_TYPES = ("payment", "payment_public", "payment_cash", "payment_priva
 # 需要银行账户的：现金付款没有账号和开户行，不在此列；对私是转账，照样要账号+开户行
 PAYMENT_BANK_DOC_TYPES = ("payment", "payment_public", "payment_private")
 
+# 🆕 #412：加了 "paid" 之后，这两个常量都必须带上它——
+#   已付款是「approved 之后」的状态，钱都花出去了，不算成本/不进报表是最离谱的漏法。
+#   这条注释下面那句是上次同款事故留下的，这次是第二遍。
+_OA_DONE_STATUS = ("approved", "paid")                     # 审批已完成（含已付款）
+_OA_COST_STATUS = ("approved", "pending_payment", "paid")
+
 
 def _norm_cost_center(v) -> Optional[str]:
     v = (v or "").strip()
@@ -987,7 +993,17 @@ async def mark_paid(
         raise HTTPException(404, "申请不存在")
     if req.status != "pending_payment":
         raise HTTPException(400, "该申请当前不是待付款状态")
-    req.status = "approved"
+    # 🆕 反馈#412（杨坛）：「审批完成后加一个已付款……对公的上传付款凭证，对私的可以不上传」。
+    #   ⚠️ 对公付款没有凭证，财务月底对不上账——这一步是钱真的走了才点的，回单必须留下。
+    #      现金/对私不强制：现金本来就没有回单，对私很多是微信/支付宝转账，截图不一定拿得到。
+    if req.doc_type in ("payment", "payment_public") and not (file is not None and file.filename):
+        raise HTTPException(400, "对公付款必须上传付款凭证（现金/对私可以不传）")
+    # 🆕 #412 的核心就是这一行。原来这里写回 "approved"，于是**付过款和只是批过的单
+    #   在列表上一模一样**——杨坛看到的全是「已通过」，没法判断钱走没走。
+    #   线上 44 单已经填了付款时间(pay_at)，状态却都是 approved，就是这么来的。
+    #   ⚠️ 加了新状态，所有**按 approved 白名单取数的报表**都要同步带上 paid，
+    #      否则已付款的单会从财务报表里凭空消失（本文件 1084 行那条注释记的就是上次同款事故）。
+    req.status = "paid"
     req.pay_note = (pay_note or "").strip() or None
     req.pay_at = datetime.now(timezone.utc)
     if file is not None and file.filename:
@@ -1065,7 +1081,7 @@ async def oa_summary(
             func.sum(func.coalesce(models.OaRequest.settle_amount, models.OaRequest.amount, 0.0)),
         )
         .join(models.Department, models.Department.id == models.OaRequest.department_id)
-        .where(models.OaRequest.status == "approved")
+        .where(models.OaRequest.status.in_(_OA_DONE_STATUS))   # 🆕 #412 含已付款
         # Department.sort_order 必须进 GROUP BY：Postgres 严格要求 ORDER BY 的列出现在 GROUP BY 或聚合里，
         # 否则报 GroupingError 500（SQLite 宽松不报，沙箱测不出）。sort_order 与部门 1:1，不改变分组结果。
         .group_by(models.OaRequest.department_id, models.Department.name,
@@ -1081,7 +1097,6 @@ async def oa_summary(
 # ⚠️ 「审批通过」在数据上是**两个** status：approved 和 pending_payment。
 #    末环节是财务的报销类单据审完会转 pending_payment（等财务点已付款），
 #    只按 approved 过滤的话这些单会从成本里凭空消失。
-_OA_COST_STATUS = ("approved", "pending_payment")
 
 
 @router.get("/reports/cost", response_model=schemas.CostSummaryOut)
@@ -1177,7 +1192,7 @@ async def oa_summary_detail(
     """🆕 #247 汇总报表下钻：某部门+单据类型下的已批准申请逐条明细（申请人/金额/事由/时间）。"""
     q = (
         select(models.OaRequest)
-        .where(models.OaRequest.status == "approved",
+        .where(models.OaRequest.status.in_(_OA_DONE_STATUS),   # 🆕 #412 含已付款
                models.OaRequest.department_id == department_id,
                models.OaRequest.doc_type == doc_type)
         .order_by(models.OaRequest.updated_at.desc())

@@ -198,16 +198,26 @@ async def suggest_materials(
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 #278/#289 物料名称联想：按关键字模糊匹配物料主数据（WhMaterial）里已建档物料的
-    名称，返回 name+spec（最多 20 条，前缀命中的排前面）。权限同物料主数据（登录即可读）。
-    用途：采购申请弹窗「名称」、项目详单「名称」列的 el-autocomplete，选中带出规格型号。"""
+    """🆕 #278/#289 物料联想：按关键字模糊匹配物料主数据里已建档的物料，
+    返回 name+spec（最多 20 条，前缀命中的排前面）。权限同物料主数据（登录即可读）。
+    用途：采购下单/采购申请/项目详单的「名称」「规格型号」列 el-autocomplete，选中互相带出。
+
+    🆕 反馈#411（李新新）：**名称和规格都要能搜**。原来只按名称匹配，她在「规格型号」列里
+    敲「120F」什么也搜不出来，只能凭记忆手打——手打出的名称/规格和仓库里的对不上，
+    收货时就按新料建档，这正是 #410 王利利说的重复物料的来源
+    （线上：采购明细 1962 条里有 200 条的「名称+规格」在物料主数据里对不上）。"""
     k = (q or "").strip()
     if not k:
         return []
-    r = await db.execute(select(models.WhMaterial).where(
-        models.WhMaterial.name.ilike(f"%{k}%")))
+    r = await db.execute(select(models.WhMaterial).where(or_(
+        models.WhMaterial.name.ilike(f"%{k}%"),
+        models.WhMaterial.spec.ilike(f"%{k}%"))))
     mats = list(r.scalars().all())
-    mats.sort(key=lambda m: (0 if m.name.startswith(k) else 1, m.name, m.id))
+    # 名称前缀命中的最靠前，其次规格前缀命中的，再按名称/规格排
+    def _rank(m):
+        nm, sp = m.name or "", m.spec or ""
+        return (0 if nm.startswith(k) else (1 if sp.startswith(k) else 2), nm, sp, m.id)
+    mats.sort(key=_rank)
     return [schemas.WhMaterialSuggestOut(name=m.name, spec=m.spec) for m in mats[:20]]
 
 
