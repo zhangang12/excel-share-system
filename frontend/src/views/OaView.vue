@@ -96,12 +96,21 @@ const allRowsView = computed(() => rows.value.filter(r =>
   (!filterAllDoc.value || r.doc_type === filterAllDoc.value) &&
   (!filterAllRequester.value || r.requester_name === filterAllRequester.value)))
 
+// 🆕 反馈#412（杨坛）：加「已付款」。原来标记付款之后状态写回 approved，
+//   于是**付过款的和只是批过的单在列表上一模一样**（线上 44 单填了付款时间、状态却都是已通过）。
+//   ⚠️ 两张表都要加，漏了不是显示英文——StatusPill 拿到 undefined 会渲染成一个空白胶囊，更难查。
+//   顺带把 approved 从 success 降成 info：绿色留给「钱真的走了」，蓝色是「批了但还没付」。
 const STATUS_VARIANT: Record<string, 'success' | 'warn' | 'info' | 'danger' | 'muted'> = {
-  pending: 'warn', pending_payment: 'info', approved: 'success', rejected: 'danger', withdrawn: 'muted',
+  pending: 'warn', pending_payment: 'warn', approved: 'info', paid: 'success',
+  rejected: 'danger', withdrawn: 'muted',
 }
 const STATUS_TEXT: Record<string, string> = {
-  pending: '审批中', pending_payment: '待付款', approved: '已通过', rejected: '已驳回', withdrawn: '已撤回',
+  pending: '审批中', pending_payment: '待付款', approved: '已通过', paid: '已付款',
+  rejected: '已驳回', withdrawn: '已撤回',
 }
+// 对公付款必须有回单（财务月底要凭它对账）；现金/对私不强制——
+// 现金本来就没回单，对私多是微信/支付宝转账，截图不一定拿得到。后端同口径校验。
+const PAY_RECEIPT_REQUIRED = ['payment', 'payment_public']
 // 🆕 详情里 detail(JSON) 各业务字段的中文标签，没收录的兜底显示原始 key
 const DETAIL_FIELD_LABELS: Record<string, string> = {
   destination: '目的地/对象', start_date: '开始日期', end_date: '结束日期', notes: '事由/备注',
@@ -508,8 +517,14 @@ function pickPayReceipt() {
   input.onchange = () => { payReceipt.value = input.files?.[0] || null }
   input.click()
 }
+const payReceiptRequired = computed(() =>
+  !!detailReq.value && PAY_RECEIPT_REQUIRED.includes(detailReq.value.doc_type))
 async function doMarkPaid() {
   if (!detailReq.value) return
+  // 前端先拦一道，别让人填完备注、点了确认才被后端退回来
+  if (payReceiptRequired.value && !payReceipt.value) {
+    ElMessage.warning('对公付款必须上传付款凭证（现金/对私可以不传）'); return
+  }
   markingPaid.value = true
   try {
     await oaApi.markPaid(detailReq.value.id, payNote.value.trim(), payReceipt.value)
@@ -1470,9 +1485,12 @@ onMounted(async () => {
         <el-form-item label="付款备注（选填，如：8/13 转账 建行尾号 6688）">
           <el-input v-model="payNote" type="textarea" :rows="2" maxlength="200" show-word-limit />
         </el-form-item>
-        <el-form-item label="付款回单（选填，图片 / PDF / Excel）">
+        <el-form-item :label="payReceiptRequired ? '付款回单 *（对公付款必传，图片 / PDF / Excel）' : '付款回单（选填，图片 / PDF / Excel）'">
           <el-button :icon="Upload" @click="pickPayReceipt">选择回单</el-button>
           <span v-if="payReceipt" class="muted small" style="margin-left:8px">{{ payReceipt.name }}</span>
+          <div v-else-if="payReceiptRequired" class="muted small" style="line-height:1.5;margin-top:2px">
+            对公付款的回单是财务月底对账的凭据，必须传；现金和对私可以不传。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>

@@ -191,6 +191,8 @@ interface PaymentRequestOut {
   pay_voucher_file_id?: number | null; pay_voucher_name?: string | null   // 🆕 #276 付款凭证（申请人可看/下载）
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
   po_nos?: string[]
+  project_codes?: string[]   // 🆕 后端 _pr_out 一直在下发，只是前端没声明；#406 搜索要用
+  can_cancel?: boolean       // 🆕 #405 能不能自助撤销（=待审 且 本人发起），后端算好下发
   items: Array<{ item_id: number; item_name: string; allocated_amount: number; po_no?: string | null; spec?: string | null; project_code?: string | null; received_amount?: number }>
 }
 interface PurchaseKPI { month_amount: number; quarter_amount: number; year_amount: number; total_outstanding: number; pending_requests: number }
@@ -1658,9 +1660,35 @@ function openBatchInvoiceNo() {
   if (!leaves.length) { ElMessage.warning('请先勾选要维护开票号的明细（可勾选合并行=自动含其下全部零件）'); return }
   // #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（与请款一致）
   if (!selSameSupplier.value) { ElMessage.error('跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商），请只勾选同一供应商的明细'); return }
-  // #2：未收货(收货金额为0/空)的零件不能参与合并开票，必须先全部收货
-  const unrecv = leaves.filter(i => !(i.received_amount && i.received_amount > 0))
-  if (unrecv.length) { ElMessage.error(`所选含 ${unrecv.length} 项尚未收货（收货金额为0），请先全部收货后再合并开票`); return }
+  // #2：收货金额为 0 的零件不能参与合并开票（发票总额必须= Σ收货金额，0 的行没法算进去）。
+  // 🆕 反馈#407（李新新）：「这个怎么不能整单维护，都已经签收，已经填写价格，核对过」——
+  //   她没说错，那 2 项**到货日期确实填了**，缺的是收货金额（连单价都是空的）。
+  //   老提示两个毛病，缺一不可修：
+  //     ① 说「尚未收货」——她签收过，看到这四个字只会觉得系统在胡说，压根不会想到是金额没填；
+  //     ② 只报个数不报是哪几项。她一次勾 22 条、跨 6 张采购单、要翻屏，根本找不出是哪两条。
+  //   所以：分清「没到货」和「到货了但没金额」（一个该去收货、一个该去补金额，动作完全不同），
+  //   并且把名字、规格、项目编号点出来。生产上这两种分别有 156 条和 299 条，都不罕见。
+  const notArrived = leaves.filter(i => !(i.arrival_date || '').trim() && !(i.received_amount > 0))
+  const noAmount = leaves.filter(i => (i.arrival_date || '').trim() && !(i.received_amount > 0))
+  if (notArrived.length || noAmount.length) {
+    const label = (i: PurchaseItemOut) =>
+      `${i.item_name}${i.spec ? '·' + i.spec : ''}（${i.project_code || i.po_no || '无编号'}）`
+    const listOf = (arr: PurchaseItemOut[]) =>
+      arr.slice(0, 8).map(i => '· ' + label(i)).join('<br/>') +
+      (arr.length > 8 ? `<br/>…… 等 ${arr.length} 项` : '')
+    const parts: string[] = []
+    if (noAmount.length) {
+      parts.push(`<b>${noAmount.length} 项已到货、但没填收货金额</b>（没有金额就算不出发票总额）：` +
+                 `<br/>${listOf(noAmount)}<br/>→ 点这几行的「编辑」补上单价或收货金额`)
+    }
+    if (notArrived.length) {
+      parts.push(`<b>${notArrived.length} 项还没收货</b>：<br/>${listOf(notArrived)}<br/>→ 先去「采购收货」把货收掉`)
+    }
+    ElMessageBox.alert(parts.join('<br/><br/>'), '这几项还不能合并开票', {
+      dangerouslyUseHTMLString: true, confirmButtonText: '知道了',
+    }).catch(() => {})
+    return
+  }
   // #154：仅当所勾选明细已是同一个开票号时才预填(编辑场景)，否则一律留空，避免残留上次输入
   const nos = new Set(leaves.map(i => i.invoice_no).filter(Boolean))
   invoiceNoForm.invoice_no = nos.size === 1 ? String([...nos][0]) : ''
@@ -1918,6 +1946,15 @@ function stmtSummary() {
 const payReqs = ref<PaymentRequestOut[]>([])
 const prLoading = ref(false)
 const prStatusFilter = ref('')   // #165：改成显示条(客户端筛选),'' = 全部
+// 🆕 反馈#406（王芹）：「我想看俊帆的请款记录直接搜索俊帆下面就会显示俊帆的请款记录」。
+//   本地过滤，**不下沉后端**：payReqs 同时供着四个页签的计数和表格，
+//   把 keyword 塞进请求会让计数静默变成"搜索结果内计数"——就是 #404 那个形态。
+//   字段口径照抄财务侧 FinanceView 的 paySearch（#300 已实现），两边行为一致。
+const prKeyword = ref('')
+// ⚠️ 一开始搜索就跳回「全部」。prStatusFilter 是普通 ref，会停在上次选的页签上；
+//    搜出来的结果如果恰好不在那个状态里，表格就是空的——用户只会以为"搜索坏了/记录没了"，
+//    而不会想到是几天前自己点过「已批」。生产实况：待审/已驳长期为 0，踩中的概率很高。
+watch(prKeyword, (v) => { if (v.trim()) prStatusFilter.value = '' })
 async function loadPayReqs() {
   prLoading.value = true
   try {
@@ -1946,6 +1983,57 @@ async function resubmitPayReq(row: PaymentRequestOut) {
     ElMessage.success('已重新提交，等待财务主管审批')
     await loadPayReqs()
   } finally { resubmittingId.value = null }
+}
+
+// 🆕 反馈#405（李新新）：「已经请款了，但是又临时不买了」——自己把还没人审的请款撤掉，
+//   不用再去求审批人驳回。只有待审 + 本人发起的才有这个按钮（后端下发 can_cancel）。
+const cancellingId = ref<number | null>(null)
+async function selfCancelPayReq(row: PaymentRequestOut) {
+  try {
+    await ElMessageBox.confirm(
+      `确认撤销这笔请款？\n供应商：${row.supplier_name}　金额：${fmtMoney(row.requested_amount)}\n\n` +
+      '撤销后这张请款单会被删除，关联的采购明细回到「未付款」——' +
+      '需要的话可以重新发起请款，不买了也可以直接把采购明细删掉。',
+      '撤销请款', { type: 'warning', confirmButtonText: '确认撤销', confirmButtonClass: 'el-button--warning' },
+    )
+  } catch { return }
+  cancellingId.value = row.id
+  try {
+    const r: any = await http.delete(`/purchase-mgmt/payment-requests/${row.id}/self-cancel`)
+    ElMessage.success(r?.data?.message || '已撤销')
+  } finally {
+    cancellingId.value = null
+    // ⚠️ 成功失败都要刷。失败多半是"财务刚好批了"——不刷的话她看到的还是那个撤销按钮，
+    //    再点还是报错，只会以为系统坏了。（本文件 resubmitPayReq 就是只在成功时刷，别照抄。）
+    await loadPayReqs()
+  }
+}
+
+// 🆕 反馈#411（李新新）：新建采购单的「名称」「规格型号」两列要能联想仓库已有物料。
+//   为什么重要：她手打的名称/规格只要和仓库里的差一个字，收货时就会**按新料建档**——
+//   这正是 #410（王利利）看到的重复物料的来源。线上采购明细 1962 条里有 200 条
+//   的「名称+规格」在物料主数据里对不上，而仓库里已经攒出 10 组
+//   「同名、一条规格空一条有」的重复。堵在下单这一步，比事后清理便宜得多。
+//   ⚠️ el-autocomplete 的 item.value 必须等于它绑定的那个字段，所以名称列和规格列
+//     要各用一个取数函数——共用一个的话，在规格列里选中会把规格写成名称。
+interface MatSug { value: string; name: string; spec?: string | null }
+async function fetchMatSug(q: string): Promise<MatSug[]> {
+  if (!q.trim()) return []
+  try {
+    const r = await http.get<{ name: string; spec?: string | null }[]>(
+      '/wh/materials/suggest', { params: { q } })
+    return r.data.map(m => ({ value: m.name, name: m.name, spec: m.spec }))
+  } catch { return [] }
+}
+async function sugByName(q: string, cb: (l: MatSug[]) => void) { cb(await fetchMatSug(q)) }
+async function sugBySpec(q: string, cb: (l: MatSug[]) => void) {
+  // 规格列：value 换成规格本身；没规格的物料在这一列没意义，滤掉
+  cb((await fetchMatSug(q)).filter(m => m.spec).map(m => ({ ...m, value: m.spec as string })))
+}
+function onPickMat(row: any, it: MatSug) {
+  // 选中就把名称和规格一起补齐——两边都对上，收货才认得是同一个料
+  if (it.name) row.item_name = it.name
+  if (it.spec) row.spec = it.spec
 }
 
 // 🆕 #167 采购申请处理（仓库提 → 采购部处理/驳回）
@@ -2026,13 +2114,29 @@ async function viewPreqPdf(prid: number) {
 function preqStatusTag(s: string): 'warning' | 'success' | 'danger' | 'info' {
   return s === 'done' ? 'success' : s === 'rejected' ? 'danger' : 'warning'
 }
+// #406：关键字先收窄，状态页签在其上叠加。
+//   计数**跟着关键字一起收窄**是刻意的——否则搜「俊帆」会看到「已付 (89)」但表格只有 11 行，
+//   那才是真正的对不上。#404 的教训是"不能静默"，所以旁边显示「命中 X / 全部 N」。
+const kwPayReqs = computed(() => {
+  const kw = prKeyword.value.trim().toLowerCase()
+  if (!kw) return payReqs.value
+  return payReqs.value.filter(r =>
+    String(r.id).includes(kw)
+    || (r.supplier_name || '').toLowerCase().includes(kw)
+    || (r.requester_name || '').toLowerCase().includes(kw)
+    || (r.project_codes || []).join(' ').toLowerCase().includes(kw)
+    || (r.po_nos || []).join(' ').toLowerCase().includes(kw)
+    || String(r.requested_amount ?? '').includes(kw)
+    || String(r.paid_amount ?? '').includes(kw)
+    || (r.notes || '').toLowerCase().includes(kw))
+})
 const prCounts = computed(() => {
-  const c: Record<string, number> = { '': payReqs.value.length, pending: 0, approved: 0, paid: 0, rejected: 0 }
-  for (const r of payReqs.value) c[r.status] = (c[r.status] || 0) + 1
+  const c: Record<string, number> = { '': kwPayReqs.value.length, pending: 0, approved: 0, paid: 0, rejected: 0 }
+  for (const r of kwPayReqs.value) c[r.status] = (c[r.status] || 0) + 1
   return c
 })
 const filteredPayReqs = computed(() =>
-  prStatusFilter.value ? payReqs.value.filter(r => r.status === prStatusFilter.value) : payReqs.value)
+  prStatusFilter.value ? kwPayReqs.value.filter(r => r.status === prStatusFilter.value) : kwPayReqs.value)
 
 // 🆕 报表小表合计
 function trendSummary() {
@@ -2634,10 +2738,19 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-radio-button value="paid">已付 ({{ prCounts.paid }})</el-radio-button>
               <el-radio-button value="rejected">已驳 ({{ prCounts.rejected }})</el-radio-button>
             </el-radio-group>
+            <!-- 🆕 #406（王芹）：搜供应商就能只看那家的请款记录 -->
+            <el-input v-model="prKeyword" placeholder="搜供应商/采购单号/项目编号/备注/金额"
+                      clearable size="small" style="width:280px" />
             <el-tooltip content="刷新" placement="top">
               <el-button :icon="Refresh" @click="loadPayReqs" />
             </el-tooltip>
-            <span class="muted">发起请款后在这里跟进财务审批进度，被驳回会显示原因；点行首箭头看关联明细</span>
+            <el-tooltip placement="top">
+              <template #content>发起请款后在这里跟进财务审批进度<br/>被驳回会显示原因；点行首箭头看关联明细</template>
+              <el-icon class="muted" style="cursor:help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+            <span v-if="prKeyword.trim()" class="muted small">
+              命中 {{ kwPayReqs.length }} / 全部 {{ payReqs.length }}（页签上的数也是命中范围内的）
+            </span>
           </div>
           <el-table show-overflow-tooltip :data="filteredPayReqs" stripe v-loading="prLoading"
                     max-height="max(320px, calc(100vh - 300px))" :scrollbar-always-on="true" class="compact-tbl">
@@ -2681,6 +2794,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <template #default="{ row }">
                 <el-button v-if="row.status === 'rejected'" size="small" type="primary" plain
                            :loading="resubmittingId === row.id" @click="resubmitPayReq(row)">重新提交</el-button>
+                <!-- 🆕 #405 自助撤销。显隐用后端下发的 can_cancel，不在前端另写一遍判据 -->
+                <el-button v-else-if="row.can_cancel" size="small" type="warning" plain
+                           :loading="cancellingId === row.id" @click="selfCancelPayReq(row)">撤销</el-button>
                 <span v-else class="muted small">—</span>
               </template>
             </el-table-column>
@@ -2705,7 +2821,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column prop="notes" label="备注" min-width="110">
               <template #default="{ row }">{{ row.notes || '—' }}</template>
             </el-table-column>
-            <template #empty><EmptyHint text="暂无请款记录：在采购明细勾选行后点「发起请款」" size="sm" /></template>
+            <!-- 搜不到时别再教人「怎么发起请款」——她要的是"我搜的东西哪去了"的答案 -->
+            <template #empty>
+              <EmptyHint v-if="prKeyword.trim()" size="sm"
+                         :text="`没有匹配「${prKeyword.trim()}」的请款记录，换个词试试（可搜供应商/采购单号/项目编号/备注）`" />
+              <EmptyHint v-else text="暂无请款记录：在采购明细勾选行后点「发起请款」" size="sm" />
+            </template>
           </el-table>
         </el-tab-pane>
 
@@ -3106,11 +3227,29 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </div>
         <el-table show-overflow-tooltip :data="orderForm.lines" size="small" border :scrollbar-always-on="true" max-height="max(240px, 40vh)" class="order-lines">
           <el-table-column type="index" label="#" width="44" align="center" />
+          <!-- 🆕 #411：两列都联想仓库已有物料，选中把名称+规格一起带上，
+               避免手打出仓库里没有的写法、收货时又建出一条重复物料（#410） -->
           <el-table-column label="名称 *" min-width="150">
-            <template #default="{ row }"><el-input v-model="row.item_name" placeholder="零件名称" /></template>
+            <template #default="{ row }">
+              <el-autocomplete v-model="row.item_name" :fetch-suggestions="sugByName"
+                               placeholder="零件名称（可搜仓库已有）" style="width:100%"
+                               @select="(it: any) => onPickMat(row, it)">
+                <template #default="{ item }">
+                  <span>{{ item.name }}</span><span v-if="item.spec" class="muted small"> · {{ item.spec }}</span>
+                </template>
+              </el-autocomplete>
+            </template>
           </el-table-column>
           <el-table-column label="规格型号" min-width="150">
-            <template #default="{ row }"><el-input v-model="row.spec" placeholder="规格/型号" /></template>
+            <template #default="{ row }">
+              <el-autocomplete v-model="row.spec" :fetch-suggestions="sugBySpec"
+                               placeholder="规格/型号（可搜仓库已有）" style="width:100%"
+                               @select="(it: any) => onPickMat(row, it)">
+                <template #default="{ item }">
+                  <span>{{ item.spec }}</span><span class="muted small"> · {{ item.name }}</span>
+                </template>
+              </el-autocomplete>
+            </template>
           </el-table-column>
           <el-table-column label="订单编号" width="150">
             <template #default="{ row }">

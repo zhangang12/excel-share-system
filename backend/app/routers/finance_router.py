@@ -149,7 +149,9 @@ async def expense_overview(
 
     # ③ OA 费用（业务/报销大类，已审批；核定金额优先。采购大类不计——避免与①采购付款双算）
     r = await db.execute(select(models.OaRequest.amount, models.OaRequest.settle_amount, models.OaRequest.updated_at)
-                         .where(models.OaRequest.status == "approved",
+                         # 🆕 #412：OA 加了「已付款」状态，这里只认 approved 的话
+                         #   付过款的单会从财务支出总览里消失（钱花了却不显示）
+                         .where(models.OaRequest.status.in_(("approved", "paid")),
                                 models.OaRequest.category.in_(("business", "reimbursement"))))
     for amt, settle, upd in r.all():
         val = settle if settle is not None else amt

@@ -54,6 +54,28 @@
 > 线上实测：跑了 3 周、`DBSIZE=0`、`keyspace_hits=0`。
 > **排障时别去查它**，也别照着它规划内存。要不要删/要不要真用起来，见交接文档第三节。
 
+> ## 内存：3.5 GB + 2 GB swap（swap 是 2026-08-24 才加的）
+>
+> 这台机器**只有 3.5 GB 内存**，平时用 40% 左右。原来**一点 swap 都没有**，
+> 内核日志里累计有 9 次因内存不足强杀进程的记录（dockerd 4 次、后端 worker 5 次）。
+>
+> 已做两件事：
+> 1. **清掉 437 个悬空镜像**（2026-08-15）。这是主因——dockerd 扫描镜像时会膨胀到 2.4–3 GB。
+>    清完之后 **8 天零 OOM**，期间还发过好几轮版。
+> 2. **加了 2 GB swapfile**（2026-08-24），`vm.swappiness` 从 **0 调到 10**。
+>    定位是**保险**不是救命：平时用不到，防的是发版 `--build` 跑前端构建那一下的瞬时尖峰。
+>
+> ```bash
+> swapon --show          # 应显示 /swapfile 2G
+> cat /proc/sys/vm/swappiness   # 应为 10
+> ```
+> 持久化在 `/etc/fstab`（`/swapfile none swap sw 0 0`）+ `/etc/sysctl.conf`。
+> 改 fstab 前原文件备份成了 `/etc/fstab.bak.*`。
+> ⚠️ 动 fstab 之后一定要 `findmnt --verify` 和 `swapon --all` 验一遍——**这行写错下次重启起不来**，
+> 而重启失败在云主机上很难救。当时验过：合法、且重复执行不报错。
+>
+> **还没做**：给容器设 `mem_limit`（出事只死一个容器，不连累 dockerd）。
+
 > ## ⛔ 这台机器上**不要**敲 `docker system df` / `docker system df -v`
 >
 > 服务器只有 **3.5 GB 内存、没有 swap**。这条命令要遍历所有镜像层算体积，

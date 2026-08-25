@@ -1399,11 +1399,13 @@ async function revokeInvoice(row: ViewRow) {
             <el-col :span="12">
               <div class="section-title">库存金额（按物料 · 仅通用物料）</div>
               <el-table show-overflow-tooltip :data="invValue.rows" v-loading="invLoading" stripe size="small" max-height="calc(100vh - 420px)" class="compact-tbl">
-                <el-table-column prop="name" label="物料" min-width="140" />
-                <el-table-column prop="spec" label="规格" min-width="110"><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
-                <el-table-column label="现存" width="80" align="right"><template #default="{ row }">{{ row.stock }}</template></el-table-column>
-                <el-table-column label="均价" width="100" align="right"><template #default="{ row }">{{ row.avg_price != null ? fmtMoney(row.avg_price) : '—' }}</template></el-table-column>
-                <el-table-column label="金额" width="120" align="right"><template #default="{ row }"><b>{{ row.value != null ? fmtMoney(row.value) : '—' }}</b></template></el-table-column>
+                <!-- 🆕 #408（赵仁辉）「未排序」：默认仍按金额从大到小（先看占钱多的），
+                     但每列都可点表头自己排——他要按物料名或现存找东西时不用一行行翻 -->
+                <el-table-column prop="name" label="物料" min-width="140" sortable />
+                <el-table-column prop="spec" label="规格" min-width="110" sortable><template #default="{ row }">{{ row.spec || '—' }}</template></el-table-column>
+                <el-table-column prop="stock" label="现存" width="86" align="right" sortable><template #default="{ row }">{{ row.stock }}</template></el-table-column>
+                <el-table-column prop="avg_price" label="均价" width="106" align="right" sortable><template #default="{ row }">{{ row.avg_price != null ? fmtMoney(row.avg_price) : '—' }}</template></el-table-column>
+                <el-table-column prop="value" label="金额" width="126" align="right" sortable><template #default="{ row }"><b>{{ row.value != null ? fmtMoney(row.value) : '—' }}</b></template></el-table-column>
               </el-table>
               <EmptyHint v-if="!invLoading && !invValue.rows.length" text="暂无通用库存物料（料都挂了订单编号，已归入项目材料成本）" size="sm" />
             </el-col>
@@ -1445,8 +1447,10 @@ async function revokeInvoice(row: ViewRow) {
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="项目" min-width="120"><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
-                <el-table-column label="材料成本" width="130" align="right"><template #default="{ row }"><b>{{ fmtMoney(row.cost) }}</b></template></el-table-column>
+                <!-- 🆕 #408：他圈的就是这一列——默认按成本从大到小排，要按项目编号找就点「项目」表头。
+                     ⚠️ 用 prop 指定排序依据（code / cost），光写 sortable 而列是模板列的话排不动。 -->
+                <el-table-column prop="code" label="项目" min-width="120" sortable><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
+                <el-table-column prop="cost" label="材料成本" width="136" align="right" sortable><template #default="{ row }"><b>{{ fmtMoney(row.cost) }}</b></template></el-table-column>
               </el-table>
               <EmptyHint v-if="!invLoading && !projCost.length" text="暂无项目材料成本" size="sm" />
             </el-col>

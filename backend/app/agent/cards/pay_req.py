@@ -55,8 +55,12 @@ async def pending_pay_reqs(db: AsyncSession, current: models.User) -> list[model
     if _buyer_restricted(current):
         sub = (select(models.PurchaseItem.id)
                .where(models.PurchaseItem.buyer_id == current.id))
+        # ⚠️ 关联字段是 `item_id`，**不是** `purchase_item_id`（那是 WhTxn 上的列）。
+        #   写错不会在导入时报错，只在**受限采购员**真去拿卡片/简报时抛 AttributeError → 500，
+        #   管理员因为走不到这个分支永远测不出来。本文件 129 行早写过同一条警告、
+        #   下面那段也改对了，唯独漏了这里；2026-08-22 线上实测王芹/李新新两个账号全炸。
         mine = (select(models.PaymentRequestItem.request_id)
-                .where(models.PaymentRequestItem.purchase_item_id.in_(sub)))
+                .where(models.PaymentRequestItem.item_id.in_(sub)))
         stmt = stmt.where(models.PaymentRequest.id.in_(mine))
     return list((await db.execute(stmt)).scalars().all())
 
