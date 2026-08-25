@@ -1751,14 +1751,39 @@ async def list_pending_cards(
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """当前用户的待办审批卡。第一期白名单只有请款一类（registry.CARD_TYPES）。
+    """当前用户的待办审批卡 —— **所有类别合在一起**。
+
+    🐛 原来这里写死只装 `assemble_pay_req_cards`，于是用户看到的是
+       「审批功能只能审批采购板块的请款审批，OA 申请不显示」。
+       待办是按人算的，不是按模块算的：他打开「待我审批」要的是
+       **今天该他批的全部**，而不是某一个模块里的那几张。
+       以后再加类别，往 `_PENDING_KINDS` 里加一行即可。
 
     行级隔离交给装配层复用业务侧谓词；这里不写任何 where。
+    ⚠️ 某一类装配炸了不能把整页带塌——那样用户是「审批打不开」，
+       比少一类严重得多。所以逐类 try，失败只记日志。
     """
     from ..agent import cards as _cards
-    items = await _cards.assemble_pay_req_cards(db, current)
-    total = sum(float(str(f["v"]).replace("¥", "").replace(",", ""))
-                for c in items for f in c["facts"] if f["k"] == "请款金额")
+    _PENDING_KINDS = (
+        ("pay_req_approve", _cards.assemble_pay_req_cards, "请款金额"),
+        ("oa_approve", _cards.assemble_oa_cards, "金额"),
+    )
+    items: list[dict] = []
+    total = 0.0
+    for name, fn, amount_key in _PENDING_KINDS:
+        try:
+            got = await fn(db, current)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[agent] 待办卡 %s 装配失败: %s", name, e)
+            continue
+        items += got
+        for c in got:
+            for f in c["facts"]:
+                if f["k"] == amount_key:
+                    try:
+                        total += float(str(f["v"]).replace("¥", "").replace(",", ""))
+                    except (TypeError, ValueError):
+                        pass
     return {
         "cards": items,
         "count": len(items),

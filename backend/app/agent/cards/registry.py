@@ -29,6 +29,9 @@ CARD_TYPES: dict[str, set[str]] = {
     #    ⚠️ ref 是 **草稿 id**（agent_drafts.id），不是待办 id ——
     #       点这一下之前，待办还不存在。
     "mgmt_todo_send": {"send"},
+    # 🆕 OA 申请审批：打 PUT /oa/requests/{id}/approve|reject
+    #    ⚠️ reject 的 reason 必填（schemas.OaRejectIn min_length=1）
+    "oa_approve": {"approve", "reject"},
 }
 
 

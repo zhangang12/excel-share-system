@@ -26,7 +26,9 @@ MAX_QUESTION = 120      # 自定义提问长度
 # ── 卡片目录：每一张都对应 agent_router 里真实存在的工具 ──
 # 没有工具支撑的条目一律不要加：摆上去点进去只会得到「查不到」，比不摆更伤信任。
 CATALOG: list[dict] = [
-    {"key": "approvals", "label": "等你签字", "desc": "待你审批的请款单",
+    # 🆕 不再只是请款：/cards/pending 现在把请款和 OA 一起装（用户反馈
+    #    「审批功能只能审批采购板块的请款审批，OA 申请不显示」）
+    {"key": "approvals", "label": "等你签字", "desc": "待你审批的请款单和 OA 申请",
      "glyph": "￥", "tone": "blue", "q": "待我审批的请款单", "tool": None, "kind": "approve"},
     {"key": "morning_report", "label": "今日晨报", "desc": "一条消息看完全部要紧事",
      "glyph": "报", "tone": "blue", "q": "今日晨报", "tool": "morning_report"},

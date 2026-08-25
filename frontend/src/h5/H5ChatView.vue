@@ -48,9 +48,12 @@ const scroller = ref<HTMLElement>()
 const panel = ref<HTMLElement>()
 const pending = ref<{ count: number; amount_total: number; blocked: number }>(
   { count: 0, amount_total: 0, blocked: 0 })
-const suggestions = ref<string[]>(['这月销售额多少？', '哪些供应商老迟到？', '待我审批的请款单'])
+const suggestions = ref<string[]>(['这月销售额多少？', '哪些供应商老迟到？', '待我审批的'])
 /** 走卡片通道的精确入口文案；只有这几条，别改成模糊匹配 */
-const CARD_ENTRIES = new Set(['待我审批的请款单', '待我审批', '请款审批'])
+// ⚠️ 这几条是**精确文案**，别改成模糊匹配（改过一次，把用户自己打的
+//    「查询一下所有的待审批的待办?」也劫持成查请款单）。
+//    「待我审批的」不带类别 —— /cards/pending 现在把请款和 OA 一起返回。
+const CARD_ENTRIES = new Set(['待我审批的', '待我审批的请款单', '待我审批', '请款审批', 'OA审批'])
 
 const greet = computed(() => {
   const h = new Date().getHours()
