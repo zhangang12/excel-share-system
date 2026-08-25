@@ -82,6 +82,27 @@ export const CARD_REGISTRY: Record<string, CardDef> = {
     },
   },
 
+  // 🆕 OA 申请审批（业务申请/报销/采购申请共用一张表，多步审批）。
+  //    ⚠️ 驳回的 reason **必填**（后端 OaRejectIn 用了 min_length=1），
+  //       所以 needsReason 一定要标，否则不弹输入框、点下去 422。
+  oa_approve: {
+    title: 'OA 审批',
+    glyph: 'OA',
+    actions: {
+      approve: {
+        label: '通过',
+        run: (ref) => http.put(`/oa/requests/${ref}/approve`, {}),
+      },
+      reject: {
+        label: '驳回',
+        danger: true,
+        needsReason: true,
+        run: (ref, reason) => http.put(`/oa/requests/${ref}/reject`,
+          { reason: reason || '' }),
+      },
+    },
+  },
+
   // 🆕 下发待办·草稿确认。⚠️ ref 是**草稿 id**（agent_drafts.id），不是待办 id ——
   //    点这一下之前，待办还不存在。模型只能拟草稿，发不发由这一下决定。
   mgmt_todo_send: {
