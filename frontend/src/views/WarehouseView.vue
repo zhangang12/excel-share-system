@@ -1712,8 +1712,8 @@ function applyPoPick() {
               </el-table-column>
               <el-table-column label="收货单" width="82" align="center">
                 <template #default="{ row }">
-                  <span v-if="row._isGroup" class="muted small">{{ row.receipt_count ? `📎 ${row.receipt_count}` : '—' }}</span>
-                  <el-button v-else-if="row.receipt_count" size="small" link type="primary" @click="viewReceipts(row)">📎 {{ row.receipt_count }}</el-button>
+                  <span v-if="row._isGroup" class="muted small">{{ row.receipt_count ? `凭证 ${row.receipt_count}` : '—' }}</span>
+                  <el-button v-else-if="row.receipt_count" size="small" link type="primary" @click="viewReceipts(row)">凭证 {{ row.receipt_count }}</el-button>
                   <span v-else class="muted small">—</span>
                 </template>
               </el-table-column>
@@ -1747,7 +1747,7 @@ function applyPoPick() {
           <EmptyHint v-if="!canWrite" text="仅仓库角色可查看发货清单目录" :icon="Lock" />
           <template v-else>
             <div class="ship-cat-head">
-              <div class="ship-pending-title" style="margin:0">📋 发货清单目录</div>
+              <div class="ship-pending-title" style="margin:0">发货清单目录</div>
               <el-radio-group v-model="shipFilter" size="small">
                 <el-radio-button label="requested">待备货</el-radio-button>
                 <el-radio-button label="ready">已备齐</el-radio-button>
@@ -1829,7 +1829,7 @@ function applyPoPick() {
                   <!-- 🆕 #245/#246 直传文件（可下载） -->
                   <div v-if="row.attachments && row.attachments.length" style="margin:6px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                     <span class="muted small">采购文件：</span>
-                    <el-button v-for="a in row.attachments" :key="a.id" size="small" link type="primary" @click="downloadAttachment(a)">📎 {{ a.name }}</el-button>
+                    <el-button v-for="a in row.attachments" :key="a.id" size="small" link type="primary" @click="downloadAttachment(a)">{{ a.name }}</el-button>
                   </div>
                   <el-table v-if="row.lines && row.lines.length" show-overflow-tooltip :data="row.lines" size="small" border style="margin:6px 12px">
                     <el-table-column type="index" label="#" width="44" />
@@ -1940,7 +1940,7 @@ function applyPoPick() {
 
     <!-- 出入库弹窗 -->
     <!-- 🆕 #377 调至项目物料 -->
-    <el-dialog v-model="transferVisible" title="📦 调至项目物料（中转）" width="720px">
+    <el-dialog v-model="transferVisible" title="调至项目物料（中转）" width="720px">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px"
         title="把库位上的存量物料划给某个项目。库存净额不变（记一笔转出、一笔转入），调完这批料会出现在该项目的「物料需求」里统一领料出库，并从「库存总览 / 库存金额」转入该项目的材料成本。" />
       <el-form label-position="top">
@@ -1982,7 +1982,7 @@ function applyPoPick() {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="ioVisible" :title="ioForm.direction === 'in' ? '📥 入库登记' : '📤 出库登记（可多行批量）'"
+    <el-dialog v-model="ioVisible" :title="ioForm.direction === 'in' ? '入库登记' : '出库登记（可多行批量）'"
                :width="ioForm.direction === 'out' ? '680px' : '480px'">
       <el-form label-position="top">
         <!-- 🆕 #325 出库=多行批量：逐行选物料+数量，消耗品一次出多种；入库保持单行 -->
@@ -2061,7 +2061,7 @@ function applyPoPick() {
     </el-dialog>
 
     <!-- 🆕 按采购单号挑物料出库 -->
-    <el-dialog v-model="poPickVisible" title="📦 按采购单号选物料出库" width="760px" append-to-body>
+    <el-dialog v-model="poPickVisible" title="按采购单号选物料出库" width="760px" append-to-body>
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
         <el-input v-model="poKw" placeholder="输入采购单号（可只输一段）" :prefix-icon="Search"
                   clearable style="width:280px" @input="onPoSearch" @clear="loadPoItems" />

@@ -192,7 +192,7 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="submitVisible" title="📝 提交问题反馈" width="480px">
+    <el-dialog v-model="submitVisible" title="提交问题反馈" width="480px">
       <el-form label-position="top">
         <el-form-item label="项目（在手）" required>
           <el-select v-model="form.project_id" filterable placeholder="选择在手项目" style="width: 100%">
@@ -204,7 +204,7 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
         </el-form-item>
         <!-- 🆕 #193 现场照片(选填,多张) -->
         <el-form-item label="现场照片（选填，可多张）">
-          <el-button size="small" @click="pickImages">📷 选择图片</el-button>
+          <el-button size="small" @click="pickImages">选择图片</el-button>
           <div v-if="fbImages.length" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">
             <el-tag v-for="(f, i) in fbImages" :key="i" size="small" closable @close="removeImage(i)">{{ f.name }}</el-tag>
           </div>
@@ -217,7 +217,7 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
     </el-dialog>
 
     <!-- 🆕 #29 指派死信反馈给设计师 -->
-    <el-dialog v-model="assignVisible" title="👤 指派设计师" width="420px">
+    <el-dialog v-model="assignVisible" title="指派设计师" width="420px">
       <div v-if="assignTarget" class="assign-tip">
         <b class="code">{{ assignTarget.code }}</b> · {{ assignTarget.content }}
       </div>

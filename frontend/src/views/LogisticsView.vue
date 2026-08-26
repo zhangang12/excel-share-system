@@ -346,7 +346,7 @@ async function confirmShip(force = false) {
     </el-card>
 
     <!-- 收货信息 -->
-    <el-dialog v-model="rcvVisible" :title="`📍 收货信息 · ${rcvRow?.code || ''}`" width="460px">
+    <el-dialog v-model="rcvVisible" :title="`收货信息 · ${rcvRow?.code || ''}`" width="460px">
       <el-alert v-if="siblingRcv" type="info" :closable="false" show-icon style="margin-bottom:12px">
         <template #title>
           同编号项目「{{ siblingRcv.code }}」已有收货信息（{{ siblingRcv.receiver_name }}），
@@ -369,7 +369,7 @@ async function confirmShip(force = false) {
 
     <!-- 确认发货 -->
     <!-- 🆕 #201 物料运输费弹窗 -->
-    <el-dialog v-model="frVisible" :title="`🚚 物料运输费 · ${frRow?.code || ''}`" width="420px">
+    <el-dialog v-model="frVisible" :title="`物料运输费 · ${frRow?.code || ''}`" width="420px">
       <el-form label-position="top">
         <el-form-item label="运费金额（元）">
           <el-input-number v-model="frForm.freight_cost" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="留空/0 表示无运费" />
@@ -390,7 +390,7 @@ async function confirmShip(force = false) {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="shipVisible" :title="`📦 确认发货 · ${shipRow?.code || ''}`" width="480px">
+    <el-dialog v-model="shipVisible" :title="`确认发货 · ${shipRow?.code || ''}`" width="480px">
       <el-alert v-if="shipRow?.receiver_name" type="success" :closable="false" style="margin-bottom: 12px"
                 :title="`${shipRow.receiver_name} ｜ ${shipRow.receiver_phone || '—'} ｜ ${shipRow.receiver_addr || '—'}`" />
       <el-alert v-else type="warning" :closable="false" style="margin-bottom: 12px"

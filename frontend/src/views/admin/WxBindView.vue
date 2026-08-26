@@ -70,7 +70,7 @@ onMounted(load)
         <div class="desc">绑定企业微信 userid 后，站内消息将同步推送企业微信（凭证未配置时仅站内）</div>
       </div>
       <div class="spacer" style="flex:1"></div>
-      <el-button type="primary" plain :loading="testing" @click="testPush">🔔 测试推送（给自己）</el-button>
+      <el-button type="primary" plain :loading="testing" @click="testPush">测试推送（给自己）</el-button>
       <PageRefresh :load="load" />
     </div>
 

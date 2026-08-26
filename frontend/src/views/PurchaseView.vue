@@ -365,7 +365,7 @@ async function packDownload() {
 
         <div class="dl-sec">
           <div class="dl-sec-head">
-            <span class="dl-sec-title">📄 采购数据表</span>
+            <span class="dl-sec-title">采购数据表</span>
             <el-checkbox v-if="dlSheets.length"
                          :model-value="dlSelSheets.length === dlSheets.length"
                          :indeterminate="dlSelSheets.length > 0 && dlSelSheets.length < dlSheets.length"
@@ -383,7 +383,7 @@ async function packDownload() {
 
         <div class="dl-sec">
           <div class="dl-sec-head">
-            <span class="dl-sec-title">📎 设计推送附件</span>
+            <span class="dl-sec-title">设计推送附件</span>
             <el-checkbox v-if="dlAtts.length"
                          :model-value="dlSelAtts.length === dlAtts.length"
                          :indeterminate="dlSelAtts.length > 0 && dlSelAtts.length < dlAtts.length"

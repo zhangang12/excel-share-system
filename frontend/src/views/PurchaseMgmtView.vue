@@ -2343,7 +2343,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
         <!-- ==================== 🆕 #167 采购申请（仓库提 → 采购部处理）==================== -->
         <el-tab-pane v-if="tv('preq')" name="preq" lazy>
-          <template #label>📥 采购申请<span v-if="incomingPending">（{{ incomingPending }}）</span></template>
+          <template #label>采购申请<span v-if="incomingPending">（{{ incomingPending }}）</span></template>
           <div class="filter-bar">
             <el-button :icon="Refresh" size="small" @click="loadIncomingReqs">刷新</el-button>
             <span class="muted small">仓库提交的采购申请汇到这里。核对后「已处理」（表示已按此下单）或「驳回」；仓库会收到通知。</span>
@@ -2354,7 +2354,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                 <!-- 🆕 #245/#246 直传文件（可下载） -->
                 <div v-if="row.attachments && row.attachments.length" style="margin:6px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                   <span class="muted small">采购文件：</span>
-                  <el-button v-for="a in row.attachments" :key="a.id" size="small" link type="primary" @click="downloadAttachment(a)">📎 {{ a.name }}</el-button>
+                  <el-button v-for="a in row.attachments" :key="a.id" size="small" link type="primary" @click="downloadAttachment(a)">{{ a.name }}</el-button>
                 </div>
                 <el-table v-if="row.lines && row.lines.length" show-overflow-tooltip :data="row.lines" size="small" border style="margin:6px 12px">
                   <el-table-column type="index" label="#" width="44" />
@@ -2506,7 +2506,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
                     <el-button link type="primary" class="po-no" @click="printPO(row.po_no)">{{ row.po_no }}</el-button>
                   </el-tooltip>
                   <el-tooltip content="下载PDF（移动端/微信推荐）" placement="top">
-                    <el-button link type="success" size="small" @click="downloadPoPdf(row.po_no)">⬇PDF</el-button>
+                    <el-button link type="success" size="small" @click="downloadPoPdf(row.po_no)">PDF</el-button>
                   </el-tooltip>
                 </template>
                 <span v-else class="muted">—</span>
@@ -2810,7 +2810,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             <el-table-column label="付款凭证" width="110" align="center">
               <template #default="{ row }">
                 <el-button v-if="row.pay_voucher_file_id" size="small" link type="primary"
-                           @click="previewVoucher({ id: row.pay_voucher_file_id, name: row.pay_voucher_name || '付款凭证' })">📎 凭证</el-button>
+                           @click="previewVoucher({ id: row.pay_voucher_file_id, name: row.pay_voucher_name || '付款凭证' })">凭证</el-button>
                 <span v-else-if="row.status === 'paid'" class="muted small">未上传</span>
                 <span v-else class="muted small">—</span>
               </template>
@@ -3852,7 +3852,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
         <div class="dl-sec">
           <div class="dl-sec-head">
-            <span class="dl-sec-title">📄 采购数据表</span>
+            <span class="dl-sec-title">采购数据表</span>
             <el-checkbox v-if="dlSheets.length"
                          :model-value="dlSelSheets.length === dlSheets.length"
                          :indeterminate="dlSelSheets.length > 0 && dlSelSheets.length < dlSheets.length"
@@ -3870,7 +3870,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
         <div class="dl-sec">
           <div class="dl-sec-head">
-            <span class="dl-sec-title">📎 设计推送附件</span>
+            <span class="dl-sec-title">设计推送附件</span>
             <el-checkbox v-if="dlAtts.length"
                          :model-value="dlSelAtts.length === dlAtts.length"
                          :indeterminate="dlSelAtts.length > 0 && dlSelAtts.length < dlAtts.length"

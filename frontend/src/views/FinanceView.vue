@@ -963,7 +963,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-table-column label="采购单" min-width="130">
               <template #default="{ row }">
                 <template v-if="row.po_nos?.length">
-                  <el-button v-for="po in row.po_nos" :key="po" size="small" link type="primary" @click="downloadPoPdf(po)">📄 {{ po }}</el-button>
+                  <el-button v-for="po in row.po_nos" :key="po" size="small" link type="primary" @click="downloadPoPdf(po)">{{ po }}</el-button>
                 </template>
                 <span v-else>—</span>
               </template>
@@ -1013,7 +1013,7 @@ async function revokeInvoice(row: ViewRow) {
             <el-select v-model="expYear" style="width:110px" @change="loadExpense">
               <el-option v-for="y in expYears" :key="y" :label="y + ' 年'" :value="y" />
             </el-select>
-            <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先) + 物料运输费(物流录入·我方承担)。材料是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「📈 项目毛利」tab。</span>
+            <span class="muted small">口径：采购付款(按付款日期) + 安装/售后费用(已审批) + OA业务/报销费用(已审批，核定金额优先) + 物料运输费(物流录入·我方承担)。材料是项目成本口径(钱已含在采购付款里,不重复计)，项目级毛利见「项目毛利」tab。</span>
           </div>
           <div v-if="expData" class="kpi-grid" style="margin-bottom:12px">
             <div class="kpi is-primary"><div class="kpi-v">{{ fmtMoney(expData.totals.grand) }}</div><div class="kpi-l">{{ expData.year }} 年总支出</div></div>
@@ -1147,7 +1147,7 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!pnlLoading && !pnlRows.length" text="暂无项目毛利数据（需要销售台账或项目成本数据）" />
           <div v-if="asTop.length" style="margin-top:14px">
             <div class="section-title" style="display:flex;align-items:center;gap:10px">
-              🛎️ 售后侵蚀 Top5（Σ安装/售后费 ÷ 合同额，定位返修高发）
+              售后侵蚀 Top5（Σ安装/售后费 ÷ 合同额，定位返修高发）
               <el-radio-group v-model="asTopDim" size="small">
                 <el-radio-button value="name">按机型</el-radio-button>
                 <el-radio-button value="customer">按客户</el-radio-button>
@@ -1502,16 +1502,16 @@ async function revokeInvoice(row: ViewRow) {
     <el-dialog v-model="payDialogVisible" title="记录付款" width="600px">
       <div v-if="payingPr" class="pay-info">
         <div class="pay-info-block">
-          <div class="pay-info-title">🏦 收款账户信息（供应商：{{ payingPr.supplier_name }}<el-button v-if="payingPr.supplier_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_name)">复制</el-button>）</div>
+          <div class="pay-info-title">收款账户信息（供应商：{{ payingPr.supplier_name }}<el-button v-if="payingPr.supplier_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_name)">复制</el-button>）</div>
           <div class="pay-info-row"><span class="k">开户行</span>{{ payingPr.supplier_bank_name || '—' }}<el-button v-if="payingPr.supplier_bank_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_name)">复制</el-button></div>
           <div class="pay-info-row"><span class="k">银行账号</span><b>{{ payingPr.supplier_bank_account || '—' }}</b><el-button v-if="payingPr.supplier_bank_account" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_account)">复制</el-button></div>
           <div class="pay-info-row"><span class="k">税号</span>{{ payingPr.supplier_tax_no || '—' }}<el-button v-if="payingPr.supplier_tax_no" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_tax_no)">复制</el-button></div>
           <div v-if="!payingPr.supplier_bank_account" class="muted small">该供应商未维护银行账号，请先在采购管理补全供应商档案。</div>
         </div>
         <div class="pay-info-block">
-          <div class="pay-info-title">📄 关联采购单
+          <div class="pay-info-title">关联采购单
             <template v-if="payingPr.po_nos?.length">
-              <el-button v-for="po in payingPr.po_nos" :key="po" size="small" link type="primary" @click="downloadPoPdf(po)">📄 {{ po }}</el-button>
+              <el-button v-for="po in payingPr.po_nos" :key="po" size="small" link type="primary" @click="downloadPoPdf(po)">{{ po }}</el-button>
             </template>
           </div>
           <el-table show-overflow-tooltip :data="payingPr.items" size="small" border max-height="180">

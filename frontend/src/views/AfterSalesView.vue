@@ -314,7 +314,7 @@ async function approve(r: Row, ok: boolean) {
     </div>
 
     <el-card shadow="never">
-      <template #header>📋 安装/售后登记台账</template>
+      <template #header>安装/售后登记台账</template>
       <!-- 🆕 #392（杨坛）：类型 / 项目编号 / 提交人 筛选 -->
       <div class="as-filters">
         <el-select v-model="fKind" clearable placeholder="全部类型" size="small" style="width:110px">
@@ -428,7 +428,7 @@ async function approve(r: Row, ok: boolean) {
       <EmptyHint v-if="!loading && !rows.length" text="暂无售后记录" />
     </el-card>
 
-    <el-dialog v-model="regVisible" :title="isInstall ? '🔧 登记安装' : '🛎️ 登记售后'" width="520px">
+    <el-dialog v-model="regVisible" :title="isInstall ? '登记安装' : '登记售后'" width="520px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
                 :title="isInstall
                   ? '选项目 + 逐行填安装费用并附发票 + 上传安装清单 → 售后主管审批 → 财务核对发票后安排报销'
@@ -480,7 +480,7 @@ async function approve(r: Row, ok: boolean) {
     </el-dialog>
 
     <!-- 🆕 发票被财务退回后，登记人在这里改完再交回去（整份清单覆盖式替换） -->
-    <el-dialog v-model="fixVisible" title="🧾 重传发票" width="560px">
+    <el-dialog v-model="fixVisible" title="重传发票" width="560px">
       <el-alert v-if="fixRow?.pay_note" type="warning" :closable="false" style="margin-bottom:12px"
                 :title="`财务退回原因：${fixRow.pay_note}`" />
       <div class="cost-list">

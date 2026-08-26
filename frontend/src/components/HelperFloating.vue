@@ -126,7 +126,7 @@ const tip = computed(() => `当前页面：${route.fullPath || '/'}（提交时�
     <span class="lbl">反馈</span>
   </button>
 
-  <el-dialog v-model="visible" title="💬 反馈小助手" width="560px"
+  <el-dialog v-model="visible" title="反馈小助手" width="560px"
              :close-on-click-modal="false" append-to-body class="v3-scroll-dialog">
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- 提交反馈 -->

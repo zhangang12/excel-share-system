@@ -474,7 +474,7 @@ const resVisible = ref(false)
 const resId = ref<number | null>(null)
 const resMode = ref<ResMode>('shipprep')
 const resOrder = computed(() => orders.value.find(o => o.id === resId.value) || null)
-const resTitle = computed(() => resMode.value === 'shipprep' ? '📦 发货准备' : '🔧 设计资料更换')
+const resTitle = computed(() => resMode.value === 'shipprep' ? '发货准备' : '设计资料更换')
 const resSections = computed(() => resMode.value === 'shipprep'
   ? (dept.value === 'electric'   // 🆕 #197 电工发货准备 = 电路图
       ? [{ k: 'circuit', label: '电路图 (PDF)', btn: '上传电路图' }]
@@ -937,14 +937,14 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                  style="width:140px" clearable filterable placeholder="全部负责人" @change="load">
         <el-option v-for="w in options?.workers || []" :key="w.id" :label="w.name" :value="w.id" />
       </el-select>
-      <el-button v-if="canSpare" type="primary" @click="openSpare">➕ 备机下单</el-button>
-      <el-button v-if="dept === 'design'" @click="stockVisible = true">🔎 查库存(只读)</el-button>
-      <el-button v-if="isLead || isMgr" type="primary" plain @click="openReport">📊 {{ deptName }}报表</el-button>
+      <el-button v-if="canSpare" type="primary" @click="openSpare">备机下单</el-button>
+      <el-button v-if="dept === 'design'" @click="stockVisible = true">查库存(只读)</el-button>
+      <el-button v-if="isLead || isMgr" type="primary" plain @click="openReport">{{ deptName }}报表</el-button>
       <PageRefresh :load="load" />
     </div>
 
     <!-- ===== 🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账 ===== -->
-    <el-dialog v-model="spareVisible" title="➕ 备机下单" width="560px" :close-on-click-modal="false">
+    <el-dialog v-model="spareVisible" title="备机下单" width="560px" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" style="margin-bottom: 12px"
                 title="备机不走销售台账；下单后建项目并推送所选部门待分派，同样进入项目目录/详单。" />
       <el-form label-position="top">
@@ -1049,7 +1049,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
               </div>
               <!-- 🆕 #1 对合同技术资料提修订意见（设计/电工，进行中）→ 推送对应销售 -->
               <div v-if="(dept === 'design' || dept === 'electric') && o.status === 'in_progress' && o.input_files.length" style="margin:4px 0">
-                <el-button size="small" link type="warning" @click="openRevision(o)">✏️ 对技术资料提修订意见</el-button>
+                <el-button size="small" link type="warning" @click="openRevision(o)">对技术资料提修订意见</el-button>
               </div>
 
               <!-- 🆕 #6 电工部：标准件清单只读引用（待接单/进行中卡片均显示） -->
@@ -1699,7 +1699,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <!-- 🆕 #245/#246 直传文件（可下载） -->
                 <div v-if="row.attachments && row.attachments.length" style="margin:6px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                   <span class="muted small">采购文件：</span>
-                  <el-button v-for="a in row.attachments" :key="a.id" size="small" link type="primary" @click="downloadAttachment(a)">📎 {{ a.name }}</el-button>
+                  <el-button v-for="a in row.attachments" :key="a.id" size="small" link type="primary" @click="downloadAttachment(a)">{{ a.name }}</el-button>
                 </div>
                 <el-table v-if="row.lines && row.lines.length" show-overflow-tooltip :data="row.lines" size="small" border style="margin:6px 12px">
                   <el-table-column type="index" label="#" width="44" />
@@ -1737,7 +1737,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     <StockQueryDialog v-if="dept === 'design'" v-model="stockVisible" />
 
     <!-- 🆕 M14 部门报表弹窗 -->
-    <el-dialog v-model="reportVisible" :title="`📊 ${report?.dept_name || ''}报表（仅本部门数据）`" width="1080px" top="6vh" class="v3-scroll-dialog">
+    <el-dialog v-model="reportVisible" :title="`${report?.dept_name || ''}报表（仅本部门数据）`" width="1080px" top="6vh" class="v3-scroll-dialog">
       <!-- 筛选栏 -->
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
         <span style="font-size:13px;color:var(--el-text-color-secondary)">筛选：</span>
@@ -1820,7 +1820,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     </el-dialog>
 
     <!-- ===== 换人弹窗（M17 防离职） ===== -->
-    <el-dialog v-model="reassignVisible" :title="`🔄 更换负责人 · ${reassignOrder?.project_code || ''}`" width="480px">
+    <el-dialog v-model="reassignVisible" :title="`更换负责人 · ${reassignOrder?.project_code || ''}`" width="480px">
       <el-alert type="warning" :closable="false" style="margin-bottom: 14px"
                 title="用于人员离职/请假：任务转交同部门他人，时间与已传产物保留，新负责人接续；设计/电工换人将回传项目目录" />
       <el-form label-position="top">
@@ -1840,7 +1840,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     </el-dialog>
 
     <!-- ===== 🆕 #194 组任务换人弹窗 ===== -->
-    <el-dialog v-model="grpReVisible" :title="`🔁 换人 · ${grpReRow?.code || ''}（${GROUP_LABEL[grpReGroup] || ''}）`" width="380px">
+    <el-dialog v-model="grpReVisible" :title="`换人 · ${grpReRow?.code || ''}（${GROUP_LABEL[grpReGroup] || ''}）`" width="380px">
       <el-form label-position="top">
         <el-form-item :label="`当前负责人：${grpReRow?.worker_name || '—'}，改派给`" required>
           <el-select v-model="grpReWid" filterable placeholder="选择新负责人" style="width:100%">
@@ -1977,7 +1977,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     </el-dialog>
 
     <!-- 🆕 #1 提技术资料修订意见 -->
-    <el-dialog v-model="revVisible" :title="`✏️ 技术资料修订意见 · ${revOrder?.project_code || ''}`" width="520px">
+    <el-dialog v-model="revVisible" :title="`技术资料修订意见 · ${revOrder?.project_code || ''}`" width="520px">
       <el-alert type="warning" :closable="false" style="margin-bottom: 12px"
                 title="把合同技术资料里需要修改的地方写清楚，提交后会推送给该项目对应的销售员，由销售更换技术资料。" />
       <el-input v-model="revReason" type="textarea" :rows="5" maxlength="1000" show-word-limit

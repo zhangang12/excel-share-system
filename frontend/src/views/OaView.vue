@@ -1306,7 +1306,7 @@ onMounted(async () => {
                       <template #default="{ row }">
                         <el-button v-if="!row.invoice_file_id" size="small" link type="primary" @click="uploadExpenseInvoice(row)">上传</el-button>
                         <el-tooltip v-else :content="row.invoice_file_name" placement="top">
-                          <el-button size="small" link type="success" @click="uploadExpenseInvoice(row)">📎 已传·换</el-button>
+                          <el-button size="small" link type="success" @click="uploadExpenseInvoice(row)">已传·换</el-button>
                         </el-tooltip>
                       </template>
                     </el-table-column>

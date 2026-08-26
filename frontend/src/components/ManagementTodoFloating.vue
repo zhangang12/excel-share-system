@@ -359,7 +359,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
     <span v-if="badgeCount > 0" class="mt-badge">{{ badgeCount > 99 ? '99+' : badgeCount }}</span>
   </button>
 
-  <el-dialog v-model="visible" title="🗒️ 管理层待办" width="720px"
+  <el-dialog v-model="visible" title="管理层待办" width="720px"
              :close-on-click-modal="false" append-to-body class="v3-scroll-dialog">
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- ============ 我收到的 ============ -->
@@ -595,7 +595,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
   </el-dialog>
 
   <!-- 🆕 #363/#381 个人待办：补日期 / 项目 / 紧急（新建时一律不填，建完才来这里补） -->
-  <el-dialog v-model="psEditVisible" title="✏️ 编辑个人待办" width="460px" append-to-body>
+  <el-dialog v-model="psEditVisible" title="编辑个人待办" width="460px" append-to-body>
     <el-form label-position="top">
       <el-form-item label="内容" required>
         <el-input v-model="psForm.title" maxlength="200" show-word-limit />

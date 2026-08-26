@@ -267,7 +267,7 @@ async function openReport() {
     </el-card>
 
     <!-- ===== 录入线索 ===== -->
-    <el-dialog v-model="createVisible" title="📥 录入线索" width="760px" :close-on-click-modal="false">
+    <el-dialog v-model="createVisible" title="录入线索" width="760px" :close-on-click-modal="false">
       <el-form label-position="top">
         <div class="frow">
           <el-form-item label="询盘来源" required style="flex: 1">
@@ -304,7 +304,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 跟进 / 编辑 ===== -->
-    <el-dialog v-model="editVisible" :title="(allView ? '✏️ 编辑线索 · ' : '📞 跟进线索 · ') + (editRow ? leadTitle(editRow) : '')" width="760px" :close-on-click-modal="false">
+    <el-dialog v-model="editVisible" :title="(allView ? '编辑线索 · ' : '跟进线索 · ') + (editRow ? leadTitle(editRow) : '')" width="760px" :close-on-click-modal="false">
       <el-form label-position="top">
         <div class="frow">
           <el-form-item v-if="allView" label="询盘来源" style="flex: 1">
@@ -353,7 +353,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 线索报表 ===== -->
-    <el-dialog v-model="reportVisible" title="📊 线索报表" width="900px">
+    <el-dialog v-model="reportVisible" title="线索报表" width="900px">
       <div class="filter-bar" style="margin-bottom: 12px">
         <el-date-picker v-model="reportMonth" type="month" value-format="YYYY-MM" placeholder="按月份（空=全部）" clearable style="width: 180px" @change="loadReport" />
         <span class="muted" v-if="report">共 {{ report.total_leads }} 条线索 · 成交 {{ report.total_deal }} · 总成交率 <b>{{ pct(report.total_rate) }}</b></span>

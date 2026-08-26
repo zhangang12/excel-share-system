@@ -41,7 +41,7 @@ async function open() {
 <template>
   <el-button v-if="projectId" :link="variant === 'link'" :type="variant === 'link' ? 'primary' : undefined"
              size="small" @click.stop="open">{{ label }}</el-button>
-  <el-dialog v-model="visible" :title="`🔗 全流程进度 · ${code || ''}`" width="92%" top="5vh" append-to-body>
+  <el-dialog v-model="visible" :title="`全流程进度 · ${code || ''}`" width="92%" top="5vh" append-to-body>
     <div v-loading="loading" style="min-height:200px">
       <WorkflowGraph v-if="data" :wf="data" />
     </div>

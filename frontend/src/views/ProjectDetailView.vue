@@ -402,7 +402,7 @@ onMounted(reloadAll)
       <!-- 🆕 v3 M12 部门协作 tab（叠加，不改原进度表/成员） -->
       <el-tab-pane label="部门协作" name="collab">
         <el-card style="margin-bottom:14px" shadow="never">
-          <template #header>📦 项目状态 / 发货</template>
+          <template #header>项目状态 / 发货</template>
           <div class="collab-status">
             <span>项目状态：<el-tag size="small" effect="light">{{ project.status }}</el-tag></span>
             <span v-if="workflow">发货：
@@ -421,7 +421,7 @@ onMounted(reloadAll)
         </el-card>
 
         <el-card style="margin-bottom:14px" shadow="never">
-          <template #header>📑 四个数据表（设计完成前置校验）</template>
+          <template #header>四个数据表（设计完成前置校验）</template>
           <div class="sheet-slots">
             <div v-for="s in fourSheetStatus" :key="s.name" class="slot" :class="{ up: s.imported }">
               <div class="nm">{{ s.name }}</div>
@@ -432,14 +432,14 @@ onMounted(reloadAll)
         </el-card>
 
         <el-card shadow="never" style="margin-bottom:14px" v-loading="wfLoading">
-          <template #header>🔀 全流程工作流（并行 / 串行）</template>
+          <template #header>全流程工作流（并行 / 串行）</template>
           <WorkflowGraph v-if="workflow" :wf="workflow" />
           <el-empty v-else description="加载中…" :image-size="60" />
         </el-card>
 
         <!-- 🆕 v3 M13 问题反馈存档 -->
         <el-card shadow="never">
-          <template #header>📝 问题反馈（装配组 → 生产主管 → 设计师 存档）</template>
+          <template #header>问题反馈（装配组 → 生产主管 → 设计师 存档）</template>
           <el-table v-if="feedbacks.length" :data="feedbacks" size="small">
             <el-table-column prop="content" label="问题" min-width="240" show-overflow-tooltip />
             <el-table-column label="提交人" width="90"><template #default="{ row }">{{ row.created_by_name || '—' }}</template></el-table-column>

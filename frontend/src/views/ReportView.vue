@@ -65,7 +65,7 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
       </el-row>
 
       <el-card shadow="never" style="margin-top:14px" v-if="rep">
-        <template #header>📈 人均完成效率（预计÷实际 · 越高越好，绿=达标 ≥100%）</template>
+        <template #header>人均完成效率（预计÷实际 · 越高越好，绿=达标 ≥100%）</template>
         <div v-for="w in rep.workers.filter(x => x.avg_eff != null)" :key="w.dept + w.worker_name" class="bar-row">
           <span class="bl">{{ w.dept_name }} · {{ w.worker_name }}</span>
           <div class="bt"><div class="bf" :class="effClass(w.avg_eff)" :style="{ width: barWidth(w.avg_eff) + '%' }">{{ w.avg_eff }}%</div></div>
@@ -74,7 +74,7 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
       </el-card>
 
       <el-card shadow="never" style="margin-top:14px" v-if="rep">
-        <template #header>👤 人员明细</template>
+        <template #header>人员明细</template>
         <el-table show-overflow-tooltip :data="rep.workers" size="small" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="dept_name" label="部门" width="90" />
           <el-table-column prop="worker_name" label="人员" width="100" />

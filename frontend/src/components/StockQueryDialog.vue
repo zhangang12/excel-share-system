@@ -19,7 +19,7 @@ watch(visible, (v) => { if (v) load() })
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="🔎 查库存（只读）" width="70%" top="6vh" class="stock-query-dialog">
+  <el-dialog v-model="visible" title="查库存（只读）" width="70%" top="6vh" class="stock-query-dialog">
     <el-input v-model="kw" placeholder="搜索物料名称 / 规格 / 编码" :prefix-icon="Search" clearable style="width:320px;margin-bottom:10px" @change="load" />
     <el-table :data="materials" stripe size="small" v-loading="loading" max-height="70vh" :scrollbar-always-on="true">
       <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />

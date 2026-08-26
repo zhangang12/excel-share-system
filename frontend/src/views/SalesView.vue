@@ -780,7 +780,7 @@ async function openReport() {
         <div class="desc">销售项目统计台账 · {{ allView ? '全部' : '我的' }} · 一项目一行；编号自动生成；开票申请→主管审批→财务开票回传</div>
       </div>
       <div class="spacer"></div>
-      <el-button v-if="allView" type="primary" plain @click="openReport">📊 销售报表</el-button>
+      <el-button v-if="allView" type="primary" plain @click="openReport">销售报表</el-button>
       <el-button v-if="allView" :icon="Download" :loading="exporting" @click="exportLedger">导出Excel</el-button>
       <el-button v-if="allView" :icon="Stamp" @click="openApprovals">开票审批</el-button>
       <el-button v-if="allView" :icon="Select" @click="openOrderApprovals">下单审批</el-button>
@@ -812,7 +812,7 @@ async function openReport() {
         <span class="muted">共 {{ total }} 个项目</span>
         <span class="spacer" style="flex:1"></span>
         <el-tooltip :content="fitScreen ? '关闭适屏模式，恢复正常宽度' : '适屏模式：缩小列宽与字号，所有列在一屏内显示'" placement="top">
-          <el-button :type="fitScreen ? 'primary' : ''" @click="toggleFitScreen">⛶ 适屏</el-button>
+          <el-button :type="fitScreen ? 'primary' : ''" @click="toggleFitScreen">适屏</el-button>
         </el-tooltip>
         <el-tooltip :content="opCompact ? '展开操作列' : '收起操作列'" placement="top">
           <el-button :icon="Operation" @click="toggleOpCompact">{{ opCompact ? '展开' : '收起操作列' }}</el-button>
@@ -1053,7 +1053,7 @@ async function openReport() {
     </el-card>
 
     <!-- ===== 销售下单 / 修改重提 ===== -->
-    <el-dialog v-model="orderVisible" :title="draftEditLid ? '✏️ 修改重提下单' : '💼 销售下单'" width="640px" :close-on-click-modal="false" class="v3-scroll-dialog">
+    <el-dialog v-model="orderVisible" :title="draftEditLid ? '修改重提下单' : '销售下单'" width="640px" :close-on-click-modal="false" class="v3-scroll-dialog">
       <el-alert :type="draftEditLid ? 'warning' : 'info'" :closable="false" style="margin-bottom: 14px"
                 :title="draftEditLid ? '修改被退回的下单，提交后重新进入销售主管审批' : '下单日期/交货日期在「上传合同」时填写；发货日期由物流部确认发货时自动回传'" />
       <el-form label-position="top">
@@ -1168,7 +1168,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 编辑台账 ===== -->
-    <el-dialog v-model="editVisible" :title="`✏️ 编辑台账 · ${editRow?.code || ''}`" width="560px" class="v3-scroll-dialog">
+    <el-dialog v-model="editVisible" :title="`编辑台账 · ${editRow?.code || ''}`" width="560px" class="v3-scroll-dialog">
       <el-form label-position="top">
         <div class="frow">
           <el-form-item label="设备名称" style="flex: 1">
@@ -1250,7 +1250,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 🆕 收款批注（预付 / 发货前付） ===== -->
-    <el-dialog v-model="noteVisible" :title="`📝 ${noteFieldLabel}收款批注 · ${noteRow?.code || ''}`" width="480px" append-to-body>
+    <el-dialog v-model="noteVisible" :title="`${noteFieldLabel}收款批注 · ${noteRow?.code || ''}`" width="480px" append-to-body>
       <el-alert type="info" :closable="false" style="margin-bottom: 12px"
                 title="记录该笔款项的收款时间、金额、方式等；点「插入当前时间」可在光标处快速插入时间戳" />
       <el-input ref="noteInputRef" v-model="noteText" type="textarea" :rows="6" resize="none"
@@ -1266,14 +1266,14 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 🆕 全流程工作流 ===== -->
-    <el-dialog v-model="wfVisible" :title="`🔗 全流程进度 · ${wfCode}`" width="92%" top="5vh" append-to-body>
+    <el-dialog v-model="wfVisible" :title="`全流程进度 · ${wfCode}`" width="92%" top="5vh" append-to-body>
       <div v-loading="wfLoading" style="min-height: 200px">
         <WorkflowGraph v-if="wfData" :wf="wfData" />
       </div>
     </el-dialog>
 
     <!-- ===== 上传合同 ===== -->
-    <el-dialog v-model="contractVisible" :title="`📄 上传合同 · ${contractRow?.code || ''}`" width="500px">
+    <el-dialog v-model="contractVisible" :title="`上传合同 · ${contractRow?.code || ''}`" width="500px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
                 title="合同签订日期 = 下单日期；提交后两日期自动回写台账与项目目录" />
       <el-form label-position="top">
@@ -1323,7 +1323,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 销售报表 ===== -->
-    <el-dialog v-model="reportVisible" title="📊 销售部报表" width="880px" class="v3-scroll-dialog">
+    <el-dialog v-model="reportVisible" title="销售部报表" width="880px" class="v3-scroll-dialog">
       <div v-if="report">
         <!-- 经营概览：合同总额为核心，已/待开票语义配色 -->
         <div class="sec-title">经营概览</div>
@@ -1374,7 +1374,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 开票审批（主管）：单项目 + 🆕 合并批次 ===== -->
-    <el-dialog v-model="approvalVisible" title="🧾 开票审批" width="900px" class="v3-scroll-dialog">
+    <el-dialog v-model="approvalVisible" title="开票审批" width="900px" class="v3-scroll-dialog">
       <EmptyHint v-if="!approvalGroups.length" text="暂无待审批的开票申请" size="sm" />
       <el-table show-overflow-tooltip v-else :data="approvalGroups" row-key="key" stripe>
         <el-table-column label="项目编号" min-width="160">
@@ -1412,7 +1412,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 🆕 合并开票申请（同客户多项目，一份申请 + 一张合并发票） ===== -->
-    <el-dialog v-model="mergeVisible" title="🧾 合并开票申请" width="780px" class="v3-scroll-dialog">
+    <el-dialog v-model="mergeVisible" title="合并开票申请" width="780px" class="v3-scroll-dialog">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 10px"
                 title="勾选同一客户的多个项目合并开票：选中首个项目后，其它客户的项目将不可勾选。上传一份合并开票申请表，主管审批通过后由财务开具一张合并发票。" />
       <el-table show-overflow-tooltip ref="mergeTableRef" :data="mergeEligible" stripe max-height="380" @selection-change="onMergeSel">
@@ -1449,7 +1449,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 🆕 作废审批（销售负责人） ===== -->
-    <el-dialog v-model="voidApprovalVisible" title="🗑️ 订单作废审批" width="720px" class="v3-scroll-dialog">
+    <el-dialog v-model="voidApprovalVisible" title="订单作废审批" width="720px" class="v3-scroll-dialog">
       <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 10px"
                 title="通过后将作废订单并同步移除项目目录、项目详单及各部门流程（软删可追溯，必要时管理层可恢复）。" />
       <EmptyHint v-if="!voidApprovals.length" text="暂无待审批的作废申请" size="sm" />
@@ -1475,7 +1475,7 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 🆕 下单审批（销售主管） ===== -->
-    <el-dialog v-model="orderApprovalVisible" title="📝 销售下单审批" width="960px" top="6vh" class="v3-scroll-dialog">
+    <el-dialog v-model="orderApprovalVisible" title="销售下单审批" width="960px" top="6vh" class="v3-scroll-dialog">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 10px"
                 title="通过后才正式创建并推送各部门任务与物流发货待办；退回则销售可修改后重新提交。" />
       <EmptyHint v-if="!orderApprovalRows.length" text="暂无待审批的下单" size="sm" />
