@@ -438,6 +438,29 @@ async def reimburse(
     return schemas.Msg(message="已安排报销" + (f"（{miss} 行无发票，已记入审计）" if miss else ""))
 
 
+@router.post("/{aid}/pay-note", response_model=schemas.Msg)
+async def set_pay_note(
+    aid: int,
+    note: str = Form(""),
+    current: models.User = Depends(require_roles("finance")),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#417（王芹）：财务在费用表上直接填/改备注——安排完报销补记打款批次、核对情况等。
+
+    ⚠️ 退回中(invoice_fix)的 pay_note 是给登记人看的**退回原因**，这里不许碰——
+       盖掉之后登记人就不知道发票哪里要改了；等重传回到待核对再改。
+    """
+    a = await _get_for_pay(db, aid)
+    if a.pay_status == "invoice_fix":
+        raise HTTPException(400, "这条正处于发票退回中，备注栏是给登记人看的退回原因，等重传后再改")
+    a.pay_note = (note or "").strip()[:500] or None
+    detail = a.pay_note or "（清空）"
+    await db.commit()
+    await write_audit(db, user=current, action="pay_note", target_type="aftersales",
+                      target_id=aid, detail=detail[:80])
+    return schemas.Msg(message="备注已保存")
+
+
 @router.post("/{aid}/finance-void", response_model=schemas.Msg)
 async def finance_void(
     aid: int,

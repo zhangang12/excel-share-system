@@ -604,6 +604,21 @@ async function asReimburse(row: AsRow) {
   } finally { asActing.value = null }
 }
 
+// 🆕 反馈#417：财务直接在表上填/改备注。退回中的行备注是退回原因，按钮不出、后端也拦。
+async function asEditNote(row: AsRow) {
+  let v = ''
+  try {
+    const r = await ElMessageBox.prompt('要记的信息（打款批次、核对情况等）；清空则删除备注。', '备注', {
+      inputValue: row.pay_note || '', inputType: 'textarea',
+      confirmButtonText: '保存', cancelButtonText: '取消' })
+    v = (r.value ?? '').trim()
+  } catch { return }
+  const fd = new FormData(); fd.append('note', v)
+  const r2 = await http.post<{ message: string }>(`/aftersales/${row.id}/pay-note`, fd)
+  row.pay_note = v || null
+  ElMessage.success(r2.data?.message || '已保存')
+}
+
 async function asPayReject(row: AsRow) {
   let reason = ''
   try {
@@ -752,9 +767,9 @@ async function revokeInvoice(row: ViewRow) {
               <template v-else>共 {{ aftersales.length }} 条</template>
             </span>
           </div>
-          <!-- ⚠️ summary-method 是**按数组下标**对列的：这张表 11 列，合计落在下标 7（费用）。
+          <!-- ⚠️ summary-method 是**按数组下标**对列的：这张表 12 列，合计落在下标 7（费用）。
                加/删列必须同步改这个数组，否则「合计」会落到隔壁列上（#361 踩过）。 -->
-          <el-table show-overflow-tooltip :data="filteredAftersales" stripe show-summary :summary-method="() => ['', '合计', '', '', '', '', '', fmtMoney(asShownTotal), '', '', '']" max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
+          <el-table show-overflow-tooltip :data="filteredAftersales" stripe show-summary :summary-method="() => ['', '合计', '', '', '', '', '', fmtMoney(asShownTotal), '', '', '', '']" max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
             <!-- 明细放展开行：一条售后动辄三五行费用，摊成列会把表挤到要横向滚动 -->
             <el-table-column type="expand">
               <template #default="{ row }">
@@ -811,6 +826,15 @@ async function revokeInvoice(row: ViewRow) {
                   {{ AS_PAY_TXT[row.pay_status] }}
                 </el-tag>
                 <span v-else class="muted small">旧流程</span>
+              </template>
+            </el-table-column>
+            <!-- 🆕 反馈#417（王芹）：财务安排完报销要补记信息（打款批次/核对情况），直接在表上填。
+                 退回中(invoice_fix)的备注是给登记人看的退回原因，不给改（后端同样拦）。 -->
+            <el-table-column label="备注" min-width="150">
+              <template #default="{ row }">
+                <span v-if="row.pay_note">{{ row.pay_note }}</span><span v-else class="muted">—</span>
+                <el-button v-if="row.pay_status !== 'invoice_fix'" size="small" link type="primary"
+                           @click="asEditNote(row)">{{ row.pay_note ? '改' : '填' }}</el-button>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="210" fixed="right" :show-overflow-tooltip="false">
