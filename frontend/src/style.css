@@ -44,15 +44,20 @@
   --el-color-primary-light-8: #f4ecda;
   --el-color-primary-light-9: #faf5ea;
 
-  /* 圆角 / 阴影 */
-  --radius-sm: 6px;
-  --radius: 10px;
+  /* 圆角 / 阴影 —— 🆕 卡片化V2(2026-08-26)：阴影全部改品牌 navy 色 rgba(22,41,63,·)，
+     同样深度比纯黑干净；--shadow-top 是卡面顶部 1px 白高光(受光面)，浮起感主要来自它。
+     hover 规则统一「shadow 上一档 + translateY(-1~2px)」，只对小卡(.kpi)和按钮做位移，
+     整页大容器(el-card 包整个内容区的页)只加深阴影不位移——大面积跟着鼠标动会晕。 */
+  --radius-sm: 8px;
+  --radius: 12px;
   --radius-lg: 14px;
-  --shadow-xs: 0 1px 2px rgba(0,0,0,.04);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
-  --shadow: 0 4px 12px rgba(0,0,0,.06), 0 2px 4px rgba(0,0,0,.04);
-  --shadow-md: 0 8px 24px rgba(0,0,0,.08);
-  --shadow-lg: 0 20px 50px rgba(0,0,0,.12);
+  --shadow-top: inset 0 1px 0 rgba(255,255,255,.85);
+  --shadow-xs: 0 1px 2px rgba(22,41,63,.06);
+  --shadow-sm: 0 1px 2px rgba(22,41,63,.06), 0 2px 8px rgba(22,41,63,.05);
+  --shadow: 0 1px 2px rgba(22,41,63,.05), 0 6px 16px rgba(22,41,63,.07), 0 16px 40px rgba(22,41,63,.06);
+  --shadow-md: 0 2px 4px rgba(22,41,63,.06), 0 12px 28px rgba(22,41,63,.10), 0 28px 64px rgba(22,41,63,.10);
+  --shadow-lg: 0 24px 64px rgba(22,41,63,.16), 0 8px 24px rgba(22,41,63,.10);
+  --shadow-navy: inset 0 1px 0 rgba(255,255,255,.12), 0 12px 28px rgba(18,34,54,.32);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -63,7 +68,8 @@ html, body {
   font-size: 15.5px;
   line-height: 1.55;
   color: var(--text-1);
-  background: var(--bg-page);
+  /* 🆕 卡片化V2：微渐变页面底——卡片的浮起要有参照面。fixed 防滚动时色带跳动 */
+  background: linear-gradient(160deg, #f2f4f8 0%, #e9edf3 60%, #e5eaf1 100%) fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -73,12 +79,13 @@ a:hover { text-decoration: none; opacity: .85; }
 
 /* ===== Element Plus 整体打磨 ===== */
 .el-card {
-  border-radius: var(--radius) !important;
-  box-shadow: var(--shadow-sm) !important;
-  border: 1px solid var(--border-light);
-  transition: box-shadow .2s, transform .2s;
+  border-radius: var(--radius-lg) !important;
+  background: linear-gradient(180deg, #ffffff, #fbfcfd);
+  box-shadow: var(--shadow-top), var(--shadow-sm) !important;
+  border: 1px solid rgba(229,231,235,.6);
+  transition: box-shadow .2s;
 }
-.el-card:hover { box-shadow: var(--shadow); }
+.el-card:hover { box-shadow: var(--shadow-top), var(--shadow) !important; }
 .el-card__header {
   padding: 18px 22px !important;
   font-weight: 600;
@@ -101,25 +108,37 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-button.is-link + .el-button.is-link { margin-left: 2px !important; }
 .el-button--large { padding: 10px 20px !important; font-size: 15.5px !important; }
 /* 🆕 主按钮：金底 + 深字（白字在金底对比差；设计稿即深字金底 CTA）。link 型主按钮除外(是文字) */
-.el-button--primary:not(.is-link) {
+.el-button--primary:not(.is-link):not(.is-disabled) {
   color: var(--brand-navy) !important;
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(200, 162, 79, .3);
+  background: linear-gradient(180deg, #d4b05f, #c09a43) !important;
+  border-color: #b8934a !important;
+  box-shadow: 0 3px 10px rgba(200, 162, 79, .35), inset 0 1px 0 rgba(255,255,255,.45);
 }
-.el-button--primary:not(.is-link):hover {
-  box-shadow: 0 4px 14px rgba(200, 162, 79, .4);
+.el-button--primary:not(.is-link):not(.is-disabled):hover {
+  background: linear-gradient(180deg, #dcba6b, #c8a24f) !important;
+  box-shadow: 0 5px 16px rgba(200, 162, 79, .45), inset 0 1px 0 rgba(255,255,255,.5);
   transform: translateY(-1px);
 }
-.el-button--primary:active { transform: translateY(0); }
+.el-button--primary:not(.is-link):not(.is-disabled):active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(200, 162, 79, .35), inset 0 1px 0 rgba(255,255,255,.4);
+}
+/* 普通按钮同样给一点抬起/按下的反馈（link/text 型除外——那是文字，动了很怪） */
+.el-button--default:not(.is-link):not(.is-disabled):hover { box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.el-button--default:not(.is-link):not(.is-disabled):active { transform: translateY(0); box-shadow: var(--shadow-xs); }
 /* 🆕 link 型主按钮(编辑/删除/查看等) & 编号 .code：金做白底文字不可读 → 用可读深琥珀 --link */
 .el-button.is-link.el-button--primary { color: var(--link) !important; }
 .el-button.is-link.el-button--primary:hover { color: var(--primary-dark) !important; }
 .code { color: var(--link) !important; }
 .el-button--danger { box-shadow: 0 2px 8px rgba(239, 68, 68, .2); }
 
-.el-input__wrapper { border-radius: var(--radius-sm) !important; box-shadow: 0 0 0 1px var(--border) inset !important; }
+.el-input__wrapper { border-radius: var(--radius-sm) !important; box-shadow: 0 0 0 1px var(--border) inset !important; transition: box-shadow .18s; }
 .el-input__wrapper:hover { box-shadow: 0 0 0 1px var(--text-3) inset !important; }
-.el-input.is-focus .el-input__wrapper { box-shadow: 0 0 0 1px var(--primary) inset !important; }
+/* 🆕 卡片化V2：聚焦 = 内描边 + 外圈淡金光晕，比一根细线醒目 */
+.el-input.is-focus .el-input__wrapper { box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 3px var(--primary-soft) !important; }
+.el-select__wrapper { transition: box-shadow .18s; }
+.el-select__wrapper.is-focused { box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 3px var(--primary-soft) !important; }
 .el-input__inner { font-size: 14.5px !important; }
 
 .el-form-item__label {
@@ -132,10 +151,16 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-table {
   font-size: 13.5px !important;
   --el-table-border-color: var(--border-light);
+  /* 🆕 卡片化V2：整表包进圆角浮卡（列筛选面板是 teleport 到 body 的，不会被 overflow 裁掉） */
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-top), var(--shadow-sm);
+  border: 1px solid rgba(229,231,235,.6);
 }
 /* 🆕 表头：深 navy + 浅字（对齐设计稿深色表头） */
 .el-table th.el-table__cell {
-  background: var(--brand-navy) !important;
+  /* 🆕 卡片化V2：表头竖向渐变提亮顶部（每格自己的背景，竖向渐变逐格无缝） */
+  background: linear-gradient(180deg, #1d3450, var(--brand-navy)) !important;
   color: #e2e7ef !important;
   font-weight: 600;
   font-size: 13px;
@@ -150,7 +175,7 @@ a:hover { text-decoration: none; opacity: .85; }
 /* 深表头下的列筛选/表头 hover 图标也用浅色 */
 .el-table th.el-table__cell .el-table__column-filter-trigger .el-icon { color: #b7c0d0; }
 /* 🆕 紧凑：更小行高，让更多数据一屏显示 */
-.el-table td.el-table__cell { padding: 7px 0 !important; }
+.el-table td.el-table__cell { padding: 7px 0 !important; transition: background-color .15s; }
 /* 🆕 紧凑布局：表格单元格一律不换行、单行省略(…)，长内容悬停看 tooltip；
    需多行的元素在自身样式里覆盖(极少数)。所有数据尽量一行显示、适应屏幕。 */
 .el-table .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -247,6 +272,10 @@ a:hover { text-decoration: none; opacity: .85; }
   --el-pagination-button-bg-color: white !important;
   font-size: 14px !important;
 }
+/* 🆕 卡片化V2：当前页码 navy 圆片 + 金字，与分段 tab 的选中态同语言 */
+.el-pagination .el-pager li { border-radius: 8px; transition: background .15s, color .15s; }
+.el-pagination .el-pager li.is-active { background: var(--brand-navy); color: #f0d99a; box-shadow: 0 2px 6px rgba(22,41,63,.3); }
+.el-pagination .el-pager li:not(.is-active):hover { background: #e8ecf1; color: var(--text-1) !important; }
 
 /* ===== 通用页面头部 ===== */
 .page-header {
@@ -300,16 +329,24 @@ a:hover { text-decoration: none; opacity: .85; }
 /* ===== 🆕 v3 报表/看板：KPI 卡片(语义色+主次层级) ===== */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .kpi {
-  background: var(--bg-card); border: 1px solid var(--border);
+  background: linear-gradient(180deg, #ffffff, #fbfcfd);
+  border: 1px solid rgba(229,231,235,.6);
   border-radius: var(--radius); padding: 16px 18px;
   position: relative; overflow: hidden;
+  box-shadow: var(--shadow-top), var(--shadow-sm);
+  transition: box-shadow .2s, transform .2s;
 }
+/* 🆕 卡片化V2：小卡允许 hover 抬起（大容器不动，见 :root 注释） */
+.kpi:hover { box-shadow: var(--shadow-top), var(--shadow); transform: translateY(-2px); }
 .kpi::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--text-4); }
 .kpi .kpi-v { font-size: 23px; font-weight: 700; color: var(--text-1); line-height: 1.2; letter-spacing: .2px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .kpi .kpi-l { font-size: 12.5px; color: var(--text-3); margin-top: 6px; }
-.kpi.is-primary { background: linear-gradient(180deg, var(--primary-light), var(--bg-card)); }
-.kpi.is-primary::before { background: var(--primary); }
-.kpi.is-primary .kpi-v { color: var(--primary-dark); font-size: 25px; }
+/* 🆕 卡片化V2：主 KPI 升级成 navy 主卡 + 金字压轴（每屏本来就至多一张 is-primary） */
+.kpi.is-primary { background: linear-gradient(155deg, #22384f 0%, var(--brand-navy) 55%, #101f30 100%); border-color: rgba(240,217,154,.15); box-shadow: var(--shadow-navy); }
+.kpi.is-primary:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 16px 36px rgba(18,34,54,.4); }
+.kpi.is-primary::before { background: linear-gradient(180deg, #d8b568, #b8934a); }
+.kpi.is-primary .kpi-v { color: #f0d99a; font-size: 25px; }
+.kpi.is-primary .kpi-l { color: #8fa0b5; }
 .kpi.is-good::before { background: var(--success); } .kpi.is-good .kpi-v { color: var(--success); }
 .kpi.is-warn::before { background: var(--warning); } .kpi.is-warn .kpi-v { color: var(--warning); }
 .kpi.is-bad::before  { background: var(--danger); }  .kpi.is-bad .kpi-v  { color: var(--danger); }
@@ -383,7 +420,20 @@ a:hover { text-decoration: none; opacity: .85; }
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.el-card, .el-dialog { animation: fadein .25s ease-out; }
+.el-card { animation: fadein .25s ease-out; }
+/* 🆕 卡片化V2：弹窗入场「上浮 + 轻回弹」，遮罩同步淡入 */
+@keyframes dialogIn {
+  from { opacity: 0; transform: translateY(16px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.el-dialog { animation: dialogIn .26s cubic-bezier(.34, 1.1, .64, 1); }
+.el-overlay { animation: fadein .2s ease-out; }
+/* 键盘操作的焦点环（鼠标点击不出现） */
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* 系统开了「减少动态效果」就全部关掉 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 
 /* ===== 滚动条（更粗、更明显，方便拖动）===== */
 ::-webkit-scrollbar {
@@ -423,17 +473,40 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-alert { padding: 7px 12px !important; border-radius: var(--radius-sm) !important; }
 .el-alert__title { font-size: 12.5px !important; line-height: 1.55; }
 
-/* Tabs 头与内容间距收紧 */
-.el-tabs__header { margin-bottom: 12px !important; }
-/* 🆕 选中标签:用可读深金(#9a7220,金色 #c8a24f 在白底上太浅) + 金色下划线,全站交易页头统一 */
-.el-tabs__item.is-active { color: var(--link) !important; font-weight: 600; }
-.el-tabs__item:not(.is-disabled):hover { color: var(--link) !important; }
-.el-tabs__active-bar { background-color: var(--primary) !important; }
-/* 卡片式 tabs 选中:金色描边 + 浅金底 */
-.el-tabs--card > .el-tabs__header .el-tabs__item.is-active {
-  border-bottom-color: var(--primary-light) !important;
-  background: var(--primary-light) !important;
+/* Tabs —— 🆕 卡片化V2：下划线式全站升级为「浮起分段卡」，选中项 navy 底 + 金字自带投影。
+   只动 --top（全站没有竖排 tabs）；card 型的描边一并抹平走同一语言。
+   ⚠️ EP 对首尾 item 有 nth-child 去 padding 的规则，这里 padding 必须 !important 压回来，
+   不然第一个 pill 的字会贴左边。tab 超宽时 EP 自己的左右滚动箭头照常工作。 */
+.el-tabs__header { margin-bottom: 14px !important; }
+.el-tabs--top > .el-tabs__header {
+  background: #fff;
+  border: 1px solid rgba(229,231,235,.7);
+  border-radius: 13px;
+  padding: 5px;
+  width: fit-content; max-width: 100%;
+  box-shadow: var(--shadow-top), var(--shadow-sm);
 }
+.el-tabs--top > .el-tabs__header .el-tabs__nav-wrap::after { display: none; }
+.el-tabs--top > .el-tabs__header .el-tabs__active-bar { display: none; }
+.el-tabs--top > .el-tabs__header .el-tabs__nav { border: none !important; }
+.el-tabs--top > .el-tabs__header .el-tabs__item {
+  height: 34px; line-height: 34px;
+  padding: 0 16px !important;
+  border: none !important;
+  border-radius: 9px;
+  color: var(--text-2);
+  transition: background .18s, color .18s, box-shadow .18s;
+}
+.el-tabs--top > .el-tabs__header .el-tabs__item:not(.is-disabled):not(.is-active):hover { color: var(--text-1) !important; background: #f0f2f6; }
+.el-tabs--top > .el-tabs__header .el-tabs__item.is-active {
+  background: var(--brand-navy) !important;
+  color: #f0d99a !important;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(22,41,63,.28), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.el-tabs--card > .el-tabs__header { border-bottom: none !important; }
+/* 切 tab 时内容轻淡入（lazy 面板挂载即触发） */
+.el-tab-pane { animation: fadein .22s ease-out; }
 
 /* 表格内操作按钮：清晰但不占行高——小按钮收紧内边距，link 按钮加字重醒目 */
 .el-table .el-button--small:not(.is-link) { padding: 3px 10px !important; font-size: 12.5px !important; }

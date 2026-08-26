@@ -342,12 +342,13 @@ onUnmounted(() => {
 .sidebar {
   position: fixed; top: 0; bottom: 0; left: 0;
   width: var(--sidebar-w);
-  background: var(--sidebar-bg);
+  /* 🆕 卡片化V2：navy 竖向微渐变 + navy 色右缘投影，侧栏「浮」在页面上 */
+  background: linear-gradient(175deg, #1b3049 0%, #16293f 45%, #122236 100%);
   color: var(--sidebar-text);
   display: flex; flex-direction: column;
   z-index: 100;
   transition: width .25s cubic-bezier(.4,0,.2,1);
-  box-shadow: 0 0 24px rgba(0,0,0,.1);
+  box-shadow: 4px 0 24px rgba(18,34,54,.35);
 }
 .layout.collapsed .sidebar { width: var(--sidebar-w-collapsed); }
 
@@ -412,17 +413,22 @@ nav a {
   font-size: 14px; font-weight: 500;
   cursor: pointer;
   white-space: nowrap; overflow: hidden;
-  border-radius: var(--radius-sm);
-  transition: all .15s;
+  border-radius: 10px;
+  transition: background .18s, color .18s, transform .12s;
 }
+/* 🆕 卡片化V2：hover 轻推 2px、按下回缩——给鼠标一个「碰到了」的手感 */
 nav a:hover {
   background: var(--sidebar-bg-hover);
   color: var(--sidebar-text-active);
+  transform: translateX(2px);
 }
+nav a:active { transform: translateX(2px) scale(.98); }
+/* 选中态：金雾渐变圆片 + 顶部高光 + 自身投影（替代原来的左侧金条） */
 nav a.active {
-  background: var(--sidebar-bg-active);
+  background: linear-gradient(135deg, rgba(200,162,79,.22), rgba(200,162,79,.10));
   color: var(--sidebar-text-active);
-  box-shadow: inset 3px 0 0 0 var(--primary);
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(240,217,154,.25), 0 2px 8px rgba(0,0,0,.25);
 }
 .nav-icon { font-size: 18px !important; flex-shrink: 0; }
 
