@@ -1249,7 +1249,7 @@ function applyPoPick() {
     </div>
 
     <el-card shadow="never" v-loading="loading">
-      <!-- ⚠️ 每个 el-tab-pane 都必须带 `lazy`。Element Plus 的 lazy **默认是 false**，
+      <!-- 每个 el-tab-pane 都必须带 `lazy`。Element Plus 的 lazy **默认是 false**，
            意思是九个页签的表格在页面一挂载时就全部渲染成真 DOM（只是 display:none 藏着），
            点都没点过的页签也照渲。生产上物料主数据 863 行 × 12 列、收发存汇总 863 行，
            一进仓库就是一万多个单元格——白屏就是这么来的。

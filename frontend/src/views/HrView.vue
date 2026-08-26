@@ -326,7 +326,7 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
     <el-card shadow="never">
       <el-tabs v-model="tab" @tab-change="onTab">
         <!-- ===== 员工花名册 ===== -->
-        <el-tab-pane v-if="tv('roster')" label="👥 员工花名册" name="roster">
+        <el-tab-pane v-if="tv('roster')" label="员工花名册" name="roster">
           <div v-if="stats" class="kpi-grid" style="margin-bottom:12px">
             <div class="kpi is-primary"><div class="kpi-v">{{ stats.active }}</div><div class="kpi-l">在职人数（含试用）</div></div>
             <div class="kpi"><div class="kpi-v">{{ stats.probation }}</div><div class="kpi-l">试用期</div></div>
@@ -387,7 +387,7 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
         </el-tab-pane>
 
         <!-- ===== 部门月度工资总额 ===== -->
-        <el-tab-pane v-if="tv('payroll')" label="💰 工资总额" name="payroll">
+        <el-tab-pane v-if="tv('payroll')" label="工资总额" name="payroll">
           <el-alert type="info" :closable="false" style="margin-bottom:10px"
             title="只填每部门的月度工资总额（不到个人），用于经营分析里的人工成本与项目毛利「含人工」口径。部门在 OA审批-部门 里维护。" />
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
@@ -427,7 +427,7 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
         </el-tab-pane>
 
         <!-- ===== 🆕 考勤(按月每人) ===== -->
-        <el-tab-pane v-if="tv('attendance')" label="🗓️ 考勤" name="attendance">
+        <el-tab-pane v-if="tv('attendance')" label="考勤" name="attendance">
           <el-alert type="info" :closable="false" style="margin-bottom:10px"
             title="人事按月录入每人考勤（应出勤 / 实出勤 / 请假 / 加班 / 迟到 / 早退 / 缺卡）。在职、试用员工都在列；离职员工离职当月仍在列，之后不在。「是否全勤」自动算，不用填。" />
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
@@ -470,7 +470,7 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
         </el-tab-pane>
 
         <!-- ===== 🆕 个人工资(按月每人,敏感) ===== -->
-        <el-tab-pane v-if="tv('salary')" label="🧾 工资" name="salary">
+        <el-tab-pane v-if="tv('salary')" label="工资" name="salary">
           <el-alert type="warning" :closable="false" style="margin-bottom:10px"
             title="个人工资明细，敏感数据——本页仅人事 / 管理层可见。实发 = 基本 + 绩效 + 加班费 + 补贴 − 社保公积金 − 个税 − 其他扣款（自动计算）。" />
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">

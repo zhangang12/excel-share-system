@@ -430,6 +430,53 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-overlay { animation: fadein .2s ease-out; }
 /* 键盘操作的焦点环（鼠标点击不出现） */
 :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* ===== 🆕 卡片化V2 第二批(2026-08-27)：骨架屏 / 浮层 / KPI 角光 ===== */
+
+/* 表格加载：转圈 → 骨架屏。纯 CSS 方案零业务改动：v-loading 的遮罩盖住表体，
+   ::after 画灰条假行、::before 扫一道高光。表头(navy,约46px)留在外面照常显示。 */
+.el-table .el-loading-mask { background: rgba(255,255,255,.97); overflow: hidden; }
+.el-table .el-loading-mask .el-loading-spinner { display: none; }
+.el-table .el-loading-mask::after {
+  content: ""; position: absolute; left: 14px; right: 14px; top: 56px; bottom: 12px;
+  background: repeating-linear-gradient(180deg, #edf0f4 0 15px, transparent 15px 40px);
+  border-radius: 6px;
+}
+.el-table .el-loading-mask::before {
+  content: ""; position: absolute; inset: 0; z-index: 1;
+  background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.85) 50%, transparent 70%);
+  animation: shimmer 1.15s infinite;
+}
+@keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+/* 下拉 / 日期 / 自动补全等浮层面板：圆角 + navy 阴影，与卡片同语言 */
+.el-popper.is-light {
+  border-radius: 12px !important;
+  box-shadow: var(--shadow-md) !important;
+  border-color: rgba(229,231,235,.7) !important;
+  overflow: hidden;
+}
+.el-select-dropdown__item.is-hovering { background: var(--primary-soft) !important; }
+.el-select-dropdown__item.is-selected { color: var(--link) !important; }
+.el-picker-panel { border-radius: 12px; }
+.el-date-table td.today .el-date-table-cell__text { color: var(--link); }
+
+/* KPI 卡右上角一抹语义色微光：不加图标也有「章」的层次，零业务改动 */
+.kpi::after {
+  content: ""; position: absolute; right: -26px; top: -26px; width: 104px; height: 104px;
+  border-radius: 50%; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(200,162,79,.10), transparent);
+}
+.kpi.is-good::after { background: radial-gradient(closest-side, rgba(16,185,129,.10), transparent); }
+.kpi.is-warn::after { background: radial-gradient(closest-side, rgba(245,158,11,.11), transparent); }
+.kpi.is-bad::after  { background: radial-gradient(closest-side, rgba(239,68,68,.09), transparent); }
+.kpi.is-primary::after { background: radial-gradient(closest-side, rgba(240,217,154,.16), transparent); }
+
+/* 确认框(el-message-box)与抽屉跟上弹窗的圆角/阴影 */
+.el-message-box { border-radius: var(--radius-lg) !important; box-shadow: var(--shadow-lg) !important; }
+.el-drawer { box-shadow: var(--shadow-lg) !important; }
+.el-drawer.rtl { border-radius: 14px 0 0 14px; }
+.el-drawer.ltr { border-radius: 0 14px 14px 0; }
+
 /* 系统开了「减少动态效果」就全部关掉 */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

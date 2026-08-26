@@ -400,7 +400,7 @@ onMounted(reloadAll)
       </el-tab-pane>
 
       <!-- 🆕 v3 M12 部门协作 tab（叠加，不改原进度表/成员） -->
-      <el-tab-pane label="部门协作 🆕" name="collab">
+      <el-tab-pane label="部门协作" name="collab">
         <el-card style="margin-bottom:14px" shadow="never">
           <template #header>📦 项目状态 / 发货</template>
           <div class="collab-status">

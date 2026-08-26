@@ -679,7 +679,7 @@ async function revokeInvoice(row: ViewRow) {
 
     <el-card shadow="never" v-loading="loading">
       <el-tabs v-model="tab" @tab-change="onFinTab">
-        <el-tab-pane v-if="tv('pending')" :label="`📥 待开票 (${pendingView.length})`" name="pending">
+        <el-tab-pane v-if="tv('pending')" :label="`待开票 (${pendingView.length})`" name="pending">
           <el-table show-overflow-tooltip :data="pendingView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="140">
               <template #default="{ row }">
@@ -717,7 +717,7 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!pendingView.length" text="暂无待开票" />
         </el-tab-pane>
 
-        <el-tab-pane v-if="tv('invoiced')" :label="`✅ 已开票 (${invoicedView.length})`" name="invoiced">
+        <el-tab-pane v-if="tv('invoiced')" :label="`已开票 (${invoicedView.length})`" name="invoiced">
           <el-table show-overflow-tooltip :data="invoicedView" stripe max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="140">
               <template #default="{ row }">
@@ -748,7 +748,7 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!invoicedView.length" text="暂无已开票" />
         </el-tab-pane>
 
-        <el-tab-pane v-if="tv('aftersales')" :label="`🛎️ 安装/售后费用 (${aftersales.length})`" name="aftersales">
+        <el-tab-pane v-if="tv('aftersales')" :label="`安装/售后费用 (${aftersales.length})`" name="aftersales">
           <!-- 🆕 2026-08-13：类型 / 项目编号 / 提交人 筛选 -->
           <div class="as-filters">
             <el-select v-model="fAsKind" clearable placeholder="全部类型" size="small" style="width:110px">
@@ -850,7 +850,7 @@ async function revokeInvoice(row: ViewRow) {
           <EmptyHint v-if="!filteredAftersales.length" :text="hasAsFilter ? '当前筛选没有匹配的记录' : '暂无已审批售后费用（售后部审批后自动同步）'" />
         </el-tab-pane>
 
-        <el-tab-pane v-if="tv('pay_requests')" :label="`💰 请款审批 (${prCounts.pending})`" name="pay_requests">
+        <el-tab-pane v-if="tv('pay_requests')" :label="`请款审批 (${prCounts.pending})`" name="pay_requests">
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
             <el-radio-group v-model="prStatus">
               <el-radio-button value="all">全部 ({{ prCounts.all }})</el-radio-button>
@@ -928,7 +928,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 需求一：付款 tab（已审批待付 / 已付款）-->
-        <el-tab-pane v-if="tv('pay_payment')" :label="`💳 付款 (${paymentCounts.approved})`" name="pay_payment">
+        <el-tab-pane v-if="tv('pay_payment')" :label="`付款 (${paymentCounts.approved})`" name="pay_payment">
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
             <el-radio-group v-model="paymentTab">
               <el-radio-button value="all">全部 ({{ paymentCounts.all }})</el-radio-button>
@@ -1008,7 +1008,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 支出总览：全公司的钱花在哪，一张表看全（盈利改善第一档的第一块） -->
-        <el-tab-pane v-if="tv('expense')" label="💸 支出总览" name="expense">
+        <el-tab-pane v-if="tv('expense')" label="支出总览" name="expense">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
             <el-select v-model="expYear" style="width:110px" @change="loadExpense">
               <el-option v-for="y in expYears" :key="y" :label="y + ' 年'" :value="y" />
@@ -1035,7 +1035,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 盈利改善1a：项目毛利红黑榜——哪个项目赚钱、哪个项目亏钱 -->
-        <el-tab-pane v-if="tv('pnl')" label="📈 项目毛利" name="pnl">
+        <el-tab-pane v-if="tv('pnl')" label="项目毛利" name="pnl">
           <el-alert type="warning" :closable="false" style="margin-bottom:10px"
             :title="pnlData?.note || '口径：材料边际贡献 = 合同额 − 材料领料 − 直发/外协采购 − 安装/售后费用；不含人工/运费'" />
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
@@ -1165,7 +1165,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 盈利改善1b：成本黑洞审计——清单不清零，毛利榜就系统性虚高 -->
-        <el-tab-pane v-if="tv('audit')" label="🕳️ 成本审计" name="audit">
+        <el-tab-pane v-if="tv('audit')" label="成本审计" name="audit">
           <div class="summary-bar" style="margin-bottom:10px" v-if="auditData">
             <span>本月未归集到项目的成本 <b class="danger">{{ fmtMoney(auditData.month_unallocated) }}</b></span>
             <span>累计未归集 <b class="danger">{{ fmtMoney(auditData.total_unallocated) }}</b></span>
@@ -1175,7 +1175,7 @@ async function revokeInvoice(row: ViewRow) {
             <span class="muted small">这三张清单是「项目毛利」可信度的前提：无主领料的钱在全系统蒸发、无价入库压低库存与项目成本、孤儿采购挂空</span>
           </div>
           <el-tabs v-model="auditTab" type="card" v-loading="auditLoading">
-            <el-tab-pane :label="`🕳 无主领料 (${auditData?.orphan_out.length ?? 0})`" name="orphan_out">
+            <el-tab-pane :label="`无主领料 (${auditData?.orphan_out.length ?? 0})`" name="orphan_out">
               <el-table show-overflow-tooltip :data="auditData?.orphan_out || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
                 <el-table-column prop="ref_no" label="单据号" width="130"><template #default="{ row }"><span class="code">{{ row.ref_no }}</span></template></el-table-column>
                 <el-table-column prop="biz_date" label="日期" width="100" />
@@ -1196,7 +1196,7 @@ async function revokeInvoice(row: ViewRow) {
               </el-table>
               <EmptyHint v-if="!auditLoading && !(auditData?.orphan_out.length)" text="没有无主领料 ✅（出库登记已强制选项目/非项目领用）" />
             </el-tab-pane>
-            <el-tab-pane :label="`💸 无价入库 (${auditData?.unpriced_in.length ?? 0})`" name="unpriced">
+            <el-tab-pane :label="`无价入库 (${auditData?.unpriced_in.length ?? 0})`" name="unpriced">
               <el-table show-overflow-tooltip :data="auditData?.unpriced_in || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
                 <el-table-column prop="ref_no" label="单据号" width="130"><template #default="{ row }"><span class="code">{{ row.ref_no }}</span></template></el-table-column>
                 <el-table-column label="方向" width="70"><template #default="{ row }"><el-tag size="small" :type="row.direction === 'in' ? 'success' : 'warning'" effect="plain">{{ row.direction === 'in' ? '入库' : '出库' }}</el-tag></template></el-table-column>
@@ -1215,7 +1215,7 @@ async function revokeInvoice(row: ViewRow) {
               <div class="muted small" style="margin-top:6px">「可回填」= 采购明细后来补了价，但收货流水还没同步——点上方「一键回填」。「采购也没价」的请先到采购明细补单价（补价现在会自动同步流水）。</div>
               <EmptyHint v-if="!auditLoading && !(auditData?.unpriced_in.length)" text="没有无价入库 ✅" />
             </el-tab-pane>
-            <el-tab-pane :label="`👻 孤儿采购 (${auditData?.orphan_purchase.length ?? 0})`" name="orphan_purchase">
+            <el-tab-pane :label="`孤儿采购 (${auditData?.orphan_purchase.length ?? 0})`" name="orphan_purchase">
               <el-table show-overflow-tooltip :data="auditData?.orphan_purchase || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
                 <el-table-column prop="po_no" label="采购单号" width="140"><template #default="{ row }"><span class="code">{{ row.po_no || '散件' }}</span></template></el-table-column>
                 <el-table-column label="名称" min-width="140"><template #default="{ row }">{{ row.item_name }}<span v-if="specOf(row.item_name, row.spec)" class="muted small"> · {{ specOf(row.item_name, row.spec) }}</span></template></el-table-column>
@@ -1228,7 +1228,7 @@ async function revokeInvoice(row: ViewRow) {
               <div class="muted small" style="margin-top:6px">订单编号既不是项目编号、也不在字典「订单编号」里 → 成本挂空。请到采购明细把订单编号改成正确的项目编号（下单入口已改为只能下拉选择，新增不会再产生）。</div>
               <EmptyHint v-if="!auditLoading && !(auditData?.orphan_purchase.length)" text="没有孤儿采购 ✅" />
             </el-tab-pane>
-            <el-tab-pane label="⚖️ 双口径对账" name="recon">
+            <el-tab-pane label="双口径对账" name="recon">
               <el-table show-overflow-tooltip :data="auditData?.recon || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 380px)">
                 <el-table-column label="项目" min-width="170"><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
                 <el-table-column prop="purchase" label="采购口径(收货金额)" width="150" align="right" sortable><template #default="{ row }">{{ fmtMoney(row.purchase) }}</template></el-table-column>
@@ -1244,7 +1244,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 盈利改善2：资金面板——现金断裂比利润难看死得更快 -->
-        <el-tab-pane v-if="tv('fund')" label="💰 资金面板" name="fund">
+        <el-tab-pane v-if="tv('fund')" label="资金面板" name="fund">
           <div v-if="fundData" class="kpi-grid" style="margin-bottom:12px">
             <div class="kpi"><div class="kpi-v danger">{{ fmtMoney(fundData.receivables.total) }}</div><div class="kpi-l">逾期应收（尾款+发货款）</div></div>
             <div class="kpi"><div class="kpi-v">{{ fmtMoney(fundData.prepay.total) }}</div><div class="kpi-l">预付敞口（已付未到货）</div></div>
@@ -1288,7 +1288,7 @@ async function revokeInvoice(row: ViewRow) {
                 </el-col>
               </el-row>
             </el-tab-pane>
-            <el-tab-pane :label="`💳 预付敞口 (${fundData?.prepay.rows.length ?? 0})`" name="prepay">
+            <el-tab-pane :label="`预付敞口 (${fundData?.prepay.rows.length ?? 0})`" name="prepay">
               <div class="muted small" style="margin-bottom:8px">已付款但货未到 = 押在供应商那里的钱，按押款天数催交货。</div>
               <el-table show-overflow-tooltip :data="fundData?.prepay.rows || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 420px)" :fit="false">
                 <el-table-column prop="supplier" label="供应商" min-width="220" />
@@ -1299,7 +1299,7 @@ async function revokeInvoice(row: ViewRow) {
               </el-table>
               <EmptyHint v-if="!fundLoading && !(fundData?.prepay.rows.length)" text="没有预付敞口 ✅" />
             </el-tab-pane>
-            <el-tab-pane label="📆 应付账期" name="payterm">
+            <el-tab-pane label="应付账期" name="payterm">
               <div class="summary-bar" style="margin-bottom:10px" v-if="fundData">
                 <span>逾期未付 <b class="danger">{{ fmtMoney(fundData.payables.overdue_total) }}</b></span>
                 <span>14天内到期 <b>{{ fmtMoney(fundData.payables.due_soon_total) }}</b></span>
@@ -1329,7 +1329,7 @@ async function revokeInvoice(row: ViewRow) {
               <el-alert v-if="fundData?.payables.missing_credit.length" type="warning" :closable="false" style="margin-top:10px"
                 :title="`有 ${fundData.payables.missing_credit.length} 家供应商未维护账期天数（合计应付 ${fmtMoney(fundData.payables.missing_credit.reduce((s, x) => s + x.outstanding, 0))}），无法算到期日——请在供应商档案补 credit_days：${fundData.payables.missing_credit.slice(0, 5).map(x => x.supplier).join('、')}${fundData.payables.missing_credit.length > 5 ? ' 等' : ''}`" />
             </el-tab-pane>
-            <el-tab-pane :label="`🧊 呆滞库存 (${fundData?.dead_stock.rows.length ?? 0})`" name="dead">
+            <el-tab-pane :label="`呆滞库存 (${fundData?.dead_stock.rows.length ?? 0})`" name="dead">
               <div class="summary-bar" style="margin-bottom:10px" v-if="fundData">
                 <span>锁死现金合计 <b class="danger">{{ fmtMoney(fundData.dead_stock.total_value) }}</b></span>
                 <span v-for="b in fundData.dead_stock.buckets" :key="b.bucket">{{ b.bucket }} <b>{{ fmtMoney(b.value) }}</b></span>
@@ -1357,7 +1357,7 @@ async function revokeInvoice(row: ViewRow) {
                 </el-table>
               </div>
             </el-tab-pane>
-            <el-tab-pane label="📉 13周现金排程" name="cash">
+            <el-tab-pane label="13周现金排程" name="cash">
               <el-alert type="info" :closable="false" style="margin-bottom:10px" :title="fundData?.cashgap.note || ''" />
               <el-table show-overflow-tooltip :data="fundData?.cashgap.weeks || []" stripe size="small" class="compact-tbl" max-height="calc(100vh - 420px)"
                         :fit="false" :row-class-name="({ row }: any) => row.cum < 0 ? 'pnl-loss-row' : ''">
@@ -1376,7 +1376,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 采购应付 -->
-        <el-tab-pane v-if="tv('payables')" label="📄 采购应付" name="payables">
+        <el-tab-pane v-if="tv('payables')" label="采购应付" name="payables">
           <div class="summary-bar" style="margin-bottom:10px">
             <span>应付合计 <b class="danger">{{ fmtMoney(payablesTotal) }}</b></span>
             <span class="muted small">已收货未付款 = 对供应商的应付;审批走「请款审批」，付款走「付款」页</span>
@@ -1395,7 +1395,7 @@ async function revokeInvoice(row: ViewRow) {
         </el-tab-pane>
 
         <!-- 🆕 库存 / 成本（需求六：仅管理层可见） -->
-        <el-tab-pane v-if="tv('inventory')" label="📦 库存 / 成本" name="inventory">
+        <el-tab-pane v-if="tv('inventory')" label="库存 / 成本" name="inventory">
           <div class="summary-bar" style="margin-bottom:10px">
             <span>通用库存金额 <b class="amt">{{ fmtMoney(invValue.total_value) }}</b></span>
             <span>项目材料成本 <b class="amt">{{ fmtMoney(projCostTotal) }}</b></span>

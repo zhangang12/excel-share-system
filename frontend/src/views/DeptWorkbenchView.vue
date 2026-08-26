@@ -993,7 +993,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     <template v-if="isWorker || isLead || isMgr || isSheetmetal || isSealing">
       <el-tabs v-model="activeTab">
         <!-- ===== 待接单 tab ===== -->
-        <el-tab-pane v-if="isWorker && !isProduce" :label="`📩 我的订单（待接单 ${myPending.length}）`" name="pending">
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`我的订单（待接单 ${myPending.length}）`" name="pending">
           <EmptyHint v-if="!loading && myPending.length === 0" text="暂无待接单任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in myPending" :key="o.id" shadow="hover"
@@ -1028,7 +1028,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         </el-tab-pane>
 
         <!-- ===== 进行中 tab ===== -->
-        <el-tab-pane v-if="isWorker && !isProduce" :label="`⚙️ 我的订单（进行中 ${myWorking.length}）`" name="working">
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`我的订单（进行中 ${myWorking.length}）`" name="working">
           <EmptyHint v-if="!loading && myWorking.length === 0" text="暂无进行中任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in myWorking" :key="o.id" shadow="hover"
@@ -1198,7 +1198,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           </div>
         </el-tab-pane>
 
-        <el-tab-pane v-if="isWorker && !isProduce" :label="`✅ 我的订单（已完成 ${myDone.length}）`" name="done">
+        <el-tab-pane v-if="isWorker && !isProduce" :label="`我的订单（已完成 ${myDone.length}）`" name="done">
           <el-table show-overflow-tooltip :data="myDone" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <el-table-column label="项目编号" min-width="112">
               <template #default="{ row }"><b>{{ row.project_code }}</b></template>
@@ -1257,7 +1257,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           <EmptyHint v-if="!loading && !myDone.length" text="还没有已完成的任务" size="sm" />
         </el-tab-pane>
         <!-- ===== 负责人 / 管理层：待分派 + 任务跟踪 ===== -->
-        <el-tab-pane v-if="isLead || isMgr" :label="`📥 待分派 (${pendingAssign.length})`" name="assign">
+        <el-tab-pane v-if="isLead || isMgr" :label="`待分派 (${pendingAssign.length})`" name="assign">
           <EmptyHint v-if="!loading && pendingAssign.length === 0" text="暂无待分派任务" />
           <div v-else class="todo-grid" v-loading="loading">
             <el-card v-for="o in pendingAssign" :key="o.id" shadow="hover" class="todo-card assign">
@@ -1289,7 +1289,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           </div>
         </el-tab-pane>
 
-        <el-tab-pane v-if="isLead || isMgr" label="📋 任务跟踪" name="track">
+        <el-tab-pane v-if="isLead || isMgr" label="任务跟踪" name="track">
           <el-table show-overflow-tooltip :data="trackingList" stripe v-loading="loading" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
             <!-- 🆕 #385 全流程进度同步到所有带项目编号的部门：主管盯进度时最需要看
                  上下游卡在哪一环，不用再切到销售台账去查 -->
@@ -1402,7 +1402,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
 
         <!-- ===== 🆕 生产部-钣金组 tab（被派发项目；只读钣金装配表引用） ===== -->
         <!-- 🆕 外协订单：只看外协人员的任务单(数据同任务跟踪，只读监控)；外协人员本人不可见 -->
-        <el-tab-pane v-if="showOutsourceTab" :label="`🔗 外协订单 (${outsourceOrders.length})`" name="outsource">
+        <el-tab-pane v-if="showOutsourceTab" :label="`外协订单 (${outsourceOrders.length})`" name="outsource">
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
             <span class="muted" style="font-size:13px">
               外协人员（{{ (options?.outsource_workers || []).map(u => u.name).join('、') }}）的订单状态，仅本部门负责人/管理层可见。
@@ -1446,7 +1446,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           </el-table>
         </el-tab-pane>
 
-        <el-tab-pane v-if="isProduce && (isSheetmetal || isLead || isMgr)" :label="`🔧 钣金组 (${sheetmetalRows.length})`" name="sm">
+        <el-tab-pane v-if="isProduce && (isSheetmetal || isLead || isMgr)" :label="`钣金组 (${sheetmetalRows.length})`" name="sm">
           <div class="grp-filter">
             <span class="muted small">按人员筛选：</span>
             <el-select v-model="smWorkerFilter" placeholder="全部人员" clearable filterable size="small" style="width:160px">
@@ -1525,7 +1525,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         </el-tab-pane>
 
         <!-- ===== 🆕 生产部-装配组 tab（被派发项目 + 标准件清单/外协加工 备齐状态） ===== -->
-        <el-tab-pane v-if="isProduce && (isAssembler || isLead || isMgr)" :label="`🔩 装配组 (${assemblyRows.length})`" name="asm">
+        <el-tab-pane v-if="isProduce && (isAssembler || isLead || isMgr)" :label="`装配组 (${assemblyRows.length})`" name="asm">
           <div class="grp-filter">
             <span class="muted small">按人员筛选：</span>
             <el-select v-model="asmWorkerFilter" placeholder="全部人员" clearable filterable size="small" style="width:160px">
@@ -1607,7 +1607,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         </el-tab-pane>
 
         <!-- ===== 🆕 反馈#209 生产部-封板组 tab（被派发项目 + 激光件清单/CAD激光图纸 = 推送激光图） ===== -->
-        <el-tab-pane v-if="isProduce && (isSealing || isLead || isMgr)" :label="`🧰 封板组 (${sealingRows.length})`" name="seal">
+        <el-tab-pane v-if="isProduce && (isSealing || isLead || isMgr)" :label="`封板组 (${sealingRows.length})`" name="seal">
           <div class="grp-filter">
             <span class="muted small">按人员筛选：</span>
             <el-select v-model="sealWorkerFilter" placeholder="全部人员" clearable filterable size="small" style="width:160px">
@@ -1687,7 +1687,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         </el-tab-pane>
 
         <!-- 🆕 设计师请购单：列清单推给采购员（与仓库采购申请同一流程） -->
-        <el-tab-pane v-if="dept === 'design' || dept === 'electric' || dept === 'produce'" label="🛒 请购单" name="preq">
+        <el-tab-pane v-if="dept === 'design' || dept === 'electric' || dept === 'produce'" label="请购单" name="preq">
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
             <span class="muted" style="font-size:13px">要买的东西列成清单推送给采购员，处理进度在下方列表查看。</span>
             <span style="flex:1" />
