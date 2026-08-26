@@ -416,9 +416,12 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-table .el-scrollbar__thumb:hover { background-color: #8b94a3 !important; }
 
 /* ===== 全局动画 ===== */
+/* ⚠️ fadein 只动 opacity：它挂在 el-card / el-tab-pane / el-overlay 上，这些容器里
+   都可能有弹窗；transform（哪怕动画完还原）会让容器短暂成为 position:fixed 的包含块。
+   同理 .main>* 的 pagefade（MainLayout 里）也只准动 opacity——2026-08-27 生产事故见交接文档。 */
 @keyframes fadein {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .el-card { animation: fadein .25s ease-out; }
 /* 🆕 卡片化V2：弹窗入场「上浮 + 轻回弹」，遮罩同步淡入 */
@@ -459,17 +462,6 @@ a:hover { text-decoration: none; opacity: .85; }
 .el-select-dropdown__item.is-selected { color: var(--link) !important; }
 .el-picker-panel { border-radius: 12px; }
 .el-date-table td.today .el-date-table-cell__text { color: var(--link); }
-
-/* KPI 卡右上角一抹语义色微光：不加图标也有「章」的层次，零业务改动 */
-.kpi::after {
-  content: ""; position: absolute; right: -26px; top: -26px; width: 104px; height: 104px;
-  border-radius: 50%; pointer-events: none;
-  background: radial-gradient(closest-side, rgba(200,162,79,.10), transparent);
-}
-.kpi.is-good::after { background: radial-gradient(closest-side, rgba(16,185,129,.10), transparent); }
-.kpi.is-warn::after { background: radial-gradient(closest-side, rgba(245,158,11,.11), transparent); }
-.kpi.is-bad::after  { background: radial-gradient(closest-side, rgba(239,68,68,.09), transparent); }
-.kpi.is-primary::after { background: radial-gradient(closest-side, rgba(240,217,154,.16), transparent); }
 
 /* 确认框(el-message-box)与抽屉跟上弹窗的圆角/阴影 */
 .el-message-box { border-radius: var(--radius-lg) !important; box-shadow: var(--shadow-lg) !important; }

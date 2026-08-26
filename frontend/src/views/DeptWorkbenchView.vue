@@ -1753,7 +1753,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           <div class="kpi is-primary"><div class="kpi-v">{{ report.total }}</div><div class="kpi-l">任务总数</div></div>
           <div class="kpi is-good"><div class="kpi-v">{{ report.done }}</div><div class="kpi-l">已完成</div></div>
           <div class="kpi" :class="report.overdue ? 'is-bad' : ''"><div class="kpi-v">{{ report.overdue }}</div><div class="kpi-l">逾期</div></div>
-          <div class="kpi"><div class="kpi-v">{{ report.ontime_rate ?? '—' }}%</div><div class="kpi-l">按时率 · 均效率 {{ report.avg_eff ?? '—' }}%</div></div>
+          <div class="kpi"><div class="kpi-v">{{ report.ontime_rate != null ? report.ontime_rate + '%' : '—' }}</div><div class="kpi-l">按时率 · 均效率 {{ report.avg_eff != null ? report.avg_eff + '%' : '—' }}</div></div>
         </div>
         <el-table show-overflow-tooltip :data="report.workers" size="small" stripe style="margin-top:10px" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="worker_name" label="人员" min-width="100" />
@@ -1761,8 +1761,8 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           <el-table-column prop="done" label="完成" width="70" />
           <el-table-column prop="ontime" label="按时" width="70" />
           <el-table-column label="逾期" width="70"><template #default="{ row }">{{ row.over }}</template></el-table-column>
-          <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate ?? '—' }}%</template></el-table-column>
-          <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff != null && row.avg_eff >= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff ?? '—' }}%</span></template></el-table-column>
+          <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate != null ? row.rate + '%' : '—' }}</template></el-table-column>
+          <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff == null ? '' : row.avg_eff >= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff != null ? row.avg_eff + '%' : '—' }}</span></template></el-table-column>
         </el-table>
         <div class="sec-title" style="margin-top:16px">逾期任务（{{ report.overdue_items.length }}）</div>
         <el-table show-overflow-tooltip v-if="report.overdue_items.length" :data="report.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">

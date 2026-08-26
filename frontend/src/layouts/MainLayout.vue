@@ -509,9 +509,14 @@ nav a.active {
 }
 .layout.collapsed .main { margin-left: var(--sidebar-w-collapsed); }
 /* 🆕 卡片化V2：切菜单时页面轻淡入。不用 <transition>——多根视图会告警且不生效，
-   这里靠「路由切换 = 视图根节点重新挂载」触发一次 CSS 动画，多根也各自淡入 */
-.main > * { animation: pagefade .18s ease-out both; }
-@keyframes pagefade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+   这里靠「路由切换 = 视图根节点重新挂载」触发一次 CSS 动画，多根也各自淡入。
+   ⚠️ 只准动 opacity，绝不能动 transform（2026-08-27 生产事故）：
+   带 transform 的动画配 fill-mode:both，结束后浏览器保留的是插值出来的
+   **单位矩阵 matrix(1,0,0,1,0,0)**——它不是 none，视图根从此永久成为
+   position:fixed 的包含块，所有没 append-to-body 的弹窗连遮罩带本体
+   都被困在内容区里（生产部报表弹窗遮罩只盖半屏就是它干的）。 */
+.main > * { animation: pagefade .18s ease-out; }
+@keyframes pagefade { from { opacity: 0; } to { opacity: 1; } }
 
 /* 小屏笔记本 / 平板：压缩主内容区边距，给表格腾空间 */
 @media (max-height: 800px) {

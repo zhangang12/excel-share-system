@@ -47,8 +47,8 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
         <div class="kpi is-primary"><div class="kpi-v">{{ rep.total }}</div><div class="kpi-l">任务总数 · 当月下单 {{ rep.sales_order_count }}</div></div>
         <div class="kpi is-good"><div class="kpi-v">{{ rep.done }}</div><div class="kpi-l">已完成</div></div>
         <div class="kpi" :class="rep.overdue ? 'is-bad' : ''"><div class="kpi-v">{{ rep.overdue }}</div><div class="kpi-l">逾期任务</div></div>
-        <div class="kpi"><div class="kpi-v">{{ rep.ontime_rate ?? '—' }}%</div><div class="kpi-l">按时率</div></div>
-        <div class="kpi"><div class="kpi-v">{{ rep.avg_eff ?? '—' }}%</div><div class="kpi-l">平均效率（越高越好）</div></div>
+        <div class="kpi"><div class="kpi-v">{{ rep.ontime_rate != null ? rep.ontime_rate + '%' : '—' }}</div><div class="kpi-l">按时率</div></div>
+        <div class="kpi"><div class="kpi-v">{{ rep.avg_eff != null ? rep.avg_eff + '%' : '—' }}</div><div class="kpi-l">平均效率（越高越好）</div></div>
       </div>
 
       <div class="sec-title" v-if="rep">部门概览</div>
@@ -58,8 +58,8 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
             <div class="dc-h"><span class="dc-dot"></span>{{ d.name }}</div>
             <div class="dc-row"><span>任务 / 完成</span><b>{{ d.total }} / {{ d.done }}</b></div>
             <div class="dc-row"><span>逾期</span><b :class="{ bad: d.over }">{{ d.over }}</b></div>
-            <div class="dc-row"><span>按时率</span><b>{{ d.rate ?? '—' }}%</b></div>
-            <div class="dc-row"><span>平均效率</span><b :class="effClass(d.avg_eff)">{{ d.avg_eff ?? '—' }}%</b></div>
+            <div class="dc-row"><span>按时率</span><b>{{ d.rate != null ? d.rate + '%' : '—' }}</b></div>
+            <div class="dc-row"><span>平均效率</span><b :class="effClass(d.avg_eff)">{{ d.avg_eff != null ? d.avg_eff + '%' : '—' }}</b></div>
           </el-card>
         </el-col>
       </el-row>
@@ -82,8 +82,8 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
           <el-table-column prop="done" label="完成" width="70" />
           <el-table-column prop="ontime" label="按时" width="70" />
           <el-table-column label="逾期" width="70"><template #default="{ row }"><span :class="{ bad: row.over }">{{ row.over }}</span></template></el-table-column>
-          <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate ?? '—' }}%</template></el-table-column>
-          <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="effClass(row.avg_eff)">{{ row.avg_eff ?? '—' }}%</span></template></el-table-column>
+          <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate != null ? row.rate + '%' : '—' }}</template></el-table-column>
+          <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="effClass(row.avg_eff)">{{ row.avg_eff != null ? row.avg_eff + '%' : '—' }}</span></template></el-table-column>
         </el-table>
       </el-card>
 
@@ -97,7 +97,7 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
           <el-table-column label="预计完成" width="110"><template #default="{ row }">{{ fmtDate(row.due_date) }}</template></el-table-column>
           <el-table-column label="实际完成" width="110"><template #default="{ row }">{{ fmtDate(row.done_date) }}</template></el-table-column>
           <el-table-column label="逾期" width="90"><template #default="{ row }"><StatusPill :text="`超 ${row.over_days} 天`" variant="danger" /></template></el-table-column>
-          <el-table-column label="效率" width="80"><template #default="{ row }"><span class="bad">{{ row.eff ?? '—' }}%</span></template></el-table-column>
+          <el-table-column label="效率" width="80"><template #default="{ row }"><span class="bad">{{ row.eff != null ? row.eff + '%' : '—' }}</span></template></el-table-column>
         </el-table>
         <EmptyHint v-else text="本月无逾期任务" size="sm" />
       </el-card>
