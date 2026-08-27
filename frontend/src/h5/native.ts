@@ -77,6 +77,24 @@ export function nativeSpeechAvailable(): boolean {
 export interface NativeSpeechHandle { stop: () => void }
 
 /**
+ * 🆕 云端录音前先把麦克风的**运行时权限**要到手。
+ * WebView 的 getUserMedia 只放行应用已持有的权限，自己不弹授权框——
+ * 不先要权限，getUserMedia 必然 NotAllowedError。
+ * ⚠️ 老 APK 没有 ensureMic 方法：调用会抛异常 → 返回 true 放行，
+ *    让 getUserMedia 自己试（行为等同没有这层，绝不能因为壳旧把功能整个堵死）。
+ */
+export async function ensureNativeMic(): Promise<boolean> {
+  const p = plugins().PmsSpeech
+  if (!p) return true            // 不在 APP 里：浏览器自己会弹权限框
+  try {
+    const r = await p.ensureMic()
+    return r?.granted !== false
+  } catch {
+    return true                  // 老壳没这个方法：放行，别把路堵死
+  }
+}
+
+/**
  * 起一次原生识别。onText(文本, 是否最终结果)，onError(可读文案)。
  * 权限请求在原生侧做（RECORD_AUDIO），这里不用管。
  */

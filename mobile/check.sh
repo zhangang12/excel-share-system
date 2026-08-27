@@ -104,6 +104,11 @@ grep -q "setDecorFitsSystemWindows(getWindow(), false)" "$MAIN" \
 grep -q "RECORD_AUDIO" "$MANIFEST" \
   && ok "声明了麦克风权限（WebView 没有 Web Speech API，语音走原生桥）" \
   || no "没声明 RECORD_AUDIO，APP 里语音用不了"
+# ⚠️ WebView 的 getUserMedia 录音要 RECORD_AUDIO **加** MODIFY_AUDIO_SETTINGS，
+#    缺后者 Chromium 直接拒——系统设置里给了麦克风也没用（华为机上实证过）
+grep -q "MODIFY_AUDIO_SETTINGS" "$MANIFEST" \
+  && ok "声明了 MODIFY_AUDIO_SETTINGS（云端录音 getUserMedia 需要）" \
+  || no "没声明 MODIFY_AUDIO_SETTINGS，云端语音在 APP 里必然报权限错"
 
 # ── ③.5 资源 XML 必须合法 ─────────────────────────────────────────────
 # ⚠️ **XML 注释里不能出现 `--`**。写了照样过 IDE、也过 git，但 mergeReleaseResources

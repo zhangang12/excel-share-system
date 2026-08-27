@@ -49,6 +49,30 @@ public class PmsSpeechPlugin extends Plugin {
         startRecognition(call);
     }
 
+    /**
+     * 🆕 只要权限、不起识别 —— 给**云端录音**用。
+     * 云端路径走 WebView 的 getUserMedia，而 WebView 只会放行**应用已经持有**的
+     * 运行时权限，它自己不弹授权框。没有这个方法的话，用户得先去点一次原生识别
+     * （失败）才能顺带把权限要到，太绕。
+     */
+    @PluginMethod
+    public void ensureMic(PluginCall call) {
+        if (getPermissionState(MIC) == PermissionState.GRANTED) {
+            JSObject ret = new JSObject();
+            ret.put("granted", true);
+            call.resolve(ret);
+            return;
+        }
+        requestPermissionForAlias(MIC, call, "micEnsureResult");
+    }
+
+    @PermissionCallback
+    private void micEnsureResult(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("granted", getPermissionState(MIC) == PermissionState.GRANTED);
+        call.resolve(ret);
+    }
+
     @PermissionCallback
     private void micResult(PluginCall call) {
         if (getPermissionState(MIC) != PermissionState.GRANTED) {

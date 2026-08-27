@@ -45,6 +45,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 语音输入：WebView 里没有 Web Speech API，语音走原生 SpeechRecognizer（PmsSpeechPlugin） -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- ⚠️ WebView 里的 getUserMedia 录音要 RECORD_AUDIO **加** MODIFY_AUDIO_SETTINGS
+         两个都有，缺后者 Chromium 直接拒（NotAllowedError），系统设置里给了麦克风也没用。
+         生产实测：华为机云端语音一直报「需要允许麦克风权限」就是这里缺的。
+         这是 normal 权限，装上即生效、不弹框。 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!--
       附件下载落到公共「下载」目录。Android 10(API 29) 起分区存储不再需要这个权限，
       但 7~9 的机器需要 —— 不声明的话那几档机型点附件直接失败。
