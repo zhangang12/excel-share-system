@@ -5,7 +5,7 @@
  *
  * 这里刻意不做业务页面——手机上填单子是灾难，看数和批单才合适。
  */
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { http, errText } from './http'
 import { api } from './apiBase'
@@ -164,6 +164,30 @@ async function send(text?: string) {
 const speech = useSpeech((text, final) => {
   input.value = text
   if (final && text.trim()) send()
+})
+
+// 🆕 录音条：计时 + 声波。计时在这做（useSpeech 管音频，不管展示节奏）。
+const recSecs = ref(0)
+let recTick = 0
+watch(() => speech.listening.value, (on) => {
+  if (on) {
+    recSecs.value = 0
+    recTick = window.setInterval(() => { recSecs.value++ }, 1000)
+  } else if (recTick) {
+    clearInterval(recTick); recTick = 0
+  }
+})
+const recClock = computed(() =>
+  `${Math.floor(recSecs.value / 60)}:${String(recSecs.value % 60).padStart(2, '0')}`)
+/** 声波条：有真实音量用真的（云端路径），没有就让 CSS 动画兜底（原生/浏览器）。 */
+const waveBars = computed(() => {
+  const lv = speech.levels.value
+  const out: number[] = []
+  for (let i = 0; i < 20; i++) {
+    const v = lv.length ? (lv[Math.max(0, lv.length - 20 + i)] ?? 0) : 0
+    out.push(4 + Math.round(v * 14))
+  }
+  return out
 })
 
 /**
@@ -439,9 +463,26 @@ onMounted(() => {
           <button v-for="s in suggestions" :key="s" class="chip" @click="send(s)">{{ s }}</button>
         </div>
         <div v-if="speech.error.value" class="serr">{{ speech.error.value }}</div>
+
+        <!-- 🆕 录音状态条：正在听（红点+计时+声波+取消/完成）或 识别中（跳点） -->
+        <div v-if="speech.phase.value === 'asr'" class="vbar">
+          <span class="vdots"><i /><i /><i /></span>
+          <span class="vlabel">正在识别…</span>
+        </div>
+        <div v-else-if="speech.listening.value" class="vbar rec">
+          <span class="vdot"></span>
+          <span class="vlabel">正在听</span>
+          <span class="vtime">{{ recClock }}</span>
+          <span class="vwave" :class="{ sim: !speech.levels.value.length }">
+            <i v-for="(h, i) in waveBars" :key="i"
+               :style="speech.levels.value.length ? { height: h + 'px' } : undefined" />
+          </span>
+          <button class="vbtn ghost" @click="speech.cancel()">取消</button>
+          <button class="vbtn go" @click="speech.stop()">完成</button>
+        </div>
+
         <div class="composer">
-          <input v-model="input" :placeholder="speech.phase.value === 'asr' ? '识别中…'
-                   : speech.listening.value ? '正在听…（再按一下结束）' : '问点什么…'"
+          <input v-model="input" placeholder="问点什么…"
                  @keyup.enter="send()" />
           <button v-if="speech.supported" class="mic" :class="{ on: speech.listening.value }"
                   @click="speech.toggle()" :aria-label="speech.listening.value ? '停止' : '语音输入'">
@@ -702,15 +743,84 @@ onMounted(() => {
   width: 30px; height: 34px; flex: none; border: 0; background: none; cursor: pointer;
   color: var(--h5-blue); font-size: 24px; line-height: 1; padding: 0; margin-left: -6px;
 }
-.serr { font-size: 11.5px; color: var(--h5-warn); padding: 0 6px 8px }
+.serr {
+  display: inline-flex; align-items: center; font-size: 12px; color: var(--h5-warn);
+  background: rgba(169, 106, 8, .1); border-radius: 999px; padding: 5px 12px;
+  margin: 0 2px 8px;
+}
+
+/* ── 🆕 录音状态条 ─────────────────────────────────────────────
+   录音时的反馈原来只有「占位文字变了 + 按钮变红」，用户看不到在不在录、
+   录了多久、也没有取消的路（用户原话：麦克风有点太垃圾了）。
+   现在：红点 + 计时 + 实时声波 + 取消/完成。 */
+.vbar {
+  display: flex; align-items: center; gap: 8px; margin: 0 2px 8px;
+  padding: 9px 12px; background: rgba(255, 255, 255, .88);
+  border: 1px solid rgba(255, 255, 255, .95); border-radius: 14px;
+  box-shadow: var(--h5-sh-card); backdrop-filter: blur(8px);
+}
+.vdot {
+  width: 8px; height: 8px; flex: none; border-radius: 50%;
+  background: var(--h5-danger); animation: h5GlowPulse 1.1s ease-in-out infinite;
+}
+.vlabel { flex: none; font-size: 12.5px; font-weight: 600; color: var(--h5-ink-2) }
+.vtime {
+  flex: none; font-size: 12px; color: var(--h5-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+/* 声波：云端路径有真实音量逐条驱动；原生/浏览器拿不到就用 sim 循环动画 */
+.vwave {
+  flex: 1; min-width: 0; height: 20px; display: flex; align-items: center;
+  justify-content: center; gap: 2.5px; overflow: hidden;
+}
+.vwave i {
+  /* ⚠️ <i> 是行内元素，不转块级 width/height 全不生效（预览页实测踩到） */
+  display: block; width: 3px; height: 4px; border-radius: 2px;
+  background: var(--h5-blue-lt); transition: height .09s linear;
+}
+.vwave.sim i { animation: vSim 1s ease-in-out infinite }
+.vwave.sim i:nth-child(2n) { animation-delay: .12s }
+.vwave.sim i:nth-child(3n) { animation-delay: .24s }
+.vwave.sim i:nth-child(5n) { animation-delay: .36s }
+@keyframes vSim { 0%, 100% { height: 4px } 50% { height: 14px } }
+.vbtn {
+  flex: none; border: 0; border-radius: 999px; padding: 7px 14px;
+  font: 600 12.5px var(--h5-font); cursor: pointer;
+}
+.vbtn.ghost { background: #F1F3F6; color: var(--h5-ink-3) }
+.vbtn.go { background: var(--h5-grad-btn); color: #fff; box-shadow: var(--h5-sh-btn-sm) }
+/* 识别中的三个跳点 */
+.vdots { flex: none; display: flex; gap: 4px }
+.vdots i {
+  display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--h5-blue);
+  animation: vBounce .9s ease-in-out infinite;
+}
+.vdots i:nth-child(2) { animation-delay: .15s }
+.vdots i:nth-child(3) { animation-delay: .3s }
+@keyframes vBounce { 0%, 100% { transform: translateY(0); opacity: .5 }
+  50% { transform: translateY(-4px); opacity: 1 } }
+
 .mic {
   width: 46px; height: 46px; flex: none; border-radius: 50%; cursor: pointer;
-  border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.7);
-  color: var(--h5-ink-3); display: grid; place-items: center;
+  border: 1px solid rgba(43, 110, 246, .22); background: #fff;
+  color: var(--h5-blue); display: grid; place-items: center;
+  box-shadow: 0 4px 12px rgba(43, 110, 246, .12);
+  transition: transform .12s ease;
+  position: relative;
 }
+.mic:active { transform: scale(.92) }
 .mic.on {
   background: var(--h5-danger); color: #fff; border-color: transparent;
-  animation: h5GlowPulse 1.4s ease-in-out infinite;
+}
+/* 录音时往外扩的水波环——比整个按钮闪烁安静，但一眼能看出「在录」 */
+.mic.on::after {
+  content: ''; position: absolute; inset: -4px; border-radius: 50%;
+  border: 2px solid rgba(196, 54, 47, .5);
+  animation: vRipple 1.2s ease-out infinite;
+}
+@keyframes vRipple {
+  0% { transform: scale(.85); opacity: .8 }
+  100% { transform: scale(1.35); opacity: 0 }
 }
 .composer { display: flex; gap: 10px; align-items: center }
 .composer input {
