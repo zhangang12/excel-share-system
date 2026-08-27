@@ -67,6 +67,9 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
   /** 'idle' | 'rec'（正在听）| 'asr'（云端识别中） */
   const phase = ref<'idle' | 'rec' | 'asr'>('idle')
   const error = ref('')
+  /** 🆕 云端录音的实时音量（0~1 一串），驱动 UI 的声波条。原生/浏览器路径拿不到，
+   *  为空时 UI 退回 CSS 循环动画 —— 有真数据用真数据，没有也别一片死寂。 */
+  const levels = ref<number[]>([])
   let rec: SR = null
   let native: NativeSpeechHandle | null = null
   let starting = false
@@ -119,8 +122,16 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
     const src = ctx!.createMediaStreamSource(stream)
     proc = ctx!.createScriptProcessor(4096, 1, 1)
     pcmChunks = []
+    levels.value = []
     proc.onaudioprocess = (e) => {
-      pcmChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+      const buf = e.inputBuffer.getChannelData(0)
+      pcmChunks.push(new Float32Array(buf))
+      // RMS → 0~1。×4 是经验增益：正常说话 RMS 大约 0.05~0.2，不放大条子几乎不动
+      let sum = 0
+      for (let i = 0; i < buf.length; i += 8) sum += buf[i] * buf[i]
+      const rms = Math.sqrt(sum / (buf.length / 8))
+      levels.value.push(Math.min(1, rms * 4))
+      if (levels.value.length > 28) levels.value.shift()
     }
     src.connect(proc)
     proc.connect(ctx!.destination)
@@ -153,6 +164,19 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
       phase.value = 'idle'
       listening.value = false
     }
+  }
+
+  /** 🆕 取消：录到一半不想要了。云端路径**直接丢弃不上传**（不花钱不等待）；
+   *  其余路径等同 stop。 */
+  function cancel() {
+    if (phase.value === 'rec') {
+      pcmChunks = []
+      cleanupCloud()
+      phase.value = 'idle'
+      listening.value = false
+      return
+    }
+    stop()
   }
 
   function stop() {
@@ -236,5 +260,5 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
   function toggle() { listening.value ? stop() : start() }
 
   onUnmounted(() => { cleanupCloud(); stop() })
-  return { supported, listening, phase, error, start, stop, toggle }
+  return { supported, listening, phase, error, levels, start, stop, cancel, toggle }
 }
