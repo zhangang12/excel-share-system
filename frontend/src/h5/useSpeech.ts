@@ -22,7 +22,8 @@
  */
 import { ref, onUnmounted } from 'vue'
 import { http } from './http'
-import { nativeSpeechAvailable, startNativeSpeech, type NativeSpeechHandle } from './native'
+import { ensureNativeMic, nativeSpeechAvailable, startNativeSpeech,
+         type NativeSpeechHandle } from './native'
 
 type SR = any
 
@@ -120,12 +121,18 @@ export function useSpeech(onText: (text: string, final: boolean) => void,
   async function startCloud() {
     if (listening.value) return
     error.value = ''
+    // ⚠️ APP 里先把运行时权限要到手：WebView 的 getUserMedia 只放行
+    //    应用已持有的权限，自己不弹授权框
+    if (!(await ensureNativeMic())) {
+      error.value = '需要允许麦克风权限：手机设置 → 应用 → 同辉项目管理 → 权限 → 麦克风'
+      return
+    }
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
       })
     } catch {
-      error.value = '需要允许麦克风权限（在系统设置里给本应用开麦克风）'
+      error.value = '录音打不开：手机设置 → 应用 → 同辉项目管理 → 权限 → 麦克风 设为允许后重试'
       return
     }
     const AC = window.AudioContext || (window as any).webkitAudioContext
