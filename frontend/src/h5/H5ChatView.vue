@@ -440,7 +440,8 @@ onMounted(() => {
         </div>
         <div v-if="speech.error.value" class="serr">{{ speech.error.value }}</div>
         <div class="composer">
-          <input v-model="input" :placeholder="speech.listening.value ? '正在听…' : '问点什么…'"
+          <input v-model="input" :placeholder="speech.phase.value === 'asr' ? '识别中…'
+                   : speech.listening.value ? '正在听…（再按一下结束）' : '问点什么…'"
                  @keyup.enter="send()" />
           <button v-if="speech.supported" class="mic" :class="{ on: speech.listening.value }"
                   @click="speech.toggle()" :aria-label="speech.listening.value ? '停止' : '语音输入'">

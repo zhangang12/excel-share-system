@@ -52,6 +52,11 @@ services:
       # 前置条件：该域名已在企微后台配成「OAuth2.0 网页授权回调域名」并完成归属认证。
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       WECOM_OAUTH_ENABLED: ${WECOM_OAUTH_ENABLED:-false}
+      # 🆕 云端语音识别（阿里云一句话识别）。⚠️ compose 不声明的变量进不了容器
+      #    ——只写 .env.prod 是不够的（PUBLIC_BASE_URL 那次踩过）。留空=功能关。
+      SPEECH_ASR_APPKEY: ${SPEECH_ASR_APPKEY:-}
+      SPEECH_ASR_AK_ID: ${SPEECH_ASR_AK_ID:-}
+      SPEECH_ASR_AK_SECRET: ${SPEECH_ASR_AK_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
