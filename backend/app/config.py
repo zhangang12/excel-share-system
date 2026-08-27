@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     wecom_agent_id: str = ""
     wecom_secret: str = ""
 
+    # 🆕 云端语音识别（阿里云·智能语音交互·一句话识别）。
+    # 三个都留空 = 功能关：/api/speech/available 报 false，前端不显示云端麦克风，
+    # 与现状完全一致（可逆开关红线）。AppKey 是项目标识；AK 是真凭证，只在服务端。
+    speech_asr_appkey: str = ""
+    speech_asr_ak_id: str = ""
+    speech_asr_ak_secret: str = ""
+
     # 🆕 企微内嵌：对外可访问的站点根地址（用于拼消息里的链接和 OAuth 回调）。
     # ⚠️ **必须是 https 且必须是企微后台配的「可信域名」**，否则：
     #    · http 的链接企微客户端会拦

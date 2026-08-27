@@ -1,26 +1,27 @@
 /**
- * 语音输入。**两套后端**，能力探测决定用哪个：
+ * 语音输入。**三套后端**，能力探测决定用哪个：
  *
- *   ① 原生（APP 内）—— 壳把系统 SpeechRecognizer 桥出来
+ *   ① 原生（APP 内）—— 壳把系统 SpeechRecognizer 桥出来（免费、边说边出字）
  *   ② Web Speech API（浏览器内）—— webkitSpeechRecognition
+ *   ③ 🆕 云端识别（阿里云一句话识别）—— 录 PCM 传后端代理，说完出整段
  *
  * ⚠️ 为什么必须有 ①：**Android WebView 里根本没有 Web Speech API**。
- *   `webkitSpeechRecognition` 是 Chrome 浏览器的功能，WebView 不带语音识别服务绑定，
- *   一律取不到构造函数。所以旧版 APP（纯 WebView 壳）里麦克风按钮**永远是隐藏的** ——
- *   网页上能用、APP 里没有，用户看到的就是「不兼容」。走原生桥接才补得上。
+ * ⚠️ 为什么必须有 ③：原生 SpeechRecognizer 依赖系统语音服务，无 GMS 的
+ *   国产机（生产实测：华为）直接报「这台手机没有可用的语音识别服务」。
+ *   云端识别是唯一能覆盖所有手机的路。①失败会**自动切到③**（若已开通）。
  *
- * 各端边界（说清楚，别让人以为哪都能用）：
- *   同辉 APP（原生桥接）        可用
- *   Android Chrome / 鸿蒙浏览器  可用（Web Speech）
- *   iOS Safari 14.5+            可用，但必须由用户手势触发，且识别在苹果服务器上做
- *   企业微信 / 微信内置浏览器     多半不可用（内核裁剪掉了这个 API）
+ * 选路顺序：原生可用 → ①；否则浏览器有 Web Speech → ②；否则问一次后端
+ * `/speech/available`，开通了且拿得到 getUserMedia → ③；全没有 → 按钮隐藏。
  *
- * 拿不到任何一种就把麦克风按钮整个隐藏，而不是显示一个点了没反应的按钮——那比没有更糟。
+ * ③ 的录音：getUserMedia + ScriptProcessor 采 PCM，降采样到 16k/16bit 单声道。
+ * ⚠️ 刻意不用 MediaRecorder：它吐 webm/opus 容器，各 WebView 支持参差、
+ *   服务端还得解封装；裸 PCM 在哪都一样，后端原样转发即可。
+ * ⚠️ ScriptProcessor 虽是废弃 API，但老 WebView 全兼容——这里要的就是兼容。
  *
- * 隐私：识别由系统/浏览器完成，音频不经过我们的服务器，也不落库。
- * 若将来要在企微里用，得换企微 JS-SDK 的 translateVoice，那是另一套鉴权，不在本期。
+ * 隐私：①② 音频不经过我们服务器；③ 会经服务器转发到阿里云识别，不落库不落盘。
  */
 import { ref, onUnmounted } from 'vue'
+import { http } from './http'
 import { nativeSpeechAvailable, startNativeSpeech, type NativeSpeechHandle } from './native'
 
 type SR = any
@@ -30,17 +31,132 @@ function getCtor(): SR | null {
   return w.SpeechRecognition || w.webkitSpeechRecognition || null
 }
 
+function canRecord(): boolean {
+  // window.AudioContext 在 lib.dom 里恒有类型，但老 WebView 运行时可能没有——
+  // 走 any 探测，别让 TS 以为「总是真」
+  const w = window as any
+  return typeof navigator.mediaDevices?.getUserMedia === 'function'
+    && !!(w.AudioContext || w.webkitAudioContext)
+}
+
+/** Float32 任意采样率 → Int16 16kHz 单声道（线性插值）。 */
+function toPcm16k(chunks: Float32Array[], srcRate: number): ArrayBuffer {
+  let n = 0
+  for (const c of chunks) n += c.length
+  const all = new Float32Array(n)
+  let off = 0
+  for (const c of chunks) { all.set(c, off); off += c.length }
+  const ratio = srcRate / 16000
+  const outLen = Math.floor(all.length / ratio)
+  const out = new Int16Array(outLen)
+  for (let i = 0; i < outLen; i++) {
+    const pos = i * ratio
+    const i0 = Math.floor(pos)
+    const frac = pos - i0
+    const s = all[i0] * (1 - frac) + (all[Math.min(i0 + 1, all.length - 1)] || 0) * frac
+    out[i] = Math.max(-1, Math.min(1, s)) * 0x7fff
+  }
+  return out.buffer
+}
+
 export function useSpeech(onText: (text: string, final: boolean) => void) {
   const useNative = nativeSpeechAvailable()
-  const supported = useNative || !!getCtor()
+  // supported 是 ref：云端那条要问一次后端才知道，探到了再把按钮亮出来
+  const supported = ref(useNative || !!getCtor())
   const listening = ref(false)
+  /** 'idle' | 'rec'（正在听）| 'asr'（云端识别中） */
+  const phase = ref<'idle' | 'rec' | 'asr'>('idle')
   const error = ref('')
   let rec: SR = null
   let native: NativeSpeechHandle | null = null
-  /** 防重入：原生 start 要往返一次，连点两下会起两路识别 */
   let starting = false
+  /** 原生报「没有语音服务」之后置 true，后续都直接走云端 */
+  let preferCloud = false
+  let cloudEnabled = false
+
+  // 云端录音现场
+  let stream: MediaStream | null = null
+  let ctx: AudioContext | null = null
+  let proc: ScriptProcessorNode | null = null
+  let pcmChunks: Float32Array[] = []
+  let recTimer = 0
+
+  // 探测云端：只有原生和 Web Speech 都没有时才问（省一次请求）
+  if (!supported.value && canRecord()) {
+    http.get('/speech/available')
+      .then(({ data }) => {
+        if (data?.enabled) { cloudEnabled = true; supported.value = true }
+      })
+      .catch(() => { /* 探测失败按不可用处理，按钮维持隐藏 */ })
+  } else if (useNative && canRecord()) {
+    // APP 里也悄悄探一次：原生报「没有语音服务」时要有云端可切
+    http.get('/speech/available')
+      .then(({ data }) => { cloudEnabled = !!data?.enabled })
+      .catch(() => { /* 没有就没有 */ })
+  }
+
+  function cleanupCloud() {
+    if (recTimer) { clearTimeout(recTimer); recTimer = 0 }
+    try { proc?.disconnect() } catch { /* 已断开 */ }
+    try { ctx?.close() } catch { /* 已关闭 */ }
+    stream?.getTracks().forEach((t) => t.stop())
+    proc = null; ctx = null; stream = null
+  }
+
+  async function startCloud() {
+    if (listening.value) return
+    error.value = ''
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      })
+    } catch {
+      error.value = '需要允许麦克风权限（在系统设置里给本应用开麦克风）'
+      return
+    }
+    const AC = window.AudioContext || (window as any).webkitAudioContext
+    ctx = new AC()
+    const src = ctx!.createMediaStreamSource(stream)
+    proc = ctx!.createScriptProcessor(4096, 1, 1)
+    pcmChunks = []
+    proc.onaudioprocess = (e) => {
+      pcmChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+    }
+    src.connect(proc)
+    proc.connect(ctx!.destination)
+    listening.value = true
+    phase.value = 'rec'
+    // 一句话识别上限 60 秒，到点自动收——别让人白说后半段
+    recTimer = window.setTimeout(() => { void stopCloud() }, 58_000)
+  }
+
+  async function stopCloud() {
+    if (phase.value !== 'rec') { cleanupCloud(); listening.value = false; return }
+    const rate = ctx?.sampleRate || 48000
+    cleanupCloud()
+    phase.value = 'asr'
+    try {
+      const pcm = toPcm16k(pcmChunks, rate)
+      pcmChunks = []
+      if (pcm.byteLength < 3200) {
+        error.value = '没听清，说长一点再试'
+        return
+      }
+      const { data } = await http.post('/speech/recognize', pcm, {
+        headers: { 'Content-Type': 'application/octet-stream' },
+        timeout: 25_000,
+      })
+      if (data?.text) onText(data.text, true)
+    } catch (e: any) {
+      error.value = e?.response?.data?.detail || '识别失败，再说一次试试'
+    } finally {
+      phase.value = 'idle'
+      listening.value = false
+    }
+  }
 
   function stop() {
+    if (phase.value === 'rec') { void stopCloud(); return }
     if (useNative) {
       native?.stop()
       native = null
@@ -54,12 +170,20 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
     if (starting || listening.value) return
     starting = true
     error.value = ''
-    // 先亮起来：起原生会话要往返一次，不先置 true 会有一段「点了没反应」
     listening.value = true
     try {
       native = await startNativeSpeech(
         onText,
-        (msg) => { error.value = msg; listening.value = false; native = null },
+        (msg) => {
+          listening.value = false; native = null
+          // 🆕 这台机没有系统语音服务（华为等无 GMS 机型）→ 自动切云端
+          if (cloudEnabled && /语音识别服务/.test(msg)) {
+            preferCloud = true
+            error.value = '本机没有语音服务，已切换云端识别，请再按一次'
+          } else {
+            error.value = msg
+          }
+        },
         () => { listening.value = false; native = null },
       )
       if (!native) listening.value = false
@@ -87,7 +211,6 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
       onText(text, final)
     }
     rec.onerror = (e: any) => {
-      // not-allowed = 用户拒了麦克风权限；no-speech = 没说话。两种都不该报红
       error.value = e.error === 'not-allowed' ? '需要允许麦克风权限'
         : e.error === 'no-speech' ? ''
         : '语音识别不可用，请打字'
@@ -104,9 +227,14 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
     }
   }
 
-  function start() { useNative ? void startNative() : startWeb() }
+  function start() {
+    if (preferCloud && cloudEnabled) { void startCloud(); return }
+    if (useNative) { void startNative(); return }
+    if (getCtor()) { startWeb(); return }
+    if (cloudEnabled) { void startCloud() }
+  }
   function toggle() { listening.value ? stop() : start() }
 
-  onUnmounted(stop)
-  return { supported, listening, error, start, stop, toggle }
+  onUnmounted(() => { cleanupCloud(); stop() })
+  return { supported, listening, phase, error, start, stop, toggle }
 }

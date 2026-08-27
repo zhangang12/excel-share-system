@@ -26,6 +26,7 @@ from .routers import (
     warehouse_router, export_router, user_feedback_router,
     produce_router, leads_router, purchase_mgmt_router, oa_router,
     hr_router, management_todo_router, personal_todo_router, agent_router, desktop_router,
+    speech_router,
 )
 from .errors import register_exception_handlers
 from .database import get_db
@@ -189,6 +190,7 @@ def create_app() -> FastAPI:
     app.include_router(personal_todo_router.router)    # 🆕 #363/#381/#382 个人待办
     app.include_router(agent_router.router)  # 🆕 Agent 助手（只读问数 POC，admin/manager）
     app.include_router(desktop_router.router)  # 🆕 桌面客户端在线统计（只读，admin/manager）
+    app.include_router(speech_router.router)   # 🆕 云端语音识别（阿里云一句话识别，配置留空=关）
     # 🆕 客户端故障上报：不挂鉴权——升级失败/启动崩溃都发生在登录之前，
     #    要认证就永远收不到。防滥用在 router 内部（kind 白名单 + 64KB 截断 + 每设备每天 20 条）
     app.include_router(desktop_router.report_router)
