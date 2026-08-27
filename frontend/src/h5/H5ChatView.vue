@@ -161,10 +161,21 @@ async function send(text?: string) {
 }
 
 // 语音：能力探测不通过就整个不显示按钮，别摆一个点了没反应的
-const speech = useSpeech((text, final) => {
-  input.value = text
-  if (final && text.trim()) send()
-})
+// 🆕 自动发送挂在「录音会话结束」上，不挂识别器的 final 标记——
+//    有些手机的识别器只给中间结果、从不报 final（用户实测：字出来了但不发）。
+//    voiceGot：本次会话确实识别出过字才发，防止「输入框里有手打的字 →
+//    点了下麦克风又取消 → 把手打的字发出去」这种误发。
+let voiceGot = false
+const speech = useSpeech(
+  (text) => {
+    input.value = text
+    voiceGot = !!text.trim()
+  },
+  () => {
+    if (voiceGot && input.value.trim()) send()
+    voiceGot = false
+  },
+)
 
 // 🆕 录音条：计时 + 声波。计时在这做（useSpeech 管音频，不管展示节奏）。
 const recSecs = ref(0)
