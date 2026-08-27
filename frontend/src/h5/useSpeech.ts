@@ -59,7 +59,8 @@ function toPcm16k(chunks: Float32Array[], srcRate: number): ArrayBuffer {
   return out.buffer
 }
 
-export function useSpeech(onText: (text: string, final: boolean) => void) {
+export function useSpeech(onText: (text: string, final: boolean) => void,
+                          onEnd?: () => void) {
   const useNative = nativeSpeechAvailable()
   // supported 是 ref：云端那条要问一次后端才知道，探到了再把按钮亮出来
   const supported = ref(useNative || !!getCtor())
@@ -76,6 +77,16 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
   /** 原生报「没有语音服务」之后置 true，后续都直接走云端 */
   let preferCloud = false
   let cloudEnabled = false
+  /** 🆕 会话结束通知（去重）。**自动发送挂在这上面**，不挂在识别器的 final 标记上——
+   *  有些手机的识别器只给中间结果、从不报 final，等 final 的自动发送永远等不到
+   *  （用户实测：字出来了但不发）。`end` 是唯一每条路径都保证有的信号。
+   *  取消/出错时置 ended=true 拦掉通知：用户主动放弃或报错后不该替他把话发出去。 */
+  let sessionEnded = true
+  function notifyEnd() {
+    if (sessionEnded) return
+    sessionEnded = true
+    onEnd?.()
+  }
 
   // 云端录音现场
   let stream: MediaStream | null = null
@@ -137,6 +148,7 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
     proc.connect(ctx!.destination)
     listening.value = true
     phase.value = 'rec'
+    sessionEnded = false
     // 一句话识别上限 60 秒，到点自动收——别让人白说后半段
     recTimer = window.setTimeout(() => { void stopCloud() }, 58_000)
   }
@@ -163,12 +175,14 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
     } finally {
       phase.value = 'idle'
       listening.value = false
+      notifyEnd()          // 失败也通知——上层看有没有字决定发不发
     }
   }
 
   /** 🆕 取消：录到一半不想要了。云端路径**直接丢弃不上传**（不花钱不等待）；
    *  其余路径等同 stop。 */
   function cancel() {
+    sessionEnded = true          // 用户主动放弃：不触发自动发送
     if (phase.value === 'rec') {
       pcmChunks = []
       cleanupCloud()
@@ -184,6 +198,9 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
     if (useNative) {
       native?.stop()
       native = null
+      // ⚠️ 手动停时 native.stop() 会先摘掉事件监听器，end 事件到不了——
+      //    这里补一次通知（notifyEnd 自带去重，自然结束那条不会重复）
+      notifyEnd()
     } else {
       try { rec?.stop() } catch { /* 已经停了 */ }
     }
@@ -195,11 +212,13 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
     starting = true
     error.value = ''
     listening.value = true
+    sessionEnded = false
     try {
       native = await startNativeSpeech(
         onText,
         (msg) => {
           listening.value = false; native = null
+          sessionEnded = true          // 出错不自动发送
           // 🆕 这台机没有系统语音服务（华为等无 GMS 机型）→ 自动切云端
           if (cloudEnabled && /语音识别服务/.test(msg)) {
             preferCloud = true
@@ -208,7 +227,7 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
             error.value = msg
           }
         },
-        () => { listening.value = false; native = null },
+        () => { listening.value = false; native = null; notifyEnd() },
       )
       if (!native) listening.value = false
     } finally {
@@ -238,13 +257,15 @@ export function useSpeech(onText: (text: string, final: boolean) => void) {
       error.value = e.error === 'not-allowed' ? '需要允许麦克风权限'
         : e.error === 'no-speech' ? ''
         : '语音识别不可用，请打字'
+      sessionEnded = true          // 出错不自动发送
       listening.value = false
     }
-    rec.onend = () => { listening.value = false }
+    rec.onend = () => { listening.value = false; notifyEnd() }
 
     try {
       rec.start()
       listening.value = true
+      sessionEnded = false
     } catch {
       error.value = '语音识别启动失败，请打字'
       listening.value = false
