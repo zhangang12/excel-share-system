@@ -26,6 +26,12 @@ http.interceptors.request.use((config) => {
   //   远超全局 30s，被 axios 掐断后表现为「请求超时/打包下载失败」。
   //   服务端 nginx proxy_read_timeout=300s 仍然兜底，不会无限挂起。
   if (config.responseType === 'blob') config.timeout = 0
+  // 🆕 2026-08-28 生产排查：**上传同样不设前端超时**——设计师传附件包（密封包/冷作包，
+  //   几十 MB）走厂里上行带宽，30s 根本传不完，被 axios 掐断后 nginx 记 499/400，
+  //   用户看到的就是「系统报错」，换小文件重试才碰巧成功。全站所有上传（发票/图纸/
+  //   凭证/Excel 导入）都吃这一条。服务端仍有 nginx client_max_body_size=50M +
+  //   proxy_read_timeout=300s 兜底，不会无限挂起。
+  if (config.data instanceof FormData) config.timeout = 0
   return config
 })
 
