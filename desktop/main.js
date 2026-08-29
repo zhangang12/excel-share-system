@@ -573,6 +573,24 @@ function createWindow() {
     try { mainWindow.loadFile(indexHtml); } catch { /* 连内置页都加载不了就没辙了 */ }
   });
 
+  // ---- 🆕 页面报错黑匣子（2026-08-29 王利利白屏排查）----
+  // 白屏的一类真身：页面文件加载成功、也在正常"画"（paint-beat 有心跳），但前端 JS
+  // 在挂载前抛了异常 → #app 是空的 → 一片白。这类错误此前**任何钩子都不记**：
+  // 不触发 did-fail-load（文件加载成功了）、不触发 render-process-gone（进程活着）、
+  // 不触发 unresponsive（页面响应好好的）——crash.log 里干干净净，只能靠猜。
+  // 从今往后把渲染进程 console 的 error 级输出记进 crash.log 并上报服务器。
+  // 只报前 5 条：白屏页面可能循环报错，别把上报通道打爆。
+  let rendererErrSent = 0;
+  mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    if (level < 3) return;                        // 0=verbose 1=info 2=warning 3=error
+    const detail = `${message} @${sourceId}:${line}`;
+    logCrash('renderer-error', detail);
+    if (rendererErrSent < 5) {
+      rendererErrSent++;
+      sendReport('renderer-error', detail.slice(0, 4000), { where: 'console-message' });
+    }
+  });
+
   // ---- 🆕 崩溃自恢复：闲置一段时间后"黑屏"的真身 ----
   // 渲染进程被系统回收/崩溃后，窗口还在，但已经没有任何内容在画，只剩上面那句
   // backgroundColor('#0f1d30') 的底色——用户看到的就是一整片深蓝，且怎么点都没反应，
