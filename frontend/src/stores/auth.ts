@@ -3,15 +3,33 @@ import { ref, computed } from 'vue'
 import { authApi, type MenuItem } from '@/api/auth'
 import type { User } from '@/types'
 
+// 🆕 2026-08-29 王利利白屏事故：localStorage 里被写进了字符串 "undefined"
+//   （JSON.stringify(undefined) 返回 undefined，setItem 把它强转成 "undefined" 存进去——
+//   断网时接口数据没到手就存，正好踩中），而这里是**全应用最先执行的代码**，
+//   JSON.parse 一炸 store 初始化就死，Vue 挂载不了 = 整窗白屏，清缓存重装都救不回。
+//   读写两头都设防：读到解析不了的一律当没有并顺手清掉；写 undefined/null 改为删 key。
+function lsGetJson<T>(key: string): T | null {
+  try {
+    const v = localStorage.getItem(key)
+    if (!v || v === 'undefined' || v === 'null') return null
+    return JSON.parse(v) as T
+  } catch {
+    try { localStorage.removeItem(key) } catch { /* 清不掉也别拦启动 */ }
+    return null
+  }
+}
+export function lsSetJson(key: string, val: unknown): void {
+  try {
+    if (val === undefined || val === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, JSON.stringify(val))
+  } catch { /* 存储满/被禁不致命 */ }
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string>(localStorage.getItem('pms_token') || '')
-  const user = ref<User | null>(
-    JSON.parse(localStorage.getItem('pms_user') || 'null'),
-  )
+  const user = ref<User | null>(lsGetJson<User>('pms_user'))
   // 🆕 v3：后端下发的可见菜单（null=尚未加载，此时按老默认渲染避免闪烁）
-  const menus = ref<MenuItem[] | null>(
-    JSON.parse(localStorage.getItem('pms_menus') || 'null'),
-  )
+  const menus = ref<MenuItem[] | null>(lsGetJson<MenuItem[]>('pms_menus'))
   const canViewDetail = ref<boolean>(
     localStorage.getItem('pms_can_view_detail') !== '0',
   )
@@ -62,7 +80,7 @@ export const useAuthStore = defineStore('auth', () => {
       const resp = await authApi.menus()
       menus.value = resp.menus
       canViewDetail.value = resp.can_view_detail
-      localStorage.setItem('pms_menus', JSON.stringify(resp.menus))
+      lsSetJson('pms_menus', resp.menus)
       localStorage.setItem('pms_can_view_detail', resp.can_view_detail ? '1' : '0')
     } catch { /* 接口失败保持现状（老默认），不阻塞页面 */ }
   }
@@ -72,7 +90,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = resp.access_token
     user.value = resp.user
     localStorage.setItem('pms_token', resp.access_token)
-    localStorage.setItem('pms_user', JSON.stringify(resp.user))
+    lsSetJson('pms_user', resp.user)
     menus.value = null  // 🆕 切换账号清菜单缓存，登录后重新拉取
     localStorage.removeItem('pms_menus')
     await fetchMenus()
@@ -83,7 +101,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const me = await authApi.me()
       user.value = me
-      localStorage.setItem('pms_user', JSON.stringify(me))
+      lsSetJson('pms_user', me)
       return me
     } catch {
       logout()
@@ -95,7 +113,7 @@ export const useAuthStore = defineStore('auth', () => {
     await authApi.changePassword(oldPwd, newPwd)
     if (user.value) {
       user.value.password_must_change = false
-      localStorage.setItem('pms_user', JSON.stringify(user.value))
+      lsSetJson('pms_user', user.value)
     }
   }
 

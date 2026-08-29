@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthStore, lsSetJson } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import type { LoginResp } from '@/types'
 import { ElMessage } from 'element-plus'
@@ -53,7 +53,7 @@ async function finishLogin(resp: LoginResp) {
   auth.token = resp.access_token
   auth.user = resp.user
   localStorage.setItem('pms_token', resp.access_token)
-  localStorage.setItem('pms_user', JSON.stringify(resp.user))
+  lsSetJson('pms_user', resp.user)
   auth.menus = null  // 切换账号清菜单缓存，登录后重新拉取
   localStorage.removeItem('pms_menus')
   await auth.fetchMenus()

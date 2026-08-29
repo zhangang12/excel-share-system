@@ -24,6 +24,7 @@ export function setSession(t: string, u: H5User) {
   token.value = t
   user.value = u
   localStorage.setItem('pms_token', t)
+  if (u === undefined || u === null) { localStorage.removeItem('pms_user'); return }
   localStorage.setItem('pms_user', JSON.stringify(u))
 }
 
