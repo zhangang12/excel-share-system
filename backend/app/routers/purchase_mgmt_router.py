@@ -3575,3 +3575,60 @@ async def delete_purchase_request(
     await db.delete(pr)
     await db.commit()
     return {"ok": True}
+
+
+async def _preq_editable(db: AsyncSession, prid: int, current: models.User) -> models.PurchaseRequest:
+    """🆕 反馈#418 行级改/删共用守卫：本人(或管理层) + 仅待处理。
+    已处理/已驳回的单不能再改——采购已经按原样动过了，改了对方也看不见，只会让记录说谎。"""
+    r = await db.execute(select(models.PurchaseRequest).where(models.PurchaseRequest.id == prid))
+    pr = r.scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "申请不存在")
+    if pr.requester_id != current.id and not current.has_role("admin", "manager"):
+        raise HTTPException(403, "只能改自己提交的采购申请")
+    if pr.status != "pending":
+        raise HTTPException(400, "这张申请采购部已经处理过了，不能再改；有变化请重新提一张")
+    return pr
+
+
+@router.put("/purchase-requests/{prid}/lines/{lid}", response_model=schemas.PurchaseRequestOut)
+async def update_purchase_request_line(
+    prid: int,
+    lid: int,
+    data: schemas.PurchaseRequestLineIn,
+    current: models.User = Depends(require_roles(*_PREQ_VIEW)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#418（王利利）：待处理的申请逐行修改——数量写错/规格要补充，不用整单删了重提。"""
+    pr = await _preq_editable(db, prid, current)
+    line = next((x for x in pr.lines if x.id == lid), None)
+    if not line:
+        raise HTTPException(404, "明细行不存在")
+    line.item_name = data.item_name.strip()
+    line.spec = (data.spec or "").strip() or None
+    line.qty = data.qty
+    line.project_code = (data.project_code or "").strip() or None
+    line.notes = (data.notes or "").strip() or None
+    await db.commit()
+    await db.refresh(pr)
+    atts = await _preq_atts(db, [pr.id])
+    return _preq_out(pr, atts.get(pr.id, []))
+
+
+@router.delete("/purchase-requests/{prid}/lines/{lid}")
+async def delete_purchase_request_line(
+    prid: int,
+    lid: int,
+    current: models.User = Depends(require_roles(*_PREQ_VIEW)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 反馈#418：待处理的申请删掉某一行。只剩一行时不让删——那等于删整单，走整单删除更明确。"""
+    pr = await _preq_editable(db, prid, current)
+    line = next((x for x in pr.lines if x.id == lid), None)
+    if not line:
+        raise HTTPException(404, "明细行不存在")
+    if len(pr.lines) <= 1:
+        raise HTTPException(400, "只剩最后一行了——不要这张申请的话，请直接点整单的「删除」")
+    await db.delete(line)
+    await db.commit()
+    return {"ok": True}

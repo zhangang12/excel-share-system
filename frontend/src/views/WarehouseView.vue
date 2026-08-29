@@ -1077,6 +1077,32 @@ async function submitPurchReq() {
     await loadPurchReqs()
   } catch { /* handled */ } finally { preqSaving.value = false }
 }
+// 🆕 反馈#418（王利利）：待处理的申请逐行改/删——数量写错不用整单删了重提。
+//   只在 pending 状态显示按钮；后端同口径拦（非本人 403 / 已处理 400 / 最后一行 400）。
+const preqLineEdit = reactive({ visible: false, prid: 0, lid: 0, item_name: '', spec: '', qty: undefined as number | undefined, project_code: '', notes: '' })
+function openPreqLineEdit(pr: PreqRow, l: any) {
+  Object.assign(preqLineEdit, { visible: true, prid: pr.id, lid: l.id, item_name: l.item_name || '',
+    spec: l.spec || '', qty: l.qty ?? undefined, project_code: l.project_code || '', notes: l.notes || '' })
+}
+async function savePreqLine() {
+  if (!preqLineEdit.item_name.trim()) { ElMessage.warning('名称不能为空'); return }
+  await http.put(`/purchase-mgmt/purchase-requests/${preqLineEdit.prid}/lines/${preqLineEdit.lid}`, {
+    item_name: preqLineEdit.item_name.trim(), spec: preqLineEdit.spec.trim() || null,
+    qty: preqLineEdit.qty ?? null,
+    project_code: preqLineEdit.project_code.trim() || null, notes: preqLineEdit.notes.trim() || null })
+  preqLineEdit.visible = false
+  ElMessage.success('已修改')
+  await loadPurchReqs()
+}
+async function deletePreqLine(pr: PreqRow, l: any) {
+  try {
+    await ElMessageBox.confirm(`删除这一行「${l.item_name}」？`, '删除明细行', { type: 'warning', confirmButtonText: '删除' })
+  } catch { return }
+  await http.delete(`/purchase-mgmt/purchase-requests/${pr.id}/lines/${l.id}`)
+  ElMessage.success('已删除')
+  await loadPurchReqs()
+}
+
 async function deletePurchReq(row: PreqRow) {
   try { await ElMessageBox.confirm(`删除采购申请 #${row.id}？`, '提示', { type: 'warning' }) } catch { return }
   try { await http.delete(`/purchase-mgmt/purchase-requests/${row.id}`); ElMessage.success('已删除'); await loadPurchReqs() } catch { /* handled */ }
@@ -1838,6 +1864,13 @@ function applyPoPick() {
                     <el-table-column label="数量" width="90" align="right"><template #default="{ row: l }">{{ l.qty ?? '—' }}</template></el-table-column>
                     <el-table-column label="项目" width="110"><template #default="{ row: l }">{{ l.project_code || '—' }}</template></el-table-column>
                     <el-table-column label="备注" min-width="120"><template #default="{ row: l }">{{ l.notes || '—' }}</template></el-table-column>
+                    <!-- 🆕 反馈#418：待处理才能改/删行；已处理的单采购已按原样动过，不能再动 -->
+                    <el-table-column v-if="row.status === 'pending'" label="操作" width="90" align="center">
+                      <template #default="{ row: l }">
+                        <el-button size="small" link type="primary" @click="openPreqLineEdit(row, l)">改</el-button>
+                        <el-button size="small" link type="danger" @click="deletePreqLine(row, l)">删</el-button>
+                      </template>
+                    </el-table-column>
                   </el-table>
                 </template>
               </el-table-column>
@@ -1940,6 +1973,21 @@ function applyPoPick() {
 
     <!-- 出入库弹窗 -->
     <!-- 🆕 #377 调至项目物料 -->
+    <!-- 🆕 反馈#418：采购申请明细行编辑 -->
+    <el-dialog v-model="preqLineEdit.visible" title="修改申请明细" width="460px">
+      <el-form label-width="80px">
+        <el-form-item label="名称"><el-input v-model="preqLineEdit.item_name" maxlength="128" /></el-form-item>
+        <el-form-item label="规格"><el-input v-model="preqLineEdit.spec" maxlength="128" /></el-form-item>
+        <el-form-item label="数量"><el-input-number v-model="preqLineEdit.qty" :min="0" :controls="false" style="width:140px" /></el-form-item>
+        <el-form-item label="项目"><el-input v-model="preqLineEdit.project_code" maxlength="64" placeholder="选填" /></el-form-item>
+        <el-form-item label="备注"><el-input v-model="preqLineEdit.notes" type="textarea" :rows="2" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="preqLineEdit.visible = false">取消</el-button>
+        <el-button type="primary" @click="savePreqLine">保存</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="transferVisible" title="调至项目物料（中转）" width="720px">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px"
         title="把库位上的存量物料划给某个项目。库存净额不变（记一笔转出、一笔转入），调完这批料会出现在该项目的「物料需求」里统一领料出库，并从「库存总览 / 库存金额」转入该项目的材料成本。" />
