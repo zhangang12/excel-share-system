@@ -1731,7 +1731,11 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
     <EmptyHint v-else text="你没有本工作台权限" :icon="Lock" />
 
     <!-- 🆕 v3 M13 问题反馈面板（生产部=装配提交/主管审批；设计部=设计师接收） -->
-    <FeedbackPanel v-if="dept === 'produce' || dept === 'design'" :key="dept" />
+    <!-- 🆕 2026-08-30：补上电工部。后端 2026-07-26 就把提交权限开给了 electrician/electric_lead
+         （feedback_router._FEEDBACK_ROLES），但这里的条件一直漏了 'electric'——
+         权限开了、入口没给，电工部三个人一条问题反馈都提不了（线上 11 条全是生产的人提的），
+         夏锟只好把工作问题提到「系统反馈」入口去（#419）。 -->
+    <FeedbackPanel v-if="dept === 'produce' || dept === 'design' || dept === 'electric'" :key="dept" />
 
     <!-- 🆕 M07 设计师查库存 -->
     <StockQueryDialog v-if="dept === 'design'" v-model="stockVisible" />
