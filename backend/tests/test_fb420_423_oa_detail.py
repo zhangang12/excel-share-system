@@ -60,7 +60,9 @@ async def main():
             return r.json()["id"]
 
         fin_id = await mkuser("oa_fin", ["finance"])
+        await mkuser("oa_fin2", ["finance"])   # ⚠️ #420 后申请人不能自付，付款动作由第二位财务做
         Hf = await login("oa_fin", "pass123")
+        Hf2 = await login("oa_fin2", "pass123")
 
         # 造一张待付款的对公付款单。审批链因环境而异，直接改库把状态推到 pending_payment，
         # 本文件测的是 mark_paid 之后的事，不是审批链本身（那有 test_fb412_oa_paid.py 管）。
@@ -105,10 +107,10 @@ async def main():
                 models.AuditLog.action == "oa_mark_paid"))).scalars().all())
 
         # 对公不传凭证应被拒（#412 既有口径，顺带保住不被本次改动破坏）
-        r = await c.put(f"/api/oa/requests/{oid}/mark-paid", headers=Hf, data={"pay_note": "试试"})
+        r = await c.put(f"/api/oa/requests/{oid}/mark-paid", headers=Hf2, data={"pay_note": "试试"})
         chk(r.status_code == 400, f"对公不传凭证仍被拒（#412 没被破坏）-> {r.status_code}")
 
-        r = await c.put(f"/api/oa/requests/{oid}/mark-paid", headers=Hf,
+        r = await c.put(f"/api/oa/requests/{oid}/mark-paid", headers=Hf2,
                         data={"pay_note": "9/1 网银转账"},
                         files={"file": ("receipt.png", b"\x89PNG\r\n\x1a\n fake", "image/png")})
         chk(r.status_code == 200, f"带凭证标记已付款 -> {r.status_code}")
@@ -120,7 +122,11 @@ async def main():
             chk(len(rows) == before + 1, f"写了 1 条 oa_mark_paid 审计 -> {len(rows) - before}")
             if rows:
                 a = rows[-1]
-                chk(a.user_id == fin_id, "审计记的是操作人（谁点的付款，从此查得到）")
+                async with SessionLocal() as db2:
+                    from sqlalchemy import select as _sel
+                    fin2_id = (await db2.execute(_sel(models.User.id).where(
+                        models.User.username == "oa_fin2"))).scalar()
+                chk(a.user_id == fin2_id, "审计记的是操作人（第二位财务，谁点的付款查得到）")
                 chk("OA20260901-001" in (a.detail or ""), f"审计带单号 -> {a.detail}")
                 chk("850" in (a.detail or ""), f"审计带金额 -> {a.detail}")
 

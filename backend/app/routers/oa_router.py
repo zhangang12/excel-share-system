@@ -592,7 +592,12 @@ async def _req_out(db: AsyncSession, req: models.OaRequest, current: models.User
         and steps_sorted and steps_sorted[0].step_order == req.current_step_order
         and steps_sorted[0].status == "pending"
     )
-    can_mark_paid = bool(req.status == "pending_payment" and current.has_role("finance", "admin", "manager"))
+    # 🆕 反馈#420（王芹）内控职责分离：**自己提的单自己不能标记付款**。
+    #   与 purchase_mgmt_router「不能审批自己提交的请款单」(#237) 同源；管理层同样不留后门（#331 口径）。
+    #   兼任账号（王芹=采购+财务）最容易踩：生产实测 88 张待付款口径的单里 9 张(¥14.6万)申请人自己就能付。
+    can_mark_paid = bool(req.status == "pending_payment"
+                         and current.has_role("finance", "admin", "manager")
+                         and req.requester_id != current.id)
     related_no = None
     if req.related_request_id:
         r = await db.execute(select(models.OaRequest.request_no).where(models.OaRequest.id == req.related_request_id))
@@ -877,7 +882,11 @@ async def list_requests(
         #   这里给财务一个明确的待付款队列。
         if not current.has_role("finance", "admin", "manager"):
             raise HTTPException(403, "无权查看待付款队列")
-        q = q.where(models.OaRequest.status == "pending_payment")
+        # 🆕 #420 配套：自己提的单自己付不了(见 can_mark_paid/mark_paid)，也就别进自己的
+        #   待付款队列/红角标——挂着一条永远点不掉的，违背 #396「处理一个就减一个」的口径。
+        #   别的财务打开队列照样能看到这些单。
+        q = q.where(models.OaRequest.status == "pending_payment",
+                    models.OaRequest.requester_id != current.id)
     elif scope == "acted_by_me":
         cond = exists().where(StepT.request_id == models.OaRequest.id, StepT.acted_by == current.id)
         q = q.where(cond)
@@ -993,6 +1002,11 @@ async def mark_paid(
         raise HTTPException(404, "申请不存在")
     if req.status != "pending_payment":
         raise HTTPException(400, "该申请当前不是待付款状态")
+    # 🆕 反馈#420 内控硬闸：前端 can_mark_paid 只是不显示按钮，直接 PUT 照样能进来，这里必须再拦一道。
+    #   ⚠️ OA 没有请款那样的 withdraw-approval 解锁出口，这条闸的唯一出口是「换个人点」——
+    #      线上有付款权的在职账号有 5 个，不会死锁。
+    if req.requester_id == current.id:
+        raise HTTPException(400, "职责分离：不能给自己提交的申请标记付款，请由另一位财务/出纳操作")
     # 🆕 反馈#412（杨坛）：「审批完成后加一个已付款……对公的上传付款凭证，对私的可以不上传」。
     #   ⚠️ 对公付款没有凭证，财务月底对不上账——这一步是钱真的走了才点的，回单必须留下。
     #      现金/对私不强制：现金本来就没有回单，对私很多是微信/支付宝转账，截图不一定拿得到。

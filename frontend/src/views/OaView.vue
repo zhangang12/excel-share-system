@@ -1493,7 +1493,8 @@ onMounted(async () => {
         </div>
         <el-button size="small" :icon="Upload" @click="uploadAttachment" style="margin-top:8px">上传附件</el-button>
 
-        <div class="drawer-actions" v-if="detailReq.can_approve || detailReq.can_withdraw || detailReq.can_mark_paid">
+        <div class="drawer-actions" v-if="detailReq.can_approve || detailReq.can_withdraw || detailReq.can_mark_paid
+                                          || (detailReq.status === 'pending_payment' && detailReq.requester_id === auth.user?.id)">
           <el-divider />
           <template v-if="detailReq.can_approve">
             <el-input v-model="approveNote" placeholder="审批意见（选填）" style="margin-bottom:8px" />
@@ -1507,6 +1508,10 @@ onMounted(async () => {
           <template v-if="detailReq.can_mark_paid">
             <div class="muted small" style="margin-bottom:8px">已审批通过，等待财务实际付款；付款后点下面按钮标记，跟"审批通过"是两件事。</div>
             <el-button type="primary" :icon="Check" @click="openMarkPaid">标记已付款</el-button>
+          </template>
+          <!-- 🆕 反馈#420：本人+待付款 → 不给按钮，但要说清为什么（凭空消失她会以为系统坏了） -->
+          <template v-else-if="detailReq.status === 'pending_payment' && detailReq.requester_id === auth.user?.id">
+            <div class="muted small">已审批通过，等待财务实际付款。<b>这是你自己提交的申请，按内控职责分离，需由另一位财务/出纳标记付款。</b></div>
           </template>
           <el-button v-if="detailReq.can_withdraw" type="warning" plain @click="doWithdraw" style="margin-top:8px">撤回申请</el-button>
         </div>

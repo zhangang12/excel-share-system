@@ -109,18 +109,27 @@ async def main():
         r = await c.put(f"/api/oa/requests/{rid}/approve", headers=H, json={})
         chk(r.status_code == 200 and r.json()["status"] == "pending_payment",
             f"末环节finance批准→待付款: {r.status_code} {r.json().get('status')}")
+        # ⚠️ 2026-09-02（反馈#420）口径再变：**申请人自己不能标记付款**（admin 也不留后门），
+        #   自己提的单也不进自己的待付款队列。本单是 admin 提的，付款相关动作换另一位财务来做。
+        rid2 = {x["code"]: x["id"] for x in (await c.get("/api/admin/roles", headers=H)).json()}
+        await c.post("/api/admin/users", headers=H, json={
+            "username": "oa_cashier", "password": "pass123", "full_name": "出纳",
+            "role_ids": [rid2["finance"]]})
+        Hc = {"Authorization": f"Bearer {(await c.post('/api/auth/login', json={'username':'oa_cashier','password':'pass123'})).json()['access_token']}"}
         r = await c.get("/api/oa/requests", headers=H, params={"scope": "pending_pay"})
-        chk(any(x["id"] == rid for x in r.json()), "待付款队列可见")
+        chk(not any(x["id"] == rid for x in r.json()), "自己提的单不进自己的待付款队列（#420）")
+        r = await c.get("/api/oa/requests", headers=Hc, params={"scope": "pending_pay"})
+        chk(any(x["id"] == rid for x in r.json()), "待付款队列可见（另一位财务）")
         # ⚠️ 2026-08-25（反馈#412）这一步的口径变了两处，本用例跟着改：
         #   ① 对公付款**必须传付款凭证**（现金/对私不强制）——财务月底要凭它对账；
         #   ② 标记之后状态留在 **paid**，不再写回 approved。
         #      原来写回 approved 的后果：付过款的单和只是批过的单在列表上一模一样，
         #      杨坛看到的全是「已通过」，判断不了钱走没走（线上 44 单就是这个样子）。
-        r = await c.put(f"/api/oa/requests/{rid}/mark-paid", headers=H)
+        r = await c.put(f"/api/oa/requests/{rid}/mark-paid", headers=Hc)
         chk(r.status_code == 400,
             f"对公付款不传凭证要被拦: {r.status_code} {str(r.json())[:70]}")
         import io as _io
-        r = await c.put(f"/api/oa/requests/{rid}/mark-paid", headers=H,
+        r = await c.put(f"/api/oa/requests/{rid}/mark-paid", headers=Hc,
                         files={"file": ("回单.pdf", _io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")})
         chk(r.status_code == 200 and r.json()["status"] == "paid",
             f"标记已付款→已付款(paid，不再写回已通过): {r.status_code} {r.json().get('status')}")
