@@ -1010,7 +1010,15 @@ async def mark_paid(
         from .attachments_router import save_upload
         await save_upload(db, file, biz_type="oa_request", biz_id=req.id,
                           kind="pay_receipt", user=current)
+    amt = req.settle_amount if req.settle_amount is not None else (req.amount or 0)
+    no, dt = req.request_no, req.doc_type
     await db.commit()
+    # 🆕 2026-09-02（查 #420 时发现）：这一步是**钱真的走了**才点的，却一直没留痕——
+    #   OaRequest 没有 paid_by 字段、端点也不写审计，线上 54 张已付款单**谁点的已无从查证**。
+    #   （与 #331 记的「PaymentRequest 没有 paid_by」是同一个坑。）
+    #   补一条审计：内控要能回溯，否则改了口径也验证不了执行情况。
+    await write_audit(db, user=current, action="oa_mark_paid", target_type="oa_request",
+                      target_id=rid, detail=f"{no} {dt} ¥{float(amt):,.2f}")
     note_tail = f"（备注：{req.pay_note}）" if req.pay_note else ""
     await push_message(db, to_user_id=req.requester_id, kind="info",
                        text=f"【OA审批】你的申请 {req.request_no} 财务已付款{note_tail}",

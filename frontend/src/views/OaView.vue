@@ -2,14 +2,17 @@
 // 🆕 OA 审批：部门字典 + 可配置多级审批链 + 业务/报销/采购三类共8种申请单。
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Check, Close, Download, Upload, RefreshLeft, Delete } from '@element-plus/icons-vue'
+import { Plus, Check, Close, Download, Upload, RefreshLeft, Delete, View, CopyDocument } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { oaApi, type CostSummary, type Department, type OaDocType, type OaApprovalStep, type OaRequest, type OaSummaryRow, type OaSummaryDetailRow, type OaChainOverviewRow } from '@/api/oa'
 import { adminApi } from '@/api/admin'
 import { downloadAttachment } from '@/api/orders'
+import { canInlinePreview } from '@/api/attachments'
+import { copyText } from '@/utils/clipboard'
 import { useAuthStore } from '@/stores/auth'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import AttachmentPreview from '@/components/AttachmentPreview.vue'   // 🆕 #421 附件预览
 import { fmtDateTime } from '@/utils/format'
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
@@ -425,6 +428,21 @@ const detailVisible = ref(false)
 const detailReq = ref<OaRequest | null>(null)
 const detailLoading = ref(false)
 const attachments = ref<{ id: number; name: string }[]>([])
+// 🆕 反馈#421（杨倩）「这个附件可以预览吗」——附件区原来只有「下载」。
+//   复用已有的 AttachmentPreview（#369/#370 做的，图片/PDF/Office 都能内嵌看），后端零改动。
+const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
+function previewAtt(a: { id: number; name: string }) { previewRef.value?.open(a) }
+
+// 🆕 反馈#422（杨倩）「单位和账号后面加复制按钮」——出纳要把收款单位/账号粘进网银，
+//   20 位账号手抄就是错款的直接路径（交接文档里已有「收款账户名称/账号不对」的先例）。
+//   ⚠️ 按 **key 白名单** 判断，不能按位置：生产是 PostgreSQL，detail 存 JSONB，
+//      键顺序会被按长度重排，本地 SQLite 却保留插入顺序——按第几行判断在生产上必错。
+const COPYABLE_DETAIL_KEYS = ['payee', 'payee_account', 'payee_bank']
+async function onCopyDetail(v: unknown) {
+  const ok = await copyText(String(v ?? ''))
+  if (ok) ElMessage.success('已复制')
+  else ElMessage.warning('复制失败，请手动选中复制')
+}
 async function loadAttachments(rid: number) {
   try { attachments.value = (await http.get('/attachments', { params: { biz_type: 'oa_request', biz_id: rid } })).data }
   catch { attachments.value = [] }
@@ -1363,6 +1381,16 @@ onMounted(async () => {
     <el-drawer v-model="detailVisible" :title="detailReq ? `${detailReq.request_no} · ${docLabel(detailReq.doc_type)}` : ''" size="min(560px, 96vw)">
       <div v-loading="detailLoading" v-if="detailReq">
         <div class="detail-grid">
+          <!-- 🆕 反馈#423（杨倩）「处理点进去的页面要显示标题里的内容」——
+               列表的「标题」列是 OaRequest.title，详情抽屉从来没渲染过它，
+               而标题里常写着关键提示（线上真实例子：「6月份货款，**他家收款账号已变更，
+               注意最新收款账号**」）——正要付款的出纳看不到，是实打实的错款风险。
+               标题 == 单据类型名时不显示：线上六成单子的 title 是兜底的类型名，
+               抽屉标题栏已经写了同样的字，再来一行是废话。跨满两列，长标题不折成窄条。 -->
+          <div v-if="detailReq.title && detailReq.title !== docLabel(detailReq.doc_type)"
+               style="grid-column: 1 / -1">
+            <span class="muted">标题</span><div>{{ detailReq.title }}</div>
+          </div>
           <div><span class="muted">部门</span><div>{{ detailReq.department_name }}</div></div>
           <div><span class="muted">申请人</span><div>{{ detailReq.requester_name }}</div></div>
           <div><span class="muted">金额</span><div>{{ fmtMoney(detailReq.amount) }}</div></div>
@@ -1378,7 +1406,10 @@ onMounted(async () => {
           <!-- 明细数组单独用表格渲染(见下)，平铺这里跳过 -->
           <div v-for="(v, k) in detailReq.detail" :key="k"
                v-show="v && k !== 'expense_items' && k !== 'commission_items'">
-            <span class="muted">{{ detailFieldLabel(k, detailReq.doc_type) }}</span>：{{ v }}
+            <span class="muted">{{ detailFieldLabel(k, detailReq.doc_type) }}</span>：<span class="dj-val">{{ v }}</span>
+            <!-- 🆕 #422：只给收款单位/账号/开户行加复制（按 key 白名单，见 script 注释） -->
+            <el-button v-if="COPYABLE_DETAIL_KEYS.includes(String(k))" size="small" link type="primary"
+                       :icon="CopyDocument" @click="onCopyDetail(v)">复制</el-button>
           </div>
         </div>
         <!-- 🆕 #236：销售提成明细（按月多项目）+ 总计 -->
@@ -1450,8 +1481,13 @@ onMounted(async () => {
         <div class="form-section-title">附件</div>
         <div class="att-list">
           <div v-for="a in attachments" :key="a.id" class="att-row">
-            <span>{{ a.name }}</span>
-            <el-button size="small" link type="primary" :icon="Download" @click="downloadAttachment(a)">下载</el-button>
+            <span class="att-name" :title="a.name">{{ a.name }}</span>
+            <!-- 🆕 #421：能内嵌看的(图片/PDF/Office)给预览，其余仍只有下载 -->
+            <span class="att-acts">
+              <el-button v-if="canInlinePreview(a.name)" size="small" link type="primary"
+                         :icon="View" @click="previewAtt(a)">预览</el-button>
+              <el-button size="small" link type="primary" :icon="Download" @click="downloadAttachment(a)">下载</el-button>
+            </span>
           </div>
           <EmptyHint v-if="!attachments.length" text="暂无附件" size="sm" />
         </div>
@@ -1475,6 +1511,8 @@ onMounted(async () => {
           <el-button v-if="detailReq.can_withdraw" type="warning" plain @click="doWithdraw" style="margin-top:8px">撤回申请</el-button>
         </div>
       </div>
+      <!-- 🆕 #421 附件预览浮层 -->
+      <AttachmentPreview ref="previewRef" />
     </el-drawer>
 
     <!-- 🆕 #395 标记已付款：备注 + 付款回单一起提交 -->
@@ -1540,6 +1578,10 @@ onMounted(async () => {
 .clickable-rows :deep(.el-table__row) { cursor: pointer; }
 .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 16px; margin-bottom: 14px; }
 .detail-json { background: var(--el-fill-color-light); border-radius: 6px; padding: 10px 14px; font-size: 13px; line-height: 1.8; margin-bottom: 14px; }
+/* 🆕 #423-b：付款事由里常写多行（开票名称/开户行/账号/行号/税号），原来被压成一长串，
+   出纳照着抄账号极易看错。pre-wrap **只给值**，不给 .detail-json 容器——
+   给容器加会把模板里「值」和「复制按钮」之间的换行缩进当成真实空白渲染出来。 */
+.dj-val { white-space: pre-wrap; word-break: break-word; }
 .cc-line { margin-bottom: 14px; font-size: 13px; }
 /* 🆕 #236 销售提成明细行 + 总计 */
 .cm-tbl :deep(.el-table__cell) { padding: 4px 0; }
@@ -1559,5 +1601,9 @@ onMounted(async () => {
 .reject-box { background: var(--el-color-danger-light-9); color: var(--el-color-danger); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
 .att-list { display: flex; flex-direction: column; gap: 4px; }
 .att-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--el-border-color-lighter); font-size: 13px; }
+/* 🆕 #421：文件名可省略、按钮成组靠右。用子类不用 .att-row > span，
+   因为 .att-row 在新建单弹窗的待上传列表(:1346 附近)也在用，别把那儿的布局带歪。 */
+.att-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-acts { flex: none; white-space: nowrap; }
 .drawer-actions { margin-top: 8px; }
 </style>

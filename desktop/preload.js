@@ -5,7 +5,7 @@
 //     仅供强制更新页（renderer/force-update.html）使用
 // contextIsolation: true、nodeIntegration: false（在 main.js webPreferences 里设置）
 // ============================================================
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, clipboard } = require('electron');
 
 // 同步拿主进程的版本号/设备ID（preload 阶段同步注入，前端 axios 初始化时就能读到）
 const info = ipcRenderer.sendSync('pms-desktop:info') || {};
@@ -17,6 +17,13 @@ contextBridge.exposeInMainWorld('pmsDesktop', {
 
   // 前端 Vue 挂载完成后调用：主进程收到后关启动页、亮主窗口
   notifyReady: () => ipcRenderer.send('pms-desktop:app-ready'),
+
+  // 🆕 反馈#422（2026-09-02）复制到剪贴板 —— **客户端必须走这条，别指望浏览器 API**。
+  //   客户端页面是 loadFile 出来的 file:// 文档：navigator.clipboard 在这里能不能用
+  //   取决于 Electron 版本和权限处理器，赌不起；document.execCommand('copy') 又要求
+  //   真实用户手势、还被标记为废弃。财务点了没反应、而网页版测试时一切正常，
+  //   是最难查的那种 bug。Electron 原生 clipboard 无条件可用，一步到位。
+  copyText: (t) => { clipboard.writeText(String(t == null ? '' : t)); return true; },
 
   // ---- 主动检查更新（布局底部「检查更新」按钮）----
   // 触发后主进程走 electron-updater 检查，状态经 onUpdateStatus 回推：
