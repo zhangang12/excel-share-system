@@ -342,8 +342,28 @@ const paymentCounts = computed(() => ({
   paid: paymentReqs.value.filter(r => r.status === 'paid').length,
 }))
 const paySearch = ref('')
+// 🆕 反馈#424（杨倩）：付款页按日期范围筛（「8.1-8.31 的车间耗材」）。
+//   已付款按**付款日期**（出纳关心的是钱哪天走的），还没付的按**申请日期**——
+//   一个控件两条口径，控件旁的提示写清楚了；范围两端都含。
+const payRange = ref<[string, string] | null>(null)
+// created_at 是 UTC ISO 串，直接 slice(0,10) 在晚上 8 点后会差一天——按本地日历日算
+function localDay(iso?: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return String(iso).slice(0, 10)
+  const p2 = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+}
+function payReqDay(r: PaymentRequestOut): string {
+  return (r.status === 'paid' && r.paid_date) ? r.paid_date.slice(0, 10) : localDay(r.created_at)
+}
+function clearPayFilters() { paySearch.value = ''; payRange.value = null }
 const filteredPaymentReqs = computed(() => {
-  const base = paymentTab.value === 'all' ? paymentReqs.value : paymentReqs.value.filter(r => r.status === paymentTab.value)
+  let base = paymentTab.value === 'all' ? paymentReqs.value : paymentReqs.value.filter(r => r.status === paymentTab.value)
+  if (payRange.value && payRange.value[0] && payRange.value[1]) {
+    const [a, b] = payRange.value
+    base = base.filter(r => { const d = payReqDay(r); return d >= a && d <= b })
+  }
   const kw = paySearch.value.trim().toLowerCase()
   if (!kw) return base
   // 🆕 #300：付款情况搜索（编号/供应商/申请人/项目编号/金额/备注，大小写不敏感）
@@ -938,6 +958,11 @@ async function revokeInvoice(row: ViewRow) {
             <el-button @click="loadPayReqs" :loading="prLoading">刷新</el-button>
             <!-- 🆕 #300：搜索所有付款情况（已付款 tab 后面加搜索栏） -->
             <el-input v-model="paySearch" placeholder="搜索编号/供应商/申请人/项目编号/金额/备注" clearable style="width:300px" />
+            <!-- 🆕 #424：日期范围。已付款按付款日期、待付款按申请日期（见 payReqDay） -->
+            <el-date-picker v-model="payRange" type="daterange" value-format="YYYY-MM-DD" unlink-panels
+                            start-placeholder="开始日期" end-placeholder="结束日期" style="width:250px" />
+            <el-button v-if="paySearch || payRange" size="small" @click="clearPayFilters">清空条件</el-button>
+            <span class="muted small">日期按已付款的付款日、待付款的申请日筛；命中 {{ filteredPaymentReqs.length }} 条</span>
             <span class="muted small">💡 仅对已审批通过的请款单付款；审批人不能给自己审过的单付款（后端校验）。</span>
           </div>
           <el-table show-overflow-tooltip :data="filteredPaymentReqs" stripe v-loading="prLoading" max-height="calc(100vh - 280px)" :scrollbar-always-on="true">
