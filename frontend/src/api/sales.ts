@@ -193,5 +193,6 @@ export const salesApi = {
 
 export function fmtMoney(n?: number | null): string {
   if (!n) return '—'
-  return '¥' + Number(n).toLocaleString('zh-CN')
+  // 🆕 金额审计(2026-09-09)：固定 2 位小数（原来 0~3 位，1234.5678 显示 ¥1,234.568，与其它页对不上）
+  return '¥' + Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }

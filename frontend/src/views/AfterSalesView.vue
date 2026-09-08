@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/utils/format'
+import { moneyParser } from '@/utils/money'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import FilePicker from '@/components/FilePicker.vue'
@@ -450,7 +451,8 @@ async function approve(r: Row, ok: boolean) {
           <div class="cost-list">
             <div v-for="(it, i) in regForm.items" :key="i" class="cost-row">
               <el-input v-model="it.name" placeholder="费用项，如 配件费/差旅/住宿" class="c-name" />
-              <el-input-number v-model="it.amount" :controls="false" :precision="2"
+              <!-- 🆕 金额审计：费用行不能为负（原来 -500 会悄悄抵扣合计）；parser 防千分位粘贴截断 -->
+              <el-input-number v-model="it.amount" :controls="false" :precision="2" :min="0" :parser="moneyParser"
                                placeholder="金额" class="c-amt" />
               <FilePicker :model-value="null" accept=".pdf,.jpg,.jpeg,.png,.ofd"
                           :placeholder="it.invoice_file_name || '发票'"
@@ -486,7 +488,7 @@ async function approve(r: Row, ok: boolean) {
       <div class="cost-list">
         <div v-for="(it, i) in fixItems" :key="i" class="cost-row">
           <el-input v-model="it.name" placeholder="费用项" class="c-name" />
-          <el-input-number v-model="it.amount" :controls="false" :precision="2" class="c-amt" />
+          <el-input-number v-model="it.amount" :controls="false" :precision="2" :min="0" :parser="moneyParser" class="c-amt" />
           <FilePicker :model-value="null" accept=".pdf,.jpg,.jpeg,.png,.ofd"
                       :placeholder="it.invoice_file_name || '发票'" class="c-inv"
                       @update:model-value="(f: File | null) => pickFixInvoice(i, f)" />

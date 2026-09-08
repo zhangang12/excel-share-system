@@ -7,12 +7,12 @@
 - 低于安全库存推送 warehouse_lead 池
 """
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_, update as sa_update, delete as sa_delete
+from sqlalchemy import select, func, or_, case, update as sa_update, delete as sa_delete
 
 from ..database import get_db
 from .. import models, schemas
@@ -29,6 +29,11 @@ WRITE_ROLES = ("warehouse", "warehouse_lead")
 
 def _can_write(u: models.User) -> bool:
     return u.has_role(*WRITE_ROLES, "admin", "manager")
+
+
+def _cn_today() -> date:
+    """🆕 金额审计：容器是 UTC，业务日期（冲红/领用/调拨默认日期）按北京时间取。"""
+    return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
 
 
 async def _stock_map(db: AsyncSession, material_ids: Optional[list[int]] = None,
@@ -938,20 +943,32 @@ async def reverse_txn(
         if o.qty > cur:
             raise HTTPException(
                 400, f"该入库已被领用，现存 {cur} 不足冲红 {o.qty}，请先冲红相关出库单")
-    bd = date.today().isoformat()
+    bd = _cn_today().isoformat()
     ref = await _next_ref(db, rev_dir, bd)
     rev = models.WhTxn(
         material_id=o.material_id, biz_date=bd, direction=rev_dir, qty=o.qty,
         unit_price=o.unit_price, amount=o.amount, location=o.location,
         source="冲红", party=f"冲销 {o.ref_no}", project_id=o.project_id,
+        purchase_item_id=o.purchase_item_id,   # 🆕 冲红单同样挂回采购明细，追溯/删明细解 FK 都靠它
         ref_no=ref, operator_id=current.id, is_reversal=True, reversal_of=o.id,
     )
     o.reversed = True
     db.add(rev)
+    # 🆕 金额审计(2026-09-09)：冲红**采购收货入库单** = 撤销这次收货。原来只动仓库：采购明细仍是「已到货」，
+    #   毛利榜里它既不在材料腿（原单被排除）也不在直发腿（曾挂过流水）→ 成本凭空消失；而应付/采购报表照算。
+    #   现在同步把到货日期清掉：明细回到「待收货」，仓库重新收货会再生成一张有效入库单
+    #   （_auto_stock_in 的幂等守卫只认未冲红的单），两边口径重新对上。收货金额/单价不动（那是订单金额）。
+    extra = ""
+    if o.direction == "in" and o.purchase_item_id:
+        pi = (await db.execute(select(models.PurchaseItem).where(
+            models.PurchaseItem.id == o.purchase_item_id))).scalar_one_or_none()
+        if pi and pi.arrival_date:
+            pi.arrival_date = None
+            extra = f"；采购明细「{pi.item_name}」已退回待收货"
     await db.commit()
     await write_audit(db, user=current, action="wh_reverse", target_type="wh_txn",
-                      target_id=o.id, detail=f"冲红 {o.ref_no} → {ref}")
-    return schemas.Msg(message=f"已冲红 {o.ref_no}（生成 {ref}）")
+                      target_id=o.id, detail=f"冲红 {o.ref_no} → {ref}{extra}")
+    return schemas.Msg(message=f"已冲红 {o.ref_no}（生成 {ref}）{extra}")
 
 
 @router.get("/txns", response_model=schemas.WhTxnListOut)
@@ -1135,6 +1152,27 @@ async def _avg_price_map(db: AsyncSession) -> dict:
     return out
 
 
+async def _general_pool_map(db: AsyncSession, material_ids: list[int]) -> dict:
+    """通用池 = 期初 + 无项目入库 − 无项目出库（只算有效流水）。与 `_project_cost_core` 的池子同口径，
+    调拨可用量按它算（见 transfer_to_project）。"""
+    pool: dict = defaultdict(float)
+    if not material_ids:
+        return pool
+    for mid, init in (await db.execute(select(models.WhMaterial.id, models.WhMaterial.init_stock)
+                                       .where(models.WhMaterial.id.in_(material_ids)))).all():
+        pool[mid] += init or 0
+    r = await db.execute(
+        select(models.WhTxn.material_id, models.WhTxn.direction, func.sum(models.WhTxn.qty))
+        .where(models.WhTxn.material_id.in_(material_ids),
+               models.WhTxn.project_id.is_(None),
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False)     # noqa: E712
+        .group_by(models.WhTxn.material_id, models.WhTxn.direction))
+    for mid, direction, qty in r.all():
+        pool[mid] += (qty or 0) if direction == "in" else -(qty or 0)
+    return pool
+
+
 async def _project_material_ids(db: AsyncSession) -> set[int]:
     """🆕 反馈#373/#374/#388「项目物料 vs 通用物料」二分法的唯一判据。
 
@@ -1204,20 +1242,30 @@ async def _project_cost_core(db: AsyncSession, material_ids: Optional[list[int]]
     # ── 腿A：挂项目的入库，直接取流水金额（与采购明细收货金额同一个数，见 _sync_txn_amount）
     rows: list[dict] = []
     in_by_pm: dict[tuple, float] = defaultdict(float)   # (pid, mid) → 收货数量，腿B 判超领要用
+    # 🆕 金额审计(2026-09-09)：SQL SUM 会跳过 NULL——同一(项目,物料)两笔入库一笔有金额一笔没有时，
+    #   amt 不是 None，原来就不走均价回退、也不计缺价，无价那笔按 0 元静默丢掉。
+    #   单独聚合「无价数量」，有均价的按均价补进去，没均价的标 noprice_qty 让毛利榜亮「缺价」。
+    _null_qty = func.sum(case((models.WhTxn.amount.is_(None), models.WhTxn.qty), else_=0.0))
     r = await db.execute(_flt(
         select(models.WhTxn.project_id, models.WhTxn.material_id,
-               func.sum(models.WhTxn.qty), func.sum(models.WhTxn.amount))
+               func.sum(models.WhTxn.qty), func.sum(models.WhTxn.amount), _null_qty)
         .where(models.WhTxn.direction == "in", models.WhTxn.project_id.isnot(None),
                models.WhTxn.is_reversal == False,  # noqa: E712
                models.WhTxn.reversed == False))  # noqa: E712
         .group_by(models.WhTxn.project_id, models.WhTxn.material_id))
-    for pid, mid, qty, amt in r.all():
+    for pid, mid, qty, amt, null_qty in r.all():
         in_by_pm[(pid, mid)] += qty or 0
         price = avg.get(mid)
-        if amt is None and price is not None:
-            amt = (qty or 0) * price
+        null_qty = float(null_qty or 0)
+        noprice_qty = 0.0
+        if null_qty > 0:
+            if price is not None:
+                amt = (amt or 0) + null_qty * price
+            elif amt is not None:
+                noprice_qty = null_qty          # 有一部分算得出，另一部分缺价
         rows.append({"project_id": pid, "material_id": mid, "leg": "收货",
-                     "qty": qty or 0, "avg_price": price, "amount": amt})
+                     "qty": qty or 0, "avg_price": price, "amount": amt,
+                     "noprice_qty": noprice_qty})
 
     # ── 通用池：期初 + 无项目入库 − 无项目出库
     pool: dict[int, float] = defaultdict(float)
@@ -1271,6 +1319,8 @@ async def _project_cost_map(db: AsyncSession) -> tuple[dict, dict]:
                 noprice[r["project_id"]] += 1
         else:
             by_proj[r["project_id"]] += r["amount"]
+            if r.get("noprice_qty"):
+                noprice[r["project_id"]] += 1   # 部分行缺价也要亮标
     return by_proj, {
         "unassigned": round(sum(unassigned.values()), 2),
         "noprice_by_project": dict(noprice),
@@ -1528,7 +1578,7 @@ async def issue_demand(
     lines = [ln for ln in body.lines if ln.qty and ln.qty > 0 and ln.material_id]
     if not lines:
         raise HTTPException(400, "没有可领用的物料")
-    bd = date.today().isoformat()
+    bd = _cn_today().isoformat()
     mids = [ln.material_id for ln in lines]
     stock = await _stock_map(db, mids)
     mrows = {m.id: m for m in (await db.execute(
@@ -1544,6 +1594,9 @@ async def issue_demand(
         if take <= 0:
             skipped += 1
             continue
+        # 🆕 金额审计：同一物料在需求里出现两行时，各行都按"全部现存"领 → 现存 100 领出 200 → 负库存、负库存金额。
+        #   每领一行就把可用量扣掉（与 batch_out_txns 的 remain 同口径）。
+        stock[ln.material_id] = avail - take
         ref = await _next_ref(db, "out", bd)
         up = m.unit_price
         db.add(models.WhTxn(
@@ -1596,10 +1649,11 @@ async def transfer_to_project(
         raise HTTPException(404, "项目不存在")
     mids = [ln.material_id for ln in lines]
     stock = await _stock_map(db, mids)
+    pool = await _general_pool_map(db, mids)
     avg = await _avg_price_map(db)
     mrows = {m.id: m for m in (await db.execute(
         select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)))).scalars().all()}
-    bd = normalize_date_str(body.biz_date) or date.today().isoformat()
+    bd = normalize_date_str(body.biz_date) or _cn_today().isoformat()
     note = (body.note or "").strip()
     moved, skipped = 0, []
     for ln in lines:
@@ -1607,10 +1661,20 @@ async def transfer_to_project(
         if not m:
             skipped.append(f"物料{ln.material_id}不存在")
             continue
-        avail = stock.get(m.id, m.init_stock or 0)
-        if ln.qty > avail:
-            skipped.append(f"{m.name} 现存 {avail} 不足 {ln.qty}")
+        # 🆕 金额审计(2026-09-09)：可调拨量按**通用池**算，不是总现存。
+        #   B 项目收的料（收货那刻已计 B 的成本）若能调给 A，转入腿会再按均价计一遍 A 的成本，
+        #   而 B 那边不冲减——同一批料算两次；转出腿还把通用池打成负数被截断，永远查不出来。
+        total = stock.get(m.id, m.init_stock or 0)
+        avail = min(total, max(0.0, pool.get(m.id, 0.0)))
+        if ln.qty > avail + 1e-9:
+            if total >= ln.qty:
+                skipped.append(f"{m.name} 通用库存仅 {avail:g}（现存 {total:g} 里其余是项目物料，"
+                               f"收货时已计入原项目成本，不能再调给别的项目），不足 {ln.qty:g}")
+            else:
+                skipped.append(f"{m.name} 现存 {total:g} 不足 {ln.qty:g}")
             continue
+        stock[m.id] = total - ln.qty
+        pool[m.id] = avail - ln.qty
         price = avg.get(m.id)
         amt = round(ln.qty * price, 4) if price is not None else None
         party = f"调拨至 {p.code}" + (f"（{note}）" if note else "")

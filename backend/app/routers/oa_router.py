@@ -243,8 +243,47 @@ PAYMENT_BANK_DOC_TYPES = ("payment", "payment_public", "payment_private")
 # 🆕 #412：加了 "paid" 之后，这两个常量都必须带上它——
 #   已付款是「approved 之后」的状态，钱都花出去了，不算成本/不进报表是最离谱的漏法。
 #   这条注释下面那句是上次同款事故留下的，这次是第二遍。
-_OA_DONE_STATUS = ("approved", "paid")                     # 审批已完成（含已付款）
 _OA_COST_STATUS = ("approved", "pending_payment", "paid")
+# 🆕 金额审计(2026-09-09)：「审批已完成」在数据上是三个状态——approved / pending_payment(审完等财务付款) / paid。
+#   原来 _OA_DONE_STATUS 漏了 pending_payment：财务汇总/下钻看不到"审完还没付"的单（生产 2 张对公 ¥22,500），
+#   成本归集却看得到，三张财务页对不上。一个常量，三处共用。
+_OA_DONE_STATUS = _OA_COST_STATUS
+
+
+def _cn_month(dt) -> Optional[str]:
+    """DateTime(timezone=True) 存的是 UTC，按月归集一律转北京时间（每月 1 日 0–8 点的单不能跑到上个月）。"""
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m")
+
+
+async def oa_book_month_map(db: AsyncSession, reqs: list) -> dict:
+    """🆕 金额审计：OA 费用归哪个月，成本归集与支出总览共用这一个口径——
+      · 已付款(paid)       → 付款月 pay_at
+      · 审批通过/待付款    → 末步审批通过的时间（acted_at），不用 updated_at
+        （updated_at 会被任何一次 UPDATE 顶到最新，删掉关联的业务单都会让报销单换月）
+      · 都没有            → created_at
+    返回 {request_id: 'YYYY-MM'}。"""
+    ids = [r.id for r in reqs]
+    if not ids:
+        return {}
+    appr: dict = {}
+    r = await db.execute(
+        select(models.OaRequestStep.request_id, func.max(models.OaRequestStep.acted_at))
+        .where(models.OaRequestStep.request_id.in_(ids), models.OaRequestStep.status == "approved")
+        .group_by(models.OaRequestStep.request_id))
+    for rid, dt in r.all():
+        appr[rid] = dt
+    out = {}
+    for q in reqs:
+        if q.status == "paid" and q.pay_at:
+            dt = q.pay_at
+        else:
+            dt = appr.get(q.id) or q.updated_at or q.created_at
+        out[q.id] = _cn_month(dt)
+    return out
 
 
 def _norm_cost_center(v) -> Optional[str]:
@@ -826,6 +865,9 @@ async def delete_request(
     if not req:
         raise HTTPException(404, "申请不存在")
     no, st = req.request_no, req.status
+    # 🆕 金额审计：钱已经付出去的单不能删——删了支出总览/成本归集少一笔，付款回单也跟着没了。误提的付款单请走驳回。
+    if st == "paid":
+        raise HTTPException(400, f"{no} 已付款，不能删除（会让已支出的钱从财务报表消失）")
     # 解除其它单(报销↔业务)对本单的引用
     await db.execute(sa_update(models.OaRequest).where(
         models.OaRequest.related_request_id == rid).values(related_request_id=None))
@@ -947,10 +989,30 @@ async def approve_request(
         raise HTTPException(400, "当前没有待处理的步骤")
     if not _can_act_on_step(cur_step, current, await _my_principal_ids(db, current)):
         raise HTTPException(403, _no_right_msg(cur_step, current))
+    # 🆕 金额审计(2026-09-09)：不能审批自己提交的申请——与 #237（不能批自己的请款）、#420（不能给自己标付款）同源。
+    #   生产上已发生 9 次：王芹给自己的两张对公付款(¥33,478 / ¥13,281)做了财务审批。
+    #   角色步由同角色其他人或 admin/manager 兜底（_can_act_on_step 第 1 条），指定到人的由代理人接。
+    if req.requester_id == current.id:
+        raise HTTPException(403, "职责分离：不能审批自己提交的申请，请由该环节的其他审批人（或代理人）处理")
     cur_step.status = "approved"; cur_step.acted_by = current.id
     cur_step.acted_at = datetime.now(timezone.utc); cur_step.note = (body.note or "").strip() or None
     if body.settle_amount is not None:
-        req.settle_amount = body.settle_amount
+        # 🆕 金额审计：核定金额只有**财务环节**能写（字段本意「财务等环节核定的实际金额」，原来任何一步都能写、
+        #   无上下限、不留痕）。口径：0 ≤ 核定 ≤ 申请金额；核减理由记 settle_note；动作写审计（谁改的、从多少到多少）。
+        #   admin（老板）同样可以核定——那是审批权限本身，不是自己给自己付钱那种自利路径。
+        if (cur_step.approver_role not in ("finance", "finance_lead")
+                and not current.has_role("finance", "finance_lead", "admin")):
+            raise HTTPException(403, "核定金额只能由财务环节（或管理员）填写")
+        if req.amount is not None and body.settle_amount > float(req.amount) + 0.005:
+            raise HTTPException(400, f"核定金额 ¥{body.settle_amount:,.2f} 不能高于申请金额 ¥{float(req.amount):,.2f}")
+        old_settle = req.settle_amount
+        req.settle_amount = round(float(body.settle_amount), 2)
+        if (body.note or "").strip():
+            req.settle_note = (body.note or "").strip()
+        await write_audit(db, user=current, action="oa_settle_amount", target_type="oa_request",
+                          target_id=req.id,
+                          detail=f"{req.request_no} 申请 ¥{float(req.amount or 0):,.2f} 核定 "
+                                 f"{('¥%.2f' % old_settle) if old_settle is not None else '—'} → ¥{req.settle_amount:,.2f}")
     next_step = next((s for s in steps_sorted if s.step_order > cur_step.step_order), None)
     # 🆕 最后一步是财务审批的（多见于报销类），先进"待付款"，财务还要再单独点"标记已付款"，
     # 不能审批通过=已付款——审批只代表"同意报销"，钱有没有真的付出去是另一件事，得分开记。
@@ -1133,14 +1195,9 @@ async def cost_summary(
       · OA 报销  —— 部门的 cost_center 决定进哪个科目；采购申请不计
       · 售后登记 —— 一律进「售后成本」，且**售后成本只认这一个来源**
     """
-    def _in_period(col):
-        if not period:
-            return None
-        return func.substr(func.cast(col, String), 1, 7) == period
-
     notes = [
         "金额按财务核定金额算；没填核定金额的按申请金额算。",
-        "审批通过即计入（含已审完待付款的），不等实际付款。",
+        "审批通过即计入（含已审完待付款的），不等实际付款。按月看时：已付款的归付款月，其余归审批通过月（北京时间）。",
         "OA 的采购申请不计入——成本一律以采购单为准，否则同一笔钱算两次。",
         "售后成本只统计售后/安装登记，不吃 OA 报销，避免同一笔费用算两遍。",
     ]
@@ -1154,9 +1211,8 @@ async def cost_summary(
         models.OaRequest.category != "purchase")     # 采购申请不计
     oa_all = list((await db.execute(q)).scalars().all())
     if period:
-        oa_all = [r for r in oa_all
-                  if (r.updated_at or r.created_at) and
-                  (r.updated_at or r.created_at).strftime("%Y-%m") == period]
+        bm = await oa_book_month_map(db, oa_all)
+        oa_all = [r for r in oa_all if bm.get(r.id) == period]
 
     agg: dict[str, list] = {}
     skipped_as = {"count": 0, "amount": 0.0}
@@ -1187,8 +1243,8 @@ async def cost_summary(
     as_q = select(models.AfterSales).where(models.AfterSales.status == "approved")
     as_all = list((await db.execute(as_q)).scalars().all())
     if period:
-        as_all = [a for a in as_all
-                  if a.created_at and a.created_at.strftime("%Y-%m") == period]
+        # 🆕 售后费用归**审批通过月**（与支出总览/毛利榜明细一致），北京时间
+        as_all = [a for a in as_all if _cn_month(a.appr_at or a.created_at) == period]
     if as_all:
         rows.append(schemas.CostRow(
             cost_center="售后成本", source="aftersales", source_label="售后/安装登记",

@@ -138,12 +138,19 @@ async def main():
         chk(rq.status_code == 200, f"提 OA 报销单: {rq.status_code} {rq.text[:110]}")
         rid = rq.json()["id"]
 
+        # ⚠️ 2026-09-09（金额审计）：申请人不能审批/标付自己的单（#420 + 本次同源口径），
+        #   本单是 admin 提的，审批与付款换一位财务来做。
+        rid_map = {x["code"]: x["id"] for x in (await c.get("/api/admin/roles", headers=H)).json()}
+        await c.post("/api/admin/users", headers=H, json={
+            "username": "fb395_fin", "password": "pass123", "full_name": "财务丙",
+            "role_ids": [rid_map["finance"]]})
+        Hf = {"Authorization": f"Bearer {(await c.post('/api/auth/login', json={'username': 'fb395_fin', 'password': 'pass123'})).json()['access_token']}"}
         # 一路批到待付款
         for _ in range(8):
             cur = (await c.get(f"/api/oa/requests/{rid}", headers=H)).json()
             if cur["status"] != "pending":
                 break
-            ar = await c.put(f"/api/oa/requests/{rid}/approve", headers=H, json={"note": "同意"})
+            ar = await c.put(f"/api/oa/requests/{rid}/approve", headers=Hf, json={"note": "同意"})
             if ar.status_code != 200:
                 break
         cur = (await c.get(f"/api/oa/requests/{rid}", headers=H)).json()
@@ -151,7 +158,7 @@ async def main():
             f"审批走完（状态 {cur['status']}）")
 
         if cur["status"] == "pending_payment":
-            r = await c.put(f"/api/oa/requests/{rid}/mark-paid", headers=H,
+            r = await c.put(f"/api/oa/requests/{rid}/mark-paid", headers=Hf,
                             data={"pay_note": "8/13 转账 建行尾号 6688"}, files=_f())
             chk(r.status_code == 200, f"#395 带备注+回单标记已付款: {r.status_code} {r.text[:120]}")
             j = r.json()

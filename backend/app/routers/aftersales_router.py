@@ -4,6 +4,7 @@
 - 审批通过 → 推送财务部角色池（含费用/问题摘要/物料清单），财务部「售后费用」tab 展示已审批记录
 """
 import json
+import math
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -49,6 +50,11 @@ def _parse_items(raw: str) -> list[schemas.AfterSalesItemIn]:
             amt = float(d.get("amount") or 0)
         except (TypeError, ValueError):
             raise HTTPException(400, f"「{name or '费用行'}」的金额不是数字")
+        # 🆕 金额审计：float("nan")/"inf" 能过上面的转换，一条 NaN 落库所有财务 SUM 变 NaN、报表 500；负数会悄悄抵扣合计
+        if not math.isfinite(amt):
+            raise HTTPException(400, f"「{name or '费用行'}」的金额不是有效数字")
+        if amt < 0:
+            raise HTTPException(400, f"「{name or '费用行'}」的金额不能是负数")
         if not name and not amt:
             continue                      # 整行空白，跳过（前端加了行没填）
         if not name:
@@ -381,6 +387,10 @@ async def resubmit_invoice(
     parsed = _parse_items(items)
     if not parsed:
         raise HTTPException(400, "费用清单不能为空")
+    new_cost = round(sum(float(x.amount or 0) for x in parsed), 2)
+    if new_cost <= 0:
+        raise HTTPException(400, "费用合计必须大于 0")
+    old_cost = float(a.cost or 0)
     await db.execute(models.AfterSalesItem.__table__.delete().where(
         models.AfterSalesItem.aftersales_id == a.id))
     for i, it in enumerate(parsed):
@@ -388,16 +398,19 @@ async def resubmit_invoice(
             aftersales_id=a.id, name=it.name.strip()[:64], amount=float(it.amount or 0),
             invoice_file_id=it.invoice_file_id, note=(it.note or "").strip()[:200] or None,
             sort_order=i))
-    a.cost = round(sum(float(x.amount or 0) for x in parsed), 2)
+    a.cost = new_cost
     a.pay_status = "checking"
     a.pay_note = None
     disp, cost = _pay_disp(a), a.cost
     await db.commit()
+    changed = f"（金额 ¥{old_cost:,.2f} → ¥{new_cost:,.2f}，请留意）" if abs(new_cost - old_cost) > 0.005 else ""
     await push_message(db, to_role="finance", kind="info",
-                       text=f"【发票已重传】{disp} 报销 ¥{cost:,.0f} 请重新核对",
+                       text=f"【发票已重传】{disp} 报销 ¥{cost:,.0f} 请重新核对{changed}",
                        biz_type="aftersales", biz_id=aid)
+    # 🆕 金额审计：这一步是登记人在**审批通过后**改金额的唯一口子，审计必须记旧→新，财务核对时看得见
     await write_audit(db, user=current, action="resubmit_invoice",
-                      target_type="aftersales", target_id=aid)
+                      target_type="aftersales", target_id=aid,
+                      detail=f"费用 ¥{old_cost:,.2f} → ¥{new_cost:,.2f}")
     return schemas.Msg(message="已重新提交财务核对")
 
 
@@ -474,6 +487,10 @@ async def finance_void(
         raise HTTPException(404, "记录不存在")
     if a.status != "approved":
         raise HTTPException(400, "只能作废已审批的售后费用记录")
+    # 🆕 金额审计：钱已经报销出去的不能作废——作废后从所有成本报表消失，pay_status 却还留着，
+    #   重新审批又能再报销一次。已报销的要冲回请走财务红字流程。
+    if a.pay_status == "reimbursed":
+        raise HTTPException(400, "该记录已报销（钱已付出），不能作废；如需冲回请财务另行处理")
     p_code = a.project.code if a.project else ("[以往]" if a.project_name else f"#{a.project_id}")
     p_name = a.project.name if a.project else (a.project_name or "")
     problem = a.problem
@@ -481,6 +498,10 @@ async def finance_void(
     a.status = "pending"
     a.appr_by = None
     a.appr_at = None
+    a.pay_status = None      # 🆕 退回待审批，报销支腿一并清零，重新审批后从头走
+    a.pay_note = None
+    a.pay_by = None
+    a.pay_at = None
     await db.commit()
     if creator_id:
         await push_message(db, to_user_id=creator_id, kind="warn",
@@ -504,6 +525,9 @@ async def delete_aftersale(
     a = r.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "记录不存在")
+    # 🆕 金额审计：已报销的记录不能删（钱已付出，删了成本消失、报销痕迹也没了）
+    if a.pay_status == "reimbursed":
+        raise HTTPException(400, "该记录已报销（钱已付出），不能删除")
     # a.project 用 joined 关系，即使项目已软删/已被硬删也能取到（软删）或为 None（硬删）
     p_code = a.project.code if a.project else ("[以往]" if a.project_name else f"#{a.project_id}")
     label = "安装" if (a.kind or "aftersales") == "install" else "售后"

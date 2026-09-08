@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { whApi, type WhMaterial, type WhTxn, type WhSummaryRow, type ShipListFile, type ShipListPendingRow, type WhCustomField , type WhLocation } from '@/api/warehouse'
 import { canInlinePreview, attachmentBlobUrl, isPdfAtt, isImageAtt } from '@/api/attachments'
+import { moneyParser } from '@/utils/money'   // 🆕 金额审计：粘贴 "1,250.00" 不再被截成 1
 import { downloadAttachment } from '@/api/orders'
 import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
 import EmptyHint from '@/components/EmptyHint.vue'
@@ -608,8 +609,9 @@ function onRecvCalc() {   // 填单价 → 算总价（收货金额）
   }
 }
 function onRecvAmountCalc() {   // #186 填总价(收货金额) → 按数量均分算单价
+  // 🆕 金额审计：单价反算保留 4 位（与采购侧一致）。原来 toFixed(2)：总价 100 ÷ 3 = 33.33，再碰一下单价金额就变 99.99
   if (recvForm.qty && recvForm.qty > 0 && recvForm.received_amount != null) {
-    recvForm.unit_price = Number((recvForm.received_amount / recvForm.qty).toFixed(2))
+    recvForm.unit_price = Number((recvForm.received_amount / recvForm.qty).toFixed(4))
   }
 }
 // 🆕 需求十四：单条收货时可上传收货单（图片/PDF）
@@ -2314,10 +2316,11 @@ function applyPoPick() {
         <div class="frow">
           <!-- 反馈#346（李新新）：采购用优惠券会单开一行负金额，收货补价时也得能填负数。 -->
           <el-form-item label="单价（后填价格在此补）">
-            <el-input-number v-model="recvForm.unit_price" :precision="2" :controls="false" style="width:100%" @change="onRecvCalc" />
+            <!-- 🆕 金额审计：单价 4 位小数（采购下单填 0.3333，这里 2 位一碰就按 0.33 存）；parser 防千分位粘贴截断 -->
+            <el-input-number v-model="recvForm.unit_price" :precision="4" :controls="false" :parser="moneyParser" style="width:100%" @change="onRecvCalc" />
           </el-form-item>
           <el-form-item label="收货金额（总价，填此按数量算单价）">
-            <el-input-number v-model="recvForm.received_amount" :precision="2" :controls="false" style="width:100%" @change="onRecvAmountCalc" />
+            <el-input-number v-model="recvForm.received_amount" :precision="2" :controls="false" :parser="moneyParser" style="width:100%" @change="onRecvAmountCalc" />
           </el-form-item>
         </div>
         <!-- 🆕 需求十四：上传收货单（图片/PDF） -->
@@ -2369,10 +2372,10 @@ function applyPoPick() {
         </el-table-column>
         <el-table-column label="数量" width="70" align="right"><template #default="{ row }">{{ row.qty ?? '—' }}</template></el-table-column>
         <el-table-column label="单价" width="110" align="right">
-          <template #default="{ row }"><el-input-number v-model="row.unit_price" :precision="2" :controls="false" style="width:96px" @change="onBatchLinePriceCalc(row)" /></template>
+          <template #default="{ row }"><el-input-number v-model="row.unit_price" :precision="4" :controls="false" :parser="moneyParser" style="width:96px" @change="onBatchLinePriceCalc(row)" /></template>
         </el-table-column>
         <el-table-column label="收货金额" width="120" align="right">
-          <template #default="{ row }"><el-input-number v-model="row.received_amount" :precision="2" :controls="false" style="width:106px" /></template>
+          <template #default="{ row }"><el-input-number v-model="row.received_amount" :precision="2" :controls="false" :parser="moneyParser" style="width:106px" /></template>
         </el-table-column>
         <!-- 🆕 #376 逐行订单编号：带出明细上原有的，可逐行改 -->
         <el-table-column label="订单编号" width="170">

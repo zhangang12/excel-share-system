@@ -589,6 +589,8 @@ async def sales_summary(db: AsyncSession, current: models.User,
     )).all())
     if not _all_view(current):
         rows = [(p, l) for p, l in rows if l.sales_uid == current.id]
+    # 🆕 金额审计(2026-09-09)：待主管审批/被退回草稿的订单还没生效，不进销售额（与 sales_report / 台账合计同口径）
+    rows = [(p, l) for p, l in rows if (l.order_state or None) not in ("pending", "draft")]
 
     buckets: dict[str, dict] = {}
     no_sign = 0
@@ -814,8 +816,12 @@ async def get_material(db: AsyncSession, current: models.User, q: str) -> dict:
     if not m:
         return {"material": text, "found": False, "hint": "查无此物料，先用 find_entity 找"}
 
+    # 🆕 金额审计(2026-09-09)：冲红是「原单标 reversed + 另插一张反向 is_reversal 单」，两张要么都算要么都不算。
+    #   原来只排冲红单、不排被冲红的原单 → 入库 100 冲红后仓库页是 0、助手答 100。与 warehouse_router._stock_map 同口径。
     txns = list((await db.execute(select(models.WhTxn).where(
-        models.WhTxn.material_id == m.id, models.WhTxn.is_reversal == False)  # noqa: E712
+        models.WhTxn.material_id == m.id,
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False)     # noqa: E712
         .order_by(models.WhTxn.id.desc()))).scalars().all())
     stock = float(m.init_stock or 0)
     for t in txns:

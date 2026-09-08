@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment, ordersApi } from '@/api/orders'
 import { projectsApi } from '@/api/projects'
+import { moneyParser } from '@/utils/money'   // 🆕 金额审计：粘贴 "1,280,000" 不再被截成 1
 import { reportsApi, type SalesReport } from '@/api/reports'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -1098,7 +1099,7 @@ async function openReport() {
             </el-select>
           </el-form-item>
           <el-form-item label="金额(元)" style="flex: 1">
-            <el-input-number v-model="orderForm.amount" :min="0" :controls="false" style="width: 100%" />
+            <el-input-number v-model="orderForm.amount" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" />
           </el-form-item>
           <el-form-item label="税票" style="flex: 1">
             <el-select v-model="orderForm.tax_rate" style="width: 100%">
@@ -1108,12 +1109,12 @@ async function openReport() {
         </div>
         <div class="fsec">💰 收款（选填）</div>
         <div class="frow">
-          <el-form-item label="预付" style="flex: 1"><el-input-number v-model="orderForm.prepay" :min="0" :controls="false" style="width: 100%" /></el-form-item>
-          <el-form-item label="发货前付" style="flex: 1"><el-input-number v-model="orderForm.before_ship" :min="0" :controls="false" style="width: 100%" /></el-form-item>
-          <el-form-item label="发货款应收" style="flex: 1"><el-input-number v-model="orderForm.ship_receivable" :min="0" :controls="false" style="width: 100%" /></el-form-item>
+          <el-form-item label="预付" style="flex: 1"><el-input-number v-model="orderForm.prepay" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" /></el-form-item>
+          <el-form-item label="发货前付" style="flex: 1"><el-input-number v-model="orderForm.before_ship" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" /></el-form-item>
+          <el-form-item label="发货款应收" style="flex: 1"><el-input-number v-model="orderForm.ship_receivable" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" /></el-form-item>
         </div>
         <div class="frow">
-          <el-form-item label="尾款" style="flex: 1"><el-input-number v-model="orderForm.balance" :min="0" :controls="false" style="width: 100%" @change="() => { if (!orderForm.balance) orderForm.balance_date = '' }" /></el-form-item>
+          <el-form-item label="尾款" style="flex: 1"><el-input-number v-model="orderForm.balance" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" @change="() => { if (!orderForm.balance) orderForm.balance_date = '' }" /></el-form-item>
           <el-form-item label="尾款日期" style="flex: 1">
             <el-date-picker v-model="orderForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" :disabled="!orderForm.balance" placeholder="尾款为0时无需填" />
           </el-form-item>
@@ -1191,7 +1192,7 @@ async function openReport() {
               <el-option label="有" value="有" /><el-option label="无" value="无" />
             </el-select>
           </el-form-item>
-          <el-form-item label="金额(元)" style="flex: 1"><el-input-number v-model="editForm.amount" :min="0" :controls="false" style="width: 100%" /></el-form-item>
+          <el-form-item label="金额(元)" style="flex: 1"><el-input-number v-model="editForm.amount" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" /></el-form-item>
           <el-form-item label="税票" style="flex: 1">
             <el-select v-model="editForm.tax_rate" style="width: 100%">
               <el-option label="13%" value="13%" /><el-option label="0（不开票）" value="0" />
@@ -1212,12 +1213,12 @@ async function openReport() {
           </el-form-item>
         </div>
         <div class="frow">
-          <el-form-item label="预付" style="flex: 1"><el-input-number v-model="editForm.prepay" :min="0" :controls="false" style="width: 100%" /></el-form-item>
-          <el-form-item label="发货前付" style="flex: 1"><el-input-number v-model="editForm.before_ship" :min="0" :controls="false" style="width: 100%" /></el-form-item>
-          <el-form-item label="发货款应收" style="flex: 1"><el-input-number v-model="editForm.ship_receivable" :min="0" :controls="false" style="width: 100%" /></el-form-item>
+          <el-form-item label="预付" style="flex: 1"><el-input-number v-model="editForm.prepay" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" /></el-form-item>
+          <el-form-item label="发货前付" style="flex: 1"><el-input-number v-model="editForm.before_ship" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" /></el-form-item>
+          <el-form-item label="发货款应收" style="flex: 1"><el-input-number v-model="editForm.ship_receivable" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" /></el-form-item>
         </div>
         <div class="frow">
-          <el-form-item label="尾款" style="flex: 1"><el-input-number v-model="editForm.balance" :min="0" :controls="false" style="width: 100%" @change="() => { if (!editForm.balance) editForm.balance_date = '' }" /></el-form-item>
+          <el-form-item label="尾款" style="flex: 1"><el-input-number v-model="editForm.balance" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width: 100%" @change="() => { if (!editForm.balance) editForm.balance_date = '' }" /></el-form-item>
           <el-form-item label="尾款日期" style="flex: 1">
             <el-date-picker v-model="editForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" :disabled="!editForm.balance" placeholder="尾款为0时无需填" />
           </el-form-item>

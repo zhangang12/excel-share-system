@@ -114,6 +114,18 @@ def _china_date_str(dt: Optional[datetime]) -> Optional[str]:
     return (dt + timedelta(hours=8)).strftime("%Y-%m-%d")
 
 
+def _china_month(dt: Optional[datetime]) -> Optional[str]:
+    """🆕 金额审计(2026-09-09)：按月归集一律用北京时间。库里 DateTime(timezone=True) 是 UTC，
+    直接 strftime 会把每月 1 日 00:00–08:00 的单算进上个月（1 月 1 日早上的跑到上一年）。"""
+    d = _china_date_str(dt)
+    return d[:7] if d else None
+
+
+def _china_today() -> date:
+    """服务器/容器是 UTC（生产实测 TZ 未设），「今天/本月」一律按北京时间取。"""
+    return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
+
+
 def _agg_produce(rows: list, umap: dict, month: Optional[str] = None):
     """rows: list[(ProduceGroupTask, DeptOrder parent, Project)]；按 (组, 工人) 聚合。
     返回 (stats, overdue_items, total, done, ontime, effs)。"""
@@ -204,11 +216,11 @@ async def monthly(
     _: models.User = Depends(require_roles()),  # 仅 admin/manager（require_roles 默认只放行管理层）
     db: AsyncSession = Depends(get_db),
 ):
-    ym = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    ym = month or _china_today().strftime("%Y-%m")
     r = await db.execute(select(models.DeptOrder))
     all_orders = list(r.scalars().all())
-    # 按下单月(created_at)过滤（C4）
-    orders = [o for o in all_orders if o.created_at and o.created_at.strftime("%Y-%m") == ym]
+    # 按下单月(created_at)过滤（C4）——🆕 按北京时间归月
+    orders = [o for o in all_orders if o.created_at and _china_month(o.created_at) == ym]
 
     stats, overdue_items = _agg_workers(orders)
     done = [o for o in orders if _kpi_done(o)]
@@ -224,7 +236,7 @@ async def monthly(
     # 🆕 生产部分组任务（C4 按父单下单月 created_at 归月）——供生产部卡片用分组口径
     prows, pumap = await _load_produce_rows(db)
     p_month = [(gt, parent, proj) for gt, parent, proj in prows
-               if parent.created_at and parent.created_at.strftime("%Y-%m") == ym]
+               if parent.created_at and _china_month(parent.created_at) == ym]
     _ps, p_over, p_total, p_done, p_ontime, p_effs = _agg_produce(p_month, pumap)
 
     # 部门概览
@@ -313,14 +325,14 @@ async def dept_report(
          .where(models.DeptOrder.dept == dept, models.Project.is_deleted == False))  # noqa: E712
     if year:
         q = q.where(models.Project.code.like(f"{year}-%"))
-    if month:
-        # 按派单（接单开始）月份过滤：start_date 或 created_at 前缀匹配
-        q = q.where(
-            (models.DeptOrder.start_date.like(f"{month}%")) |
-            (models.DeptOrder.start_date.is_(None) & models.DeptOrder.created_at.like(f"{month}%"))
-        )
     r = await db.execute(q)
     orders = [o for o in r.scalars().all() if o.status not in ("voided", "pending_assign")]
+    if month:
+        # 按派单（接单开始）月份过滤：start_date 或 created_at。
+        # 🆕 金额审计：原来对 created_at(timestamptz) 用 LIKE——PG 没有 timestamptz ~~ text 运算符会 500
+        #   （SQLite 宽松才跑得过）；改在 Python 侧按北京时间比较。
+        orders = [o for o in orders
+                  if ((o.start_date or "")[:7] == month if o.start_date else _china_month(o.created_at) == month)]
     stats, overdue_items = _agg_workers(orders)
     done = [o for o in orders if _kpi_done(o)]
     effs, ontime = [], 0
@@ -363,10 +375,16 @@ async def sales_report(
     r = await db.execute(
         select(models.SalesLedger).join(models.Project)
         .where(models.Project.is_deleted == False))  # noqa: E712
-    leds = list(r.scalars().all())
+    # 🆕 金额审计(2026-09-09)：待主管审批(pending)/被退回(draft)的订单还没生效，合同额不能进销售总额/业绩榜
+    leds = [l for l in r.scalars().all() if (l.order_state or None) not in ("pending", "draft")]
     total_amount = sum(l.amount or 0 for l in leds)
     invoiced = [l for l in leds if l.invoice_state == "invoiced"]
     invoiced_amount = sum(l.amount or 0 for l in invoiced)
+    # 🆕 税票"0"/"/"的项目本来就不开票，不能算「未开票」、也不进开票率分母
+    from .sales_router import _is_no_invoice
+    no_inv_amount = sum(l.amount or 0 for l in leds
+                        if l.invoice_state != "invoiced" and _is_no_invoice(l.tax_rate))
+    invoiceable_amount = total_amount - no_inv_amount
     contract_cnt = sum(1 for l in leds if l.contract == "有")
     shipped = sum(1 for l in leds if l.ship_date)
 
@@ -398,15 +416,17 @@ async def sales_report(
     state_map = {None: "未申请", "applying": "待主管审批", "pending_invoice": "待财务开票", "invoiced": "已开票"}
     by_is = []
     for st, label in state_map.items():
-        arr = [l for l in leds if l.invoice_state == st]
+        # "" 与 None 同为未申请（台账侧 _INVOICE_STATE_LABEL 认 ""），否则分组之和 < 总额
+        arr = [l for l in leds if (l.invoice_state or None) == st]
         by_is.append({"label": label, "count": len(arr), "amount": sum(l.amount or 0 for l in arr)})
 
     return SalesReport(
-        project_count=len(leds), total_amount=total_amount,
-        invoiced_amount=invoiced_amount, uninvoiced_amount=total_amount - invoiced_amount,
+        project_count=len(leds), total_amount=round(total_amount, 2),
+        invoiced_amount=round(invoiced_amount, 2),
+        uninvoiced_amount=round(max(invoiceable_amount - invoiced_amount, 0), 2),
         shipped_count=shipped, contract_count=contract_cnt,
         contract_rate=round(contract_cnt / len(leds) * 100) if leds else None,
-        invoice_rate=round(invoiced_amount / total_amount * 100) if total_amount else None,
+        invoice_rate=round(invoiced_amount / invoiceable_amount * 100) if invoiceable_amount > 0 else None,
         by_salesperson=by_salesperson, by_cust_type=by_ct, by_invoice_state=by_is,
         receivables={
             "prepay": sum(l.prepay or 0 for l in leds),
@@ -429,6 +449,15 @@ async def sales_report(
 #   两腿互斥不重叠——改腿1 口径时**不要碰腿2 的 not_in(linked)**，那是唯一的隔离墙。
 
 _PNL_ROLES = ("finance", "finance_lead")
+
+
+def _pnl_linked_subq():
+    """腿1/腿2 的隔离墙：哪些采购明细「已经仓库过账」。只认有效流水（排除冲红单与被冲红的原单），
+    毛利榜与项目明细两处必须共用，否则合计和展开对不上。"""
+    return select(models.WhTxn.purchase_item_id).where(
+        models.WhTxn.purchase_item_id.isnot(None),
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False)     # noqa: E712
 _PNL_NOTE = ("口径：合同额 − 材料成本(挂项目收货金额 + 通用物料领用×均价) − 直发/外协采购 "
              "− 安装/售后费用 − 物料运输费(我方)；不含人工工资等系统外成本，"
              "排名供比较用，绝对值≠净利")
@@ -454,10 +483,17 @@ async def project_pnl(
     noprice: dict = _cost_extra.get("noprice_by_project") or {}
 
     # ── 腿2：直发/外协采购——收货金额>0 且收货未生成 wh_txn(未经仓库)，按 project_code
-    linked = select(models.WhTxn.purchase_item_id).where(models.WhTxn.purchase_item_id.isnot(None))
+    # 🆕 金额审计(2026-09-09)：腿2 两处收口——
+    #   ① 必须**已到货**：received_amount 下单时就=qty×单价（它其实是订单金额），没到货的 90 行 ¥62.7k
+    #      原来也进了毛利榜成本；"直发/外协"本意是收了货但没经仓库的。
+    #   ② linked 只认**有效**流水：入库被冲红后原单仍带 purchase_item_id，明细在腿1 因 reversed 被排除、
+    #      在腿2 又因"已挂流水"被排除 → 成本凭空消失。冲红=撤销收货，收货接口已同步清 arrival_date，
+    #      这里再按到货日期兜一层。
+    linked = _pnl_linked_subq()
     r = await db.execute(
         select(models.PurchaseItem.project_code, func.sum(models.PurchaseItem.received_amount))
         .where(models.PurchaseItem.received_amount > 0,
+               models.PurchaseItem.arrival_date.isnot(None),
                models.PurchaseItem.project_code.isnot(None),
                models.PurchaseItem.id.not_in(linked))
         .group_by(models.PurchaseItem.project_code))
@@ -491,7 +527,9 @@ async def project_pnl(
     rows = []
     for p in projs:
         led = led_by_pid.get(p.id)
-        amount = round((led.amount or 0), 2) if led else 0.0
+        # 🆕 金额审计：待审批/退回草稿的订单合同额还没生效，收入按 0 算并打标
+        _led_effective = bool(led) and (led.order_state or None) not in ("pending", "draft")
+        amount = round((led.amount or 0), 2) if _led_effective else 0.0
         mc = round(mat_cost.get(p.id, 0), 2)
         dc = round(direct_by_code.get((p.code or "").strip(), 0), 2)
         ac = round(as_cost.get(p.id, 0), 2)
@@ -503,6 +541,8 @@ async def project_pnl(
         flags = []
         if not led:
             flags.append("无销售台账")
+        elif not _led_effective:
+            flags.append("订单待审批/未生效")
         elif not amount:
             flags.append("合同额为0")
         if noprice.get(p.id):
@@ -562,13 +602,14 @@ async def project_pnl_detail(
                      "qty": r_["qty"], "unit": r_.get("unit"),
                      "date": None, "party": None, "amount": r_["amount"]})
 
-    # 腿2 直发/外协采购：口径与毛利榜一字不差——收货金额>0 且**未生成 wh_txn**（未经仓库）
-    linked = select(models.WhTxn.purchase_item_id).where(models.WhTxn.purchase_item_id.isnot(None))
+    # 腿2 直发/外协采购：口径与毛利榜一字不差——已到货、收货金额>0 且**无有效 wh_txn**（未经仓库）
+    linked = _pnl_linked_subq()
     code = (p.code or "").strip()
     if code:
         r = await db.execute(
             select(models.PurchaseItem).where(
                 models.PurchaseItem.received_amount > 0,
+                models.PurchaseItem.arrival_date.isnot(None),
                 models.PurchaseItem.project_code == code,
                 models.PurchaseItem.id.not_in(linked)))   # supplier 是 lazy="joined"，无需 options
         for it in r.scalars().all():
@@ -615,7 +656,7 @@ async def cost_audit(
     审计先行——这三张清单不清零，毛利榜就系统性虚高。"""
     from .warehouse_router import _avg_price_map
     avg = await _avg_price_map(db)
-    this_month = date.today().isoformat()[:7]
+    this_month = _china_today().isoformat()[:7]
 
     # ── ① 无主领料：出库未挂项目(排除冲红对；排除明确勾过「非项目领用」的) × 加权均价
     r = await db.execute(select(models.WhTxn).where(
@@ -648,7 +689,8 @@ async def cost_audit(
         select(models.WhTxn, models.PurchaseItem)
         .join(models.PurchaseItem, models.PurchaseItem.id == models.WhTxn.purchase_item_id)
         .where(models.WhTxn.amount.is_(None),
-               models.WhTxn.is_reversal == False)  # noqa: E712
+               models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False)     # noqa: E712  🆕 被冲红的原单不算待补价
         .order_by(models.WhTxn.id.desc()))
     unpriced_in = []
     fillable_cnt = 0
@@ -776,6 +818,7 @@ async def audit_backfill_prices(
         .join(models.PurchaseItem, models.PurchaseItem.id == models.WhTxn.purchase_item_id)
         .where(models.WhTxn.amount.is_(None),
                models.WhTxn.is_reversal == False,  # noqa: E712
+               models.WhTxn.reversed == False,     # noqa: E712  🆕 回填只填有效流水
                models.PurchaseItem.unit_price.isnot(None)))
     n = 0
     for t, price in r.all():
@@ -814,7 +857,7 @@ async def fund_panel(
     db: AsyncSession = Depends(get_db),
 ):
     """资金面板：逾期应收账龄 / 预付敞口 / 应付账期利用 / 呆滞库存 / 未来13周现金排程。"""
-    today = date.today()
+    today = _china_today()   # 🆕 金额审计：容器是 UTC，"今天"按北京时间取，否则 0–8 点逾期天数差一天
     today_s = today.isoformat()
 
     # ───────── ① 逾期应收账龄（尾款按 balance_date；发货款按 ship_date） ─────────

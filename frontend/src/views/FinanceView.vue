@@ -6,6 +6,7 @@ import { UploadFilled } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/api/sales'
+import { moneyParser } from '@/utils/money'
 import { specOf } from '@/utils/format'   // 反馈#387：名称里已含规格时别再拼一遍
 import EmptyHint from '@/components/EmptyHint.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -447,6 +448,15 @@ function pickVoucher() {
 
 async function submitPay() {
   if (!payTargetId.value) return
+  // 🆕 金额审计(2026-09-09)：0 < 实付 ≤ 请款金额。原来无上限也允许 0，出纳手滑 15000 付 1500 的单照样"已付款"，
+  //   明细按比例回写后已付就超过收货额（后端同样拦，这里先拦一道给出可读提示）。
+  const amt = Number(payForm.value.paid_amount)
+  const req = Number(payingPr.value?.requested_amount ?? 0)
+  if (!Number.isFinite(amt) || amt <= 0) { ElMessage.warning('付款金额必须大于 0'); return }
+  if (req > 0 && amt > req + 0.005) {
+    ElMessage.warning(`付款金额 ${fmtMoney(amt)} 超过请款金额 ${fmtMoney(req)}，如确需多付请让申请人修改请款单后重新审批`)
+    return
+  }
   const fd = new FormData()
   fd.append('paid_amount', String(payForm.value.paid_amount))
   fd.append('paid_date', payForm.value.paid_date)
@@ -661,7 +671,7 @@ async function asPayReject(row: AsRow) {
 async function voidAfterSales(row: AsRow) {
   try {
     await ElMessageBox.confirm(
-      `确认作废「${row.code}」的售后费用（¥${row.cost}）？将退回售后部重新审批，财务列表中移除。`,
+      `确认作废「${row.code}」的售后费用（${fmtMoney(row.cost)}）？将退回售后部重新审批，财务列表中移除。`,
       '作废售后费用', { type: 'warning', confirmButtonText: '确认作废' })
   } catch { return }
   try {
@@ -1549,7 +1559,9 @@ async function revokeInvoice(row: ViewRow) {
       </div>
       <el-form :model="payForm" label-width="90px" style="margin-top:12px">
         <el-form-item label="付款金额">
-          <el-input-number v-model="payForm.paid_amount" :min="0" :precision="2" style="width:100%" />
+          <!-- 🆕 金额审计：上限=请款金额；parser 把粘进来的 "12,500.00" 还原成数字（EP 原生 parseFloat 会截成 12） -->
+          <el-input-number v-model="payForm.paid_amount" :min="0.01" :max="payingPr?.requested_amount || undefined"
+                           :precision="2" :parser="moneyParser" style="width:100%" />
         </el-form-item>
         <el-form-item label="付款日期">
           <el-date-picker v-model="payForm.paid_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />

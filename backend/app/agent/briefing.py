@@ -179,12 +179,14 @@ async def _stock_items(db: AsyncSession, current: models.User) -> list[dict]:
         models.WhMaterial.safety_stock > 0))).scalars().all())
     if not mats:
         return []
-    # 库存 = 期初 + 入 - 出（红冲不算），一次算完，别逐个物料查
+    # 库存 = 期初 + 入 - 出，一次算完，别逐个物料查
+    # 🆕 金额审计：冲红单与被冲红的原单**都**要排除（原来只排冲红单，原单仍计入，冲红越多库存越歪）——与 _stock_map 同口径
     ids = [m.id for m in mats]
     moved: dict[int, float] = {}
     for t in (await db.execute(select(models.WhTxn).where(
             models.WhTxn.material_id.in_(ids),
-            models.WhTxn.is_reversal == False))).scalars().all():  # noqa: E712
+            models.WhTxn.is_reversal == False,  # noqa: E712
+            models.WhTxn.reversed == False))).scalars().all():  # noqa: E712
         q = float(t.qty or 0)
         moved[t.material_id] = moved.get(t.material_id, 0.0) + (q if t.direction == "in" else -q)
 

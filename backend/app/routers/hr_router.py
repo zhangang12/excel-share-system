@@ -7,6 +7,8 @@
   盈利改善规划 §五-1「含分摊人工」毛利口径的数据源。
 - 到期提醒（合同 30 天 / 转正 7 天）在 overdue.scan_hr_reminders，每日扫、7 天窗口去重。
 """
+import math
+import re
 from datetime import date
 from io import BytesIO
 from typing import List, Optional
@@ -28,6 +30,34 @@ router = APIRouter(prefix="/api/hr", tags=["人事部"])
 
 _HR = ("hr",)   # admin/manager 由 require_roles 自动放行
 _STATUSES = ("试用", "在职", "离职")
+
+_PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def _check_period(v: str, label: str = "period") -> None:
+    """🆕 金额审计：月份键原来只查长度和第 5 位横杠，"2026-13"/"2026-ab" 都能写进去，之后汇总永远看不到。"""
+    if not _PERIOD_RE.match(v or ""):
+        raise HTTPException(400, f"{label} 格式应为 YYYY-MM（月份 01–12）")
+
+
+def _parse_num(v) -> Optional[float]:
+    """Excel 格子 → 数字。空=0；能解析的返回数值（容忍千分位/全角逗号/货币符/空格）；
+    解析不了返回 None，由调用方决定是报错还是跳过——**绝不把非空的脏格子当 0**。"""
+    if v is None:
+        return 0.0
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v) if math.isfinite(float(v)) else None
+    s = str(v).strip()
+    if s == "":
+        return 0.0
+    s = s.replace(",", "").replace("，", "").replace("￥", "").replace("¥", "").replace(" ", "")
+    try:
+        f = float(s)
+    except ValueError:
+        return None
+    return f if math.isfinite(f) else None
 
 
 # ==================== schemas（模块内自用） ====================
@@ -441,17 +471,20 @@ async def save_payroll(
     current: models.User = Depends(require_roles(*_HR)),
     db: AsyncSession = Depends(get_db),
 ):
-    if len(month) != 7 or month[4] != "-":
-        raise HTTPException(400, "month 格式应为 YYYY-MM")
+    _check_period(month, "month")
     cur = {r.department_id: r for r in (await db.execute(
         select(models.PayrollMonthly).where(models.PayrollMonthly.month == month))).scalars().all()}
     n = 0
     for r in body.rows:
+        if r.total_amount is not None and (not math.isfinite(float(r.total_amount)) or float(r.total_amount) < 0):
+            raise HTTPException(400, "工资总额必须是非负数字")
         row = cur.get(r.department_id)
         if row is None:
-            db.add(models.PayrollMonthly(month=month, department_id=r.department_id,
-                                         total_amount=r.total_amount or 0,
-                                         note=(r.note or "").strip() or None))
+            row = models.PayrollMonthly(month=month, department_id=r.department_id,
+                                        total_amount=r.total_amount or 0,
+                                        note=(r.note or "").strip() or None)
+            db.add(row)
+            cur[r.department_id] = row   # 🆕 同一部门在 rows 里出现两次时不再撞唯一约束 500
         else:
             row.total_amount = r.total_amount or 0
             row.note = (r.note or "").strip() or None
@@ -533,8 +566,7 @@ async def save_attendance(
     current: models.User = Depends(require_roles(*_HR)),
     db: AsyncSession = Depends(get_db),
 ):
-    if len(period) != 7 or period[4] != "-":
-        raise HTTPException(400, "period 格式应为 YYYY-MM")
+    _check_period(period)
     cur = {r.employee_id: r for r in (await db.execute(select(models.AttendanceMonthly).where(
         models.AttendanceMonthly.period == period))).scalars().all()}
     n = 0
@@ -622,8 +654,7 @@ async def import_attendance(
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 #240 批量导入某月考勤：按工号匹配，已有则整行覆盖，未出现的人不动。"""
-    if len(period) != 7 or period[4] != "-":
-        raise HTTPException(400, "period 格式应为 YYYY-MM")
+    _check_period(period)
     from openpyxl import load_workbook
     try:
         wb = load_workbook(BytesIO(await file.read()), data_only=True, read_only=True)
@@ -641,13 +672,16 @@ async def import_attendance(
         i = col.get(name)
         return row[i] if (i is not None and i < len(row)) else None
 
-    def num(v) -> float:
-        if v is None or str(v).strip() == "":
+    bad_cells: list[str] = []
+
+    def num(v, label: str = "", rowno: int = 0) -> float:
+        # 🆕 金额审计：非空但解析不了的格子（"8天"、"—"、"1,234"）原来静默当 0 写库还整行覆盖——
+        #   考勤天数错了工资就错。现在记下来整批拒绝，让人改了表再导。
+        val = _parse_num(v)
+        if val is None:
+            bad_cells.append(f"第{rowno}行「{label}」={str(v).strip()[:12]}")
             return 0.0
-        try:
-            return float(str(v).strip())
-        except ValueError:
-            return 0.0
+        return val
 
     # 该月在册员工(含当月离职)：工号 -> 员工
     emp_by_no = {(e.emp_no or "").strip(): e for e in await _active_emps(db, period) if e.emp_no}
@@ -656,7 +690,8 @@ async def import_attendance(
 
     created = updated = 0
     skipped: list[str] = []
-    for row in rows[1:]:
+    seen_rows: dict[int, int] = {}
+    for rn, row in enumerate(rows[1:], start=2):
         raw_no = cell(row, "工号")
         if raw_no is None or str(raw_no).strip() == "":
             continue
@@ -668,21 +703,30 @@ async def import_attendance(
         if not e:
             skipped.append(str(raw_no).strip())
             continue
+        # 🆕 同一工号出现两行：原来第二行再 db.add 撞唯一约束 → 整批 500 回滚且无提示
+        if e.id in seen_rows:
+            raise HTTPException(400, f"工号 {no} 在第 {seen_rows[e.id]} 行和第 {rn} 行重复出现，请只保留一行")
+        seen_rows[e.id] = rn
         vals = dict(
-            should_days=num(cell(row, "应出勤(天)")), actual_days=num(cell(row, "实出勤(天)")),
-            leave_days=num(cell(row, "请假(天)")), overtime_hours=num(cell(row, "加班(工时)")),
-            late_count=int(num(cell(row, "迟到(次)"))), early_leave_count=int(num(cell(row, "早退(次)"))),
-            missing_card_count=int(num(cell(row, "缺卡(次)"))),
+            should_days=num(cell(row, "应出勤(天)"), "应出勤(天)", rn), actual_days=num(cell(row, "实出勤(天)"), "实出勤(天)", rn),
+            leave_days=num(cell(row, "请假(天)"), "请假(天)", rn), overtime_hours=num(cell(row, "加班(工时)"), "加班(工时)", rn),
+            late_count=int(num(cell(row, "迟到(次)"), "迟到(次)", rn)), early_leave_count=int(num(cell(row, "早退(次)"), "早退(次)", rn)),
+            missing_card_count=int(num(cell(row, "缺卡(次)"), "缺卡(次)", rn)),
             note=(str(cell(row, "备注")).strip() if cell(row, "备注") not in (None, "") else None),
         )
         a = cur.get(e.id)
         if a is None:
-            db.add(models.AttendanceMonthly(employee_id=e.id, period=period, **vals))
+            a = models.AttendanceMonthly(employee_id=e.id, period=period, **vals)
+            db.add(a)
+            cur[e.id] = a
             created += 1
         else:
             for k, v in vals.items():
                 setattr(a, k, v)
             updated += 1
+    if bad_cells:
+        raise HTTPException(400, "有 %d 个格子不是数字，整批未导入，请改好再导：%s" % (
+            len(bad_cells), "；".join(bad_cells[:6]) + ("…" if len(bad_cells) > 6 else "")))
     await db.commit()
     await write_audit(db, user=current, action="hr_attendance_import", target_type="attendance",
                       detail=f"{period} 新增{created} 覆盖{updated} 跳过{len(skipped)}")
@@ -736,20 +780,25 @@ async def save_salary(
     current: models.User = Depends(require_roles(*_HR)),
     db: AsyncSession = Depends(get_db),
 ):
-    if len(period) != 7 or period[4] != "-":
-        raise HTTPException(400, "period 格式应为 YYYY-MM")
+    _check_period(period)
     cur = {r.employee_id: r for r in (await db.execute(select(models.EmployeeSalaryMonthly).where(
         models.EmployeeSalaryMonthly.period == period))).scalars().all()}
     n = 0
     for r in body.rows:
+        for f in ("base", "merit", "overtime_pay", "allowance", "social_deduct", "personal_tax", "other_deduct"):
+            fv = getattr(r, f, None)
+            if fv is not None and (not math.isfinite(float(fv)) or float(fv) < 0):
+                raise HTTPException(400, f"工资各项必须是非负数字（{f}）")
         row = cur.get(r.employee_id)
         if row is None:
-            db.add(models.EmployeeSalaryMonthly(
+            row = models.EmployeeSalaryMonthly(
                 employee_id=r.employee_id, period=period,
                 base=r.base or 0, merit=r.merit or 0, overtime_pay=r.overtime_pay or 0,
                 allowance=r.allowance or 0, social_deduct=r.social_deduct or 0,
                 personal_tax=r.personal_tax or 0,
-                other_deduct=r.other_deduct or 0, note=(r.note or "").strip() or None))
+                other_deduct=r.other_deduct or 0, note=(r.note or "").strip() or None)
+            db.add(row)
+            cur[r.employee_id] = row   # 🆕 同一人出现两次不再撞唯一约束 500
         else:
             row.base = r.base or 0
             row.merit = r.merit or 0
@@ -824,8 +873,7 @@ async def import_salary(
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 #249 批量导入某月工资：按工号匹配，已有则整行覆盖，未出现的人不动。"""
-    if len(period) != 7 or period[4] != "-":
-        raise HTTPException(400, "period 格式应为 YYYY-MM")
+    _check_period(period)
     from openpyxl import load_workbook
     try:
         wb = load_workbook(BytesIO(await file.read()), data_only=True, read_only=True)
@@ -843,13 +891,16 @@ async def import_salary(
         i = col.get(name)
         return row[i] if (i is not None and i < len(row)) else None
 
-    def num(v) -> float:
-        if v is None or str(v).strip() == "":
+    bad_cells: list[str] = []
+
+    def num(v, label: str, rowno: int) -> float:
+        # 🆕 金额审计(2026-09-09)：工资格子"6000元"、"—"、"10%"、全角逗号原来都静默变 0 并整行覆盖，
+        #   返回只说"覆盖 N 人"——直接发错工资。非空但解析不了 → 记下来，整批拒绝。
+        val = _parse_num(v)
+        if val is None:
+            bad_cells.append(f"第{rowno}行「{label}」={str(v).strip()[:12]}")
             return 0.0
-        try:
-            return float(str(v).replace(",", "").replace("￥", "").replace("¥", "").strip())
-        except ValueError:
-            return 0.0
+        return val
 
     emp_by_no = {(e.emp_no or "").strip(): e for e in await _active_emps(db, period) if e.emp_no}
     cur = {r.employee_id: r for r in (await db.execute(select(models.EmployeeSalaryMonthly).where(
@@ -857,7 +908,8 @@ async def import_salary(
 
     created = updated = 0
     skipped: list[str] = []
-    for row in rows[1:]:
+    seen_rows: dict[int, int] = {}
+    for rn, row in enumerate(rows[1:], start=2):
         raw_no = cell(row, "工号")
         if raw_no is None or str(raw_no).strip() == "":
             continue
@@ -868,21 +920,30 @@ async def import_salary(
         if not e:
             skipped.append(str(raw_no).strip())
             continue
+        # 🆕 同一工号两行：原来第二行 db.add 撞唯一约束 → 整批 500 回滚、无业务提示
+        if e.id in seen_rows:
+            raise HTTPException(400, f"工号 {no} 在第 {seen_rows[e.id]} 行和第 {rn} 行重复出现，请只保留一行")
+        seen_rows[e.id] = rn
         vals = dict(
-            base=num(cell(row, "基本工资")), merit=num(cell(row, "绩效/奖金")),
-            overtime_pay=num(cell(row, "加班费")), allowance=num(cell(row, "补贴")),
-            social_deduct=num(cell(row, "社保公积金")), personal_tax=num(cell(row, "个税")),
-            other_deduct=num(cell(row, "其他扣款")),
+            base=num(cell(row, "基本工资"), "基本工资", rn), merit=num(cell(row, "绩效/奖金"), "绩效/奖金", rn),
+            overtime_pay=num(cell(row, "加班费"), "加班费", rn), allowance=num(cell(row, "补贴"), "补贴", rn),
+            social_deduct=num(cell(row, "社保公积金"), "社保公积金", rn), personal_tax=num(cell(row, "个税"), "个税", rn),
+            other_deduct=num(cell(row, "其他扣款"), "其他扣款", rn),
             note=(str(cell(row, "备注")).strip() if cell(row, "备注") not in (None, "") else None),
         )
         s = cur.get(e.id)
         if s is None:
-            db.add(models.EmployeeSalaryMonthly(employee_id=e.id, period=period, **vals))
+            s = models.EmployeeSalaryMonthly(employee_id=e.id, period=period, **vals)
+            db.add(s)
+            cur[e.id] = s
             created += 1
         else:
             for k, v in vals.items():
                 setattr(s, k, v)
             updated += 1
+    if bad_cells:
+        raise HTTPException(400, "有 %d 个格子不是数字，整批未导入，请改好再导：%s" % (
+            len(bad_cells), "；".join(bad_cells[:6]) + ("…" if len(bad_cells) > 6 else "")))
     await db.commit()
     await write_audit(db, user=current, action="hr_salary_import", target_type="salary",
                       detail=f"{period} 新增{created} 覆盖{updated} 跳过{len(skipped)}")

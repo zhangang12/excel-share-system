@@ -262,14 +262,18 @@ async def list_ledger(
     total = len(ledgers)
 
     # 合计针对全集(全部页)，非当前页。销售员看本人合计、主管/管理层看全量合计（口径同各自可见范围）
+    # 🆕 金额审计(2026-09-09)：待主管审批(pending)/被退回(draft)的订单还没生效，合同额与四段款不进合计
+    #   （行照样列出来给人看，只是不计钱）；「未开票」不含税票 0/"/" 的不开票项目（它们本来就不能申请开票）。
+    eff = [l for l in ledgers if (l.order_state or None) not in ("pending", "draft")]
     totals = schemas.SalesLedgerTotals(
         count=total,
-        amount=sum(l.amount or 0 for l in ledgers),
-        uninvoiced=sum(l.amount or 0 for l in ledgers if l.invoice_state != "invoiced"),
-        prepay=sum(l.prepay or 0 for l in ledgers),
-        before_ship=sum(l.before_ship or 0 for l in ledgers),
-        ship_receivable=sum(l.ship_receivable or 0 for l in ledgers),
-        balance=sum(l.balance or 0 for l in ledgers),
+        amount=round(sum(l.amount or 0 for l in eff), 2),
+        uninvoiced=round(sum(l.amount or 0 for l in eff
+                             if l.invoice_state != "invoiced" and not _is_no_invoice(l.tax_rate)), 2),
+        prepay=round(sum(l.prepay or 0 for l in eff), 2),
+        before_ship=round(sum(l.before_ship or 0 for l in eff), 2),
+        ship_receivable=round(sum(l.ship_receivable or 0 for l in eff), 2),
+        balance=round(sum(l.balance or 0 for l in eff), 2),
     )
 
     start = (page - 1) * page_size
@@ -549,7 +553,8 @@ async def update_ledger(
     if not _all_view(current) and led.sales_uid != current.id:
         raise HTTPException(403, "只能编辑本人负责的台账行")
     # 🆕 #105 已进入开票流程(待财务开票/已开票)后，禁改金额/税票——否则与已开发票及推送财务的快照金额脱节
-    if led.invoice_state in ("pending_invoice", "invoiced"):
+    # 🆕 金额审计(2026-09-09)：申请开票中(applying，主管正按这个金额审)同样锁——审的是 100 万、批完变 80 万，审批就成了摆设
+    if led.invoice_state in ("applying", "pending_invoice", "invoiced"):
         amt_chg = data.amount is not None and data.amount != led.amount
         tax_chg = data.tax_rate is not None and (data.tax_rate or "").strip() != (led.tax_rate or "")
         if amt_chg or tax_chg:
@@ -560,9 +565,15 @@ async def update_ledger(
         v = getattr(data, f)
         if v is not None:
             setattr(led, f, v.strip() if isinstance(v, str) else v)
+    # 🆕 金额审计：合同额/四段款的改动审计要记旧→新（原来只记 action=update，事后查不出改了什么），
+    #   销售员改已生效订单的合同额时通知销售主管（不加审批，但不能悄无声息）
+    money_changes: list[str] = []
     for f in ("amount", "prepay", "before_ship", "ship_receivable", "balance"):
         v = getattr(data, f)
         if v is not None:
+            old = getattr(led, f)
+            if abs(float(old or 0) - float(v)) > 0.005:
+                money_changes.append(f"{f}: {float(old or 0):,.2f}→{float(v):,.2f}")
             setattr(led, f, v)
     for f in ("prepay_note", "before_ship_note"):
         v = getattr(data, f)
@@ -582,8 +593,16 @@ async def update_ledger(
         _writeback_overview(led.project, "签订日期", normalize_date_str(data.sign_date) or "")
     if data.deliver_date is not None and led.project:
         _writeback_overview(led.project, "交货日期", normalize_date_str(data.deliver_date) or "")
+    p_code = led.project.code if led.project else f"#{led.project_id}"
     await db.commit()
-    await write_audit(db, user=current, action="update", target_type="sales_ledger", target_id=lid)
+    await write_audit(db, user=current, action="update", target_type="sales_ledger", target_id=lid,
+                      detail=(f"{p_code} " + "；".join(money_changes)) if money_changes else None)
+    amt_changed = any(c.startswith("amount:") for c in money_changes)
+    if amt_changed and not _all_view(current) and (led.order_state or None) not in ("pending", "draft"):
+        await push_message(db, to_role="sales_lead", kind="warn",
+                           text=f"【合同额变更】{p_code} 由 {current.full_name or current.username} 修改："
+                                f"{next(c for c in money_changes if c.startswith('amount:'))}，请知悉。",
+                           biz_type="sales_ledger", biz_id=lid, exclude_user_ids={current.id})
     return schemas.Msg(message="已保存")
 
 

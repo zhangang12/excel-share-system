@@ -87,11 +87,15 @@ async def main():
                             json={"name": "上海屹上脚轮有限公司",
                                   "bank_name": "农业银行上海方泰支行",
                                   "bank_account": "03841100040018127"})).json()["id"]
-        iid = (await c.post("/api/purchase-mgmt/items", headers=Hb,
-                            json={"supplier_id": sid, "item_name": "脚轮", "qty": 10,
-                                  "unit_price": 100})).json()["id"]
+        async def new_item():
+            return (await c.post("/api/purchase-mgmt/items", headers=Hb,
+                                 json={"supplier_id": sid, "item_name": "脚轮", "qty": 10,
+                                       "unit_price": 100})).json()["id"]
 
         async def new_pr():
+            # ⚠️ 2026-09-09（金额审计）：同一条明细付清后不能再对它请款（分配 ≤ 收货 − 已付 − 在途），
+            #   每个场景各建一条新明细，不再复用同一条。
+            iid = await new_item()
             r = await c.post("/api/purchase-mgmt/payment-requests", headers=Hb,
                              json={"supplier_id": sid, "requested_amount": 1000, "notes": "月结",
                                    "items": [{"item_id": iid, "allocated_amount": 1000}]})

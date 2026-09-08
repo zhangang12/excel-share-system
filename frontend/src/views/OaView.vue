@@ -6,6 +6,7 @@ import { Plus, Check, Close, Download, Upload, RefreshLeft, Delete, View, CopyDo
 import { http } from '@/api'
 import { oaApi, type CostSummary, type Department, type OaDocType, type OaApprovalStep, type OaRequest, type OaSummaryRow, type OaSummaryDetailRow, type OaChainOverviewRow } from '@/api/oa'
 import { adminApi } from '@/api/admin'
+import { moneyParser } from '@/utils/money'   // 🆕 金额审计：粘贴 "12,500.00" 不再被截成 12
 import { downloadAttachment } from '@/api/orders'
 import { canInlinePreview } from '@/api/attachments'
 import { copyText } from '@/utils/clipboard'
@@ -1184,7 +1185,7 @@ onMounted(async () => {
           <el-col :xs="24" :sm="12"><el-form-item label="标题"><el-input v-model="subForm.title" placeholder="留空则用单据类型名" /></el-form-item></el-col>
           <el-col :xs="24" :sm="12" v-if="!showReimburseFields && !showCommissionFields">
             <el-form-item :label="showPaymentFields ? '付款金额 *' : (showPurchaseFields ? '预估采购金额' : '预估金额（选填）')">
-              <el-input-number v-model="subForm.amount" :min="0" :precision="2" :controls="false" style="width:100%" />
+              <el-input-number v-model="subForm.amount" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width:100%" />
             </el-form-item>
           </el-col>
 
@@ -1209,7 +1210,7 @@ onMounted(async () => {
                     </el-table-column>
                     <el-table-column label="回款金额" width="120" align="right">
                       <template #default="{ row }">
-                        <el-input-number v-model="row.payback_amount" :min="0" :precision="2" :controls="false" size="small" style="width:100%" />
+                        <el-input-number v-model="row.payback_amount" :min="0" :precision="2" :controls="false" :parser="moneyParser" size="small" style="width:100%" />
                       </template>
                     </el-table-column>
                     <el-table-column label="回款类型" width="118">
@@ -1318,7 +1319,7 @@ onMounted(async () => {
                       <template #default="{ row }"><el-input v-model="row.note" size="small" placeholder="用途/说明" /></template>
                     </el-table-column>
                     <el-table-column label="金额(元)" width="120">
-                      <template #default="{ row }"><el-input-number v-model="row.amount" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template>
+                      <template #default="{ row }"><el-input-number v-model="row.amount" :min="0" :precision="2" :controls="false" :parser="moneyParser" size="small" style="width:100%" /></template>
                     </el-table-column>
                     <el-table-column label="发票" width="120" align="center">
                       <template #default="{ row }">

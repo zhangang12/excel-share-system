@@ -181,8 +181,12 @@ async def main():
         chk(s2.get("activated_at") is None, "第二步建单时 activated_at 为空（还没轮到）")
 
         # 把第一步晾 10 天，然后销售批掉 → 第二步的计时应该从现在开始，不是从建单
+        # ⚠️ 2026-09-09（金额审计）：申请人不能批自己的单（与 #237/#420 同源）——第一步换另一位销售来批
         await _set_activated(req2, 1, datetime.now(timezone.utc) - timedelta(days=10))
-        Hs = await login("emp")
+        await mk("emp2", "sales", "销售乙")
+        Hs = await login("emp2")
+        r = await c.put(f"/api/oa/requests/{req2}/approve", headers=await login("emp"), json={})
+        chk(r.status_code == 403, f"申请人自己批第一步被拦（金额审计 2026-09-09）: {r.status_code}")
         r = await c.put(f"/api/oa/requests/{req2}/approve", headers=Hs, json={})
         chk(r.status_code == 200, f"第一步(按角色)审批通过: {r.status_code} {r.text[:120]}")
         d = (await c.get(f"/api/oa/requests/{req2}", headers=H)).json()
@@ -219,7 +223,7 @@ async def main():
         r = await c.post("/api/oa/requests", headers=Hemp, json={
             "category": doc_cat, "doc_type": doc_type, "department_id": dept_id, "title": "纯角色链", "amount": 10})
         req3 = r.json()["id"]
-        await c.put(f"/api/oa/requests/{req3}/approve", headers=await login("emp"), json={})
+        await c.put(f"/api/oa/requests/{req3}/approve", headers=Hs, json={})   # 另一位销售批第一步（不能自批）
         for who, hh in (("钱一", Hf1), ("钱二", Hf2)):
             d = (await c.get(f"/api/oa/requests/{req3}", headers=hh)).json()
             chk(d.get("can_approve") is True, f"没指定人时 {who} 都能批（老行为不变）")

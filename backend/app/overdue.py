@@ -92,8 +92,12 @@ async def scan_balance_due(db: AsyncSession, *, advance_days: int = 14) -> dict:
     today = datetime.now(_CN_TZ).date()
     # balance_date <= 今天+advance_days 即进入提醒窗（含已逾期）；ISO 字符串可直接字典序比较
     threshold = (today + timedelta(days=advance_days)).isoformat()
+    # 🆕 金额审计(2026-09-09)：作废订单（项目软删）不再催尾款——作废只软删项目、四段款不清零，原来照样推催办
     r = await db.execute(
-        select(models.SalesLedger).where(
+        select(models.SalesLedger)
+        .join(models.Project, models.SalesLedger.project_id == models.Project.id)
+        .where(
+            models.Project.is_deleted == False,  # noqa: E712
             models.SalesLedger.balance > 0,
             models.SalesLedger.balance_date.isnot(None),
             models.SalesLedger.balance_date != "",

@@ -7,6 +7,7 @@ import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'   // 🆕 #245/#246 请购单直传文件下载
 import { useAuthStore } from '@/stores/auth'
 import { datasheetsApi } from '@/api/datasheets'
+import { moneyParser } from '@/utils/money'   // 🆕 金额审计：粘贴 "12,500.00" 不再被截成 12
 import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
 import EmptyHint from '@/components/EmptyHint.vue'
 import LineChart from '@/components/LineChart.vue'
@@ -1630,6 +1631,18 @@ async function submitPaymentRequest() {
     ElMessage.error('请款金额必须大于0')
     return
   }
+  // 🆕 金额审计(2026-09-09)：总额框可手改，改了就和分配脱钩——付款按分配比例回写时明细会被多付。
+  //   提交前对一遍：Σ分配 == 总额（±0.005）、每行不超过未付余额；后端同样校验，这里给可读提示。
+  const alloc = Number(payReqForm.items.reduce((s, i) => s + (i.allocated_amount || 0), 0).toFixed(2))
+  if (Math.abs(alloc - Number(payReqForm.requested_amount)) > 0.005) {
+    ElMessage.error(`请款总额 ${fmtMoney(payReqForm.requested_amount)} 与明细分配合计 ${fmtMoney(alloc)} 不一致，请核对`)
+    return
+  }
+  const over = payReqForm.items.find(i => (i.allocated_amount || 0) > (i.max || 0) + 0.005)
+  if (over) {
+    ElMessage.error(`「${over.item_name}」分配 ${fmtMoney(over.allocated_amount)} 超过可请款余额 ${fmtMoney(over.max)}`)
+    return
+  }
   payReqSaving.value = true
   try {
     await http.post('/purchase-mgmt/payment-requests', {
@@ -1641,6 +1654,7 @@ async function submitPaymentRequest() {
     ElMessage.success('请款单已提交，等待财务审批')
     payReqVisible.value = false
     clearSelection()
+    await loadItems()   // 🆕 刷新付款状态列（原来还显示"未付款"，再勾一次就撞后端防重 400）
   } catch { /* handled */ } finally { payReqSaving.value = false }
 }
 
@@ -1654,7 +1668,8 @@ const selRecvTotal = computed(() => selLeaves.value.reduce((s, i) => s + (i.rece
 // 合并开票金额是否与Σ收货金额一致（±0.01 容差）
 const invoiceAmtMatch = computed(() =>
   invoiceNoForm.invoice_amount != null &&
-  Math.abs(invoiceNoForm.invoice_amount - Number(selRecvTotal.value.toFixed(2))) <= 0.01)
+  // 🆕 金额审计：先按"分"取整再比，否则 100.01−100=0.010000000000005 会被判成不一致（提示却写"差 ¥0.01"）
+  Math.abs(Math.round(invoiceNoForm.invoice_amount * 100) - Math.round(selRecvTotal.value * 100)) <= 1)
 function openBatchInvoiceNo() {
   const leaves = selLeaves.value
   if (!leaves.length) { ElMessage.warning('请先勾选要维护开票号的明细（可勾选合并行=自动含其下全部零件）'); return }
@@ -1668,8 +1683,10 @@ function openBatchInvoiceNo() {
   //     ② 只报个数不报是哪几项。她一次勾 22 条、跨 6 张采购单、要翻屏，根本找不出是哪两条。
   //   所以：分清「没到货」和「到货了但没金额」（一个该去收货、一个该去补金额，动作完全不同），
   //   并且把名字、规格、项目编号点出来。生产上这两种分别有 156 条和 299 条，都不罕见。
-  const notArrived = leaves.filter(i => !(i.arrival_date || '').trim() && !(i.received_amount > 0))
-  const noAmount = leaves.filter(i => (i.arrival_date || '').trim() && !(i.received_amount > 0))
+  // 🆕 金额审计：「没填金额」= 空或 0；负数是反馈#346 允许的「优惠」行，算已填（原来 !(x>0) 把优惠行当没填，整单永远开不了票）
+  const hasAmt = (i: PurchaseItemOut) => i.received_amount != null && Number(i.received_amount) !== 0
+  const notArrived = leaves.filter(i => !(i.arrival_date || '').trim() && !hasAmt(i))
+  const noAmount = leaves.filter(i => (i.arrival_date || '').trim() && !hasAmt(i))
   if (notArrived.length || noAmount.length) {
     const label = (i: PurchaseItemOut) =>
       `${i.item_name}${i.spec ? '·' + i.spec : ''}（${i.project_code || i.po_no || '无编号'}）`
@@ -3454,13 +3471,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-col>
             <el-col :xs="24" :sm="12" :md="8">
               <el-form-item label="开票金额">
-                <el-input-number v-model="itemForm.invoice_amount" :precision="2" :min="0" style="width:100%" />
+                <el-input-number v-model="itemForm.invoice_amount" :precision="2" :min="0" :parser="moneyParser" style="width:100%" />
               </el-form-item>
             </el-col>
             <!-- 🆕 #314 现金直付：不走请款链路的(淘宝现金买等)直接维护已付款；保存后付款状态/供应商账目自动更新 -->
             <el-col :xs="24" :sm="12" :md="8">
               <el-form-item label="已付款金额">
-                <el-input-number v-model="itemForm.paid_amount" :precision="2" :min="0" style="width:100%" />
+                <el-input-number v-model="itemForm.paid_amount" :precision="2" :min="0" :parser="moneyParser" style="width:100%" />
               </el-form-item>
             </el-col>
             <el-col :xs="24" :sm="12" :md="8">
@@ -3496,12 +3513,14 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <div class="pr-item-list">
             <div v-for="it in payReqForm.items" :key="it.item_id" class="pr-item-row">
               <span class="pr-item-name">{{ it.item_name }}</span>
-              <el-input-number v-model="it.allocated_amount" :precision="2" :min="0" :max="it.max" size="small" style="width:130px" />
+              <el-input-number v-model="it.allocated_amount" :precision="2" :min="0" :max="it.max" :parser="moneyParser" size="small" style="width:130px" />
             </div>
           </div>
         </el-form-item>
         <el-form-item label="请款总额">
-          <el-input-number v-model="payReqForm.requested_amount" :precision="2" :min="0" style="width:100%" />
+          <!-- 🆕 金额审计：总额随分配自动汇总；手改后必须与 Σ分配 一致，否则提交被拦（前后端都校验） -->
+          <el-input-number v-model="payReqForm.requested_amount" :precision="2" :min="0" :parser="moneyParser" style="width:100%" />
+          <div class="small muted">= 各明细分配金额之和；如需少请，请改上面的分配金额</div>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="payReqForm.notes" type="textarea" :rows="2" placeholder="选填：付款说明、账期等" />
@@ -3526,7 +3545,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-input v-model="invoiceNoForm.invoice_no" placeholder="填写发票号码" />
         </el-form-item>
         <el-form-item label="合并开票金额（发票总额）" required>
-          <el-input-number v-model="invoiceNoForm.invoice_amount" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="按实际发票金额填写" />
+          <el-input-number v-model="invoiceNoForm.invoice_amount" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width:100%" placeholder="按实际发票金额填写" />
           <div class="inv-match" :class="invoiceAmtMatch ? 'ok' : 'bad'">
             <template v-if="invoiceNoForm.invoice_amount == null">请填写发票总额；须与上方收货金额合计一致方可开票</template>
             <template v-else-if="invoiceAmtMatch">✓ 与收货金额合计一致，可开票</template>
@@ -3568,7 +3587,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <div class="form-section-title">按零件改价 / 补备注（仓库收货价填错时改这里；备注仓库收货页看得到）</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <span class="small muted">整单重填总价：</span>
-        <el-input-number v-model="groupSumTotalInput" :min="0" :precision="2" :controls="false"
+        <el-input-number v-model="groupSumTotalInput" :min="0" :precision="2" :controls="false" :parser="moneyParser"
                          size="small" style="width:140px" placeholder="按数量分摊" />
         <el-button size="small" :disabled="groupSumTotalInput == null" @click="spreadGroupTotal">按数量分摊</el-button>
         <span class="small muted">改后合计 <b class="amt">{{ fmtMoney(groupSumLinesTotal) }}</b></span>
@@ -3607,10 +3626,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       <div class="form-section-title">开票与付款</div>
       <el-form label-position="top">
         <el-form-item :label="`开票金额（整单总额，当前 ${fmtMoney(groupSumRow?.invoice_amount || 0)}）`">
-          <el-input-number v-model="groupSumForm.invoice_amount" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="留空不改" />
+          <el-input-number v-model="groupSumForm.invoice_amount" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width:100%" placeholder="留空不改" />
         </el-form-item>
         <el-form-item :label="`已付款（整单总额，当前 ${fmtMoney(groupSumRow?.paid_amount || 0)}）`">
-          <el-input-number v-model="groupSumForm.paid_amount" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="留空不改" />
+          <el-input-number v-model="groupSumForm.paid_amount" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width:100%" placeholder="留空不改" />
         </el-form-item>
         <el-form-item label="付款日期（选填）">
           <el-date-picker v-model="groupSumForm.paid_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
@@ -3727,7 +3746,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <el-date-picker v-model="openingBalanceForm.balance_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
         </el-form-item>
         <el-form-item label="期初欠款">
-          <el-input-number v-model="openingBalanceForm.outstanding_amount" :precision="2" :min="0" style="width:100%" />
+          <el-input-number v-model="openingBalanceForm.outstanding_amount" :precision="2" :min="0" :parser="moneyParser" style="width:100%" />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="openingBalanceForm.notes" type="textarea" :rows="2" />
@@ -3818,9 +3837,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         <el-table-column label="开票金额" width="105" align="right">
           <template #default="{ row }">{{ row.invoice_amount ? fmtMoney(row.invoice_amount) : '—' }}</template>
         </el-table-column>
+        <!-- 🆕 金额审计：不再 Math.max(0,…) 把多开票/多付款遮成 0——负数就是对账异常，标红让人看见 -->
         <el-table-column label="未开票" width="105" align="right">
           <template #default="{ row }">
-            <span class="warn">{{ fmtMoney(Math.max(0, (row.received_amount || 0) - (row.invoice_amount || 0))) }}</span>
+            <span :class="((row.received_amount || 0) - (row.invoice_amount || 0)) < -0.005 ? 'danger' : 'warn'"
+                  :title="((row.received_amount || 0) - (row.invoice_amount || 0)) < -0.005 ? '开票金额超过收货金额，请核对' : ''">
+              {{ fmtMoney((row.received_amount || 0) - (row.invoice_amount || 0)) }}
+            </span>
           </template>
         </el-table-column>
         <el-table-column label="已付款" width="105" align="right">
@@ -3828,7 +3851,9 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
         </el-table-column>
         <el-table-column label="未付款" width="105" align="right">
           <template #default="{ row }">
-            <span class="danger">{{ fmtMoney(Math.max(0, (row.received_amount || 0) - (row.paid_amount || 0))) }}</span>
+            <span class="danger" :title="((row.received_amount || 0) - (row.paid_amount || 0)) < -0.005 ? '已付超过收货金额（多付），请核对' : ''">
+              {{ fmtMoney((row.received_amount || 0) - (row.paid_amount || 0)) }}
+            </span>
           </template>
         </el-table-column>
         <el-table-column label="付款状态" width="90">

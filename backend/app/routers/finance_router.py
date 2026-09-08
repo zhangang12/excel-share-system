@@ -7,6 +7,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from datetime import datetime, timezone, timedelta
 
 from ..database import get_db
 from .. import models, schemas
@@ -113,8 +114,8 @@ async def expense_overview(
     current: models.User = Depends(require_roles("finance", "finance_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    from datetime import date as _d
-    y = year or int(_d.today().isoformat()[:4])
+    from .oa_router import _OA_COST_STATUS, _cn_month, oa_book_month_map
+    y = year or (datetime.now(timezone.utc) + timedelta(hours=8)).year   # 🆕 容器 UTC，按北京时间取"今年"
     ys = str(y)
     months = [f"{ys}-{m:02d}" for m in range(1, 13)]
     buckets: dict = {m: {"purchase": 0.0, "aftersales": 0.0, "oa": 0.0, "freight": 0.0} for m in months}
@@ -141,21 +142,32 @@ async def expense_overview(
     r = await db.execute(select(models.AfterSales.cost, models.AfterSales.appr_at, models.AfterSales.created_at)
                          .where(models.AfterSales.status == "approved", models.AfterSales.cost > 0))
     for cost, appr, created in r.all():
-        dt = appr or created
-        m = dt.strftime("%Y-%m") if dt else None
+        m = _cn_month(appr or created)   # 🆕 北京时间归月
         if m and not m.startswith(ys):
             continue
         put("aftersales", m, float(cost or 0))
 
-    # ③ OA 费用（业务/报销大类，已审批；核定金额优先。采购大类不计——避免与①采购付款双算）
-    r = await db.execute(select(models.OaRequest.amount, models.OaRequest.settle_amount, models.OaRequest.updated_at)
-                         # 🆕 #412：OA 加了「已付款」状态，这里只认 approved 的话
-                         #   付过款的单会从财务支出总览里消失（钱花了却不显示）
-                         .where(models.OaRequest.status.in_(("approved", "paid")),
-                                models.OaRequest.category.in_(("business", "reimbursement"))))
-    for amt, settle, upd in r.all():
-        val = settle if settle is not None else amt
-        m = upd.strftime("%Y-%m") if upd else None
+    # ③ OA 费用（业务/报销大类；核定金额优先。采购大类不计——避免与①采购付款双算）
+    # 🆕 金额审计(2026-09-09)：状态集与归月口径改为与「成本归集」(oa_router.cost_summary) **同一套**：
+    #   · 状态 = _OA_COST_STATUS（含审完待付款的 pending_payment，原来漏掉）
+    #   · 归月 = 已付款按付款月、其余按审批通过月（原来用 updated_at，随任何一次更新漂移）
+    #   · 售后部(cost_center=售后成本)走 OA 的报销不计——售后费用只认售后登记，否则同一笔钱两列都算
+    #     （被剔除的单独报在 oa_aftersales_skipped 里，不藏）
+    depts = {d.id: d for d in (await db.execute(select(models.Department))).scalars().all()}
+    oa_reqs = list((await db.execute(
+        select(models.OaRequest)
+        .where(models.OaRequest.status.in_(_OA_COST_STATUS),
+               models.OaRequest.category.in_(("business", "reimbursement"))))).scalars().all())
+    bm = await oa_book_month_map(db, oa_reqs)
+    oa_as_skipped = {"count": 0, "amount": 0.0}
+    for q in oa_reqs:
+        val = q.settle_amount if q.settle_amount is not None else q.amount
+        d = depts.get(q.department_id)
+        if d and d.cost_center == "售后成本":
+            oa_as_skipped["count"] += 1
+            oa_as_skipped["amount"] += float(val or 0)
+            continue
+        m = bm.get(q.id)
         if m and not m.startswith(ys):
             continue
         put("oa", m, float(val or 0))
@@ -166,7 +178,7 @@ async def expense_overview(
                                 (models.Shipment.freight_payer == "我方")
                                 | (models.Shipment.freight_payer.is_(None))))
     for cost, shipped in r.all():
-        m = shipped.strftime("%Y-%m") if shipped else None
+        m = _cn_month(shipped)
         if m and not m.startswith(ys):
             continue
         put("freight", m, float(cost or 0))
@@ -178,4 +190,7 @@ async def expense_overview(
     totals["grand"] = round(sum(totals.values()), 2)
     und = {k: round(v, 2) for k, v in undated.items()}
     und["total"] = round(sum(undated.values()), 2)
-    return {"year": y, "rows": rows, "undated": und, "totals": totals}
+    return {"year": y, "rows": rows, "undated": und, "totals": totals,
+            "oa_aftersales_skipped": {"count": oa_as_skipped["count"],
+                                      "amount": round(oa_as_skipped["amount"], 2)},
+            "note": "OA 列含审批通过/待付款/已付款；已付款按付款月、其余按审批月；售后部走 OA 的报销不计（售后费用只认售后登记）"}

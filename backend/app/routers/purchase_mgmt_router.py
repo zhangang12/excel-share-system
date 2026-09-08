@@ -7,7 +7,8 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, delete, or_
+import math
+from sqlalchemy import select, func, delete, or_, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -1477,20 +1478,56 @@ async def _sync_txn_amount(db: AsyncSession, item: models.PurchaseItem) -> None:
     不在这里回写的话，采购明细金额改对了，库存金额与项目材料成本还停在错的旧价上。
     口径：整条明细一次性入库时直接跟「收货金额」走（合并收货按数量权重分摊总价、单价是反算出来的，
     qty×unit_price 会有分位差）；部分入库等其他情况退回 qty×单价。"""
-    if item.unit_price is None and item.received_amount is None:
-        return
     # ⚠️ 同样要排除已冲红的原单：冲红后重新收货会留下两条非冲红流水（旧的已冲红 + 新的），
     #    把旧单的金额也改了，它和对应的冲红单就对不上，净额永远差一截。只改**当前有效**的那条。
     tr = await db.execute(select(models.WhTxn).where(
         models.WhTxn.purchase_item_id == item.id,
         models.WhTxn.is_reversal == False,  # noqa: E712
         models.WhTxn.reversed == False))    # noqa: E712
-    for t in tr.scalars().all():
+    txns = tr.scalars().all()
+    # 🆕 金额审计(2026-09-09)：`received_amount` 列默认 0、所有写入都是 `recv or 0`，**永远不是 None**。
+    #   原来的写法「received_amount is not None 就写进流水」会把未定价收货的流水金额写成 0.0 而不是 NULL——
+    #   生产库 210 条这样的流水、193 个物料：0 元被加权均价当成真实样本，34 个物料均价被拉低
+    #   （液压站 1700→850），库存金额/领料腿/未归集跟着偏低；而 cost_audit「无价入库」和一键回填
+    #   只认 NULL，这 210 条永远查不出来。口径：没单价又没收货金额 = 未定价 → 写 NULL。
+    has_amt = item.received_amount is not None and abs(item.received_amount) > 0.000001
+    for t in txns:
         t.unit_price = item.unit_price
-        if item.received_amount is not None and item.qty and t.qty == item.qty:
+        # 🆕 数量同步：整条明细一次性入库（只有这一张有效入库单）而采购改了数量 → 流水数量跟着改。
+        #   不同步的话采购 6 件、仓库 10 件（生产 #1350 就是），项目材料成本按仓库数算、应付按采购数算，
+        #   两边永远差一截。库存会不会被改成负数在 update_item 里先拦（_check_qty_sync_stock）。
+        if len(txns) == 1 and item.qty and item.qty > 0 and abs(t.qty - item.qty) > 1e-9:
+            t.qty = item.qty
+        if has_amt and item.qty and abs(t.qty - item.qty) < 1e-9:
             t.amount = round(item.received_amount, 4)
         elif item.unit_price is not None:
             t.amount = round((t.qty or 0) * item.unit_price, 4)
+        else:
+            t.amount = None
+
+
+async def _check_qty_sync_stock(db: AsyncSession, item: models.PurchaseItem, new_qty: Optional[float]) -> None:
+    """🆕 金额审计：采购改数量会同步到入库流水（见 _sync_txn_amount）。改小时要先看这批货有没有被领走：
+    收了 10 领了 4，采购想改成 3 → 库存会变成 -1，必须拦下，让仓库先处理出库单。"""
+    if not new_qty or new_qty <= 0:
+        return
+    tr = await db.execute(select(models.WhTxn).where(
+        models.WhTxn.purchase_item_id == item.id,
+        models.WhTxn.is_reversal == False,  # noqa: E712
+        models.WhTxn.reversed == False))    # noqa: E712
+    txns = tr.scalars().all()
+    if len(txns) != 1:
+        return
+    t = txns[0]
+    delta = new_qty - (t.qty or 0)
+    if delta >= 0:
+        return
+    from .warehouse_router import _stock_map
+    cur = (await _stock_map(db, [t.material_id])).get(t.material_id, 0)
+    if cur + delta < -1e-9:
+        raise HTTPException(
+            400, f"该明细已收货入库 {t.qty:g}，仓库现存 {cur:g}（其余已领用），数量最少只能改到 {t.qty - cur:g}；"
+                 f"要改得更少请先到仓库把对应出库单冲红")
 
 
 async def _sync_txn_project(db: AsyncSession, item: models.PurchaseItem) -> None:
@@ -1903,11 +1940,27 @@ async def update_item(
     new_ea = ((data.get("expected_arrival") or "").strip() or None) if ea_touched else old_ea
     if ea_touched:
         _check_ea_locked(item, new_ea, current)   # 🆕 #378 填过就不给采购自己改
+    # 🆕 金额审计(2026-09-09)：三道闸——
+    #   ① 已请款/已付款的明细不能改供应商：明细 paid 会挂到新供应商、请款单还挂在旧供应商，两边对账单都错
+    #   ② 改数量要先看仓库有没有被领走（同步到流水会不会负库存）
+    #   ③ 手填「已付款」不能超过收货金额（下面 setattr 之后再判）
+    if "supplier_id" in data and data["supplier_id"] is not None and data["supplier_id"] != item.supplier_id:
+        linked = (await db.execute(select(func.count(models.PaymentRequestItem.id)).where(
+            models.PaymentRequestItem.item_id == item.id))).scalar() or 0
+        if linked or (item.paid_amount or 0) > 0:
+            raise HTTPException(400, "该明细已有请款/付款记录，不能改供应商；请先处理对应请款单")
+    if "qty" in data and data["qty"] is not None:
+        await _check_qty_sync_stock(db, item, data["qty"])
     for k, v in data.items():
         setattr(item, k, v)
     if ("qty" in data or "unit_price" in data) and "received_amount" not in data:
         if item.qty and item.unit_price:
             item.received_amount = round(item.qty * item.unit_price, 4)
+    if "paid_amount" in data and data["paid_amount"] is not None:
+        _recv = item.received_amount or 0
+        if _recv >= 0 and (item.paid_amount or 0) > _recv + 0.01:
+            raise HTTPException(
+                400, f"已付款 ¥{item.paid_amount:,.2f} 超过收货金额 ¥{_recv:,.2f}；整单一次付清请用「整单维护」记在首行")
     # 🆕 盈利改善1b·修真bug：先收货后补价 → 回写已生成的出入库流水。此前补价只更新
     #   PurchaseItem，收货时生成的 amount=NULL 的 wh_txn 永久无价，库存金额与项目材料成本双双偏低。
     if "qty" in data or "unit_price" in data or "received_amount" in data:
@@ -1961,8 +2014,18 @@ async def delete_item(
         models.PaymentRequestItem.item_id == iid))
     if pri.scalar():
         raise HTTPException(400, "该明细已被请款（含已批/已付），不可直接删除；请先到【请款记录】里处理对应请款单")
+    # 🆕 金额审计：「整单维护/编辑」直接记的已付款不经请款单，上面那道查不到——钱付了明细却能删，供应商账上少一笔
+    if (item.paid_amount or 0) > 0:
+        raise HTTPException(400, f"该明细已记录付款 ¥{item.paid_amount:,.2f}，不可删除；请先把已付款改为 0")
+    # 🆕 金额审计：冲红后原单+冲红单仍以 purchase_item_id 指向本明细（保留追溯），PG 下直接删会撞外键
+    #   → 400「关联的数据不存在或被引用」，docstring 承诺的「先冲红再删」走不通（SQLite 不查外键，沙箱测不出）。
+    #   删之前把这些流水的关联置空，流水本身留着。
+    await db.execute(sa_update(models.WhTxn).where(models.WhTxn.purchase_item_id == iid)
+                     .values(purchase_item_id=None))
     await db.delete(item)
     await db.commit()
+    await write_audit(db, user=current, action="delete", target_type="purchase_item", target_id=iid,
+                      detail=f"{item.po_no or ''} {item.item_name} qty={item.qty} recv={item.received_amount}")
     return {"ok": True}
 
 
@@ -2279,6 +2342,10 @@ async def batch_invoice(
         item.invoice_status = "已开票"
         if body.invoice_date:
             item.invoice_date = body.invoice_date
+        # 🆕 金额审计：只改状态不给金额时，开票金额默认=收货金额（与 set_invoice_no「开票金额=各行收货金额」同口径）。
+        #   原来金额停在 0：列表显示「已开票」，账目一览却把整单算成「待开票」，两页对不上。
+        if amt is None and not item.invoice_amount:
+            item.invoice_amount = round(float(item.received_amount or 0), 2)
         if amt is not None:
             if idx == n - 1:
                 item.invoice_amount = round(amt - allocated, 2)
@@ -2309,6 +2376,15 @@ async def set_group_summary(
         raise HTTPException(404, "明细不存在或无权限")
     if len({i.supplier_id for i in items}) > 1:
         raise HTTPException(400, "跨供应商不能一起维护")
+    # 🆕 金额审计(2026-09-09)：整单已付不能超过整单收货金额——生产上 TH20260724-025 收货 15 记成已付 30，
+    #   供应商欠款算成负数被 overview 的 max(0) 藏掉。开票金额不卡（发票含税/运费可能略高于收货额）。
+    if body.paid_amount is not None:
+        _recv_total = sum(float(i.received_amount or 0) for i in items)
+        if _recv_total >= 0 and body.paid_amount > _recv_total + 0.01:
+            raise HTTPException(
+                400, f"已付款 ¥{body.paid_amount:,.2f} 超过所选明细收货金额合计 ¥{_recv_total:,.2f}，请核对")
+    if body.invoice_status and body.invoice_status not in ("待对账", "已对账", "已开票"):
+        raise HTTPException(400, "对账状态只能是 待对账/已对账/已开票")
     for idx, it in enumerate(items):
         if body.invoice_amount is not None:
             it.invoice_amount = round(body.invoice_amount, 2) if idx == 0 else 0
@@ -2662,6 +2738,53 @@ async def _pr_out(db: AsyncSession, pr_id: int,
     )
 
 
+async def _validate_pr_allocations(db: AsyncSession, supplier_id: int, items, requested_amount: float,
+                                   exclude_pr_id: Optional[int] = None) -> None:
+    """🆕 金额审计(2026-09-09)：请款单的钱必须和明细对得上，否则付款按比例回写时明细会被多付/少付。
+      · 明细非空——空单付了款没有任何明细记到已付，供应商账上就是「幽灵付款」
+      · 同一供应商——明细挂 B、请款单挂 A，两边对账单都错
+      · Σ分配 = 请款金额（±0.01）——前端总额框可手改，改了就脱钩
+      · 每行分配 ≤ 收货金额 − 已付 − 其他在途请款分配（±0.01）——不能替一笔货请两次款
+    resubmit 也走这里（exclude_pr_id=自己），驳回期间别的单可能已经把余额用掉了。"""
+    if not items:
+        raise HTTPException(400, "请款单必须关联至少一条采购明细")
+    ids = [it.item_id for it in items]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(400, "同一条采购明细在请款单里重复出现")
+    rows = {pi.id: pi for pi in (await db.execute(
+        select(models.PurchaseItem).where(models.PurchaseItem.id.in_(ids)))).scalars().all()}
+    missing = [i for i in ids if i not in rows]
+    if missing:
+        raise HTTPException(404, f"采购明细不存在：{missing[:5]}")
+    wrong = [rows[i] for i in ids if rows[i].supplier_id != supplier_id]
+    if wrong:
+        raise HTTPException(400, f"「{wrong[0].item_name}」属于另一家供应商，不能并进这张请款单")
+    q = (select(models.PaymentRequestItem.item_id, func.sum(models.PaymentRequestItem.allocated_amount))
+         .join(models.PaymentRequest, models.PaymentRequestItem.request_id == models.PaymentRequest.id)
+         .where(models.PaymentRequestItem.item_id.in_(ids),
+                models.PaymentRequest.status.in_(("pending", "approved")))
+         .group_by(models.PaymentRequestItem.item_id))
+    if exclude_pr_id is not None:
+        q = q.where(models.PaymentRequest.id != exclude_pr_id)
+    inflight = {iid: float(a or 0) for iid, a in (await db.execute(q)).all()}
+    total = 0.0
+    for it in items:
+        pi = rows[it.item_id]
+        alloc = float(it.allocated_amount or 0)
+        if not math.isfinite(alloc) or alloc < 0:
+            raise HTTPException(400, f"「{pi.item_name}」分配金额无效")
+        remain = float(pi.received_amount or 0) - float(pi.paid_amount or 0) - inflight.get(it.item_id, 0.0)
+        if alloc > remain + 0.01:
+            raise HTTPException(
+                400, f"「{pi.item_name}」可请款余额 ¥{max(remain, 0):,.2f}（收货 {float(pi.received_amount or 0):,.2f}"
+                     f" − 已付 {float(pi.paid_amount or 0):,.2f} − 在途请款 {inflight.get(it.item_id, 0.0):,.2f}），"
+                     f"本次分配 ¥{alloc:,.2f} 超出")
+        total += alloc
+    if abs(round(total, 2) - float(requested_amount)) > 0.01:
+        raise HTTPException(
+            400, f"请款金额 ¥{float(requested_amount):,.2f} 与明细分配合计 ¥{total:,.2f} 不一致，请核对后再提交")
+
+
 @router.post("/payment-requests", response_model=schemas.PaymentRequestOut)
 async def create_payment_request(
     body: schemas.PaymentRequestCreate,
@@ -2691,9 +2814,10 @@ async def create_payment_request(
         dups = list(dict.fromkeys(dup_r.scalars().all()))
         if dups:
             raise HTTPException(400, f"以下明细已有未完成的请款单，请勿重复请款：{'、'.join(dups)[:120]}")
+    await _validate_pr_allocations(db, body.supplier_id, body.items, body.requested_amount)
     pr = models.PaymentRequest(
         supplier_id=body.supplier_id,
-        requested_amount=body.requested_amount,
+        requested_amount=round(float(body.requested_amount), 2),
         requester_id=current.id,
         notes=body.notes,
         status="pending",
@@ -2881,6 +3005,23 @@ async def resubmit_payment_request(
     if pr.requester_id and pr.requester_id != current.id and not current.has_role(
             "buyer_lead", "admin", "manager", "finance_lead"):
         raise HTTPException(403, "只能重新提交自己发起的请款单")
+    # 🆕 金额审计：驳回期间同批明细可能已另开了请款单（rejected 不挡新建），重提前再查一遍，
+    #   否则两张同时待审→都付款→明细已付翻倍；余额也重新核（别的单可能已把这笔货付掉了）。
+    pri_rows = list((await db.execute(select(models.PaymentRequestItem).where(
+        models.PaymentRequestItem.request_id == prid))).scalars().all())
+    if pri_rows:
+        ids2 = [p.item_id for p in pri_rows]
+        dup_r = await db.execute(
+            select(models.PurchaseItem.item_name)
+            .join(models.PaymentRequestItem, models.PaymentRequestItem.item_id == models.PurchaseItem.id)
+            .join(models.PaymentRequest, models.PaymentRequestItem.request_id == models.PaymentRequest.id)
+            .where(models.PaymentRequestItem.item_id.in_(ids2),
+                   models.PaymentRequest.id != prid,
+                   models.PaymentRequest.status.in_(("pending", "approved"))))
+        dups = list(dict.fromkeys(dup_r.scalars().all()))
+        if dups:
+            raise HTTPException(400, f"以下明细已另有未完成的请款单，不能重提：{'、'.join(dups)[:120]}")
+    await _validate_pr_allocations(db, pr.supplier_id, pri_rows, pr.requested_amount, exclude_pr_id=prid)
     pr.status = "pending"
     pr.reject_stage = None
     pr.rejected_by = None
@@ -2974,6 +3115,55 @@ async def self_cancel_payment_request(
     return {"message": f"已撤销这笔请款（¥{amount:.2f}），关联的 {n_items} 条采购明细已回到「未付款」"}
 
 
+def _split_paid_amount(paid_amount: float, pri_rows: list) -> list[float]:
+    """付款金额按各行分配比例拆到明细（分配全 0 时均摊），2 位小数、末行兜余，Σ份额 == paid_amount 精确成立。
+    付款与删除反冲共用，两边口径必须一样，否则删掉请款单后明细已付回不到原值。"""
+    n = len(pri_rows)
+    if n == 0:
+        return []
+    total_alloc = sum(float(p.allocated_amount or 0) for p in pri_rows)
+    out: list[float] = []
+    acc = 0.0
+    for idx, pri in enumerate(pri_rows):
+        if idx == n - 1:
+            share = round(paid_amount - acc, 2)
+        elif total_alloc > 0:
+            share = round(paid_amount * float(pri.allocated_amount or 0) / total_alloc, 2)
+        else:
+            share = round(paid_amount / n, 2)
+        out.append(share)
+        acc = round(acc + share, 2)
+    return out
+
+
+async def _assert_po_not_overpaid(db: AsyncSession, items: list) -> None:
+    """付款回写后按采购单合计核对 Σ已付 ≤ Σ收货（+0.01）。没单号的明细按行比。
+    ⚠️ 合计要回数据库整单算：请款单可能只覆盖这张采购单的一部分行。本会话里已改的行还没 flush，
+    先 flush 再查，查出来的就是「付款后」的数。"""
+    if not items:
+        return
+    await db.flush()
+    po_nos = {i.po_no for i in items if i.po_no}
+    if po_nos:
+        r = await db.execute(
+            select(models.PurchaseItem.po_no,
+                   func.sum(func.coalesce(models.PurchaseItem.received_amount, 0)),
+                   func.sum(func.coalesce(models.PurchaseItem.paid_amount, 0)))
+            .where(models.PurchaseItem.po_no.in_(po_nos))
+            .group_by(models.PurchaseItem.po_no))
+        for po, recv_t, paid_t in r.all():
+            recv_t, paid_t = float(recv_t or 0), float(paid_t or 0)
+            if recv_t >= 0 and paid_t > recv_t + 0.01:
+                raise HTTPException(
+                    400, f"采购单 {po} 付款后已付 ¥{paid_t:,.2f} 将超过收货金额 ¥{recv_t:,.2f}，疑似重复付款"
+                         f"（该单可能已用「整单维护」或编辑明细记过付款），请先核对后再付")
+    for i in items:
+        if not i.po_no and (i.received_amount or 0) >= 0 and (i.paid_amount or 0) > (i.received_amount or 0) + 0.01:
+            raise HTTPException(
+                400, f"「{i.item_name}」付款后已付 ¥{float(i.paid_amount or 0):,.2f} 超过收货金额 "
+                     f"¥{float(i.received_amount or 0):,.2f}，疑似重复付款，请先核对")
+
+
 @router.put("/payment-requests/{prid}/pay")
 async def pay_payment_request(
     prid: int,
@@ -2995,6 +3185,24 @@ async def pay_payment_request(
     # 🆕 需求十六：请款审批与付款分成两项、不是一个人操作
     if pr.finance_approver_id and pr.finance_approver_id == current.id:
         raise HTTPException(400, "职责分离：请款审批与付款需由不同人操作，请由另一位财务/出纳付款")
+    # 🆕 金额审计(2026-09-09)：付款金额原来不做任何校验——0 元、负数、15000 付 1500 的单都能「已付款」，
+    #   然后按比例回写到明细，明细已付就超过收货额。口径：0 < 实付 ≤ 请款金额；少付允许（财务扣款/尾差）。
+    if not math.isfinite(paid_amount) or paid_amount <= 0:
+        raise HTTPException(400, "付款金额必须大于 0")
+    if paid_amount > float(pr.requested_amount or 0) + 0.005:
+        raise HTTPException(
+            400, f"付款金额 ¥{paid_amount:,.2f} 超过请款金额 ¥{float(pr.requested_amount or 0):,.2f}；"
+                 f"如确需多付，请让申请人修改请款单后重新审批")
+    paid_amount = round(paid_amount, 2)
+    # 🆕 金额审计：状态翻转用条件 UPDATE 做原子守卫——出纳双击「付款」或付款/删除同时发生时，
+    #   两个请求都先读到 approved，明细 paid_amount 会被累加两次。UPDATE ... WHERE status='approved'
+    #   只让一个赢；PG 上行锁把第二个挡到第一个提交之后，rowcount=0 → 409。
+    flip = await db.execute(sa_update(models.PaymentRequest)
+                            .where(models.PaymentRequest.id == prid,
+                                   models.PaymentRequest.status == "approved")
+                            .values(status="paid"))
+    if flip.rowcount != 1:
+        raise HTTPException(409, "该请款单状态刚刚发生了变化（可能已付款或已删除），请刷新后再操作")
     pr.status = "paid"
     pr.paid_amount = paid_amount
     pr.paid_date = paid_date
@@ -3011,21 +3219,22 @@ async def pay_payment_request(
     )
     pri_rows = ri.scalars().all()
     if pri_rows:
-        total_alloc = sum(p.allocated_amount for p in pri_rows)
-        for pri in pri_rows:
+        shares = _split_paid_amount(paid_amount, pri_rows)
+        touched: list = []
+        for pri, add in zip(pri_rows, shares):
             ir = await db.execute(
                 select(models.PurchaseItem).where(models.PurchaseItem.id == pri.item_id)
             )
             item = ir.scalar_one_or_none()
             if item:
-                if total_alloc > 0:
-                    ratio = pri.allocated_amount / total_alloc
-                    add = round(paid_amount * ratio, 4)
-                else:
-                    add = round(paid_amount / len(pri_rows), 4)
-                item.paid_amount = (item.paid_amount or 0) + add
+                item.paid_amount = round((item.paid_amount or 0) + add, 2)
                 item.paid_date = paid_date
                 _maybe_auto_reconcile(item)
+                touched.append(item)
+        # 🆕 金额审计：采购单级守卫——整单已付不能超过整单收货金额。
+        #   「整单维护」把整单付款记在首行、其余行 0，之后再走请款付款就会把同一笔钱记两遍
+        #   （先整单维护 41,220 再请款付款 41,220 → 已付 82,440）。按行比对会把整单维护误伤，按采购单合计比就对。
+        await _assert_po_not_overpaid(db, touched)
 
     # 🆕 财务付款后 → 推给请款申请人（站内+企微双通道）：你的请款已付款，及时知悉。
     #   取值须在 commit 前（commit 后属性过期，懒加载会 MissingGreenlet）
@@ -3055,22 +3264,32 @@ async def delete_payment_request(
     if not pr:
         raise HTTPException(404, "请款单不存在")
     st = pr.status
+    # 🆕 金额审计：与 /pay 同款原子守卫——付款和删除同时点，删除读到 approved 不反冲、付款却加了 → 幽灵已付。
+    #   条件 UPDATE 拿行锁并确认状态没变；PG 上把并发的付款挡到本事务提交后（那时行已删，付款 rowcount=0）。
+    guard = await db.execute(sa_update(models.PaymentRequest)
+                             .where(models.PaymentRequest.id == prid, models.PaymentRequest.status == st)
+                             .values(status=st))
+    if guard.rowcount != 1:
+        raise HTTPException(409, "该请款单状态刚刚发生了变化，请刷新后再操作")
     pri_rows = list((await db.execute(select(models.PaymentRequestItem).where(
         models.PaymentRequestItem.request_id == prid))).scalars().all())
 
-    # 已付款：反算冲销采购明细 paid_amount（与 /pay 写回口径一致）
+    # 已付款：反算冲销采购明细 paid_amount（与 /pay 写回口径一致，同一个 _split_paid_amount）
     if st == "paid" and pr.paid_amount and pri_rows:
-        total_alloc = sum(p.allocated_amount for p in pri_rows)
-        for pri in pri_rows:
+        shares = _split_paid_amount(float(pr.paid_amount), pri_rows)
+        for pri, sub in zip(pri_rows, shares):
             item = (await db.execute(select(models.PurchaseItem).where(
                 models.PurchaseItem.id == pri.item_id))).scalar_one_or_none()
             if not item:
                 continue
-            if total_alloc > 0:
-                sub = round(pr.paid_amount * (pri.allocated_amount / total_alloc), 4)
-            else:
-                sub = round(pr.paid_amount / len(pri_rows), 4)
-            item.paid_amount = max(0.0, round((item.paid_amount or 0) - sub, 4))
+            left = round((item.paid_amount or 0) - sub, 2)
+            # 🆕 原来 max(0, …) 静默截断：明细已付被「整单维护」改过之后再删请款单，反冲对不上就悄悄吞掉，
+            #   供应商已付合计从此错着。对不上就拒绝，让人先把明细的已付款核对清楚。
+            if left < -0.01:
+                raise HTTPException(
+                    400, f"无法删除：「{item.item_name}」当前已付 ¥{float(item.paid_amount or 0):,.2f}，"
+                         f"小于本单要冲销的 ¥{sub:,.2f}（已付金额可能被整单维护/编辑改过），请先核对明细已付款")
+            item.paid_amount = max(0.0, left)
             # 冲销后不再付清、且此前是「自动」置的已对账 → 回退待对账（不动已开票/人工确认态）
             if item.invoice_status == "已对账":
                 recv = item.received_amount or 0
@@ -3125,9 +3344,12 @@ async def report_overview(
         i.received_amount or 0 for i in items
         if (i.delivery_date or "").startswith(this_month)
     )
+    # 🆕 金额审计：季度原来只有下界，日期在本季之后的行（含手误 2027）全进本季，季度额能大于年度额
+    _q_lo = f"{today.year:04d}-{q_start_month:02d}-01"
+    _q_hi = f"{today.year:04d}-{q_start_month + 2:02d}-31"
     quarter_amount = sum(
         i.received_amount or 0 for i in items
-        if (i.delivery_date or "") >= f"{today.year:04d}-{q_start_month:02d}-01"
+        if _q_lo <= (i.delivery_date or "") <= _q_hi
     )
     year_amount = sum(
         i.received_amount or 0 for i in items
@@ -3186,7 +3408,10 @@ async def report_monthly_trend(
         m = (i.delivery_date or "")[:7]
         if m:
             by_month[m]["amount"] += i.received_amount or 0
-            by_month[m]["paid"] += i.paid_amount or 0
+        # 🆕 金额审计：已付按**付款月**归集（原按下单月：7 月下单 9 月付款的钱画在 7 月，趋势图失真）
+        pm = (i.paid_date or "")[:7] or m
+        if pm and (i.paid_amount or 0):
+            by_month[pm]["paid"] += i.paid_amount or 0
 
     today = date.today()
     result = []

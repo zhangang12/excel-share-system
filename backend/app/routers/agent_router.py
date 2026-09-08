@@ -165,7 +165,10 @@ async def tool_balance_due(db: AsyncSession, current: models.User) -> dict:
     """尾款到期/逾期清单：balance>0 且 balance_date 非空且 <= 今天+14 天（口径同 overdue.scan_balance_due）。"""
     today = _today()
     threshold = (today + timedelta(days=14)).isoformat()
-    q = select(models.SalesLedger).where(
+    # 🆕 金额审计(2026-09-09)：已作废订单只软删项目、四段款不清零，原来仍进"尾款到期"清单（现网 28 行 ¥40 万幽灵尾款）。
+    #   join 项目排除 is_deleted，与资金面板(fund_panel)/tools_sales 同口径。
+    q = select(models.SalesLedger).join(models.Project, models.SalesLedger.project_id == models.Project.id).where(
+        models.Project.is_deleted == False,  # noqa: E712
         models.SalesLedger.balance > 0,
         models.SalesLedger.balance_date.isnot(None),
         models.SalesLedger.balance_date != "",
@@ -1780,10 +1783,14 @@ async def list_pending_cards(
         for c in got:
             for f in c["facts"]:
                 if f["k"] == amount_key:
-                    try:
-                        total += float(str(f["v"]).replace("¥", "").replace(",", ""))
-                    except (TypeError, ValueError):
-                        pass
+                    # 金额文案形如 "¥1,234.56" 或 "¥800.00（已核定）"，只取数字部分
+                    import re as _re
+                    m_ = _re.search(r"-?\d[\d,]*(?:\.\d+)?", str(f["v"]))
+                    if m_:
+                        try:
+                            total += float(m_.group(0).replace(",", ""))
+                        except ValueError:
+                            pass
     return {
         "cards": items,
         "count": len(items),

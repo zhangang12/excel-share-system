@@ -2,6 +2,17 @@
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator
+from typing_extensions import Annotated
+
+# ---------- 🆕 金额审计(2026-09-09)：金额字段统一类型 ----------
+# 为什么要有：pydantic v2 的 float 默认接受 NaN/Infinity（JSON 里 `"amount":"nan"` 也能进），
+# 一条 NaN 落库后所有 SUM 变 NaN，Starlette 序列化 allow_nan=False 直接 500，整页财务报表打不开。
+# 负数：已付/开票/请款/期初/费用行这些字段负数没有任何业务含义，只会让欠款算成负、合计被抵扣。
+# ⚠️ 采购明细的 unit_price / received_amount **保留可负**——反馈#346 允许「优惠」行用负单价抵扣，
+#    生产库里就有 TH20260822-007 的 -0.34。这两个只挡 NaN/Inf。
+Money = Annotated[float, Field(ge=0, allow_inf_nan=False)]            # 非负、有限
+MoneyPos = Annotated[float, Field(gt=0, allow_inf_nan=False)]         # 严格正数
+MoneySigned = Annotated[float, Field(allow_inf_nan=False)]           # 可负（优惠行）、有限
 
 
 # ---------- 通用 ----------
@@ -297,14 +308,14 @@ class SalesOrderCreate(BaseModel):
     customer: str = ""
     cust_type: str = "经销商"
     contract: str = "有"
-    amount: float = 0
+    amount: Money = 0
     tax_rate: str = "13%"
-    prepay: float = 0
+    prepay: Money = 0
     prepay_note: str = ""                 # 🆕 预付收款批注(选填)
-    before_ship: float = 0
+    before_ship: Money = 0
     before_ship_note: str = ""            # 🆕 发货前付收款批注(选填)
-    ship_receivable: float = 0
-    balance: float = 0
+    ship_receivable: Money = 0
+    balance: Money = 0
     balance_date: str = ""
     depts: list[str] = Field(default_factory=list)    # 派往部门（design/electric/produce）
     req_text: str = ""
@@ -333,14 +344,14 @@ class SalesLedgerUpdate(BaseModel):
     customer: Optional[str] = None
     cust_type: Optional[str] = None
     contract: Optional[str] = None
-    amount: Optional[float] = None
+    amount: Optional[Money] = None
     tax_rate: Optional[str] = None
-    prepay: Optional[float] = None
+    prepay: Optional[Money] = None
     prepay_note: Optional[str] = None        # 🆕 预付收款批注
-    before_ship: Optional[float] = None
+    before_ship: Optional[Money] = None
     before_ship_note: Optional[str] = None   # 🆕 发货前付收款批注
-    ship_receivable: Optional[float] = None
-    balance: Optional[float] = None
+    ship_receivable: Optional[Money] = None
+    balance: Optional[Money] = None
     balance_date: Optional[str] = None
     sign_date: Optional[str] = None       # 🆕 下单日期(=合同签订日期)，回写项目一览
     deliver_date: Optional[str] = None    # 🆕 交货日期，回写项目一览
@@ -361,7 +372,7 @@ class NextCodeOut(BaseModel):
 class AfterSalesItemIn(BaseModel):
     """🆕 费用清单一行。invoice_file_id 由前端先上传附件拿到 id 再带过来。"""
     name: str
-    amount: float
+    amount: Money
     invoice_file_id: Optional[int] = None
     note: Optional[str] = None
 
@@ -555,8 +566,8 @@ class WhTxnIn(BaseModel):
     material_id: int
     biz_date: str
     direction: str            # in / out
-    qty: float
-    unit_price: Optional[float] = None   # 🆕 单价（选填；填了自动算金额，用于库存金额/成本统计）
+    qty: MoneyPos
+    unit_price: Optional[Money] = None   # 🆕 单价（选填；填了自动算金额，用于库存金额/成本统计）
     source: Optional[str] = None
     party: Optional[str] = None
     project_id: Optional[int] = None
@@ -1193,14 +1204,14 @@ class PurchaseItemCreate(BaseModel):
     item_name: str = Field(min_length=1, max_length=128)
     spec: Optional[str] = None
     brand: Optional[str] = None
-    qty: Optional[float] = None
-    unit_price: Optional[float] = None
-    received_amount: float = 0
+    qty: Optional[MoneySigned] = None
+    unit_price: Optional[MoneySigned] = None
+    received_amount: MoneySigned = 0
     invoice_date: Optional[str] = None
     tax_rate: Optional[str] = None
-    invoice_amount: float = 0
+    invoice_amount: Money = 0
     payment_method: Optional[str] = None
-    prepay_ratio: Optional[float] = None   # 🆕 预付比例(%)，仅现金预付/对公预付时有意义
+    prepay_ratio: Optional[float] = Field(default=None, ge=0, le=100)   # 🆕 预付比例(%)，仅现金预付/对公预付时有意义
     invoice_status: str = "待对账"
     notes: Optional[str] = None
     custom_values: dict = Field(default_factory=dict)   # 🆕 R6 {str(field_id): value}
@@ -1413,19 +1424,19 @@ class PurchaseItemUpdate(BaseModel):
     item_name: Optional[str] = None
     spec: Optional[str] = None
     brand: Optional[str] = None
-    qty: Optional[float] = None
-    unit_price: Optional[float] = None
-    received_amount: Optional[float] = None
+    qty: Optional[MoneySigned] = None
+    unit_price: Optional[MoneySigned] = None
+    received_amount: Optional[MoneySigned] = None
     invoice_date: Optional[str] = None
     tax_rate: Optional[str] = None
-    invoice_amount: Optional[float] = None
+    invoice_amount: Optional[Money] = None
     payment_method: Optional[str] = None
     # 🆕 反馈#314：现金采购直付通道——不走请款链路的(如淘宝现金买)可在编辑明细时直接维护
     #   已付款金额/付款日期；payment_method 本就可写(可手填"现金")。与请款付款回写共用同字段，
     #   写后 _maybe_auto_reconcile 按既有口径自动对账。
-    paid_amount: Optional[float] = None
+    paid_amount: Optional[Money] = None
     paid_date: Optional[str] = None
-    prepay_ratio: Optional[float] = None
+    prepay_ratio: Optional[float] = Field(default=None, ge=0, le=100)
     # 注意：不允许在这里开放 arrival_date——到货日期只能由仓库收货接口写入，
     # 否则采购员可绕过收货流程直接填/清到货日期，让「到期未到货提醒」失真（且不入库、不回写清单）。
     expected_arrival: Optional[str] = None   # 🆕 预计到货日期（可改；改动会回写清单「预计到货」列并通知管理层）
@@ -1444,16 +1455,16 @@ class PurchaseReceiveIn(BaseModel):
     """仓库收货：填送货单号 / 到货日期；后填价格流程可一并补单价与收货金额。"""
     delivery_note_no: Optional[str] = None
     arrival_date: Optional[str] = None
-    unit_price: Optional[float] = None
-    received_amount: Optional[float] = None
+    unit_price: Optional[MoneySigned] = None
+    received_amount: Optional[MoneySigned] = None
     stock_location: Optional[str] = None  # 🆕 #204 库位改由仓库收货时填（取代采购下单填）
     project_code: Optional[str] = None    # 🆕 #253 订单编号：手工采购单没填的，仓库收货可补/改
 
 
 class BatchReceiveLine(BaseModel):
     item_id: int
-    unit_price: Optional[float] = None
-    received_amount: Optional[float] = None
+    unit_price: Optional[MoneySigned] = None
+    received_amount: Optional[MoneySigned] = None
     # 🆕 #376：逐行订单编号。一次合并收货里各行本来就可能属于不同项目
     #   （同一供应商一车拉来三个项目的料），整批一个编号会把它们全抹成一个。
     project_code: Optional[str] = None
@@ -1591,15 +1602,15 @@ class PurchaseItemSummary(BaseModel):
 class BatchInvoiceIn(BaseModel):
     item_ids: list[int]
     invoice_date: Optional[str] = None
-    invoice_amount: Optional[float] = None  # 仅单条时有效
+    invoice_amount: Optional[Money] = None  # 仅单条时有效
 
 
 class GroupSummaryIn(BaseModel):
     """🆕 #4 合并父行整单维护（不分摊）：开票金额/已付款作为整单总额记在首行(其余置0,保持汇总合计正确)，
     对账状态套用到所有子行。空字段不改。"""
     item_ids: list[int]
-    invoice_amount: Optional[float] = None
-    paid_amount: Optional[float] = None
+    invoice_amount: Optional[Money] = None
+    paid_amount: Optional[Money] = None
     paid_date: Optional[str] = None
     invoice_status: Optional[str] = None    # 待对账/已对账
 
@@ -1616,7 +1627,7 @@ class SetInvoiceNoIn(BaseModel):
 # ---------- 期初余额 ----------
 class SupplierOpeningBalanceIn(BaseModel):
     balance_date: str
-    outstanding_amount: float = 0
+    outstanding_amount: Money = 0
     notes: Optional[str] = None
 
 
@@ -1653,12 +1664,12 @@ class SupplierStatementList(BaseModel):
 # ---------- 请款单 ----------
 class PaymentRequestItemIn(BaseModel):
     item_id: int
-    allocated_amount: float = 0
+    allocated_amount: Money = 0
 
 
 class PaymentRequestCreate(BaseModel):
     supplier_id: int
-    requested_amount: float
+    requested_amount: MoneyPos
     notes: Optional[str] = None
     items: list[PaymentRequestItemIn] = Field(default_factory=list)
 
@@ -1708,7 +1719,7 @@ class PaymentRejectIn(BaseModel):
 
 
 class PaymentPayIn(BaseModel):
-    paid_amount: float
+    paid_amount: MoneyPos
     paid_date: str
     payment_method: Optional[str] = None
 
@@ -1870,7 +1881,7 @@ class OaRequestCreate(BaseModel):
     doc_type: str
     department_id: int
     title: Optional[str] = None
-    amount: Optional[float] = None
+    amount: Optional[Money] = None
     detail: dict = Field(default_factory=dict)
     related_request_id: Optional[int] = None
     cc_user_ids: list[int] = Field(default_factory=list)   # 🆕 抄送人（用户id）
@@ -1909,7 +1920,7 @@ class OaRequestOut(BaseModel):
 
 class OaActionIn(BaseModel):
     note: Optional[str] = None
-    settle_amount: Optional[float] = None   # 审批时可选录入核定金额（通常财务环节使用）
+    settle_amount: Optional[Money] = None   # 审批时可选录入核定金额（只有财务环节能写，见 approve_request）
 
 
 class OaRejectIn(BaseModel):

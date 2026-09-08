@@ -175,9 +175,12 @@ async def main():
         chk(await txn_project(it2["id"]) == [pb["id"]], "只改单价不会动流水上的项目")
 
         # 收货只入库、不出库——这次改动没有把老行为改掉
+        # ⚠️ 2026-09-09（金额审计）：冲红单现在也挂 purchase_item_id（追溯/删明细解 FK），冲红入库单生成的反向单
+        #   方向是 out，那不是"收货自动出库"，要排除 is_reversal 再看。
         async with SessionLocal() as db:
             dirs = (await db.execute(select(models.WhTxn.direction, func.count()).where(
-                models.WhTxn.purchase_item_id.isnot(None)).group_by(models.WhTxn.direction))).all()
+                models.WhTxn.purchase_item_id.isnot(None),
+                models.WhTxn.is_reversal == False).group_by(models.WhTxn.direction))).all()  # noqa: E712
         chk(all(d == "in" for d, _ in dirs), f"收货仍然只产生入库、不自动出库: {dirs}")
 
 

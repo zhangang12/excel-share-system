@@ -1,9 +1,12 @@
 // 🆕 v4 中文格式化工具：金额/日期/数字 适配中文使用习惯。
 
-/** 金额完整显示: ¥1,280,000 (千分位, zh-CN locale) */
+/** 金额完整显示: ¥1,280,000.00 (千分位、固定 2 位小数, zh-CN locale)
+ *  🆕 金额审计(2026-09-09)：原来 maximumFractionDigits:0 整数化——仓库单价 ¥0.35 显示成 ¥0、
+ *  售后费用 1234.56 在售后页显示 ¥1,235、财务页显示 ¥1,234.56，两页对不上会被当成算错。
+ *  全站金额一律显示到分（与 api/sales.ts 的 fmtMoney 同口径）。 */
 export function fmtMoney(n?: number | null, dash = '—'): string {
   if (n == null || n === 0 || Number.isNaN(n)) return dash
-  return '¥' + Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return '¥' + Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 /** KPI 大字金额: 自动转「万」「亿」，节省空间。

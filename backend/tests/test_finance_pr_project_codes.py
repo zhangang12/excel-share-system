@@ -54,11 +54,12 @@ async def main():
         sid = r.json()["id"]
 
         # 三条明细：两个不同项目编号 + 一条无编号（无编号不该出现在 project_codes 里）
+        # ⚠️ 2026-09-09（金额审计）：请款分配不能超过「收货金额 − 已付」，没金额的明细请不了款——夹具补上收货金额
         async with SessionLocal() as db:
-            i1 = models.PurchaseItem(supplier_id=sid, item_name="件一", buyer_id=b1, project_code="P-102")
-            i2 = models.PurchaseItem(supplier_id=sid, item_name="件二", buyer_id=b1, project_code="P-101")
-            i3 = models.PurchaseItem(supplier_id=sid, item_name="件三", buyer_id=b1, project_code=None)
-            i4 = models.PurchaseItem(supplier_id=sid, item_name="件四", buyer_id=b1, project_code="P-101")  # 重复编号去重
+            i1 = models.PurchaseItem(supplier_id=sid, item_name="件一", buyer_id=b1, project_code="P-102", received_amount=25)
+            i2 = models.PurchaseItem(supplier_id=sid, item_name="件二", buyer_id=b1, project_code="P-101", received_amount=25)
+            i3 = models.PurchaseItem(supplier_id=sid, item_name="件三", buyer_id=b1, project_code=None, received_amount=25)
+            i4 = models.PurchaseItem(supplier_id=sid, item_name="件四", buyer_id=b1, project_code="P-101", received_amount=25)  # 重复编号去重
             db.add_all([i1, i2, i3, i4]); await db.commit()
             ids = [i1.id, i2.id, i3.id, i4.id]
 

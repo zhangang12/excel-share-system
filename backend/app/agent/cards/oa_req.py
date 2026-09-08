@@ -95,17 +95,23 @@ async def assemble_oa_cards(db: AsyncSession, current: models.User,
             continue
         if not _can_act_on_step(cur, current, principals):
             continue
+        # 🆕 金额审计：端点已拦「不能批自己提的单」(oa_router.approve_request)，卡片同口径不再把自己的单当待办
+        if req.requester_id == current.id:
+            continue
 
         who = (req.requester.full_name or req.requester.username) if req.requester else "—"
         dept = req.department.name if req.department else ""
         cat = _CAT_CN.get(req.category, req.category or "")
         doc = _DOC_CN.get(req.doc_type, req.doc_type or "")
 
+        # 🆕 金额审计：财务核定过的单按核定金额显示（与支出总览/资金面板 coalesce(settle, amount) 同口径）
+        eff_amt = req.settle_amount if req.settle_amount is not None else req.amount
         facts = [
             {"k": "单号", "v": req.request_no or f"#{req.id}"},
             {"k": "类型", "v": f"{cat}·{doc}" if doc else cat},
             {"k": "申请人", "v": who + (f"（{dept}）" if dept else "")},
-            {"k": "金额", "v": _money(req.amount), "emphasis": True},
+            {"k": "金额", "v": _money(eff_amt) + ("（已核定）" if req.settle_amount is not None else ""),
+             "emphasis": True},
         ]
         if req.title:
             facts.append({"k": "事由", "v": req.title[:40]})

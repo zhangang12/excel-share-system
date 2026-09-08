@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Upload, Download, ArrowDown, Search, Refresh } from '@element-plus/icons-vue'
 import { http } from '@/api'
 import { fmtMoney } from '@/api/sales'
+import { moneyParser } from '@/utils/money'   // 🆕 金额审计：工资格子粘贴 "6,000" 不再被截成 6
 import EmptyHint from '@/components/EmptyHint.vue'
 import { useAuthStore } from '@/stores/auth'
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
@@ -401,7 +402,7 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
                 <el-table-column prop="department_name" label="部门" min-width="110" />
                 <el-table-column label="工资总额(元)" width="180">
                   <template #default="{ row }">
-                    <el-input-number v-model="row.total_amount" :min="0" :precision="2" :controls="false" style="width:100%" />
+                    <el-input-number v-model="row.total_amount" :min="0" :precision="2" :controls="false" :parser="moneyParser" style="width:100%" />
                   </template>
                 </el-table-column>
                 <el-table-column label="备注" min-width="140">
@@ -491,13 +492,13 @@ onMounted(async () => { await loadDepts(); await loadEmps(); loadBindableUsers()
                         :title="`离职日期 ${row.leave_date || '—'}`" style="margin-left:4px">离职</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="基本工资" width="118"><template #default="{ row }"><el-input-number v-model="row.base" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
-            <el-table-column label="绩效/奖金" width="118"><template #default="{ row }"><el-input-number v-model="row.merit" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
-            <el-table-column label="加班费" width="112"><template #default="{ row }"><el-input-number v-model="row.overtime_pay" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
-            <el-table-column label="补贴" width="110"><template #default="{ row }"><el-input-number v-model="row.allowance" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
-            <el-table-column label="社保公积金" width="120"><template #default="{ row }"><el-input-number v-model="row.social_deduct" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
-            <el-table-column label="个税" width="110"><template #default="{ row }"><el-input-number v-model="row.personal_tax" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
-            <el-table-column label="其他扣款" width="112"><template #default="{ row }"><el-input-number v-model="row.other_deduct" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="基本工资" width="118"><template #default="{ row }"><el-input-number v-model="row.base" :min="0" :precision="2" :controls="false" :parser="moneyParser" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="绩效/奖金" width="118"><template #default="{ row }"><el-input-number v-model="row.merit" :min="0" :precision="2" :controls="false" :parser="moneyParser" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="加班费" width="112"><template #default="{ row }"><el-input-number v-model="row.overtime_pay" :min="0" :precision="2" :controls="false" :parser="moneyParser" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="补贴" width="110"><template #default="{ row }"><el-input-number v-model="row.allowance" :min="0" :precision="2" :controls="false" :parser="moneyParser" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="社保公积金" width="120"><template #default="{ row }"><el-input-number v-model="row.social_deduct" :min="0" :precision="2" :controls="false" :parser="moneyParser" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="个税" width="110"><template #default="{ row }"><el-input-number v-model="row.personal_tax" :min="0" :precision="2" :controls="false" :parser="moneyParser" size="small" style="width:100%" /></template></el-table-column>
+            <el-table-column label="其他扣款" width="112"><template #default="{ row }"><el-input-number v-model="row.other_deduct" :min="0" :precision="2" :controls="false" :parser="moneyParser" size="small" style="width:100%" /></template></el-table-column>
             <el-table-column label="实发" width="112" align="right" fixed="right"><template #default="{ row }"><b class="amt">{{ fmtMoney(salNet(row)) }}</b></template></el-table-column>
             <el-table-column label="备注" min-width="120"><template #default="{ row }"><el-input v-model="row.note" size="small" placeholder="选填" maxlength="255" /></template></el-table-column>
           </el-table>
