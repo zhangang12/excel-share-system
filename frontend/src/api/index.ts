@@ -1,4 +1,4 @@
-import axios, { AxiosError } from 'axios'
+import axios, { AxiosError, type AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
 
 export const http = axios.create({
@@ -125,8 +125,22 @@ function goLogin() {
   }
 }
 
+/**
+ * 🆕 反馈#425（卢照坤）：「每天下午四点左右系统自动退出登录」——令牌 8 小时到期。
+ * 后端在剩余有效期不足一半时，通过响应头 X-PMS-Refresh-Token 下发一张新令牌（见 backend/app/deps.py），
+ * 这里悄悄换掉本地的：人在用就不会掉线，闲置超过 8 小时才要重新登录。
+ * 桌面端页面是 file://、请求跨域，后端 CORS 已 expose 这个头，否则 axios 读不到。
+ */
+function adoptRefreshedToken(res: AxiosResponse) {
+  const t = res?.headers?.['x-pms-refresh-token']
+  if (typeof t === 'string' && t) {
+    try { localStorage.setItem('pms_token', t) } catch { /* 存储不可用时下次请求仍带旧令牌，直到过期 */ }
+  }
+  return res
+}
+
 http.interceptors.response.use(
-  (res) => res,
+  adoptRefreshedToken,
   (err: AxiosError) => {
     const status = err.response?.status
     const url = err.config?.url || ''

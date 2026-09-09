@@ -1,14 +1,37 @@
 """依赖项：当前用户 / 权限检查"""
-from fastapi import Depends, HTTPException, status, Header
+from datetime import datetime, timezone
+
+from fastapi import Depends, HTTPException, status, Header, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from .database import get_db
 from . import models
-from .auth import decode_token
+from .auth import decode_token, create_access_token
+from .config import settings
+
+# 🆕 反馈#425（卢照坤）：「每天下午四点左右系统自动退出登录」——令牌有效期 8 小时，早上 8 点登录到 16 点就过期，
+#   而系统没有任何续期机制。口径：**用着就不掉**：每次带令牌的请求，若剩余有效期不足一半（默认 < 4 小时），
+#   响应头 X-PMS-Refresh-Token 下发一张新的 8 小时令牌，前端悄悄换掉；闲置超过 8 小时才需要重新登录。
+#   不做「一律延长有效期」：那只是把 16 点挪到 20 点，且闲置电脑长期持有有效令牌。
+#   ⚠️ H5「记住我」是 30 天令牌，剩余 > 4 小时时不会触发，快到期那几小时会被续成 8 小时——可接受。
+REFRESH_HEADER = "X-PMS-Refresh-Token"
+
+
+def _maybe_refresh(payload: dict, response: Response) -> None:
+    exp = payload.get("exp")
+    if not exp or response is None:
+        return
+    try:
+        remaining = float(exp) - datetime.now(timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return
+    if remaining < settings.access_token_expire_minutes * 60 / 2:
+        response.headers[REFRESH_HEADER] = create_access_token(payload.get("sub"))
 
 
 async def get_current_user(
+    response: Response,
     authorization: str = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> models.User:
@@ -25,6 +48,7 @@ async def get_current_user(
     user = res.scalar_one_or_none()
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "账号已禁用")
+    _maybe_refresh(payload, response)
     return user
 
 

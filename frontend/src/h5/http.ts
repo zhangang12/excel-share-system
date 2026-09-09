@@ -21,7 +21,14 @@ http.interceptors.request.use((config) => {
 })
 
 http.interceptors.response.use(
-  (r) => r,
+  (r) => {
+    // 🆕 反馈#425：后端在令牌剩余不足一半时用响应头下发新令牌，悄悄换掉——用着就不掉线（与 @/api/index.ts 同口径）
+    const t = r?.headers?.['x-pms-refresh-token']
+    if (typeof t === 'string' && t) {
+      try { localStorage.setItem('pms_token', t) } catch { /* 存储不可用则沿用旧令牌 */ }
+    }
+    return r
+  },
   (err) => {
     // 401 一律回登录页；其余错误原样抛给调用方，由页面把 detail 显示出来
     if (err?.response?.status === 401) {

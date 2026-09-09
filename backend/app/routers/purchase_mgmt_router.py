@@ -350,11 +350,14 @@ async def items_summary(
     received = sum(i.received_amount or 0 for i in items)
     invoiced = sum(i.invoice_amount or 0 for i in items)
     paid = sum(i.paid_amount or 0 for i in items)
+    # 🆕 应付口径（2026-09-09）：欠款/待开票只算**已到货**的明细（到货才算应付）；收货/已付合计仍是当前列表的总数
+    arrived = [i for i in items if i.arrival_date]
+    recv_ap = sum(i.received_amount or 0 for i in arrived)
     return schemas.PurchaseItemSummary(
-        received_total=received,
-        uninvoiced=max(received - invoiced, 0),
-        paid_total=paid,
-        outstanding=max(received - paid, 0),
+        received_total=round(received, 2),
+        uninvoiced=round(max(recv_ap - sum(i.invoice_amount or 0 for i in arrived), 0), 2),
+        paid_total=round(paid, 2),
+        outstanding=round(max(recv_ap - sum(i.paid_amount or 0 for i in arrived), 0), 2),
         count=len(items),
     )
 
@@ -2472,7 +2475,8 @@ async def supplier_statements(
     all_suppliers = r.scalars().all()
 
     ob_r = await db.execute(select(models.SupplierOpeningBalance))
-    ob_map = {ob.supplier_id: ob.outstanding_amount for ob in ob_r.scalars().all()}
+    ob_objs = {ob.supplier_id: ob for ob in ob_r.scalars().all()}
+    ob_map = {sid_: (ob.outstanding_amount or 0) for sid_, ob in ob_objs.items()}
 
     item_r = await db.execute(select(models.PurchaseItem))
     items = item_r.scalars().all()
@@ -2486,42 +2490,69 @@ async def supplier_statements(
     my_sids: Optional[set] = None
     if restricted:
         my_sids = {s.id for s in all_suppliers if s.created_by == current.id}
-    grp: dict = defaultdict(lambda: {"received": 0.0, "invoice": 0.0, "paid": 0.0, "count": 0})
+    # 🆕 应付口径（2026-09-09 老板定，见 _ap_bucket）：到货才算应付；期初 balance_date 之前的明细不再累计；
+    #   未到货但已付的钱单列「预付」、未到货的订单额单列「未到货」——两者都不进欠款。
+    grp: dict = defaultdict(lambda: {"received": 0.0, "invoice": 0.0, "paid": 0.0,
+                                     "prepaid": 0.0, "pending": 0.0, "count": 0})
     for i in items:
         if restricted and i.buyer_id != current.id:
             continue
         g = grp[i.supplier_id]
-        g["received"] += i.received_amount or 0
-        g["invoice"] += i.invoice_amount or 0
-        g["paid"] += i.paid_amount or 0
         g["count"] += 1
+        b = _ap_bucket(i, ob_objs.get(i.supplier_id))
+        if b == "ap":
+            g["received"] += i.received_amount or 0
+            g["invoice"] += i.invoice_amount or 0
+            g["paid"] += i.paid_amount or 0
+        elif b == "pre":
+            g["pending"] += i.received_amount or 0
+            g["prepaid"] += i.paid_amount or 0
 
     rows = []
     total_opening = total_received = total_paid = total_outstanding = 0.0
+    total_prepaid = total_pending = 0.0
     for s in all_suppliers:
         if my_sids is not None and s.id not in my_sids:
             continue
-        g = grp.get(s.id, {"received": 0.0, "invoice": 0.0, "paid": 0.0, "count": 0})
+        g = grp.get(s.id, {"received": 0.0, "invoice": 0.0, "paid": 0.0, "prepaid": 0.0, "pending": 0.0, "count": 0})
         ob = ob_map.get(s.id, 0.0)
-        outstanding = ob + g["received"] - g["paid"]
-        uninvoiced = g["received"] - g["invoice"]
+        outstanding = round(ob + g["received"] - g["paid"], 2)
+        uninvoiced = round(g["received"] - g["invoice"], 2)
         rows.append(schemas.SupplierStatementRow(
             supplier_id=s.id, supplier_name=s.name, category=s.category,
-            opening_balance=ob, received_total=g["received"],
-            invoice_total=g["invoice"], paid_total=g["paid"],
+            opening_balance=ob, received_total=round(g["received"], 2),
+            invoice_total=round(g["invoice"], 2), paid_total=round(g["paid"], 2),
             outstanding=outstanding, uninvoiced=uninvoiced,
+            prepaid_total=round(g["prepaid"], 2), pending_total=round(g["pending"], 2),
             item_count=g["count"],
         ))
         total_opening += ob
         total_received += g["received"]
         total_paid += g["paid"]
         total_outstanding += outstanding
+        total_prepaid += g["prepaid"]
+        total_pending += g["pending"]
 
     return schemas.SupplierStatementList(
-        rows=rows, total_opening=total_opening,
-        total_received=total_received, total_paid=total_paid,
-        total_outstanding=total_outstanding,
+        rows=rows, total_opening=round(total_opening, 2),
+        total_received=round(total_received, 2), total_paid=round(total_paid, 2),
+        total_outstanding=round(total_outstanding, 2),
+        total_prepaid=round(total_prepaid, 2), total_pending=round(total_pending, 2),
+        note="欠款 = 期初 + 已到货收货金额 − 已到货已付；未到货的订单额与预付款单列，不计欠款；期初日期之前的明细不累计",
     )
+
+
+def _ap_bucket(item, ob) -> str:
+    """🆕 应付口径（2026-09-09 老板定）——每条采购明细归三档之一：
+      'ob'  下单日期 ≤ 该供应商期初余额的 balance_date：这笔钱已含在期初里，不再累计（否则重复，腾丰就多了 ¥12,492）
+      'pre' 期初之后、**未到货**：只是订单/预付，不算应付（付了款的记「预付」，订单额记「未到货」）
+      'ap'  期初之后、已到货：计入收货/开票/已付/欠款
+    ⚠️ received_amount 下单时就等于订单金额（不是"收货后才有"），所以"到没到货"只能看 arrival_date。
+    账目一览 / 对账单导出 / 汇总报表 KPI / 明细页欠款 四处共用，别各写一份。"""
+    if ob is not None and getattr(ob, "balance_date", None) and item.delivery_date \
+            and item.delivery_date <= ob.balance_date:
+        return "ob"
+    return "ap" if item.arrival_date else "pre"
 
 
 @router.get("/statements/{sid}/detail", response_model=List[schemas.PurchaseItemOut])
@@ -2570,11 +2601,16 @@ async def export_supplier_statement(
     ob = obr.scalar_one_or_none()
     opening = (ob.outstanding_amount if ob else 0) or 0
 
-    recv = sum(i.received_amount or 0 for i in items)
-    inv = sum(i.invoice_amount or 0 for i in items)
-    paid = sum(i.paid_amount or 0 for i in items)
-    uninv = sum((i.received_amount or 0) for i in items if i.invoice_status != "已开票")
-    outstanding = opening + recv - paid
+    # 🆕 应付口径与账目一览同一套（_ap_bucket）：到货才算；期初日期之前的明细不累计；未到货的单列
+    ap = [i for i in items if _ap_bucket(i, ob) == "ap"]
+    pre = [i for i in items if _ap_bucket(i, ob) == "pre"]
+    recv = round(sum(i.received_amount or 0 for i in ap), 2)
+    inv = round(sum(i.invoice_amount or 0 for i in ap), 2)
+    paid = round(sum(i.paid_amount or 0 for i in ap), 2)
+    uninv = round(recv - inv, 2)
+    prepaid = round(sum(i.paid_amount or 0 for i in pre), 2)
+    pending = round(sum(i.received_amount or 0 for i in pre), 2)
+    outstanding = round(opening + recv - paid, 2)
 
     wb = Workbook()
     ws = wb.active
@@ -2602,8 +2638,9 @@ async def export_supplier_statement(
     _cell(2, 1, f"分类：{sup.category or '—'}    联系人：{sup.contact or '—'}    电话：{sup.phone or '—'}",
           align="center")
     # 汇总条
-    summ = (f"期初欠款：{opening:,.2f}    收货合计：{recv:,.2f}    开票合计：{inv:,.2f}    "
-            f"待开票：{uninv:,.2f}    已付款：{paid:,.2f}    欠款余额：{outstanding:,.2f}")
+    summ = (f"期初欠款：{opening:,.2f}    收货合计(已到货)：{recv:,.2f}    开票合计：{inv:,.2f}    "
+            f"待开票：{uninv:,.2f}    已付款：{paid:,.2f}    欠款余额：{outstanding:,.2f}    "
+            f"未到货订单：{pending:,.2f}    预付(未到货)：{prepaid:,.2f}")
     ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=n)
     _cell(3, 1, summ, bold=True, fill="FFF7E6", align="center")
 
@@ -3362,12 +3399,14 @@ async def report_overview(
     if restricted:
         my_sids = {s.id for s in (await db.execute(select(models.Supplier).where(
             models.Supplier.created_by == current.id))).scalars().all()}
-    ob_r = await db.execute(select(models.SupplierOpeningBalance))
-    ob_total = sum(ob.outstanding_amount or 0 for ob in ob_r.scalars().all()
-                   if my_sids is None or ob.supplier_id in my_sids)
-    total_received = sum(i.received_amount or 0 for i in items)
-    total_paid = sum(i.paid_amount or 0 for i in items)
-    total_outstanding = ob_total + total_received - total_paid
+    ob_objs = {ob.supplier_id: ob for ob in (await db.execute(select(models.SupplierOpeningBalance))).scalars().all()}
+    ob_total = sum((ob.outstanding_amount or 0) for sid_, ob in ob_objs.items()
+                   if my_sids is None or sid_ in my_sids)
+    # 🆕 应付口径与账目一览同一套（_ap_bucket）：只算已到货、期初日期之后的明细
+    ap_items = [i for i in items if _ap_bucket(i, ob_objs.get(i.supplier_id)) == "ap"]
+    total_received = sum(i.received_amount or 0 for i in ap_items)
+    total_paid = sum(i.paid_amount or 0 for i in ap_items)
+    total_outstanding = round(ob_total + total_received - total_paid, 2)
 
     pr_stmt = select(func.count(models.PaymentRequest.id)).where(
         models.PaymentRequest.status == "pending")

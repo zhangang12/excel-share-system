@@ -1650,6 +1650,9 @@ class SupplierStatementRow(BaseModel):
     paid_total: float = 0
     outstanding: float = 0
     uninvoiced: float = 0
+    # 🆕 应付口径(2026-09-09)：未到货的订单额 / 未到货已付的钱（预付）单列，不进欠款
+    pending_total: float = 0
+    prepaid_total: float = 0
     item_count: int = 0
 
 
@@ -1659,6 +1662,9 @@ class SupplierStatementList(BaseModel):
     total_received: float = 0
     total_paid: float = 0
     total_outstanding: float = 0
+    total_pending: float = 0
+    total_prepaid: float = 0
+    note: Optional[str] = None
 
 
 # ---------- 请款单 ----------

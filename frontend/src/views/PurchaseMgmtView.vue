@@ -177,6 +177,7 @@ interface SupplierStatementRow {
   supplier_id: number; supplier_name: string; category?: string | null
   opening_balance: number; received_total: number; invoice_total: number
   paid_total: number; outstanding: number; uninvoiced: number; item_count: number
+  pending_total?: number; prepaid_total?: number   // 🆕 应付口径：未到货订单额 / 未到货已付(预付)，不进欠款
 }
 interface StatementList {
   rows: SupplierStatementRow[]; total_opening: number; total_received: number
@@ -1948,7 +1949,8 @@ async function saveOpeningBalance() {
   } catch { /* handled */ } finally { openingBalanceSaving.value = false }
 }
 
-// 🆕 供应商账目合计行（列对齐：供应商/分类/状态/收货/开票/待开票/已付/欠款/明细数/操作；期初欠款列已隐藏）
+// 🆕 供应商账目合计行（列对齐：供应商/分类/状态/收货/开票/待开票/已付/欠款/未到货/预付/明细数/操作；期初欠款列已隐藏）
+//   ⚠️ summary-method 按数组下标对列：加/删列必须同步改这里（#361 踩过）。2026-09-09 应付口径加了「未到货」「预付」两列 → 12 项。
 function stmtSummary() {
   const rows = filteredStatementRows.value
   const sum = (k: keyof SupplierStatementRow) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0)
@@ -1956,6 +1958,7 @@ function stmtSummary() {
     fmtMoney(sum('received_total')),
     fmtMoney(sum('invoice_total')), fmtMoney(sum('uninvoiced')),
     fmtMoney(sum('paid_total')), fmtMoney(sum('outstanding')),
+    fmtMoney(sum('pending_total')), fmtMoney(sum('prepaid_total')),
     String(rows.reduce((a, r) => a + (r.item_count || 0), 0)), '']
 }
 
@@ -2700,7 +2703,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               </template>
             </el-table-column>
             <!-- 🆕 反馈：期初欠款列不需要，隐藏（维护期初的功能保留在编辑供应商里） -->
-            <el-table-column prop="received_total" label="收货合计" width="122" align="right" sortable>
+            <!-- 🆕 应付口径(2026-09-09 老板定)：到货才算应付；期初日期之前的明细不累计；未到货的订单额/预付款单列 -->
+            <el-table-column prop="received_total" label="收货合计(已到货)" width="136" align="right" sortable>
               <template #default="{ row }"><b>{{ fmtMoney(row.received_total) }}</b></template>
             </el-table-column>
             <el-table-column prop="invoice_total" label="开票合计" width="122" align="right" sortable>
@@ -2714,6 +2718,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <el-table-column prop="outstanding" label="欠款余额" width="122" align="right" sortable>
               <template #default="{ row }"><b class="danger">{{ fmtMoney(row.outstanding) }}</b></template>
+            </el-table-column>
+            <el-table-column prop="pending_total" label="未到货订单" width="118" align="right" sortable>
+              <template #default="{ row }"><span class="muted">{{ row.pending_total ? fmtMoney(row.pending_total) : '—' }}</span></template>
+            </el-table-column>
+            <el-table-column prop="prepaid_total" label="预付(未到货)" width="118" align="right" sortable>
+              <template #default="{ row }"><span class="muted">{{ row.prepaid_total ? fmtMoney(row.prepaid_total) : '—' }}</span></template>
             </el-table-column>
             <el-table-column label="明细数" width="72" align="center">
               <template #default="{ row }">{{ row.item_count }}</template>

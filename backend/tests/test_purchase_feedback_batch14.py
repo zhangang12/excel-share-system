@@ -249,10 +249,20 @@ async def main():
             f"直付后明细付款状态=已付款: {crows[0].get('pay_status') if crows else None}")
 
         # 供应商账目：已付合计随之更新（乙供应商只有这一笔）
+        # ⚠️ 2026-09-09 应付口径（老板定）：到货才算应付——这笔淘宝现金直付**还没收货**，
+        #   钱先记在「预付(未到货)」，不进已付/欠款；仓库收货之后才转成已付。
         r = await c.get("/api/purchase-mgmt/statements", headers=Hb1)
         srow = [x for x in r.json().get("rows", []) if x["supplier_id"] == s2]
-        chk(srow and abs(srow[0]["paid_total"] - 100) < 0.005,
-            f"供应商账目已付合计=100: {srow[0].get('paid_total') if srow else None}")
+        chk(srow and abs(srow[0]["prepaid_total"] - 100) < 0.005 and abs(srow[0]["paid_total"]) < 0.005,
+            f"未到货的现金直付记预付=100、已付=0: {srow and (srow[0].get('prepaid_total'), srow[0].get('paid_total'))}")
+        rr = await c.put(f"/api/purchase-mgmt/items/{cash_id}/receive", headers=Hw1,
+                         json={"arrival_date": "2026-07-22"})
+        chk(rr.status_code == 200, f"仓库收货现金件: {rr.status_code} {rr.text[:80]}")
+        if rr.status_code == 200:
+            r = await c.get("/api/purchase-mgmt/statements", headers=Hb1)
+            srow = [x for x in r.json().get("rows", []) if x["supplier_id"] == s2]
+            chk(srow and abs(srow[0]["paid_total"] - 100) < 0.005 and abs(srow[0]["outstanding"]) < 0.005,
+                f"收货后转成已付=100、欠款=0: {srow and (srow[0].get('paid_total'), srow[0].get('outstanding'))}")
 
         # ==================== #318 外协图纸名称展示去重 ====================
         # 源头：外协/激光清单的「规格」列就是「图纸名称」列，下单时 foldDrawingSpec 把同一值折两遍，

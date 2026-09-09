@@ -127,6 +127,8 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # 🆕 反馈#425：登录续期靠响应头下发新令牌，跨域（H5/桌面端）时浏览器默认不让 JS 读自定义响应头，必须显式暴露
+        expose_headers=["X-PMS-Refresh-Token"],
     )
 
     register_exception_handlers(app)
