@@ -1143,6 +1143,23 @@ class SalesLeadReport(BaseModel):
 # ==================== 🆕 采购管理模块 ====================
 
 # ---------- 供应商 ----------
+class SupplierBankAccountIn(BaseModel):
+    """🆕 #426 供应商收款账号一行。id 有值=改已有账号，无值=新增；提交列表里没有的已有账号=删除。"""
+    id: Optional[int] = None
+    bank_name: Optional[str] = Field(default=None, max_length=128)
+    bank_account: str = Field(min_length=1, max_length=64)
+    is_default: bool = False
+    notes: Optional[str] = Field(default=None, max_length=128)
+
+
+class SupplierBankAccountOut(BaseModel):
+    id: int
+    bank_name: Optional[str] = None
+    bank_account: str
+    is_default: bool = False
+    notes: Optional[str] = None
+
+
 class SupplierCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     code: Optional[str] = None
@@ -1156,6 +1173,9 @@ class SupplierCreate(BaseModel):
     settlement_type: Optional[str] = None
     credit_days: Optional[int] = None
     notes: Optional[str] = None
+    # 🆕 #426 多个收款账号。传了就以它为准（bank_name/bank_account 被忽略）；
+    #   不传（老客户端 1.0.82 及以前）→ 按 bank_name/bank_account 维护默认账号。
+    bank_accounts: Optional[list[SupplierBankAccountIn]] = None
 
 
 class SupplierUpdate(BaseModel):
@@ -1171,6 +1191,7 @@ class SupplierUpdate(BaseModel):
     settlement_type: Optional[str] = None
     credit_days: Optional[int] = None
     notes: Optional[str] = None
+    bank_accounts: Optional[list[SupplierBankAccountIn]] = None   # 🆕 #426 同 SupplierCreate
 
 
 class SupplierOut(BaseModel):
@@ -1191,6 +1212,7 @@ class SupplierOut(BaseModel):
     created_by: Optional[int] = None          # 🆕 需求五：建档采购员
     created_by_name: Optional[str] = None
     created_at: datetime
+    bank_accounts: list[SupplierBankAccountOut] = Field(default_factory=list)   # 🆕 #426 默认账号排第一
 
 
 # ---------- 采购明细 ----------
@@ -1678,6 +1700,12 @@ class PaymentRequestCreate(BaseModel):
     requested_amount: MoneyPos
     notes: Optional[str] = None
     items: list[PaymentRequestItemIn] = Field(default_factory=list)
+    bank_account_id: Optional[int] = None   # 🆕 #426 打到供应商的哪个收款账号；空=默认账号
+
+
+class PaymentResubmitIn(BaseModel):
+    """🆕 #426 被驳回的请款单重提时可顺便换打款账号（不传=不变）。"""
+    bank_account_id: Optional[int] = None
 
 
 class PaymentRequestOut(BaseModel):
@@ -1706,6 +1734,11 @@ class PaymentRequestOut(BaseModel):
     supplier_bank_name: Optional[str] = None
     supplier_bank_account: Optional[str] = None
     supplier_tax_no: Optional[str] = None
+    # 🆕 #426：上面两列=本单要打的账号（已付款=付款时快照；否则=指定账号，未指定=默认账号）
+    bank_account_id: Optional[int] = None
+    bank_account_note: Optional[str] = None     # 账号备注，如「开票户」
+    bank_account_is_default: bool = True
+    supplier_account_count: int = 0             # 该供应商共几个账号（>1 时付款弹窗要醒目提示）
     po_nos: list[str] = Field(default_factory=list)
     # 🆕 反馈#298：请款单关联采购明细的项目编号（去重排序；财务请款审批列表「项目编号」列用）
     project_codes: list[str] = Field(default_factory=list)

@@ -27,6 +27,9 @@ interface PaymentRequestOut {
   reject_stage?: string | null; rejecter_name?: string | null; rejected_at?: string | null   // 🆕 驳回环节/退回人
   // 🆕 需求十六：付款时可见收款账户信息 + 关联采购单
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
+  // 🆕 #426 上面的开户行/账号 = 本单指定的账号；供应商共几个账号、是不是默认、账号备注
+  bank_account_id?: number | null; bank_account_note?: string | null
+  bank_account_is_default?: boolean; supplier_account_count?: number
   po_nos?: string[]
   project_codes?: string[]   // 🆕 反馈#298 请款审批列表「项目编号」列（关联采购明细的项目编号，去重）
   // 🆕 盈利改善2·应付账期：最早到期日(到货+账期) 与 距到期天数(负=已逾期)
@@ -1542,6 +1545,10 @@ async function revokeInvoice(row: ViewRow) {
           <div class="pay-info-row"><span class="k">银行账号</span><b>{{ payingPr.supplier_bank_account || '—' }}</b><el-button v-if="payingPr.supplier_bank_account" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_account)">复制</el-button></div>
           <div class="pay-info-row"><span class="k">税号</span>{{ payingPr.supplier_tax_no || '—' }}<el-button v-if="payingPr.supplier_tax_no" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_tax_no)">复制</el-button></div>
           <div v-if="!payingPr.supplier_bank_account" class="muted small">该供应商未维护银行账号，请先在采购管理补全供应商档案。</div>
+          <!-- 🆕 #426 多账号供应商：醒目提示本单指定的是哪一个，别凭记忆打到另一个账号 -->
+          <el-alert v-else-if="(payingPr.supplier_account_count || 0) > 1" type="warning" :closable="false" show-icon
+                    style="margin-top:6px"
+                    :title="`该供应商有 ${payingPr.supplier_account_count} 个收款账号，本单指定上面这个${payingPr.bank_account_is_default ? '（默认账号）' : '（非默认账号）'}${payingPr.bank_account_note ? '：' + payingPr.bank_account_note : ''}`" />
         </div>
         <div class="pay-info-block">
           <div class="pay-info-title">关联采购单

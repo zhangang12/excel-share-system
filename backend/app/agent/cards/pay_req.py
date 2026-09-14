@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import models
-from ...routers.purchase_mgmt_router import _buyer_restricted
+from ...routers.purchase_mgmt_router import _buyer_restricted, _resolve_pr_account
 from . import token as card_token
 
 # 金额异常判据：高于该供应商历史均值这么多倍就标出来。
@@ -157,6 +157,7 @@ async def assemble_pay_req_cards(db: AsyncSession, current: models.User,
     cards = []
     for pr in prs:
         sup = pr.supplier
+        acct = await _resolve_pr_account(db, pr)
         requester = pr.requester
 
         flags: list[dict] = []
@@ -185,8 +186,11 @@ async def assemble_pay_req_cards(db: AsyncSession, current: models.User,
                 {"k": "供应商", "v": sup.name if sup else f"#{pr.supplier_id}"},
                 {"k": "请款金额", "v": _money(pr.requested_amount), "emphasis": True},
                 {"k": "采购内容", "v": _brief(names.get(pr.id) or [])},
+                # 🆕 #426：多账号供应商显示本单指定的那个账号，并标出「共 N 个」
                 {"k": "收款账号",
-                 "v": f"{(sup.bank_name or '') if sup else ''} {_mask_account(sup.bank_account if sup else None)}".strip(),
+                 "v": (f"{acct['bank_name'] or ''} {_mask_account(acct['bank_account'])}".strip()
+                       + (f"（共 {acct['count']} 个，本单指定{'默认' if acct['is_default'] else '非默认'}账号）"
+                          if acct["count"] > 1 else "")),
                  "sensitive": True},
                 {"k": "提交人", "v": (requester.full_name or requester.username) if requester else "—"},
                 {"k": "单号", "v": f"#{pr.id}"},

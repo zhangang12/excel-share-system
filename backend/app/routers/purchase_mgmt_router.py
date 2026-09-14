@@ -87,7 +87,8 @@ async def list_suppliers(
     r = await db.execute(stmt)
     sups = r.scalars().all()
     names = await _uid_name_map(db, [s.created_by for s in sups if s.created_by])
-    return [_sup_out(s, names.get(s.created_by)) for s in sups]
+    accts = await _accounts_map(db, [s.id for s in sups])   # 🆕 #426 一次查完，别逐个供应商查
+    return [_sup_out(s, names.get(s.created_by), accts.get(s.id)) for s in sups]
 
 
 async def _uid_name_map(db: AsyncSession, uids: list) -> dict:
@@ -98,7 +99,8 @@ async def _uid_name_map(db: AsyncSession, uids: list) -> dict:
     return {u.id: _uname(u) for u in r.scalars().all()}
 
 
-def _sup_out(s: models.Supplier, creator_name: Optional[str] = None) -> schemas.SupplierOut:
+def _sup_out(s: models.Supplier, creator_name: Optional[str] = None,
+             accounts: Optional[list] = None) -> schemas.SupplierOut:
     return schemas.SupplierOut(
         id=s.id, name=s.name, code=s.code, category=s.category,
         contact=s.contact, phone=s.phone, address=s.address,
@@ -107,7 +109,149 @@ def _sup_out(s: models.Supplier, creator_name: Optional[str] = None) -> schemas.
         status=s.status, notes=s.notes,
         created_by=s.created_by, created_by_name=creator_name,
         created_at=s.created_at,
+        bank_accounts=[schemas.SupplierBankAccountOut(
+            id=a.id, bank_name=a.bank_name, bank_account=a.bank_account,
+            is_default=bool(a.is_default), notes=a.notes) for a in (accounts or [])],
     )
+
+
+# ==================== 🆕 反馈#426 供应商多个收款账号 ====================
+# 一家供应商可以有多个收款账号，其中一个是默认。Supplier.bank_name/bank_account 两列保留为「默认账号镜像」
+# （老客户端、导入、AI 请款卡片还在读写它们）。**所有写入口都走下面三个函数**，保证镜像和表永远一致。
+
+async def _accounts_map(db: AsyncSession, sids: list) -> dict:
+    """{supplier_id: [账号…]}，默认账号排第一，其余按 sort_order/id。"""
+    out: dict = defaultdict(list)
+    ids = [i for i in set(sids) if i]
+    if not ids:
+        return out
+    rows = (await db.execute(select(models.SupplierBankAccount)
+                             .where(models.SupplierBankAccount.supplier_id.in_(ids))
+                             .order_by(models.SupplierBankAccount.is_default.desc(),
+                                       models.SupplierBankAccount.sort_order,
+                                       models.SupplierBankAccount.id))).scalars().all()
+    for a in rows:
+        out[a.supplier_id].append(a)
+    return out
+
+
+def _acct_sig(accounts: list) -> list:
+    """账号内容签名（排序后），用来判断「收款信息有没有被改」。"""
+    return sorted(((a.bank_name or "").strip(), (a.bank_account or "").strip(), bool(a.is_default))
+                  for a in accounts)
+
+
+async def _assert_accounts_not_in_flight(db: AsyncSession, account_ids: list) -> None:
+    """在途（待审/已批待付）请款单指定了的账号不能删——删了出纳就不知道该打哪个账号。"""
+    if not account_ids:
+        return
+    hit = (await db.execute(select(func.count(models.PaymentRequest.id)).where(
+        models.PaymentRequest.bank_account_id.in_(account_ids),
+        models.PaymentRequest.status.in_(("pending", "approved"))))).scalar() or 0
+    if hit:
+        raise HTTPException(400, f"要删除的收款账号还有 {hit} 张在途请款单指定着，请等付款完成或先处理这些请款单")
+
+
+async def _save_bank_accounts(db: AsyncSession, s: models.Supplier, rows: list) -> bool:
+    """整表保存供应商收款账号（前端提交完整列表）：有 id 改、无 id 增、列表里没有的删。
+    规则：账号不能重复；最多一个默认，一个都没勾时第一个为默认；删除前查在途请款单。
+    保存后把默认账号镜像回 Supplier.bank_name/bank_account。返回收款信息是否有变化。"""
+    existing = (await _accounts_map(db, [s.id])).get(s.id, [])
+    before = _acct_sig(existing)
+    by_id = {a.id: a for a in existing}
+    cleaned = []
+    seen = set()
+    for r in rows:
+        acct = (r.bank_account or "").strip().replace(" ", "")
+        if not acct:
+            continue
+        if acct in seen:
+            raise HTTPException(400, f"收款账号 {acct} 填了两次")
+        seen.add(acct)
+        if r.id is not None and r.id not in by_id:
+            raise HTTPException(400, "收款账号不属于该供应商，请刷新后重试")
+        cleaned.append((r, acct))
+    defaults = [r for r, _ in cleaned if r.is_default]
+    if len(defaults) > 1:
+        raise HTTPException(400, "只能设一个默认收款账号")
+    keep_ids = {r.id for r, _ in cleaned if r.id is not None}
+    to_delete = [a for a in existing if a.id not in keep_ids]
+    await _assert_accounts_not_in_flight(db, [a.id for a in to_delete])
+    for a in to_delete:
+        await db.delete(a)
+    default_obj = None
+    for idx, (r, acct) in enumerate(cleaned):
+        is_def = r.is_default or (not defaults and idx == 0)
+        if r.id is not None:
+            a = by_id[r.id]
+        else:
+            a = models.SupplierBankAccount(supplier_id=s.id)
+            db.add(a)
+        a.bank_name = (r.bank_name or "").strip() or None
+        a.bank_account = acct
+        a.is_default = bool(is_def)
+        a.notes = (r.notes or "").strip() or None
+        a.sort_order = idx
+        if is_def:
+            default_obj = a
+    s.bank_name = default_obj.bank_name if default_obj else None
+    s.bank_account = default_obj.bank_account if default_obj else None
+    await db.flush()
+    after = _acct_sig((await _accounts_map(db, [s.id])).get(s.id, []))
+    return before != after
+
+
+async def _legacy_set_default_account(db: AsyncSession, s: models.Supplier,
+                                      bank_name: Optional[str], bank_account: Optional[str],
+                                      allow_clear: bool = True) -> bool:
+    """老入口（老客户端编辑、Excel 导入）只认一对 bank_name/bank_account：把它当「默认账号」来维护，
+    其它账号不动。返回收款信息是否有变化。"""
+    accts = (await _accounts_map(db, [s.id])).get(s.id, [])
+    default = next((a for a in accts if a.is_default), None)
+    acct = (bank_account or "").strip().replace(" ", "")
+    name = (bank_name or "").strip() or None
+    if not acct:
+        if default is None or not allow_clear:
+            return False
+        rows = [schemas.SupplierBankAccountIn(id=a.id, bank_name=a.bank_name, bank_account=a.bank_account,
+                                              is_default=False, notes=a.notes)
+                for a in accts if a.id != default.id]
+        return await _save_bank_accounts(db, s, rows)
+    rows = []
+    replaced = False
+    for a in accts:
+        if a.is_default:
+            rows.append(schemas.SupplierBankAccountIn(id=a.id, bank_name=name, bank_account=acct,
+                                                      is_default=True, notes=a.notes))
+            replaced = True
+        elif a.bank_account != acct:
+            rows.append(schemas.SupplierBankAccountIn(id=a.id, bank_name=a.bank_name, bank_account=a.bank_account,
+                                                      is_default=False, notes=a.notes))
+    if not replaced:
+        rows.insert(0, schemas.SupplierBankAccountIn(bank_name=name, bank_account=acct, is_default=True))
+    return await _save_bank_accounts(db, s, rows)
+
+
+async def _resolve_pr_account(db: AsyncSession, pr: models.PaymentRequest,
+                              accounts: Optional[list] = None, use_snapshot: bool = True) -> dict:
+    """请款单这次要打的账号：已付款 → 付款时快照；否则 → 指定的账号（被删了就退回默认）→ 默认账号 → 供应商列。
+    use_snapshot=False 给付款接口用：它正要生成快照，得解析「现在该打哪个」。"""
+    if accounts is None:
+        accounts = (await _accounts_map(db, [pr.supplier_id])).get(pr.supplier_id, [])
+    count = len(accounts)
+    if use_snapshot and pr.status == "paid" and pr.paid_bank_account:
+        match = next((a for a in accounts if a.bank_account == pr.paid_bank_account), None)
+        return {"bank_name": pr.paid_bank_name, "bank_account": pr.paid_bank_account,
+                "id": pr.bank_account_id, "note": match.notes if match else None,
+                "is_default": bool(match.is_default) if match else True, "count": count}
+    chosen = next((a for a in accounts if pr.bank_account_id and a.id == pr.bank_account_id), None)
+    chosen = chosen or next((a for a in accounts if a.is_default), None)
+    if chosen:
+        return {"bank_name": chosen.bank_name, "bank_account": chosen.bank_account, "id": chosen.id,
+                "note": chosen.notes, "is_default": bool(chosen.is_default), "count": count}
+    sup = pr.supplier
+    return {"bank_name": sup.bank_name if sup else None, "bank_account": sup.bank_account if sup else None,
+            "id": None, "note": None, "is_default": True, "count": count}
 
 
 async def _check_supplier_code_unique(db: AsyncSession, code: Optional[str],
@@ -129,15 +273,21 @@ async def create_supplier(
     current: models.User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    data = body.model_dump()
+    data = body.model_dump(exclude={"bank_accounts"})
     if data.get("code"):
         data["code"] = data["code"].strip() or None   # 🆕 反馈#274：入库前去空格，堵住「GYS-003 」式尾空格绕过
     s = models.Supplier(**data, created_by=current.id)  # 🆕 需求五：记录建档采购员
     await _check_supplier_code_unique(db, s.code)   # 🆕 反馈#274：编码唯一
     db.add(s)
+    await db.flush()
+    # 🆕 #426：新客户端传账号列表；老客户端只传一对 bank_name/bank_account → 建成默认账号
+    if body.bank_accounts is not None:
+        await _save_bank_accounts(db, s, body.bank_accounts)
+    else:
+        await _legacy_set_default_account(db, s, body.bank_name, body.bank_account, allow_clear=False)
     await db.commit()
     await db.refresh(s)
-    return _sup_out(s, _uname(current))
+    return _sup_out(s, _uname(current), (await _accounts_map(db, [s.id])).get(s.id))
 
 
 @router.put("/suppliers/{sid}", response_model=schemas.SupplierOut)
@@ -152,6 +302,8 @@ async def update_supplier(
     if not s:
         raise HTTPException(404, "供应商不存在")
     updates = body.model_dump(exclude_unset=True)
+    acct_rows = body.bank_accounts if "bank_accounts" in updates else None
+    updates.pop("bank_accounts", None)
     if "code" in updates and updates["code"] is not None:
         updates["code"] = updates["code"].strip() or None   # 🆕 反馈#274：入库前去空格
     if "code" in updates and (updates["code"] or "") != (s.code or "").strip():
@@ -159,20 +311,26 @@ async def update_supplier(
     # 🆕 收款账号改动单独留痕：请款审批卡要据此提示「账号 N 天前变更过」。
     #   收款信息被改是付款诈骗最常见的入口，改了谁都不知道等于没有内控。
     #   只记「改了、谁改的、什么时候」，不记账号明文——审计表不是存放收款账号的地方。
-    bank_before = {"bank_name": s.bank_name, "bank_account": s.bank_account}
-    bank_changed = [k for k in ("bank_name", "bank_account")
-                    if k in updates and (updates[k] or "") != (bank_before[k] or "")]
+    # 🆕 #426：账号改走 _save_bank_accounts（新客户端传整表）或 _legacy_set_default_account（老客户端只传一对）
+    legacy_bank = {k: updates.pop(k) for k in ("bank_name", "bank_account") if k in updates}
     for k, v in updates.items():
         setattr(s, k, v)
+    if acct_rows is not None:
+        bank_changed = await _save_bank_accounts(db, s, acct_rows)
+    elif legacy_bank:
+        bank_changed = await _legacy_set_default_account(
+            db, s, legacy_bank.get("bank_name", s.bank_name), legacy_bank.get("bank_account", s.bank_account))
+    else:
+        bank_changed = False
+    n_accts = len((await _accounts_map(db, [s.id])).get(s.id, []))
     await db.commit()
     await db.refresh(s)
     if bank_changed:
         await write_audit(db, user=current, action="update_supplier_bank",
                           target_type="supplier", target_id=sid,
-                          detail=f"{s.name}：修改了 {'、'.join(bank_changed)}"
-                                 f"（尾号 {(s.bank_account or '')[-4:] or '—'}）")
+                          detail=f"{s.name}：修改了收款账号（共 {n_accts} 个，默认尾号 {(s.bank_account or '')[-4:] or '—'}）")
     names = await _uid_name_map(db, [s.created_by])
-    return _sup_out(s, names.get(s.created_by))
+    return _sup_out(s, names.get(s.created_by), (await _accounts_map(db, [s.id])).get(s.id))
 
 
 @router.put("/suppliers/{sid}/toggle")
@@ -215,6 +373,9 @@ async def delete_supplier(
     # 无交易记录：连带清理期初余额后硬删除
     await db.execute(delete(models.SupplierOpeningBalance).where(
         models.SupplierOpeningBalance.supplier_id == sid))
+    # 🆕 #426 显式删收款账号（不依赖 DB 级联——SQLite 默认不强制外键）
+    await db.execute(delete(models.SupplierBankAccount).where(
+        models.SupplierBankAccount.supplier_id == sid))
     await db.delete(s)
     await db.commit()
     return {"message": "供应商已删除"}
@@ -1812,6 +1973,7 @@ async def import_suppliers(
                  ("备注", "notes")]
     created = updated = 0
     errors: list[str] = []
+    touched_sups: dict = {}   # 🆕 #426 本次导入改动过的供应商，导完同步默认收款账号
     for rn, row in enumerate(rows[1:], start=2):
         if row is None or all(c is None or str(c).strip() == "" for c in row):
             continue
@@ -1840,6 +2002,13 @@ async def import_suppliers(
             touched = True
         if touched and sup.id:
             updated += 1
+        if touched:
+            touched_sups[name] = sup
+    # 🆕 #426：导入只补空缺的开户行/账号列 → 同步成默认收款账号（已有账号的供应商列非空、上面不会覆盖）
+    await db.flush()
+    for sup in touched_sups.values():
+        if sup.bank_account:
+            await _legacy_set_default_account(db, sup, sup.bank_name, sup.bank_account, allow_clear=False)
     await db.commit()
     msg = f"导入完成：新建 {created} 家、补全 {updated} 家"
     if errors:
@@ -2744,6 +2913,7 @@ async def _pr_out(db: AsyncSession, pr_id: int,
             models.Attachment.id == pr.pay_voucher_file_id))
         voucher_name = ar.scalar_one_or_none()
     sup = pr.supplier
+    acct = await _resolve_pr_account(db, pr)   # 🆕 #426 本单要打的账号（多账号供应商）
     return schemas.PaymentRequestOut(
         id=pr.id, supplier_id=pr.supplier_id,
         supplier_name=sup.name if sup else "",
@@ -2763,9 +2933,11 @@ async def _pr_out(db: AsyncSession, pr_id: int,
         rejecter_name=_uname(pr.rejecter),
         rejected_at=pr.rejected_at,
         # 🆕 需求十六：付款时可见收款账户信息 + 关联采购单
-        supplier_bank_name=(sup.bank_name if sup else None),
-        supplier_bank_account=(sup.bank_account if sup else None),
+        supplier_bank_name=acct["bank_name"],
+        supplier_bank_account=acct["bank_account"],
         supplier_tax_no=(sup.tax_no if sup else None),
+        bank_account_id=acct["id"], bank_account_note=acct["note"],
+        bank_account_is_default=acct["is_default"], supplier_account_count=acct["count"],
         po_nos=po_nos,
         project_codes=project_codes,
         earliest_due=earliest_due, due_in_days=due_in_days,
@@ -2852,8 +3024,16 @@ async def create_payment_request(
         if dups:
             raise HTTPException(400, f"以下明细已有未完成的请款单，请勿重复请款：{'、'.join(dups)[:120]}")
     await _validate_pr_allocations(db, body.supplier_id, body.items, body.requested_amount)
+    # 🆕 #426 指定收款账号必须是这家供应商的
+    if body.bank_account_id is not None:
+        ok = (await db.execute(select(models.SupplierBankAccount.id).where(
+            models.SupplierBankAccount.id == body.bank_account_id,
+            models.SupplierBankAccount.supplier_id == body.supplier_id))).scalar_one_or_none()
+        if not ok:
+            raise HTTPException(400, "所选收款账号不属于该供应商，请刷新后重选")
     pr = models.PaymentRequest(
         supplier_id=body.supplier_id,
+        bank_account_id=body.bank_account_id,
         requested_amount=round(float(body.requested_amount), 2),
         requester_id=current.id,
         notes=body.notes,
@@ -3027,6 +3207,7 @@ async def pay_reject_payment_request(
 @router.put("/payment-requests/{prid}/resubmit")
 async def resubmit_payment_request(
     prid: int,
+    body: Optional[schemas.PaymentResubmitIn] = None,
     current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -3059,6 +3240,14 @@ async def resubmit_payment_request(
         if dups:
             raise HTTPException(400, f"以下明细已另有未完成的请款单，不能重提：{'、'.join(dups)[:120]}")
     await _validate_pr_allocations(db, pr.supplier_id, pri_rows, pr.requested_amount, exclude_pr_id=prid)
+    # 🆕 #426：出纳常因「账户不对」退回——重提时可以换打款账号；原指定账号已被删的，退回默认账号
+    accts = (await _accounts_map(db, [pr.supplier_id])).get(pr.supplier_id, [])
+    if body is not None and body.bank_account_id is not None:
+        if not any(a.id == body.bank_account_id for a in accts):
+            raise HTTPException(400, "所选收款账号不属于该供应商，请刷新后重选")
+        pr.bank_account_id = body.bank_account_id
+    elif pr.bank_account_id and not any(a.id == pr.bank_account_id for a in accts):
+        pr.bank_account_id = None
     pr.status = "pending"
     pr.reject_stage = None
     pr.rejected_by = None
@@ -3240,6 +3429,9 @@ async def pay_payment_request(
                             .values(status="paid"))
     if flip.rowcount != 1:
         raise HTTPException(409, "该请款单状态刚刚发生了变化（可能已付款或已删除），请刷新后再操作")
+    # 🆕 #426 付款那一刻把实际账号快照下来（事后账号被改/删，已付记录照样知道钱打到哪）
+    _acct = await _resolve_pr_account(db, pr, use_snapshot=False)
+    pr.paid_bank_name, pr.paid_bank_account = _acct["bank_name"], _acct["bank_account"]
     pr.status = "paid"
     pr.paid_amount = paid_amount
     pr.paid_date = paid_date

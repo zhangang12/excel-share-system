@@ -656,6 +656,24 @@ class Supplier(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SupplierBankAccount(Base):
+    """🆕 反馈#426（李新新）：「一个公司有两个收款账号怎么录入」——供应商收款账号一对多。
+
+    ⚠️ Supplier.bank_name / bank_account 两列**保留**，永远等于「默认账号」的镜像：
+      老客户端(1.0.82 及以前)、供应商导入、AI 请款卡片都还读写这两列；
+      写入口统一走 purchase_mgmt_router._save_bank_accounts / _legacy_set_default_account，别直接改列。
+    请款单用 PaymentRequest.bank_account_id 指定打哪个账号；付款那一刻把账号快照到 paid_bank_*。"""
+    __tablename__ = "supplier_bank_accounts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id", ondelete="CASCADE"), index=True)
+    bank_name: Mapped[Optional[str]] = mapped_column(String(128))
+    bank_account: Mapped[str] = mapped_column(String(64))
+    is_default: Mapped[bool] = mapped_column(default=False)
+    notes: Mapped[Optional[str]] = mapped_column(String(128))       # 如「开票户」「只收货款」
+    sort_order: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PurchaseItem(Base):
     """采购明细（唯一录入入口）"""
     __tablename__ = "purchase_items"
@@ -802,6 +820,12 @@ class PaymentRequest(Base):
     paid_date: Mapped[Optional[str]] = mapped_column(String(10))
     payment_method: Mapped[Optional[str]] = mapped_column(String(32))
     pay_voucher_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))  # 🆕 付款凭证
+    # 🆕 反馈#426：一家供应商多个收款账号——请款时指定打哪个（空=默认账号）。
+    #   不加外键：账号删了请款单要能照常显示；在途单引用的账号不让删（见 _save_bank_accounts）。
+    #   付款那一刻把实际账号快照到 paid_bank_*：事后账号被改，已付款记录也还原得出"钱打到了哪"。
+    bank_account_id: Mapped[Optional[int]] = mapped_column()
+    paid_bank_name: Mapped[Optional[str]] = mapped_column(String(128))
+    paid_bank_account: Mapped[Optional[str]] = mapped_column(String(64))
     reject_reason: Mapped[Optional[str]] = mapped_column(Text)
     # 🆕 驳回三兄弟：驳回**发生在哪一步**要分清，否则「谁把单子退回来的」查无对证。
     #   approve=审批人待审时拒绝 / withdraw=审批人批完又撤回 / pay=出纳付款时发现账户信息不对退回。

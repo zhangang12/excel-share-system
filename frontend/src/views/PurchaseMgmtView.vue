@@ -155,6 +155,10 @@ interface SupplierOut {
   tax_no?: string | null; bank_name?: string | null; bank_account?: string | null
   settlement_type?: string | null; credit_days?: number | null
   status: string; notes?: string | null; created_at: string
+  bank_accounts?: SupplierBankAccount[]   // 🆕 #426 多个收款账号，默认排第一
+}
+interface SupplierBankAccount {
+  id?: number | null; bank_name?: string | null; bank_account: string; is_default: boolean; notes?: string | null
 }
 interface PurchaseItemOut {
   id: number; po_no?: string | null; supplier_id: number; supplier_name: string
@@ -192,6 +196,8 @@ interface PaymentRequestOut {
   reject_stage?: string | null; rejecter_name?: string | null; rejected_at?: string | null   // 🆕 驳回环节/退回人
   pay_voucher_file_id?: number | null; pay_voucher_name?: string | null   // 🆕 #276 付款凭证（申请人可看/下载）
   supplier_bank_name?: string | null; supplier_bank_account?: string | null; supplier_tax_no?: string | null
+  bank_account_id?: number | null; bank_account_note?: string | null   // 🆕 #426 本单指定的收款账号
+  bank_account_is_default?: boolean; supplier_account_count?: number
   po_nos?: string[]
   project_codes?: string[]   // 🆕 后端 _pr_out 一直在下发，只是前端没声明；#406 搜索要用
   can_cancel?: boolean       // 🆕 #405 能不能自助撤销（=待审 且 本人发起），后端算好下发
@@ -1401,7 +1407,21 @@ const supplierForm = reactive({
   name: '', code: '', category: '', contact: '', phone: '', address: '',
   tax_no: '', bank_name: '', bank_account: '', settlement_type: '', credit_days: null as number | null,
   notes: '',
+  // 🆕 #426 多个收款账号（开户行 + 账号 + 备注，一个默认）；bank_name/bank_account 不再从表单提交
+  bank_accounts: [] as SupplierBankAccount[],
 })
+function addBankAccountRow() {
+  supplierForm.bank_accounts.push({ id: null, bank_name: '', bank_account: '', notes: '',
+    is_default: supplierForm.bank_accounts.length === 0 })
+}
+function removeBankAccountRow(i: number) {
+  const wasDefault = supplierForm.bank_accounts[i]?.is_default
+  supplierForm.bank_accounts.splice(i, 1)
+  if (wasDefault && supplierForm.bank_accounts.length) supplierForm.bank_accounts[0].is_default = true
+}
+function setDefaultBankAccount(i: number) {
+  supplierForm.bank_accounts.forEach((a, k) => { a.is_default = k === i })
+}
 
 const payReqVisible = ref(false)
 const payReqSaving = ref(false)
@@ -1409,8 +1429,15 @@ const payReqForm = reactive({
   supplier_id: '' as number | '',
   requested_amount: 0,
   notes: '',
+  bank_account_id: null as number | null,   // 🆕 #426
   items: [] as Array<{ item_id: number; item_name: string; allocated_amount: number; max: number }>,
 })
+// 🆕 #426：请款单所属供应商的收款账号（默认排第一）
+const payReqAccounts = computed<SupplierBankAccount[]>(() =>
+  suppliers.value.find(s => s.id === payReqForm.supplier_id)?.bank_accounts || [])
+function acctLabel(a: SupplierBankAccount) {
+  return `${a.bank_name || '（未填开户行）'}  ${a.bank_account}${a.notes ? '  ·  ' + a.notes : ''}${a.is_default ? '  （默认）' : ''}`
+}
 // 🆕 改动任一明细的分配金额 → 请款总额自动跟着汇总（避免总额与分配对不上）
 watch(() => payReqForm.items.map(i => i.allocated_amount), () => {
   if (!payReqVisible.value) return
@@ -1618,6 +1645,9 @@ function openPaymentRequest() {
   payReqForm.supplier_id = firstSid
   payReqForm.requested_amount = leaves.reduce((s, i) => s + (i.received_amount - i.paid_amount), 0)
   payReqForm.notes = ''
+  // 🆕 #426：默认选中供应商的默认收款账号
+  payReqForm.bank_account_id = (suppliers.value.find(s => s.id === firstSid)?.bank_accounts || [])
+    .find(a => a.is_default)?.id ?? null
   payReqForm.items = leaves.map(i => ({
     item_id: i.id,
     item_name: i.item_name,
@@ -1650,6 +1680,7 @@ async function submitPaymentRequest() {
       supplier_id: payReqForm.supplier_id,
       requested_amount: payReqForm.requested_amount,
       notes: payReqForm.notes || null,
+      bank_account_id: payReqForm.bank_account_id ?? null,   // 🆕 #426 打到哪个收款账号
       items: payReqForm.items.map(i => ({ item_id: i.item_id, allocated_amount: i.allocated_amount })),
     })
     ElMessage.success('请款单已提交，等待财务审批')
@@ -1832,24 +1863,37 @@ function openNewSupplier() {
   Object.assign(supplierForm, {
     name: '', code: '', category: '', contact: '', phone: '', address: '',
     tax_no: '', bank_name: '', bank_account: '', settlement_type: '', credit_days: null, notes: '',
+    bank_accounts: [{ id: null, bank_name: '', bank_account: '', notes: '', is_default: true }],
   })
   supplierDialogVisible.value = true
 }
 
 function openEditSupplier(s: SupplierOut) {
   editingSupplier.value = s
+  // 🆕 #426：老数据只有一对 bank_name/bank_account、还没迁成账号表时，也拼成一行给人改
+  const accts: SupplierBankAccount[] = (s.bank_accounts && s.bank_accounts.length)
+    ? s.bank_accounts.map(a => ({ ...a, bank_name: a.bank_name || '', notes: a.notes || '' }))
+    : (s.bank_account ? [{ id: null, bank_name: s.bank_name || '', bank_account: s.bank_account, notes: '', is_default: true }]
+      : [{ id: null, bank_name: '', bank_account: '', notes: '', is_default: true }])
   Object.assign(supplierForm, {
     name: s.name, code: s.code || '', category: s.category || '',
     contact: s.contact || '', phone: s.phone || '', address: s.address || '',
     tax_no: s.tax_no || '', bank_name: s.bank_name || '', bank_account: s.bank_account || '',
     settlement_type: s.settlement_type || '', credit_days: s.credit_days,
     notes: s.notes || '',
+    bank_accounts: accts,
   })
   supplierDialogVisible.value = true
 }
 
 async function saveSupplier() {
   try { await supplierFormRef.value?.validate() } catch { return }
+  // 🆕 #426：空行（没填账号）不提交；填了开户行却没填账号的提醒一下
+  const acctRows = supplierForm.bank_accounts.filter(a => (a.bank_account || '').trim())
+  if (supplierForm.bank_accounts.some(a => !(a.bank_account || '').trim() && (a.bank_name || '').trim())) {
+    ElMessage.warning('有一行填了开户行但没填账号，请补上账号或删掉这一行'); return
+  }
+  if (acctRows.length && !acctRows.some(a => a.is_default)) acctRows[0].is_default = true
   supplierSaving.value = true
   try {
     const payload = {
@@ -1860,8 +1904,10 @@ async function saveSupplier() {
       phone: supplierForm.phone || null,
       address: supplierForm.address || null,
       tax_no: supplierForm.tax_no || null,
-      bank_name: supplierForm.bank_name || null,
-      bank_account: supplierForm.bank_account || null,
+      bank_accounts: acctRows.map(a => ({
+        id: a.id ?? null, bank_name: (a.bank_name || '').trim() || null,
+        bank_account: a.bank_account.trim(), is_default: !!a.is_default, notes: (a.notes || '').trim() || null,
+      })),
       settlement_type: supplierForm.settlement_type || null,
       credit_days: supplierForm.credit_days,
       notes: supplierForm.notes || null,
@@ -1987,7 +2033,30 @@ const PR_REJECT_STAGE: Record<string, string> = {
   approve: '审批驳回', withdraw: '撤回审批', pay: '付款驳回',
 }
 const resubmittingId = ref<number | null>(null)
+// 🆕 #426：供应商有多个收款账号时，重提弹窗里可以顺便换打款账号（出纳常因「账户不对」退回）
+const resubmitDlg = reactive({ visible: false, row: null as PaymentRequestOut | null, bank_account_id: null as number | null })
+const resubmitAccounts = computed<SupplierBankAccount[]>(() =>
+  suppliers.value.find(s => s.id === resubmitDlg.row?.supplier_id)?.bank_accounts || [])
+async function confirmResubmitWithAccount() {
+  const row = resubmitDlg.row
+  if (!row) return
+  resubmittingId.value = row.id
+  try {
+    await http.put(`/purchase-mgmt/payment-requests/${row.id}/resubmit`, { bank_account_id: resubmitDlg.bank_account_id })
+    ElMessage.success('已重新提交，等待财务主管审批')
+    resubmitDlg.visible = false
+    await loadPayReqs()
+  } finally { resubmittingId.value = null }
+}
+
 async function resubmitPayReq(row: PaymentRequestOut) {
+  const accts = suppliers.value.find(s => s.id === row.supplier_id)?.bank_accounts || []
+  if (accts.length > 1) {
+    resubmitDlg.row = row
+    resubmitDlg.bank_account_id = row.bank_account_id ?? accts.find(a => a.is_default)?.id ?? null
+    resubmitDlg.visible = true
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `确认重新提交这笔请款？\n供应商：${row.supplier_name}　金额：${fmtMoney(row.requested_amount)}\n` +
@@ -3514,10 +3583,35 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 
 
     <!-- ==================== 请款弹窗 ==================== -->
+    <!-- 🆕 #426 重新提交请款（多收款账号供应商：可换打款账号） -->
+    <el-dialog v-model="resubmitDlg.visible" title="重新提交请款" width="520px" :close-on-click-modal="false">
+      <div v-if="resubmitDlg.row" class="small" style="line-height:1.9">
+        <div>供应商：<b>{{ resubmitDlg.row.supplier_name }}</b>　金额：<b>{{ fmtMoney(resubmitDlg.row.requested_amount) }}</b></div>
+        <div>退回原因：{{ resubmitDlg.row.reject_reason || '未填' }}</div>
+        <div style="margin-top:10px">打到哪个收款账号</div>
+        <el-select v-model="resubmitDlg.bank_account_id" style="width:100%">
+          <el-option v-for="a in resubmitAccounts" :key="a.id!" :value="a.id!" :label="acctLabel(a)" />
+        </el-select>
+        <div class="muted" style="margin-top:8px">重新提交后回到「待审批」，需要财务主管重新审批。账号本身写错了，先到「供应商」里改。</div>
+      </div>
+      <template #footer>
+        <el-button @click="resubmitDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="resubmittingId === resubmitDlg.row?.id" @click="confirmResubmitWithAccount">确认重新提交</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="payReqVisible" title="发起请款" width="620px" class="v3-scroll-dialog" :close-on-click-modal="false">
       <el-form :model="payReqForm" label-position="top">
         <el-form-item label="供应商">
           <b>{{ suppliers.find(s => s.id === payReqForm.supplier_id)?.name }}</b>
+        </el-form-item>
+        <!-- 🆕 #426：供应商有多个收款账号时选打哪个，出纳付款时只看到这一个 -->
+        <el-form-item label="收款账号">
+          <el-select v-if="payReqAccounts.length > 1" v-model="payReqForm.bank_account_id" style="width:100%">
+            <el-option v-for="a in payReqAccounts" :key="a.id!" :value="a.id!" :label="acctLabel(a)" />
+          </el-select>
+          <span v-else-if="payReqAccounts.length === 1">{{ acctLabel(payReqAccounts[0]) }}</span>
+          <span v-else class="muted small">该供应商还没维护收款账号，可先去「编辑供应商」补上</span>
         </el-form-item>
         <el-form-item :label="`关联明细（${payReqForm.items.length} 条，金额可按行调整）`">
           <div class="pr-item-list">
@@ -3721,14 +3815,20 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <el-input v-model="supplierForm.tax_no" />
             </el-form-item>
           </el-col>
-          <el-col :xs="24" :sm="12" :md="8">
-            <el-form-item label="开户行">
-              <el-input v-model="supplierForm.bank_name" />
-            </el-form-item>
-          </el-col>
+          <!-- 🆕 #426 多个收款账号：一家公司可以有多个账号，其中一个默认；发起请款时再选打哪个 -->
           <el-col :span="24">
-            <el-form-item label="银行账号">
-              <el-input v-model="supplierForm.bank_account" />
+            <el-form-item label="收款账号">
+              <div class="bank-acct-list">
+                <div v-for="(a, i) in supplierForm.bank_accounts" :key="a.id ?? `new-${i}`" class="bank-acct-row">
+                  <el-input v-model="a.bank_name" placeholder="开户行" class="ba-bank" />
+                  <el-input v-model="a.bank_account" placeholder="银行账号" class="ba-acct" />
+                  <el-input v-model="a.notes" placeholder="备注，如 开票户 / 货款户" class="ba-note" />
+                  <el-radio :model-value="a.is_default" :value="true" @change="setDefaultBankAccount(i)">默认</el-radio>
+                  <el-button link type="danger" :disabled="supplierForm.bank_accounts.length <= 1 && !a.bank_account"
+                             @click="removeBankAccountRow(i)">删除</el-button>
+                </div>
+                <el-button link type="primary" @click="addBankAccountRow">+ 添加收款账号</el-button>
+              </div>
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -4143,4 +4243,10 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .pr-expand { padding: 6px 12px 6px 48px; }
 .pr-expand-row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; font-size: 13px; border-bottom: 1px dashed var(--el-border-color-lighter); max-width: 560px; }
 .pr-expand-row:last-of-type { border-bottom: none; }
+/* 🆕 #426 供应商多个收款账号 */
+.bank-acct-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.bank-acct-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bank-acct-row .ba-bank { flex: 1 1 160px; }
+.bank-acct-row .ba-acct { flex: 1.4 1 200px; }
+.bank-acct-row .ba-note { flex: 1 1 140px; }
 </style>

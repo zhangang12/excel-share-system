@@ -142,6 +142,9 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("reject_stage", "VARCHAR(16)"),           # 🆕 驳回环节 approve/withdraw/pay
         ("rejected_by", "INTEGER"),                # 🆕 驳回人（不复用审批人字段）
         ("rejected_at", "TIMESTAMP"),
+        ("bank_account_id", "INTEGER"),            # 🆕 #426 指定收款账号（空=默认）
+        ("paid_bank_name", "VARCHAR(128)"),        # 🆕 #426 付款时实际账号快照
+        ("paid_bank_account", "VARCHAR(64)"),
     ],
     "purchase_requests": [
         ("buyer_id", "INTEGER"),                   # 🆕 #2 采购申请指定采购员（存量表补列）
@@ -2628,3 +2631,24 @@ async def run_all(db: AsyncSession) -> None:
         await route_pending_pm_feedbacks_to_design(db)   # 🆕 反馈#228 装配反馈不再经主管审批,存量 pending_pm 直转设计接收
     except Exception as e:
         log.warning("route_pending_pm_feedbacks_to_design failed: %s", e)
+    try:
+        await backfill_supplier_bank_accounts(db)   # 🆕 #426 供应商单账号 → 多账号表（默认账号）
+    except Exception as e:
+        log.warning("backfill_supplier_bank_accounts failed: %s", e)
+
+
+async def backfill_supplier_bank_accounts(db: AsyncSession) -> int:
+    """🆕 反馈#426：存量供应商的单个收款账号搬进 supplier_bank_accounts，设为默认。
+    幂等：只处理「列上有账号、表里一条都没有」的供应商；已迁过的不会重复插。"""
+    from . import models
+    from sqlalchemy import select, exists
+    has_row = exists().where(models.SupplierBankAccount.supplier_id == models.Supplier.id)
+    sups = (await db.execute(select(models.Supplier).where(
+        models.Supplier.bank_account.isnot(None), models.Supplier.bank_account != "", ~has_row))).scalars().all()
+    for s in sups:
+        db.add(models.SupplierBankAccount(supplier_id=s.id, bank_name=s.bank_name,
+                                          bank_account=s.bank_account.strip(), is_default=True))
+    if sups:
+        await db.commit()
+        log.info("[backfill_supplier_bank_accounts] %d 家供应商搬入默认收款账号", len(sups))
+    return len(sups)
