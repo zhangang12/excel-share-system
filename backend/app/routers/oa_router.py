@@ -250,6 +250,11 @@ _OA_COST_STATUS = ("approved", "pending_payment", "paid")
 _OA_DONE_STATUS = _OA_COST_STATUS
 
 
+def _is_management(user) -> bool:
+    """管理层 = admin / manager（与 deps.require_admin 同口径）。OA 自批闸门的唯一例外，卡片装配也用它。"""
+    return bool(user) and user.has_role("admin", "manager")
+
+
 def _cn_month(dt) -> Optional[str]:
     """DateTime(timezone=True) 存的是 UTC，按月归集一律转北京时间（每月 1 日 0–8 点的单不能跑到上个月）。"""
     if not dt:
@@ -992,7 +997,11 @@ async def approve_request(
     # 🆕 金额审计(2026-09-09)：不能审批自己提交的申请——与 #237（不能批自己的请款）、#420（不能给自己标付款）同源。
     #   生产上已发生 9 次：王芹给自己的两张对公付款(¥33,478 / ¥13,281)做了财务审批。
     #   角色步由同角色其他人或 admin/manager 兜底（_can_act_on_step 第 1 条），指定到人的由代理人接。
-    if req.requester_id == current.id:
+    # 🆕 2026-09-14 老板定：**管理层（admin/manager）可以审批自己的申请**。
+    #   起因：杨坛(manager) 自己提的 OA 链路里好几步都是他本人在批，闸门上线后他的单子没人能往下走。
+    #   管理层本来就是审批链的兜底人，再往上没有人可以批。
+    #   ⚠️ 只放开「审批」。标记付款的职责分离(#420，mark_paid)不变——钱真走出去那一步 admin 也不留后门。
+    if req.requester_id == current.id and not _is_management(current):
         raise HTTPException(403, "职责分离：不能审批自己提交的申请，请由该环节的其他审批人（或代理人）处理")
     cur_step.status = "approved"; cur_step.acted_by = current.id
     cur_step.acted_at = datetime.now(timezone.utc); cur_step.note = (body.note or "").strip() or None

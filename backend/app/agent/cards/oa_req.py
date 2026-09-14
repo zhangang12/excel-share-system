@@ -96,7 +96,8 @@ async def assemble_oa_cards(db: AsyncSession, current: models.User,
         if not _can_act_on_step(cur, current, principals):
             continue
         # 🆕 金额审计：端点已拦「不能批自己提的单」(oa_router.approve_request)，卡片同口径不再把自己的单当待办
-        if req.requester_id == current.id:
+        #   2026-09-14：管理层(admin/manager)例外——端点放行，卡片也照常出
+        if req.requester_id == current.id and not current.has_role("admin", "manager"):
             continue
 
         who = (req.requester.full_name or req.requester.username) if req.requester else "—"

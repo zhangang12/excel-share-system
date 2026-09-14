@@ -114,11 +114,11 @@ async def main():
             "username": "oa_cashier", "password": "pass123", "full_name": "出纳",
             "role_ids": [rid2["finance"]]})
         Hc = {"Authorization": f"Bearer {(await c.post('/api/auth/login', json={'username':'oa_cashier','password':'pass123'})).json()['access_token']}"}
+        # ⚠️ 2026-09-14 老板定：管理层(admin/manager)可以审批自己的申请——本单 admin 提、admin 批，放行。
+        #   付款那一步(#420)仍然不能自己点，下面换出纳。
         r = await c.put(f"/api/oa/requests/{rid}/approve", headers=H, json={})
-        chk(r.status_code == 403, f"申请人(admin)不能批自己的单（金额审计 2026-09-09）: {r.status_code}")
-        r = await c.put(f"/api/oa/requests/{rid}/approve", headers=Hc, json={})
         chk(r.status_code == 200 and r.json()["status"] == "pending_payment",
-            f"末环节finance批准→待付款: {r.status_code} {r.json().get('status')}")
+            f"管理层批自己的单放行 → 末环节 finance 批准→待付款: {r.status_code} {r.json().get('status')}")
         r = await c.get("/api/oa/requests", headers=H, params={"scope": "pending_pay"})
         chk(not any(x["id"] == rid for x in r.json()), "自己提的单不进自己的待付款队列（#420）")
         r = await c.get("/api/oa/requests", headers=Hc, params={"scope": "pending_pay"})

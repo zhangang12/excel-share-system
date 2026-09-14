@@ -123,21 +123,30 @@ async def main():
 
         # ══════════════ ② 不能审批自己提交的申请 ══════════════
         print("\n② 职责分离")
-        o2 = await submit(Hm, 300, "经理自己的报销")
-        r = await approve(o2, Hm)
-        chk(r.status_code == 403 and "职责分离" in r.text, f"经理批自己的单被拒 -> {r.status_code}")
-        r = await approve(o2, Hm2)
-        chk(r.status_code == 200, f"另一位经理可批 -> {r.status_code}")
-        # 待办卡片同口径：自己的单不出现在自己的 OA 待办里
-        o3 = await submit(Hm, 50, "又一张自己的")
-        o3_no = (await get(o3))["request_no"]
         from app.agent import cards as _cards
-        async with SessionLocal() as db:
-            me = (await db.execute(select(models.User).where(models.User.username == "au_mgr"))).scalar_one()
-            got = await _cards.assemble_oa_cards(db, me)
-        chk(not any(o3_no in json.dumps(x, ensure_ascii=False) for x in got),
-            f"自己提的单不进自己的 OA 审批待办卡 -> 待办 {len(got)} 张")
-        await approve(o3, Hm2)
+
+        async def cards_of(username):
+            async with SessionLocal() as db:
+                me = (await db.execute(select(models.User).where(models.User.username == username))).scalar_one()
+                return await _cards.assemble_oa_cards(db, me)
+
+        # 非管理层：不能批自己的单（财务 au_fin 提单，轮到财务环节时自己不能批）
+        o2 = await submit(Hf, 300, "财务自己的报销")
+        o2_no = (await get(o2))["request_no"]
+        r = await approve(o2, Hm)
+        chk(r.status_code == 200, f"经理批第一步 -> {r.status_code}")
+        r = await approve(o2, Hf)
+        chk(r.status_code == 403 and "职责分离" in r.text, f"非管理层批自己的单被拒 -> {r.status_code}")
+        chk(not any(o2_no in json.dumps(x, ensure_ascii=False) for x in await cards_of("au_fin")),
+            "非管理层：自己提的单不进自己的 OA 审批待办卡")
+        # 🆕 2026-09-14 老板定：管理层（admin/manager）可以审批自己的申请
+        o3 = await submit(Hm, 50, "经理自己的报销")
+        o3_no = (await get(o3))["request_no"]
+        chk(any(o3_no in json.dumps(x, ensure_ascii=False) for x in await cards_of("au_mgr")),
+            "管理层：自己提的单照常进自己的待办卡")
+        r = await approve(o3, Hm)
+        chk(r.status_code == 200 and (await get(o3))["current_step_order"] == 2,
+            f"管理层批自己的单放行（2026-09-14）-> {r.status_code}")
 
         # ══════════════ ③ 三张财务页同一状态集：待付款的单也算 ══════════════
         print("\n③ 报表状态集")
