@@ -329,8 +329,9 @@ onUnmounted(() => {
       </template>
     </el-dialog>
 
-    <!-- 🆕 全局用户反馈小助手（任意登录用户可见） -->
-    <HelperFloating />
+    <!-- 🆕 全局用户反馈小助手。2026-09-15 老板定：右下角「反馈」按钮只对管理层显示；
+         组件仍对所有人挂载，普通同事收到回复时登录弹窗的「查看」照样能打开「我的反馈」 -->
+    <HelperFloating :show-fab="auth.isAdmin" />
     <!-- 🆕 管理层待办浮动挂件（全部人可见收件箱；管理层可下发/监控） -->
     <ManagementTodoFloating />
   </div>

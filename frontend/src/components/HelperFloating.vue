@@ -8,6 +8,11 @@ import { useRoute } from 'vue-router'
 import { userFeedbackApi, type UserFeedbackRow } from '@/api/userFeedback'
 import { fmtRelative } from '@/utils/format'
 
+// 🆕 2026-09-15 老板定：右下角「反馈」悬浮按钮只对管理层显示，其他人不显示。
+//   ⚠️ 组件本身仍对所有人挂载——普通同事收到反馈回复时，登录弹窗里的「查看」要靠这里的
+//   「我的反馈」弹窗打开（pms:open-my-feedback 事件），整个卸载的话点「查看」没反应。
+const props = withDefaults(defineProps<{ showFab?: boolean }>(), { showFab: true })
+
 // 反馈#347：悬浮球压住表格最右边的「编辑/删除」列，且表格横向滚动躲不开。
 // 改成可拖动 + 位置记 localStorage，挪一次就一劳永逸。
 const { el: fabEl, style: fabStyle, onPointerDown: fabDown, wasDrag: fabDragged } =
@@ -120,7 +125,7 @@ const tip = computed(() => `当前页面：${route.fullPath || '/'}（提交时�
 
 <template>
   <!-- 右下角悬浮按钮 -->
-  <button ref="fabEl" class="helper-fab" :style="fabStyle" :title="'问题反馈/意见建议·我的反馈'"
+  <button v-if="props.showFab" ref="fabEl" class="helper-fab" :style="fabStyle" :title="'问题反馈/意见建议·我的反馈'"
           @pointerdown="fabDown" @click="onFabClick">
     <el-icon class="ico"><ChatLineRound /></el-icon>
     <span class="lbl">反馈</span>
