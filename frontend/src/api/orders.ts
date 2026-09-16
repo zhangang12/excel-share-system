@@ -142,7 +142,9 @@ export const ordersApi = {
     http.post(`/orders/${id}/edit-due`, { due_date: dueDate }).then((r) => r.data),
 
   // 🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账
-  spareOrder: (data: { code: string; name: string; qty: number; unit: string; depts: string[]; req_text: string }) =>
+  // 🆕 #433 sign_date=下单时间 / deliver_date=交付时间（选填，YYYY-MM-DD）
+  spareOrder: (data: { code: string; name: string; qty: number; unit: string; depts: string[]; req_text: string;
+                       sign_date?: string; deliver_date?: string }) =>
     http.post<{ project_id: number; code: string; order_ids: number[] }>('/orders/spare', data).then((r) => r.data),
 
   // 🆕 设计完成第一步：CAD图纸+外购附图+四表齐才可点

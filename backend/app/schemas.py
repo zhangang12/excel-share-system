@@ -337,6 +337,10 @@ class SpareOrderCreate(BaseModel):
     unit: str = "台"
     depts: list[str] = Field(default_factory=lambda: ["produce", "electric"])
     req_text: str = ""
+    # 🆕 反馈#433（赵仁辉）：备机下单也要有下单时间、交付时间——回写项目一览「签订日期/交货日期」
+    #   （与销售下单同一列，项目目录/详单表头的「下单日期」自动双写）。空=不填。
+    sign_date: str = ""
+    deliver_date: str = ""
 
 
 class SalesLedgerUpdate(BaseModel):

@@ -25,32 +25,44 @@ const canAssign = computed(() => isDesignLead.value || isMgr.value)
 
 const list = ref<Feedback[]>([])
 const loading = ref(false)
-// 🆕 反馈#409（赵仁辉）「之前反馈的问题都看不到了」——他没说错：
-//   这个面板原来只取「**待**我处理」的，设计师一接收/驳回，那条就从工作台彻底消失，
-//   界面上再没有任何入口。线上 11 条反馈里 10 条是这个状态，他只看得见 1 条。
-//   加一个「已处理」开关，范围不变、只放宽状态（后端 include_done 同口径）。
-const showDone = ref(false)
+// 🆕 反馈#409（赵仁辉）「之前反馈的问题都看不到了」——面板原来只取待处理的，办完就从工作台消失。
+// 🆕 反馈#432（赵仁辉）：把「看已处理的」勾选框换成 4 个带数量的页签：待接收 / 已接收 / 驳回 / 已处理。
+//   一次取全量（include_done，可见范围不变、只放宽状态），数量和筛选都在前端算——反馈量很小（生产 12 条）。
+//   「已处理」= 已接收 + 驳回，也就是原来勾上「看已处理的」看到的那批历史。
+type FbTab = 'pending' | 'accepted' | 'rejected' | 'done'
+const tab = ref<FbTab>('pending')
 async function load() {
   loading.value = true
-  try { list.value = await feedbackApi.mine(showDone.value) }
+  try { list.value = await feedbackApi.mine(true) }
   finally { loading.value = false }
 }
 onMounted(load)
-// 待处理的那几条永远排在前面——翻历史的时候别把要办的事埋掉
 const PENDING_ST = ['pending_design', 'pending_pm']
-const shownList = computed(() => {
-  if (!showDone.value) return list.value
-  const rank = (f: Feedback) => (PENDING_ST.includes(f.status) ? 0 : 1)
-  return [...list.value].sort((a, b) => rank(a) - rank(b) || b.id - a.id)
+const ACCEPTED_ST = ['archived']
+const REJECTED_ST = ['rejected_by_design', 'rejected_by_pm']
+function inTab(f: Feedback, t: FbTab) {
+  if (t === 'pending') return PENDING_ST.includes(f.status)
+  if (t === 'accepted') return ACCEPTED_ST.includes(f.status)
+  if (t === 'rejected') return REJECTED_ST.includes(f.status)
+  return !PENDING_ST.includes(f.status)
+}
+const tabCounts = computed(() => ({
+  pending: list.value.filter(f => inTab(f, 'pending')).length,
+  accepted: list.value.filter(f => inTab(f, 'accepted')).length,
+  rejected: list.value.filter(f => inTab(f, 'rejected')).length,
+  done: list.value.filter(f => inTab(f, 'done')).length,
+}))
+const TAB_LABEL: Record<FbTab, string> = { pending: '待接收', accepted: '已接收', rejected: '驳回', done: '已处理' }
+const shownList = computed(() =>
+  list.value.filter(f => inTab(f, tab.value)).sort((a, b) => b.id - a.id))
+const emptyText = computed(() => {
+  if (tab.value === 'pending') return canSubmit.value ? '暂无待接收的反馈，可对在手项目提交问题' : '暂无待接收的反馈'
+  return `暂无${TAB_LABEL[tab.value]}的反馈`
 })
-const doneCount = computed(() => list.value.filter(f => !PENDING_ST.includes(f.status)).length)
 
 const title = computed(() => {
   if (canSubmit.value) return '📝 我的问题反馈'
-  if (isDesigner.value) return '📥 待接收的问题反馈'
-  if (isDesignLead.value) return '📥 待指派的问题反馈'
-  if (isMgr.value) return '📥 待处理的问题反馈'
-  return '问题反馈'
+  return '📥 问题反馈'
 })
 
 // 生产三组(装配/钣金/封板)提交
@@ -141,18 +153,19 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
   <el-card v-if="canSubmit || isDesigner || canAssign" shadow="never" class="fb-card">
     <template #header>
       <div class="fb-head">
-        <span>{{ title }} <el-tag v-if="list.length" size="small" type="warning">{{ list.length }}</el-tag></span>
-        <!-- 🆕 #409：办完的反馈原来直接从这块消失、界面上再没入口。勾上能翻历史。 -->
-        <el-checkbox v-model="showDone" size="small" style="margin-left:12px" @change="load">
-          看已处理的<span v-if="showDone && doneCount" class="muted small">（{{ doneCount }} 条）</span>
-        </el-checkbox>
+        <span>{{ title }}</span>
+        <!-- 🆕 #432：待接收 / 已接收 / 驳回 / 已处理 四个页签，各带数量（取代 #409 的「看已处理的」勾选框） -->
+        <el-radio-group v-model="tab" size="small" class="fb-tabs">
+          <el-radio-button v-for="t in (['pending', 'accepted', 'rejected', 'done'] as FbTab[])" :key="t" :value="t">
+            {{ TAB_LABEL[t] }}<span class="fb-count" :class="{ hot: t === 'pending' && tabCounts.pending }">{{ tabCounts[t] }}</span>
+          </el-radio-button>
+        </el-radio-group>
         <span style="flex:1"></span>
         <el-button v-if="canSubmit" size="small" type="primary" :icon="Plus" @click="openSubmit">提交反馈</el-button>
       </div>
     </template>
 
-    <EmptyHint v-if="!loading && !shownList.length"
-              :text="showDone ? '连历史一起都没有反馈' : (canSubmit ? '暂无反馈，可对在手项目提交问题' : '暂无待处理反馈；勾上「看已处理的」可翻历史')" />
+    <EmptyHint v-if="!loading && !shownList.length" :text="emptyText" />
     <el-table v-else :data="shownList" v-loading="loading" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
       <el-table-column label="项目" width="110"><template #default="{ row }"><b class="code">{{ row.code }}</b></template></el-table-column>
       <el-table-column prop="content" label="问题内容" min-width="220" show-overflow-tooltip />
@@ -244,6 +257,12 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
 /* ⚠️ 加了「看已处理的」勾选框之后不能再用 space-between：
    那样三个元素会被平均撑开，勾选框飘到中间。改成 gap + 一个 flex:1 的占位。 */
 .fb-head { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+/* 🆕 #432 状态页签 + 数量 */
+.fb-tabs { margin-left: 12px; }
+.fb-count { display: inline-block; min-width: 18px; margin-left: 5px; padding: 0 5px; border-radius: 9px;
+  font-size: 11px; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums;
+  background: var(--el-fill-color); color: var(--el-text-color-secondary); }
+.fb-count.hot { background: var(--el-color-danger); color: #fff; }
 .code { color: var(--primary, #2563eb); }
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }

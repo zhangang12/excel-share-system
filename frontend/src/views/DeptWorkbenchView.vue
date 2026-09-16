@@ -56,12 +56,19 @@ const isProduce = computed(() => dept.value === 'produce')
 const canSpare = computed(() => dept.value === 'design' && (isLead.value || auth.hasRole('admin', 'manager')))
 const spareVisible = ref(false)
 const spareSubmitting = ref(false)
-const spareForm = ref({ code: '', name: '', qty: 1, unit: '台', depts: ['produce', 'electric'], req_text: '' })
+// 🆕 反馈#433（赵仁辉）：加「下单时间」（默认今天）和「交付时间」，回写项目一览的签订日期/交货日期
+function todayStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const spareForm = ref({ code: '', name: '', qty: 1, unit: '台', depts: ['produce', 'electric'], req_text: '',
+  sign_date: todayStr(), deliver_date: '' })
 const spareFiles = ref<File[]>([])   // 🆕 #5 备机下单的合同技术资料
 async function openSpare() {
   let suggested = ''
   try { suggested = await salesApi.nextCode() } catch { /* 留空人工填 */ }
-  spareForm.value = { code: suggested, name: '', qty: 1, unit: '台', depts: ['produce', 'electric'], req_text: '' }
+  spareForm.value = { code: suggested, name: '', qty: 1, unit: '台', depts: ['produce', 'electric'], req_text: '',
+    sign_date: todayStr(), deliver_date: '' }
   spareFiles.value = []
   spareVisible.value = true
 }
@@ -75,6 +82,7 @@ async function submitSpare() {
   if (!f.code.trim()) { ElMessage.warning('请填写项目编号'); return }
   if (!f.name.trim()) { ElMessage.warning('请填写设备名称'); return }
   if (!f.depts.length) { ElMessage.warning('请至少选择一个派往部门'); return }
+  if (f.sign_date && f.deliver_date && f.deliver_date < f.sign_date) { ElMessage.warning('交付时间不能早于下单时间'); return }
   spareSubmitting.value = true
   try {
     const r = await ordersApi.spareOrder({ ...f })
@@ -969,6 +977,15 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
               <el-checkbox value="electric">⚡ 电工部</el-checkbox>
               <el-checkbox value="produce">🏭 生产部</el-checkbox>
             </el-checkbox-group>
+          </el-form-item>
+        </div>
+        <!-- 🆕 #433 下单时间 / 交付时间：回写项目一览「签订日期」「交货日期」，与销售下单同一列 -->
+        <div style="display:flex; gap:12px">
+          <el-form-item label="下单时间" style="flex:1">
+            <el-date-picker v-model="spareForm.sign_date" type="date" value-format="YYYY-MM-DD" placeholder="选择下单日期" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="交付时间" style="flex:1">
+            <el-date-picker v-model="spareForm.deliver_date" type="date" value-format="YYYY-MM-DD" placeholder="选择交付日期（选填）" style="width:100%" />
           </el-form-item>
         </div>
         <el-form-item label="下单要求">

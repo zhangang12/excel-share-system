@@ -573,6 +573,16 @@ async def create_spare_order(
     res = await db.execute(select(models.Project).where(models.Project.code == code))
     if res.scalar_one_or_none():
         raise HTTPException(409, f"项目编号 {code} 已存在")
+    # 🆕 反馈#433：下单时间 / 交付时间（选填）。格式不对直接拦，交付不能早于下单
+    from ..sheet_templates import normalize_date_str
+    sign_d = normalize_date_str((data.sign_date or "").strip()) if (data.sign_date or "").strip() else ""
+    deliver_d = normalize_date_str((data.deliver_date or "").strip()) if (data.deliver_date or "").strip() else ""
+    if (data.sign_date or "").strip() and not (sign_d and _valid_date(sign_d)):
+        raise HTTPException(400, "下单时间格式不对，请按 YYYY-MM-DD 填写")
+    if (data.deliver_date or "").strip() and not (deliver_d and _valid_date(deliver_d)):
+        raise HTTPException(400, "交付时间格式不对，请按 YYYY-MM-DD 填写")
+    if sign_d and deliver_d and deliver_d < sign_d:
+        raise HTTPException(400, "交付时间不能早于下单时间")
 
     p = models.Project(code=code, name=name, status="进行中", manager_id=None)
     db.add(p)
@@ -583,6 +593,10 @@ async def create_spare_order(
     n = data.qty if isinstance(data.qty, int) and data.qty >= 1 else 1
     _writeback_overview(p, "数量", f"{n}{u}")
     _writeback_overview(p, "销售", f"备机·{_uname(current)}")  # 标记备机便于在项目目录区分
+    if sign_d:
+        _writeback_overview(p, "签订日期", sign_d)     # alias 自动双写详单表头「下单日期」
+    if deliver_d:
+        _writeback_overview(p, "交货日期", deliver_d)
 
     req = data.req_text.strip() or f"（备机下单）{name}"
     order_ids = []
