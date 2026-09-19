@@ -21,6 +21,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errText } from './http'
+import { toast, uiConfirm, uiPrompt } from './ui'
 
 // ───────────────────────── 类型（与 api/managementTodo.ts 同构）─────────────────────────
 interface Att { id: number; name: string; ext?: string | null; size: number }
@@ -109,23 +110,30 @@ function openReply(r: MineRow) {
 const replyBusy = ref(false)
 async function submitReply() {
   if (!replyRow.value) return
-  if (!replyForm.value.committed_at) { err.value = '请选择承诺完成日期'; return }
+  if (!replyForm.value.committed_at) { toast('请选择承诺完成日期', 'err'); return }
   replyBusy.value = true
   try {
     await http.post(`/management-todos/${replyRow.value.target_id}/reply`,
       { committed_at: replyForm.value.committed_at, progress: replyForm.value.progress || undefined })
     replyOpen.value = false
+    toast('已回复承诺时间')
     await loadMine()
-  } catch (e) { err.value = errText(e, '提交失败') }
+  } catch (e) { toast(errText(e, '提交失败'), 'err') }
   finally { replyBusy.value = false }
 }
 
-// 标记完成（原生 prompt 够用：一个选填说明）
+// 标记完成（多行抽屉：完成说明可以好好写）
 async function markDone(r: MineRow) {
-  const note = prompt(`完成「${r.title}」？\n可填写完成情况说明（选填）：`, r.progress || '')
+  const note = await uiPrompt({
+    title: `完成「${r.title}」`, message: '确认标记为已完成',
+    textarea: true, initial: r.progress || '', placeholder: '完成情况说明（选填）', confirmText: '标记完成',
+  })
   if (note === null) return
-  try { await http.post(`/management-todos/${r.target_id}/done`, { progress: note.trim() || undefined }); await loadMine() }
-  catch (e) { err.value = errText(e, '操作失败') }
+  try {
+    await http.post(`/management-todos/${r.target_id}/done`, { progress: note.trim() || undefined })
+    toast('已标记完成')
+    await loadMine()
+  } catch (e) { toast(errText(e, '操作失败'), 'err') }
 }
 
 // 申请顺延
@@ -140,15 +148,16 @@ function openExtend(r: MineRow) {
 const extBusy = ref(false)
 async function submitExtend() {
   if (!extRow.value) return
-  if (!extForm.value.extend_to) { err.value = '请选择顺延到的新日期'; return }
-  if (!extForm.value.reason.trim()) { err.value = '请填写顺延原因'; return }
+  if (!extForm.value.extend_to) { toast('请选择顺延到的新日期', 'err'); return }
+  if (!extForm.value.reason.trim()) { toast('请填写顺延原因', 'err'); return }
   extBusy.value = true
   try {
     await http.post(`/management-todos/${extRow.value.target_id}/extend`,
       { extend_to: extForm.value.extend_to, reason: extForm.value.reason.trim() })
     extOpen.value = false
+    toast('顺延申请已提交，等待管理层审批')
     await loadMine()
-  } catch (e) { err.value = errText(e, '提交失败') }
+  } catch (e) { toast(errText(e, '提交失败'), 'err') }
   finally { extBusy.value = false }
 }
 
@@ -197,7 +206,7 @@ async function psAdd() {
   if (!title) return
   psInput.value = ''
   try { await http.post('/personal-todos', { title }); await loadPersonal() }
-  catch (e) { err.value = errText(e, '添加失败'); psInput.value = title }
+  catch (e) { toast(errText(e, '添加失败'), 'err'); psInput.value = title }
 }
 async function psToggle(t: PTodo) {
   if (psBusy.value) return
@@ -208,9 +217,9 @@ async function psToggle(t: PTodo) {
   finally { psBusy.value = null }
 }
 async function psDel(t: PTodo) {
-  if (!confirm(`删除「${t.title}」？`)) return
-  try { await http.delete(`/personal-todos/${t.id}`); await loadPersonal() }
-  catch (e) { err.value = errText(e, '删除失败') }
+  if (!(await uiConfirm({ title: `删除「${t.title}」？`, confirmText: '删除', danger: true }))) return
+  try { await http.delete(`/personal-todos/${t.id}`); toast('已删除'); await loadPersonal() }
+  catch (e) { toast(errText(e, '删除失败'), 'err') }
 }
 
 // 编辑（网页版行内编辑的抽屉版）：补日期/项目/紧急/备注
@@ -237,7 +246,7 @@ const psSaveBusy = ref(false)
 async function psSaveEdit() {
   const t = psEditing.value
   if (!t) return
-  if (!psForm.value.title.trim()) { err.value = '待办内容不能为空'; return }
+  if (!psForm.value.title.trim()) { toast('待办内容不能为空', 'err'); return }
   psSaveBusy.value = true
   try {
     await http.put(`/personal-todos/${t.id}`, {
@@ -248,8 +257,9 @@ async function psSaveEdit() {
       project_id: psForm.value.project_id === '' ? null : Number(psForm.value.project_id),
     })
     psEditOpen.value = false
+    toast('已保存')
     await loadPersonal()
-  } catch (e) { err.value = errText(e, '保存失败') }
+  } catch (e) { toast(errText(e, '保存失败'), 'err') }
   finally { psSaveBusy.value = false }
 }
 
@@ -287,20 +297,35 @@ async function decideExtend(g: SentTarget, approve: boolean) {
   const who = g.user_name || '对方'
   let note: string | undefined
   if (approve) {
-    if (!confirm(`同意 ${who} 把承诺日顺延到 ${g.extend_to}？`)) return
+    const ok = await uiConfirm({
+      title: '同意顺延？',
+      message: `${who} 申请把承诺日顺延到 ${g.extend_to}` + (g.extend_reason ? `\n理由：${g.extend_reason}` : ''),
+      confirmText: '同意',
+    })
+    if (!ok) return
   } else {
-    const r = prompt(`驳回 ${who} 顺延到 ${g.extend_to} 的申请，可填写理由：`, '')
+    const r = await uiPrompt({
+      title: `驳回 ${who} 的顺延申请`, message: `申请顺延到 ${g.extend_to}`,
+      textarea: true, placeholder: '理由（选填，会发给对方）', confirmText: '驳回',
+    })
     if (r === null) return
     note = r.trim() || undefined
   }
-  try { await http.post(`/management-todos/${g.id}/extend/decide`, { approve, note }); await loadSent() }
-  catch (e) { err.value = errText(e, '操作失败') }
+  try {
+    await http.post(`/management-todos/${g.id}/extend/decide`, { approve, note })
+    toast(approve ? '已同意顺延' : '已驳回')
+    await loadSent()
+  } catch (e) { toast(errText(e, '操作失败'), 'err') }
 }
 
 async function removeTodo(t: SentTodo) {
-  if (!confirm(`确认撤销待办「${t.title}」？收件人将不再收到该待办的提醒。`)) return
-  try { await http.delete(`/management-todos/${t.id}`); await loadSent() }
-  catch (e) { err.value = errText(e, '撤销失败') }
+  const ok = await uiConfirm({
+    title: `撤销「${t.title}」？`, message: '收件人将不再收到该待办的提醒。',
+    confirmText: '撤销', danger: true,
+  })
+  if (!ok) return
+  try { await http.delete(`/management-todos/${t.id}`); toast('已撤销'); await loadSent() }
+  catch (e) { toast(errText(e, '撤销失败'), 'err') }
 }
 
 // 新建 / 编辑（同一张抽屉，editingId 非空即编辑——与网页版 #366/#380 同构）
@@ -351,8 +376,8 @@ function onFiles(e: Event) {
 }
 const creating = ref(false)
 async function submitCreate() {
-  if (!cForm.value.title.trim()) { err.value = '请填写待办标题'; return }
-  if (!cForm.value.recipient_ids.length) { err.value = '请至少勾选一个收件人'; return }
+  if (!cForm.value.title.trim()) { toast('请填写待办标题', 'err'); return }
+  if (!cForm.value.recipient_ids.length) { toast('请至少勾选一个收件人', 'err'); return }
   creating.value = true
   try {
     if (editingId.value) {
@@ -376,12 +401,13 @@ async function submitCreate() {
         fd.append('biz_id', String(todo.id))
         try { await http.post('/attachments', fd) } catch { fail++ }
       }
-      if (fail) err.value = `${fail} 张图片上传失败，其余已随待办发出`
+      if (fail) toast(`${fail} 张图片上传失败，其余已随待办发出`, 'err')
       cFiles.value = []
     }
     createOpen.value = false
+    toast(editingId.value ? '已修改，收件人会收到变更通知' : '待办已下发')
     await loadSent()
-  } catch (e) { err.value = errText(e, editingId.value ? '修改失败' : '下发失败') }
+  } catch (e) { toast(errText(e, editingId.value ? '修改失败' : '下发失败'), 'err') }
   finally { creating.value = false }
 }
 
@@ -427,7 +453,9 @@ onMounted(async () => {
     <main class="scroll">
       <!-- ═════════ ① 我收到的 ═════════ -->
       <template v-if="tab === 'mine'">
-        <div v-if="mineLoading" class="hint">加载中…</div>
+        <div v-if="mineLoading" class="skel-list">
+          <div v-for="i in 3" :key="i" class="skel-card"><i class="l1"></i><i class="l2"></i><i class="l3"></i></div>
+        </div>
         <div v-else-if="!mine.length" class="hint">暂无收到的待办 🎉</div>
         <div v-for="r in mine" :key="r.target_id" class="card" :class="{ dim: r.status === 'done' }">
           <div class="c-head">
@@ -469,7 +497,9 @@ onMounted(async () => {
           <button class="link" @click="psShowDone = !psShowDone">{{ psShowDone ? '隐藏已完成' : '显示已完成' }}</button>
           <span class="tip2">只有自己看得见 · 到期当天推一次企业微信</span>
         </div>
-        <div v-if="psLoading" class="hint">加载中…</div>
+        <div v-if="psLoading" class="skel-list">
+          <div v-for="i in 3" :key="i" class="skel-card slim"><i class="l1"></i><i class="l3"></i></div>
+        </div>
         <div v-else-if="!psVisible.length" class="hint">还没有个人待办 ✍️</div>
         <div v-for="t in psVisible" :key="t.id" class="ps-row" :class="{ dim: t.done }">
           <span class="tick" :class="{ on: t.done }" @click="psToggle(t)">{{ t.done ? '✓' : '' }}</span>
@@ -498,7 +528,9 @@ onMounted(async () => {
             <button :class="{ on: sentFilter === 'all' }" @click="sentFilter = 'all'">全部 {{ sent.length }}</button>
           </span>
         </div>
-        <div v-if="sentLoading" class="hint">加载中…</div>
+        <div v-if="sentLoading" class="skel-list">
+          <div v-for="i in 2" :key="i" class="skel-card"><i class="l1"></i><i class="l2"></i><i class="l3"></i></div>
+        </div>
         <div v-else-if="!sent.length" class="hint">还没有下发过待办</div>
         <div v-else-if="!sentShown.length" class="hint">
           {{ sentFilter === 'open' ? '下发的待办都办完了 🎉' : '还没有已完成的待办' }}
@@ -652,7 +684,10 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.wrap { height: 100%; display: flex; flex-direction: column; background: var(--h5-bg); }
+.wrap {
+  height: 100%; display: flex; flex-direction: column;
+  background: var(--h5-screen-wash), var(--h5-bg);
+}
 .hd { display: flex; align-items: center; gap: 6px; padding: 12px 14px 6px; }
 .back { border: 0; background: transparent; font-size: 26px; line-height: 1; color: var(--h5-ink, #111); padding: 0 4px; }
 .ttl { font-size: 17px; font-weight: 700; color: var(--h5-ink, #111); }
@@ -663,7 +698,12 @@ onMounted(async () => {
   border-radius: 999px; padding: 8px 0; font-size: 13.5px; color: var(--h5-ink-3, #6b7280);
   position: relative;
 }
-.tabs > button.on { background: var(--h5-grad-btn, #2B6EF6); color: #fff; border-color: transparent; font-weight: 600; }
+.tabs > button { transition: background .18s ease, color .18s ease, transform .12s ease }
+.tabs > button:active { transform: scale(.96) }
+.tabs > button.on {
+  background: var(--h5-grad-btn, #2B6EF6); color: #fff; border-color: transparent;
+  font-weight: 600; box-shadow: var(--h5-sh-btn-sm);
+}
 .badge {
   position: absolute; top: -4px; right: 4px; min-width: 17px; height: 17px; border-radius: 9px;
   background: #dc2626; color: #fff; font-size: 10.5px; font-style: normal;
@@ -676,10 +716,15 @@ onMounted(async () => {
 .scroll { flex: 1; overflow-y: auto; padding: 0 14px 28px; -webkit-overflow-scrolling: touch; }
 
 .card {
-  background: rgba(255,255,255,.9); border: 1px solid rgba(255,255,255,.95);
-  border-radius: 14px; padding: 12px 13px; margin-bottom: 10px;
-  box-shadow: 0 2px 10px rgba(30,50,90,.06);
+  background: var(--h5-glass-strong); border: var(--h5-glass-border);
+  border-radius: var(--h5-r-card); padding: 13px 14px; margin-bottom: 10px;
+  box-shadow: var(--h5-sh-card);
+  animation: h5FadeUp .3s ease both;
 }
+/* 前几张卡错峰入场——列表「铺开」而不是「砸下来」 */
+.card:nth-child(2) { animation-delay: .04s }
+.card:nth-child(3) { animation-delay: .08s }
+.card:nth-child(4) { animation-delay: .12s }
 .card.dim { opacity: .6; }
 .c-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .c-title { font-size: 15px; font-weight: 600; color: var(--h5-ink, #111); flex: 1; min-width: 0; word-break: break-word; }
@@ -703,6 +748,8 @@ onMounted(async () => {
   border: 1px solid var(--h5-line, #e5e7eb); background: #fff; border-radius: 999px;
   padding: 7px 14px; font-size: 13px; color: var(--h5-ink-2, #374151); font-weight: 500;
 }
+.b { transition: transform .12s ease, opacity .12s ease }
+.b:active { transform: scale(.96) }
 .b:disabled { opacity: .5; }
 .b-pri { background: var(--h5-grad-btn, #2B6EF6); color: #fff; border-color: transparent; font-weight: 600; }
 .b-ok { background: #16a34a; color: #fff; border-color: transparent; font-weight: 600; }
@@ -732,9 +779,13 @@ onMounted(async () => {
 
 .ps-row {
   display: flex; gap: 10px; align-items: flex-start;
-  background: rgba(255,255,255,.9); border: 1px solid rgba(255,255,255,.95);
+  background: var(--h5-glass-strong); border: var(--h5-glass-border);
   border-radius: 12px; padding: 11px 12px; margin-bottom: 8px;
+  box-shadow: var(--h5-sh-card2);
+  animation: h5FadeUp .28s ease both;
+  transition: transform .12s ease;
 }
+.ps-row:active { transform: scale(.985) }
 .ps-row.dim { opacity: .55; }
 .tick {
   flex: none; width: 22px; height: 22px; border-radius: 6px; margin-top: 1px;
@@ -790,4 +841,29 @@ onMounted(async () => {
 .pv-t { color: #fff; font-size: 13px; display: flex; align-items: center; gap: 10px; }
 .pv-t .rm { margin-left: auto; font-size: 18px; padding: 4px 8px; }
 .pv-img { max-width: 94vw; max-height: 80vh; object-fit: contain; border-radius: 8px; background: #fff; }
+
+/* ── 骨架屏：加载时给出内容轮廓，比一行「加载中…」踏实 ── */
+.skel-list { display: flex; flex-direction: column; gap: 10px; }
+.skel-card {
+  background: var(--h5-glass-strong); border: var(--h5-glass-border);
+  border-radius: var(--h5-r-card); padding: 14px;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.skel-card i {
+  display: block; height: 13px; border-radius: 6px;
+  background: linear-gradient(90deg, rgba(0,0,0,.05) 25%, rgba(0,0,0,.10) 45%, rgba(0,0,0,.05) 65%);
+  background-size: 220% 100%;
+  animation: skelWave 1.3s ease-in-out infinite;
+}
+.skel-card .l1 { width: 62% }
+.skel-card .l2 { width: 88%; height: 11px }
+.skel-card .l3 { width: 38%; height: 11px }
+.skel-card.slim { flex-direction: row; align-items: center }
+.skel-card.slim .l1 { flex: 1 }
+.skel-card.slim .l3 { width: 52px }
+@keyframes skelWave { 0% { background-position: 180% 0 } 100% { background-position: -60% 0 } }
+@media (prefers-reduced-motion: reduce) {
+  .card, .ps-row { animation: none !important }
+  .skel-card i { animation: none }
+}
 </style>

@@ -9,6 +9,7 @@
  */
 import { ref, computed } from 'vue'
 import { CARD_REGISTRY, runCardAction, type AgentCard } from './cardRegistry'
+import { toast, uiPrompt } from './ui'
 
 const props = defineProps<{ card: AgentCard; index?: number; total?: number }>()
 const emit = defineEmits<{ (e: 'done', payload: { action: string; card: AgentCard }): void }>()
@@ -39,15 +40,21 @@ async function act(key: string) {
   if (!a || busy.value) return
   let reason: string | undefined
   if (a.needsReason) {
-    // 手机上打字麻烦，但驳回原因会推送给发起人，不能省
-    reason = window.prompt('驳回原因（会发给提交人）') || ''
-    if (!reason.trim()) return
+    // 驳回原因会推送给发起人，不能省——多行抽屉，别再挤原生 prompt 的小框
+    const r = await uiPrompt({
+      title: '驳回原因', message: '会原样发给提交人，说清楚怎么改',
+      textarea: true, required: true, confirmText: '驳回',
+      placeholder: '例如：金额与合同不符，请核对后重新提交',
+    })
+    if (r === null || !r.trim()) return
+    reason = r
   }
   busy.value = key
   errMsg.value = ''
   try {
     await runCardAction(props.card, key, reason)
     doneAction.value = key
+    toast(a.danger ? '已驳回' : '已完成')
     emit('done', { action: key, card: props.card })
   } catch (e: any) {
     // 后端 400 的原文照抄出来，绝不吞掉只说「操作失败」（手册 3.5.3）
