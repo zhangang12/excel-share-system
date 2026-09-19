@@ -13,6 +13,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errText } from './http'
+import { toast, uiConfirm, uiPrompt } from './ui'
 import { clearSession, displayName } from './session'
 
 interface Tile {
@@ -93,7 +94,8 @@ async function save() {
 }
 
 async function reset() {
-  if (!confirm('恢复成系统默认门户？你的自定义卡会被清掉。')) return
+  if (!(await uiConfirm({ title: '恢复默认门户？', message: '你的自定义卡会被清掉。',
+                          confirmText: '恢复默认', danger: true }))) return
   saving.value = true
   try {
     const { data } = await http.delete('/agent/portal')
@@ -112,10 +114,13 @@ function moveTile(i: number, d: number) {
   const [x] = tiles.value.splice(i, 1)
   tiles.value.splice(j, 0, x)
 }
-function addCustom() {
-  const label = window.prompt(`卡片标题（${limits.value.max_label} 字以内）`)?.trim()
+async function addCustom() {
+  const label = (await uiPrompt({ title: '新卡片标题',
+    placeholder: `${limits.value.max_label} 字以内`, required: true,
+    maxlength: limits.value.max_label }))?.trim()
   if (!label) return
-  const q = window.prompt('点这张卡时要问的话')?.trim()
+  const q = (await uiPrompt({ title: '点这张卡时要问的话', textarea: true,
+    required: true, placeholder: '例如：这个月销售额多少？' }))?.trim()
   if (!q) return
   if (tiles.value.length >= limits.value.max_tiles) { err.value = `最多摆 ${limits.value.max_tiles} 张`; return }
   tiles.value.push({ key: `custom:new${Date.now()}`, label, q, custom: true, glyph: '问', tone: 'blue', desc: q })
@@ -132,7 +137,12 @@ const ask = (t: Tile) => {
   router.push({ name: 'chat', query })
 }
 const openChat = () => router.push({ name: 'chat' })
-function logout() { clearSession(); router.replace('/login') }
+async function logout() {
+  // 🆕 原来点一下 ··· 直接退出——误触就要重新登录，加一道确认
+  if (!(await uiConfirm({ title: '退出登录？', confirmText: '退出', danger: true }))) return
+  clearSession()
+  router.replace('/login')
+}
 // 🆕 #382 待办角标：只取个数，失败静默（首页不该因为一个角标报错）
 // 2026-09-19 待办页对齐网页版后，角标口径也对齐：别人交办的 + 自己记的，合成一个数
 // （业务 2026-08-12 在网页版拍过同样的板，见 ManagementTodoFloating）
