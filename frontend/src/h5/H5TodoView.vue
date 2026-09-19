@@ -413,11 +413,14 @@ async function submitCreate() {
 
 // ───────────────────────── 进入 ─────────────────────────
 function switchTab(t: 'mine' | 'personal' | 'sent') {
+  // 🆕 再点当前页签 = 刷新（H5 没有刷新按钮，这是手机上最顺手的刷新入口）
+  const isRefresh = tab.value === t
   tab.value = t
   err.value = ''
   if (t === 'mine') void loadMine()
   else if (t === 'personal') void loadPersonal()
   else void loadSent()
+  if (isRefresh) toast('已刷新', 'info')
 }
 onMounted(async () => {
   void loadMine()
