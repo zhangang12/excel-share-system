@@ -140,6 +140,14 @@ async def recognize(request: Request,
     if data.get("status") in (40000004, 40010004) or r.status_code in (401, 403):
         # token 失效/被拒 → 清缓存，让下一次重取（本次直接报错，不自动重试拖时长）
         _token_cache["token"] = ""
+    # 🐛 2026-09-19 生产实况：status 40000010 = FREE_TRIAL_EXPIRED。
+    #    开通那天控制台上「一句话识别」选了商用，但实际生效的是试用版，
+    #    试用一到期每次识别都被网关拒，前端只看到笼统的「识别失败」——
+    #    这一类**配置/账务问题必须说人话**，否则查一圈代码才发现根本不是代码的事。
+    if data.get("status") == 40000010:
+        log.warning("[speech] 阿里云试用到期: %s", str(data)[:200])
+        raise HTTPException(502, "云端语音服务试用已到期：需在阿里云控制台把"
+                                 "「智能语音交互 → 一句话识别」开通为商用版")
     if data.get("status") != 20000000:
         log.warning("[speech] ASR 返回异常: %s", str(data)[:300])
         raise HTTPException(502, "识别失败，再说一次试试")

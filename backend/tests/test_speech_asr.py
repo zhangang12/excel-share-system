@@ -160,6 +160,45 @@ def test_阿里云报错不泄漏给前端(enabled, monkeypatch):
     assert "LTAI" not in str(e.value.detail), "**阿里云原始报错（含 AK）不许透出去**"
 
 
+def test_试用到期要说人话(enabled, monkeypatch):
+    """🐛 2026-09-19 生产实况：阿里云 status 40000010 = FREE_TRIAL_EXPIRED。
+    笼统的「识别失败」让人查了一圈代码才发现是账务问题——必须把该去哪点说清楚。"""
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"status": 40000010, "result": "",
+                    "message": "Gateway:FREE_TRIAL_EXPIRED:The free trial has expired!"}
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None):
+            return _TokResp()
+
+        async def post(self, url, **k):
+            return _Resp()
+
+    class _TokResp:
+        status_code = 200
+
+        def json(self):
+            return {"Token": {"Id": "tokT", "ExpireTime": 9999999999}}
+
+    monkeypatch.setattr(sp.httpx, "AsyncClient", _Client)
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(sp.recognize(_Req(b"\x00" * 64000), None))
+    assert e.value.status_code == 502
+    assert "商用" in e.value.detail and "一句话识别" in e.value.detail, \
+        f"**要告诉管理员去控制台开商用，不是让用户再说一次**：{e.value.detail}"
+    assert "FREE_TRIAL" not in e.value.detail, "阿里云原文不透出"
+
+
 def test_识别失败状态码_清token缓存(enabled, monkeypatch):
     class _Resp:
         status_code = 200

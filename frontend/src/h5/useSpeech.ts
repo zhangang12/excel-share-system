@@ -8,10 +8,13 @@
  * ⚠️ 为什么必须有 ①：**Android WebView 里根本没有 Web Speech API**。
  * ⚠️ 为什么必须有 ③：原生 SpeechRecognizer 依赖系统语音服务，无 GMS 的
  *   国产机（生产实测：华为）直接报「这台手机没有可用的语音识别服务」。
- *   云端识别是唯一能覆盖所有手机的路。①失败会**自动切到③**（若已开通）。
+ *   云端识别是唯一能覆盖所有手机的路。
  *
- * 选路顺序：原生可用 → ①；否则浏览器有 Web Speech → ②；否则问一次后端
- * `/speech/available`，开通了且拿得到 getUserMedia → ③；全没有 → 按钮隐藏。
+ * 选路顺序（2026-09-19 用户拍板调整）：**APP 里云端开通了就默认走 ③**——
+ * 全公司都是国产机，原生识别要么没有、要么错误五花八门，「先试原生、
+ * 失败再切云端」让用户每台机都要踩一次坑；云端行为唯一，费用按次几厘钱。
+ * ③ 没开通/探测没回来才落回 ①。浏览器仍走 ②（Chrome 的 Web Speech 免费
+ * 且边说边出字）；企微 X5 没有 ② → 落到 ③。全没有 → 按钮隐藏。
  *
  * ③ 的录音：getUserMedia + ScriptProcessor 采 PCM，降采样到 16k/16bit 单声道。
  * ⚠️ 刻意不用 MediaRecorder：它吐 webm/opus 容器，各 WebView 支持参差、
@@ -75,7 +78,8 @@ export function useSpeech(onText: (text: string, final: boolean) => void,
   let rec: SR = null
   let native: NativeSpeechHandle | null = null
   let starting = false
-  /** 原生报「没有语音服务」之后置 true，后续都直接走云端 */
+  /** true = 默认走云端。APP 里探到云端开通即置 true（用户拍板：国产机
+   *  原生识别不稳，别让每台机先踩一次坑）；原生报「没有语音服务」也会置。 */
   let preferCloud = false
   let cloudEnabled = false
   /** 🆕 会话结束通知（去重）。**自动发送挂在这上面**，不挂在识别器的 final 标记上——
@@ -104,9 +108,13 @@ export function useSpeech(onText: (text: string, final: boolean) => void,
       })
       .catch(() => { /* 探测失败按不可用处理，按钮维持隐藏 */ })
   } else if (useNative && canRecord()) {
-    // APP 里也悄悄探一次：原生报「没有语音服务」时要有云端可切
+    // APP 里探到云端已开通 → **云端就是默认**（preferCloud），原生只作兜底。
+    // 探测没回来前用户就按了麦克风 → 这一次走原生，不算错。
     http.get('/speech/available')
-      .then(({ data }) => { cloudEnabled = !!data?.enabled })
+      .then(({ data }) => {
+        cloudEnabled = !!data?.enabled
+        if (cloudEnabled) preferCloud = true
+      })
       .catch(() => { /* 没有就没有 */ })
   }
 
