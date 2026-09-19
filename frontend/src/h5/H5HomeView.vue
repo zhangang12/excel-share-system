@@ -10,7 +10,7 @@
  * 以及把自己常问的话沉淀成一张自定义卡；自定义卡本质只是一句预置提问，
  * 点下去仍走 /agent/chat，不会凭配置多出任何数据访问路径。
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errText } from './http'
 import { toast, uiConfirm, uiPrompt } from './ui'
@@ -154,7 +154,15 @@ async function loadTodoCount() {
   todoCount.value = n
 }
 
-onMounted(() => { load(); loadTodoCount() })
+function refreshOnReturn() {
+  // 🆕 切后台再回来 / 从别的页面返回：角标和待批数悄悄刷新，不打扰
+  if (document.visibilityState === 'visible') { loadTodoCount(); load() }
+}
+onMounted(() => {
+  load(); loadTodoCount()
+  document.addEventListener('visibilitychange', refreshOnReturn)
+})
+onUnmounted(() => document.removeEventListener('visibilitychange', refreshOnReturn))
 </script>
 
 <template>
@@ -225,6 +233,9 @@ onMounted(() => { load(); loadTodoCount() })
         <div class="list" :class="{ edit: editing }">
           <div v-for="t in gridTiles" :key="t.key" class="cell">
             <button class="row" :class="{ dim: editing }" @click="ask(t)">
+              <!-- 🆕 glyph/tone 是 portal.py 一直在下发的，之前没渲染——
+                   逾期红、尾款琥珀、到货绿：该急的自己跳出来 -->
+              <span class="rgl" :class="`t-${t.tone || 'blue'}`">{{ t.glyph || '问' }}</span>
               <span class="rtx">
                 <span class="rl">{{ t.label }}</span>
                 <span class="rd">{{ t.desc }}</span>
@@ -243,6 +254,7 @@ onMounted(() => { load(); loadTodoCount() })
           <div class="gh">还能加这些</div>
           <div class="addlist">
             <button v-for="c in addable" :key="c.key" class="additem" @click="addTile(c)">
+              <span class="rgl sm" :class="`t-${c.tone || 'blue'}`">{{ c.glyph || '问' }}</span>
               <span class="atx">
                 <span class="al">{{ c.label }}</span>
                 <span class="ad">{{ c.desc }}</span>
@@ -250,6 +262,7 @@ onMounted(() => { load(); loadTodoCount() })
               <span class="aplus">+</span>
             </button>
             <button class="additem custom" @click="addCustom">
+              <span class="rgl sm t-blue">问</span>
               <span class="atx">
                 <span class="al">常问的话</span>
                 <span class="ad">把你自己的问题存成一张卡</span>
@@ -361,6 +374,18 @@ onMounted(() => { load(); loadTodoCount() })
   transition: transform .14s, box-shadow .14s;
 }
 .row:active { transform: translateY(1px); box-shadow: none }
+/* 🆕 磁贴图标块：tone 定色。浅底深字，醒目但不喧宾夺主 */
+.rgl {
+  flex: none; width: 36px; height: 36px; border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700;
+  border: 1px solid rgba(255,255,255,.7);
+}
+.rgl.sm { width: 30px; height: 30px; border-radius: 9px; font-size: 13px }
+.t-blue   { background: rgba(76,141,255,.15);  color: var(--h5-blue) }
+.t-danger { background: rgba(196,54,47,.11);   color: var(--h5-danger) }
+.t-warn   { background: rgba(169,106,8,.11);   color: var(--h5-warn) }
+.t-good   { background: rgba(42,122,82,.11);   color: var(--h5-good) }
 .rtx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px }
 .rl { font-size: 14.5px; font-weight: 600; color: var(--h5-ink) }
 .rd { font-size: 11.5px; color: var(--h5-ink-3); line-height: 1.45 }
