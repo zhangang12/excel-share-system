@@ -134,10 +134,14 @@ const ask = (t: Tile) => {
 const openChat = () => router.push({ name: 'chat' })
 function logout() { clearSession(); router.replace('/login') }
 // 🆕 #382 待办角标：只取个数，失败静默（首页不该因为一个角标报错）
+// 2026-09-19 待办页对齐网页版后，角标口径也对齐：别人交办的 + 自己记的，合成一个数
+// （业务 2026-08-12 在网页版拍过同样的板，见 ManagementTodoFloating）
 const todoCount = ref(0)
 async function loadTodoCount() {
-  try { todoCount.value = (await http.get<{ count: number }>('/personal-todos/count')).data.count }
-  catch { todoCount.value = 0 }
+  let n = 0
+  try { n += (await http.get<{ count: number }>('/personal-todos/count')).data.count } catch { /* 静默 */ }
+  try { n += (await http.get<{ count: number }>('/management-todos/mine/count')).data.count } catch { /* 静默 */ }
+  todoCount.value = n
 }
 
 onMounted(() => { load(); loadTodoCount() })
