@@ -28,9 +28,11 @@
    用户反馈「智能体顶上的待办/定制太靠上，每次按都打不开」。根因：APP 是沉浸式（铺到状态栏下面），
    而 Android WebView 的 env(safe-area-inset-top) 在很多机型上是 0（只报刘海，不报状态栏），
    页头于是压在状态栏底下——状态栏那一条是系统窗口，点上去的手指根本到不了网页，按钮就「按不动」。
-   APP 里（main.ts 给 <html> 挂 .h5-shell-android）至少留 32px；浏览器/企微里有自己的状态栏，保持 env()。 */
+   APP 里（main.ts 给 <html> 挂 .h5-shell-android）至少留 44px；浏览器/企微里有自己的状态栏，保持 env()。 */
 :root { --h5-safe-top: env(safe-area-inset-top, 0px); }
-:root.h5-shell-android { --h5-safe-top: max(env(safe-area-inset-top, 0px), 32px); }
+:root.h5-shell-android { --h5-safe-top: max(env(safe-area-inset-top, 0px), 44px); }
+/* ⚠️ 44 不是随手取的：赵仁辉那台（打孔屏）实拍状态栏约 44px，32 只能刚好擦边。老机型状态栏 24px，
+   多留 20px 空白无伤大雅；留少了就是「按钮按不动」。宁多勿少。 */
 
 :root {
   /* ── 字体：Outfit 是设计稿指定的，中文回落苹方 ── */
