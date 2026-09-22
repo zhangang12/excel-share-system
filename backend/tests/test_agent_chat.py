@@ -161,8 +161,12 @@ async def main():
             f"聚合回复含 A/B 两家供应商: {j.get('reply','')[:300]}")
 
         # ===== 2b. 模型选择：models 接口 + chat 的 model 入参 =====
+        # 🆕 2026-09-23 推广到全公司：/models 由 admin/manager 放开到「登录即可」。
+        #   网页版智能体一进页面就探测模型列表，普通员工每次吃 403 弹红叉——
+        #   功能是好的，只是看起来坏了。返回里没有密钥，写配置的 /config 仍只给管理员。
         r = await c.get("/api/agent/models", headers=Hb)
-        chk(r.status_code == 403, f"buyer 调 /api/agent/models 应 403: {r.status_code}")
+        chk(r.status_code == 200, f"buyer 调 /api/agent/models 应 200（放开后）: {r.status_code}")
+        chk("api_key" not in r.text, "放开的只是模型列表，密钥一个字都不给")
         r = await c.get("/api/agent/models", headers=H)
         j = r.json() if r.status_code == 200 else {}
         chk(r.status_code == 200, f"admin 取 models 200: {r.status_code} {r.text[:200]}")

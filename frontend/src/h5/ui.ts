@@ -58,6 +58,13 @@ function ensureStyle() {
   box-shadow:0 0 0 3px rgba(43,110,246,.12)}
 .h5k-req{font:400 12px/1 var(--h5-font);color:#C4362F;margin-top:6px;min-height:12px}
 .h5k-acts{display:flex;gap:10px;margin-top:16px}
+/* 🆕 uiActions：竖排整行。并排按钮只适合「取消/确定」这种二选一，
+   三项以上并排就挤成小方块，手机上点不准。 */
+.h5k-acts.col{flex-direction:column;gap:8px}
+.h5k-acts.col .h5k-b{flex:none;width:100%}
+.h5k-b.plain{background:rgba(255,255,255,.9);color:var(--h5-ink,#17181A);
+  border:1px solid rgba(24,32,50,.08)}
+.h5k-b.warnt{background:rgba(196,54,47,.08);color:#C4362F}
 .h5k-b{flex:1;border:0;border-radius:999px;padding:12px 0;text-align:center;
   font:600 14.5px/1 var(--h5-font);cursor:pointer;
   transition:transform .12s ease,opacity .12s ease}
@@ -199,4 +206,44 @@ export function uiPrompt(opts: PromptOpts): Promise<string | null> {
     // 弹出即聚焦：少一次点击（键盘会顶起抽屉，visualViewport 由页面处理）
     setTimeout(() => inp.focus(), 260)
   }) as Promise<string | null>
+}
+
+
+// ───────────────────────── uiActions ─────────────────────────
+/**
+ * 动作面板：竖排几项让人选一个，选完返回 key，点遮罩/取消返回 null。
+ *
+ * 🆕 2026-09-23：首页那颗「···」原来是「点一下就退出登录」的单功能按钮。
+ * 推广到全公司后手机成了多数人唯一的入口，那颗按钮下面还得放「修改密码」，
+ * 于是需要一个最简单的动作面板。刻意不做成通用菜单组件 —— 现在只有这一处在用。
+ */
+export interface ActionItem {
+  key: string
+  label: string
+  /** 危险项（退出、删除）：文字标红 */
+  danger?: boolean
+}
+
+export interface ActionsOpts {
+  title?: string
+  message?: string
+  actions: ActionItem[]
+  cancelText?: string
+}
+
+export function uiActions(opts: ActionsOpts): Promise<string | null> {
+  return openSheet((sheet, close) => {
+    if (opts.title) sheet.appendChild(el('div', 'h5k-t', opts.title))
+    if (opts.message) sheet.appendChild(el('div', 'h5k-m', opts.message))
+    const acts = el('div', 'h5k-acts col')
+    for (const a of opts.actions) {
+      const b = el('button', `h5k-b ${a.danger ? 'warnt' : 'plain'}`, a.label)
+      b.onclick = () => close(a.key)
+      acts.appendChild(b)
+    }
+    const no = el('button', 'h5k-b ghost', opts.cancelText || '取消')
+    no.onclick = () => close(null)
+    acts.appendChild(no)
+    sheet.appendChild(acts)
+  }).then((v) => (typeof v === 'string' ? v : null))
 }

@@ -17,15 +17,24 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
-from ..routers.sales_router import _all_view          # ← 行级隔离唯一真源，勿重写
+from . import perm                                    # ← 智能体权限口径唯一真源
+from ..routers.sales_router import _all_view          # ← 写动作仍用它（与端点同判据）
 
 # 截断统一由 agent_router._cap 处理（可被 limit 参数调整）；
 # 工具本身返回全量，别在这里再截一次，否则 limit=200 也拿不到第 21 条。
 
 
 def _scope(q, current: models.User):
-    """销售行级隔离：非管理层/非销售主管只看本人负责的台账行。口径同 /api/sales/ledger。"""
-    if not _all_view(current):
+    """销售行级隔离：管理层/销售主管/**财务**看全部，销售只看本人负责的台账行。
+
+    ⚠️ 2026-09-23 把判据从 `_all_view` 换成 `perm.sales_read_all`，多出来的只有财务。
+       原因：`_all_view` 只认管理层+销售主管，财务不在里面，于是财务问「待开票有哪些」
+       被过滤成 sales_uid=自己 → 一条不剩 → 助手回「没有 ✅」。而网页上
+       finance_router.pending_invoices 给财务的是**全量**（那页就是财务自己干活的页面），
+       资金面板、应收也一样。这不是放宽，是把智能体拉回与网页一致。
+       **只用于只读查询**；销账/审批这些写动作仍走 `_all_view`（与端点同一条判断）。
+    """
+    if not perm.sales_read_all(current):
         q = q.where(models.SalesLedger.sales_uid == current.id)
     return q
 
@@ -183,7 +192,7 @@ async def tool_leads_followup(db: AsyncSession, current: models.User) -> dict:
     q = select(models.SalesLead).where(
         models.SalesLead.status.notin_(_LEAD_CLOSED)
     ).order_by(models.SalesLead.id.desc())
-    if not _all_view(current):
+    if not perm.sales_read_all(current):
         q = q.where(models.SalesLead.owner_uid == current.id)
     rows = [{"id": x.id, "customer": x.customer or "—", "status": x.status or "—",
              "contact": x.contact or "", "age_days": _age_days(x.created_at)}

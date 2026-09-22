@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
 from ..database import SessionLocal
+from . import perm
 from .cards import ledger_settle, pay_req, sales_order
 
 log = logging.getLogger("agent.briefing")
@@ -132,6 +133,11 @@ async def _ledger_items(db: AsyncSession, current: models.User) -> list[dict]:
 
 async def _pay_req_items(db: AsyncSession, current: models.User) -> list[dict]:
     """待审请款。字段以 cards/pay_req.py 为准：金额是 requested_amount。"""
+    # 🆕 2026-09-23：简报是「待你处理」，批不了的人不该出现在这里。
+    #   pending_pay_reqs 现在也给采购员返回他自己那张（让他能看进度），
+    #   但那张不是「待他审批」，进简报就是假待办。
+    if not perm.can_approve_pay_req(current):
+        return []
     prs = await pay_req.pending_pay_reqs(db, current)
     sup_ids = {pr.supplier_id for pr in prs if pr.supplier_id}
     names: dict[int, str] = {}

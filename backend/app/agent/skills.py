@@ -77,7 +77,9 @@ async def _customer_profile(db: AsyncSession, user: models.User, message: str) -
     #    技能直接 KeyError。取值兜一层，别再因为键名挪动把整条技能打挂。
     c = await _te.get_customer(db, user, cands[0].get("customer") or cands[0].get("name", ""))
     if not c.get("found"):
-        return {"text": f"没查到「{name}」的台账。"}
+        # hint 里可能是「你的账号看不到这部分」——那句比「没查到」准确得多，
+        # 不转出来的话，没权限的人会以为是数据丢了，然后来问「系统是不是坏了」
+        return {"text": c.get("hint") or f"没查到「{name}」的台账。"}
 
     lines = [f"**{c['customer']} · {c['ledger_count']} 单 · 合同 {_rd.money(c['contract_total'])}"
              f" · 未收 {_rd.money(c['unpaid_total'])}"
@@ -112,14 +114,19 @@ async def _project_check(db: AsyncSession, user: models.User, message: str) -> d
     p = await _te.get_project(db, user, code)
     if not p.get("found"):
         return {"text": f"没找到项目「{code}」。"}
+    # 🆕 2026-09-23：ledger 为空有两种情况——项目真没建台账，或**这个人没有看钱的权限**
+    #   （get_project 会按 perm.redact_ledger 整段摘掉）。两种都不能再往下印
+    #   「合同 ¥0.00 · 客户 —」：那是把「不给看」显示成「是 0」，
+    #   下面的风险判定还会据此报一条「合同额为 0，毛利会算成假亏损」，纯属误导。
     led = p.get("ledger") or {}
     lines = [f"**{p['project']}「{p['name']}」**", ""]
-    lines.append(f"- 合同 {_rd.money(led.get('contract'))} · 客户 {led.get('customer') or '—'}"
-                 f" · 订单状态 {led.get('order_state') or '—'}")
-    unpaid = float(led.get("ship_receivable") or 0) + float(led.get("balance") or 0)
-    lines.append(f"- 未收 {_rd.money(unpaid)}"
-                 + (f"（发货款 {_rd.money(led.get('ship_receivable'))}）"
-                    if led.get("ship_receivable") else ""))
+    if led:
+        lines.append(f"- 合同 {_rd.money(led.get('contract'))} · 客户 {led.get('customer') or '—'}"
+                     f" · 订单状态 {led.get('order_state') or '—'}")
+        unpaid = float(led.get("ship_receivable") or 0) + float(led.get("balance") or 0)
+        lines.append(f"- 未收 {_rd.money(unpaid)}"
+                     + (f"（发货款 {_rd.money(led.get('ship_receivable'))}）"
+                        if led.get("ship_receivable") else ""))
     lines.append(f"- 部门任务逾期 {p['dept_overdue_count']} 个 · "
                  f"采购未到货 {p.get('purchase_overdue_count', 0)} 项")
     lines.append(f"- 发货状态 {p.get('shipment_status') or '还没建发货单'}"
@@ -129,7 +136,7 @@ async def _project_check(db: AsyncSession, user: models.User, message: str) -> d
         risk.append(f"{p['dept_overdue_count']} 个部门任务已逾期")
     if p.get("purchase_overdue_count"):
         risk.append(f"{p['purchase_overdue_count']} 项采购到期没到货")
-    if not led.get("contract"):
+    if led and not led.get("contract"):
         risk.append("合同额为 0，毛利会算成假亏损")
     lines += ["", ("⚠️ 风险：" + "；".join(risk)) if risk else "✅ 没有发现明显风险。"]
     return {"text": "\n".join(lines)}

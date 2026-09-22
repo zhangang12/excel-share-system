@@ -44,6 +44,7 @@ from ..utils import write_audit
 #   重写是上一版越权的根因——页面改了规则，工具这边不会跟。这几个函数是唯一真源：
 #   _buyer_restricted 有反直觉语义（兼任 finance/logistics 不解除采购隔离），自己写必然踩坑。
 from .purchase_mgmt_router import _buyer_restricted
+from ..agent import perm as _perm
 from .sales_router import _all_view as _sales_all_view
 from .orders_router import _is_mgr as _orders_is_mgr, _is_lead as _orders_is_lead
 
@@ -174,8 +175,8 @@ async def tool_balance_due(db: AsyncSession, current: models.User) -> dict:
         models.SalesLedger.balance_date != "",
         models.SalesLedger.balance_date <= threshold,
     )
-    # 销售行级隔离：与 /api/sales/ledger 同口径（sales_router.py:239）——非管理层/非销售主管只看本人
-    if not _sales_all_view(current):
+    # 销售行级隔离：管理层/销售主管/财务看全部，销售只看本人（口径见 agent/perm.py）
+    if not _perm.sales_read_all(current):
         q = q.where(models.SalesLedger.sales_uid == current.id)
     r = await db.execute(q)
     rows = []
@@ -374,6 +375,10 @@ TOOL_LABELS = {
     "sales_summary": "销售额统计",
     "get_supplier": "供应商画像",
     "get_material": "物料全景",
+    # 🆕 2026-09-23 推广到全公司：装配/钣金/封板三个组人最多，而助手原来
+    #    一个能答他们问题的工具都没有（他们的活在 produce_group_tasks，
+    #    dept_orders.worker_id 对他们永远是 NULL）。
+    "my_tasks": "我手上的活",
     "mgmt_todo_watch": "我发的待办",
     "mgmt_todo_peers": "常派给谁",
     "mgmt_todo_send": "下发待办",
@@ -388,6 +393,7 @@ TOOL_DESC = {
     "sales_summary": "按月看销售额（合同额），本月/上月对比；按签订日期归月",
     "get_supplier": "这家供应商准时率多少、平均拖几天、现在还欠几批货",
     "get_material": "这个物料还有多少库存、低不低于安全线、最近进出了多少",
+    "my_tasks": "派给我、还没做完的活：哪个项目、干什么、还剩几天（含装配/钣金/封板）",
     "mgmt_todo_watch": "我发下去的待办谁没回、谁超期、谁申请顺延",
     "mgmt_todo_peers": "最近都派给了谁——发待办时用来快速挑人",
     "mgmt_todo_send": "下发一条待办给某个人（先出草稿，确认后才真发）",
@@ -588,6 +594,12 @@ TOOL_SCHEMAS += [
         "parameters": {"type": "object", "properties": dict(
             _LIM_PROP, q={"type": "string", "description": "物料编码或名称或规格"}),
             "required": ["q"]}}},
+    {"type": "function", "function": {
+        "name": "my_tasks",
+        "description": "派给当前这个人、还没做完的活：哪个项目、干什么、什么状态、还剩几天。"
+                       "**部门单和生产组任务（钣金/装配/封板）都在里面**。"
+                       "回答「我今天要干什么」「我手上还有几台」「我有没有超期的」用它",
+        "parameters": {"type": "object", "properties": dict(_LIM_PROP)}}},
 ]
 
 
@@ -631,6 +643,10 @@ def _allowed_tools(user: models.User) -> set[str]:
         out.add("mgmt_todo_watch")
         out.add("mgmt_todo_peers")
         out.add("mgmt_todo_send")
+    # 🆕 2026-09-23：「我手上的活」**不设门控**——它只取 worker_id == 自己的行，
+    #    没有任何可泄露的东西，而它恰恰是装配/钣金/封板这些人唯一用得上的工具。
+    #    给它加菜单门控等于把最需要的人挡在外面（他们只有 produce 一个菜单）。
+    out.add("my_tasks")
     # 🆕 v2：找实体是所有纵深查询的入口，任何能查数的人都该有
     if out:
         out.add("find_entity")
@@ -711,7 +727,7 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
 
     # 🆕 v2 阶段一：find → get。门控沿用 _allowed_tools（各自的业务域），
     #    工具内部的行级隔离继续走 sales_router._all_view，不另写谓词。
-    from ..agent import tools_entity as _te
+    from ..agent import tools_entity as _te, tools_tasks as _tt
     _V2 = {
         "find_entity":  lambda: _te.find_entity(db, current, args.get("q", ""), args.get("kind")),
         "get_customer": lambda: _te.get_customer(db, current, args.get("name", "")),
@@ -731,6 +747,7 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
             limit=int(args.get("limit") or 200)),
         "get_supplier": lambda: _te.get_supplier(db, current, args.get("name", "")),
         "get_material": lambda: _te.get_material(db, current, args.get("q", "")),
+        "my_tasks":     lambda: _tt.my_tasks(db, current),
     }
     if name in _V2:
         if name not in _allowed_tools(current):
@@ -1168,6 +1185,24 @@ def _overdue_orders_text(d: dict) -> str:
     return "\n".join(lines)
 
 
+def _my_tasks_text(d: dict) -> str:
+    """「我手上的活」。⚠️ 一条都没有时要说「没有派给你的」，
+    不能只回一个 0 —— 装配工看到 0 会以为是系统没查到，而不是真没活。"""
+    if d["count"] == 0:
+        return "**派给你的未完成任务：0 条** ✅\n\n" + (d.get("hint") or "")
+    head = f"**你手上还有 {d['count']} 项**"
+    if d.get("overdue"):
+        head += f"，其中 **⚠ {d['overdue']} 项已超期**"
+    lines = [head, "", "| 项目 | 干什么 | 状态 | 交期 |", "|---|---|---|---|"]
+    for it in d["items"]:
+        left = it["days_left"]
+        when = ("—" if left is None else
+                (f"**⚠ 超期 {-left} 天**" if left < 0 else
+                 ("**今天**" if left == 0 else f"还剩 {left} 天")))
+        lines.append(f"| {it['project']} | {it['what']} | {it['status']} | {when} |")
+    return "\n".join(lines)
+
+
 def _morning_text(d: dict) -> str:
     def _sec(title: str, count: int) -> str:
         return f"**{title}：{count} 条**" + (" ✅" if count == 0 else "")
@@ -1235,6 +1270,7 @@ def _project_text(d: dict) -> str:
 
 
 _CAPABILITY_TEXT = """我是 ERP 数据助手（只读），所有数字都来自系统实时查询。目前可以回答：
+- **「我手上的活」**：派给你、还没做完的任务（装配/钣金/封板/设计/电工都在里面）
 - **「今日晨报」**：采购未到货 / 逾期任务 / 尾款 / 人事到期一览（也可以说「今天要盯什么」）
 - **「采购未到货」**：到期仍未收货的采购明细；「哪个供应商拖期」→ 按供应商汇总
 - **「未来一周到货」**：即将到货的采购明细
@@ -1268,6 +1304,20 @@ async def _rule_chat(message: str, db: AsyncSession, current: models.User):
     if any(k in m for k in ("尾款", "回款", "欠款")):
         d = await _call("balance_due")
         return (d["error"], []) if "error" in d else (_balance_text(d), ["balance_due"])
+    # 🆕 2026-09-23：规则降级现在是**常见路径**（超日限/并发满都会落到这里），
+    #   所以新工具必须同时在这里有一条意图。
+    #   ⚠️ 放在「逾期」之前：装配工问「我有没有超期的活」要落到自己的任务，
+    #      不是全公司的部门逾期表。
+    # 判据拆成「第一人称 × 干活」两组词的交集，而不是硬列问法 ——
+    #   一线的说法太散（「我手上还有几台」「派给我的活」「我有没有超期的」…），
+    #   列不全就会掉进能力清单，而那是最像「系统坏了」的回答。
+    #   ⚠️ 「我们」不算第一人称：「我们部门逾期任务」问的是全部门，
+    #      该落到下面的 overdue_orders，不是本人的活。
+    _first_person = ("我" in m and "我们" not in m) or "自己" in m
+    _about_work = any(k in m for k in ("活", "任务", "干", "超期", "逾期", "做完", "几台", "负责"))
+    if (_first_person and _about_work) or "派给我" in m:
+        d = await _call("my_tasks")
+        return (d["error"], []) if "error" in d else (_my_tasks_text(d), ["my_tasks"])
     if "逾期" in m:
         d = await _call("overdue_orders")
         return (d["error"], []) if "error" in d else (_overdue_orders_text(d), ["overdue_orders"])
@@ -1373,10 +1423,17 @@ async def _require_admin_only(current: models.User = Depends(get_current_user)) 
 
 @router.get("/models")
 async def list_models(
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """可选模型列表 + 默认模型 + 是否已配置 LLM Key（走生效配置；不泄露 api_key 本身）。"""
+    """可选模型列表 + 默认模型 + 是否已配置 LLM Key（走生效配置；不泄露 api_key 本身）。
+
+    🆕 2026-09-23 门从 admin/manager 放开到「登录即可」：网页版智能体一进页面就调这个接口，
+       普通员工每次都吃 403，右上角弹一个红叉——功能其实是好的，只是探测模型列表失败。
+       推广到全公司前必须去掉这个假故障。
+       返回值里没有任何密钥：models 是白名单，llm_enabled 只是个布尔。
+       **改模型/改 Key 的写接口（/config）仍然只给管理员**，那条没动。
+    """
     cfg = await _effective_llm_config(db)
     return {
         "models": _model_whitelist(cfg),
@@ -1684,7 +1741,17 @@ async def chat(
     history = [{"role": h.role, "content": h.content[:2000]}
                for h in body.history[-20:] if h.role in ("user", "assistant")]
     allowed = _allowed_tools(current)
-    if cfg["api_key"]:
+    # 🆕 2026-09-23 推广到全公司：用量闸（每人每日上限 + 全局并发），见 agent/quota.py。
+    #   超限不报错，**降级到规则引擎** —— 规则路径不花钱、查的是同一批真数据，
+    #   用户至少拿得到答案；给他一个 429 只会被理解成「系统坏了」。
+    from ..agent import quota as _q
+    _ok_daily, _quota_note = await _q.check_daily(db, current)
+    _held = False
+    if cfg["api_key"] and _ok_daily:
+        _held = await _q.acquire(db)
+        if not _held:
+            _quota_note = _q.busy_note()
+    if cfg["api_key"] and _ok_daily and _held:
         llm_model = model or cfg["model"]
         try:
             reply, tool_names = await _chat_with_llm(text, history, db, llm_model, cfg, current)
@@ -1697,9 +1764,20 @@ async def chat(
         except Exception as e:  # noqa: BLE001 —— LLM 任何异常都降级，保证可用
             log.warning("[agent] LLM 调用失败，转规则降级: %s", e)
             fb_model = f"rule-fallback:{_fallback_reason(e)}"
+        finally:
+            # ⚠️ 必须在 finally 里还位子。漏一次这个位置就永久少一个，
+            #    表现是「助手越来越慢」，而且只有重启才好。
+            _q.release()
+    elif not _ok_daily:
+        fb_model = "rule-fallback:daily_quota"
+    elif cfg["api_key"]:
+        fb_model = "rule-fallback:busy"
     else:
         fb_model = "rule-fallback"
     reply, tool_names = await _rule_chat(text, db, current)
+    if _quota_note:
+        # 闸的原因要**当面说清**，否则用户只会觉得「今天的助手变笨了」
+        reply = f"{_quota_note}\n\n{reply}"
     await _log_chat(db, current, text, reply, tool_names, via="rule",
                     model=fb_model, duration_ms=int((time.perf_counter() - t0) * 1000),
                     session_id=_sid, turn=_turn, outcome="ok")
@@ -2038,6 +2116,9 @@ _DIRECT_FORMATTERS = {
     "po_overdue_by_supplier": _po_by_supplier_text,
     "balance_due": _balance_text,
     "overdue_orders": _overdue_orders_text,
+    # 🆕 2026-09-23：门户第一张卡就是它，必须走直答——
+    #    这张卡的答案是确定性的，让模型再想一遍纯属浪费，而且一线最怕等。
+    "my_tasks": _my_tasks_text,
 }
 
 
@@ -2374,9 +2455,26 @@ async def chat_stream(
                 except Exception as e:  # noqa: BLE001 —— 技能炸了就退回 ReAct，别整条挂掉
                     log.warning("[agent] 技能 %s 执行失败，转 LLM: %s", _hit["key"], e)
 
+            # 🆕 2026-09-23 用量闸（见 agent/quota.py）。流式这条路径尤其要管并发：
+            #   一路流从头到尾占着一条 DB 连接和一条上游连接，十几个人同时点「问」，
+            #   先满的是 Postgres 连接池，然后**整个系统**卡，不只是助手。
+            from ..agent import quota as _q
+            _ok_daily, _note = await _q.check_daily(db, current)
+            _held = False
+            if cfg["api_key"] and _ok_daily:
+                _held = await _q.acquire(db)
+                if not _held:
+                    _note = _q.busy_note()
+            if _note:
+                # 先把原因推给用户再答，让他知道这次为什么「变简单了」
+                yield sse("delta", {"text": _note + "\n\n"})
             try:
                 if not cfg["api_key"]:
                     raise RuntimeError("未配置 api_key")
+                if not _ok_daily:
+                    raise RuntimeError("daily_quota")
+                if not _held:
+                    raise RuntimeError("busy")
                 async for kind, payload in _chat_stream(text, history, model, cfg, current):
                     if kind == "delta":
                         yield sse("delta", {"text": payload})
@@ -2402,6 +2500,11 @@ async def chat_stream(
                 via = "rule-stream-fallback"
                 reply, tools = await _rule_chat(text, db, current)
                 yield sse("delta", {"text": reply})
+            finally:
+                # ⚠️ 只在真占到位子时才还。占都没占到就 release 会把上限越放越大，
+                #    那道闸等于白设。
+                if _held:
+                    _q.release()
 
             # ⚠️ 审计日志要带上提问卡的问题：它是正文之外模型真正说的话，
             #    不记进去，日志里就只剩一句没头没尾的结论，复盘时看不懂。

@@ -24,7 +24,13 @@ const step = ref<1 | 2>(1)
 // 记住的只有用户名。密码一个字都不存——「记住我」延长的是服务端令牌有效期(30 天)，
 // 不是把密码缓存在手机上。手机丢了点「退出」即失效。
 const form = reactive({ username: localStorage.getItem(REMEMBER_KEY) || '', password: '' })
-const remember = ref(!!localStorage.getItem(REMEMBER_KEY))
+// 🆕 2026-09-23 推广到全公司：默认**勾上**。
+//   老逻辑是「localStorage 里有记住的用户名才勾」，等于新装的 APP 第一次登录默认不勾，
+//   令牌按短有效期发 → 一线工人过一两天打开就要重登一次，而他们多半已经忘了密码。
+//   手机是个人设备，丢了点「退出」即失效；这里存的也只有用户名，密码一个字都不存。
+//   只有用户自己手动取消过（存下 REMEMBER_OFF）才不勾——尊重明确的选择。
+const REMEMBER_OFF = 'pms_h5_remember_off'
+const remember = ref(localStorage.getItem(REMEMBER_OFF) !== '1')
 const showPwd = ref(false)
 const preToken = ref('')
 const digits = ref<string[]>(['', '', '', '', '', ''])
@@ -36,6 +42,8 @@ async function finishLogin(resp: LoginResp) {
   setSession(resp.access_token, resp.user)
   if (remember.value) localStorage.setItem(REMEMBER_KEY, form.username)
   else localStorage.removeItem(REMEMBER_KEY)
+  // 记下这次的选择：默认是勾上的，只有本人主动取消才不勾（见上方 REMEMBER_OFF）
+  try { localStorage.setItem(REMEMBER_OFF, remember.value ? '0' : '1') } catch { /* 存储不可用就按默认 */ }
   await router.replace('/')
 }
 

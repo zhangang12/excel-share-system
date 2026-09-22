@@ -34,6 +34,9 @@ const router = createRouter({
     //   业务选「底部我的」而不是「首页」，意思就是别挤首页；H5 没有底部导航，
     //   于是入口放首页顶栏，意图一样落到。
     { path: '/todos', name: 'todos', component: () => import('./H5TodoView.vue') },
+    // 🆕 2026-09-23 推广到全公司：APP 里原来没有改密码的地方，
+    //   而管理员建号/重置密码后后端会置 password_must_change —— 网页端拦，手机端既不拦也没页面。
+    { path: '/password', name: 'password', component: () => import('./H5PasswordView.vue') },
     { path: '/:rest(.*)', redirect: '/' },
   ],
 })
@@ -47,8 +50,20 @@ const router = createRouter({
  */
 let wecomTried = false
 
+/** 本地那份用户信息里的「必须改密」标记。取不到就按 false —— 宁可不拦，也不能把人锁在外面。 */
+function mustChangePwd(): boolean {
+  try {
+    return !!JSON.parse(localStorage.getItem('pms_user') || 'null')?.password_must_change
+  } catch { return false }
+}
+
 router.beforeEach(async (to) => {
   if (to.meta.public) return true
+  // 🆕 强制改密：已登录但还在用初始密码的，一律先送去改密页。
+  //   ⚠️ 必须先排除 to.name === 'password'，否则守卫自己把自己拦成死循环。
+  if (isLoggedIn.value && mustChangePwd() && to.name !== 'password') {
+    return { name: 'password', query: { force: '1' } }
+  }
   if (isLoggedIn.value) return true
   if (!wecomTried) {
     wecomTried = true

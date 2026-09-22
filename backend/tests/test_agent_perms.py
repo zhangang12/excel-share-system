@@ -14,7 +14,8 @@
    - balance_due 可用；project_status 结果含 ledger（渲染「回款/尾款」）；
    - 晨报只含其有菜单的小节（采购/尾款），不含人事到期。
 4. admin：全部工具可用（晨报含全部小节）。
-5. 配置接口仍仅管理层：GET /api/agent/models、GET/PUT /api/agent/config 对普通用户 403。
+5. 写配置接口仍仅管理层：GET/PUT /api/agent/config 对普通用户 403
+   （GET /api/agent/models 自 2026-09-23 起登录即可，见下方断言）。
 """
 import asyncio, os, sys, tempfile, shutil
 
@@ -142,8 +143,13 @@ async def main():
             f"admin 晨报含全部小节: {j['reply'][:150]}")
 
         # ===== 5. 配置接口仍仅管理层（普通用户 403）=====
+        # 🆕 2026-09-23 推广到全公司：/models 由 admin/manager 放开到「登录即可」。
+        #   网页版智能体一进页面就探测模型列表，普通员工每次都吃 403 弹红叉——
+        #   功能是好的，只是看起来坏了。返回里没有密钥，只有白名单和一个布尔。
+        #   **写配置的 /config 没动**，下面 148 行仍断言 403。
         r = await c.get("/api/agent/models", headers=Hw1)
-        chk(r.status_code == 403, f"w1 GET /models 403: {r.status_code}")
+        chk(r.status_code == 200, f"w1 GET /models 200（推广后放开）: {r.status_code}")
+        chk("api_key" not in r.text, "放开的只是列表，密钥一个字都不给")
         r = await c.get("/api/agent/config", headers=Hw1)
         chk(r.status_code == 403, f"w1 GET /config 403: {r.status_code}")
         r = await c.put("/api/agent/config", headers=Hw1, json={"model": "x"})

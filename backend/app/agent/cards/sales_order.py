@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import models
+from .. import perm
 from ...routers.sales_router import _all_view
 from . import token as card_token
 
@@ -25,6 +26,11 @@ def _age(d: datetime | None) -> int | None:
 
 async def pending_orders(db: AsyncSession, current: models.User,
                          refs: list[int] | None = None) -> list[models.SalesLedger]:
+    # 🆕 2026-09-23：只有真正的审批人（销售主管/管理层）才出这类卡和简报条目。
+    #   以前销售员会在简报里看到「自己提交的单 待你审批」，点「通过」得到 403——
+    #   注释里写的「_allowed 已挡」当时并没有真的挡。
+    if not perm.can_approve_sales_order(current):
+        return []
     q = (select(models.SalesLedger)
          .join(models.Project, models.Project.id == models.SalesLedger.project_id)
          .where(models.Project.is_deleted == False,  # noqa: E712

@@ -13,7 +13,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errText } from './http'
-import { toast, uiConfirm, uiPrompt } from './ui'
+import { toast, uiConfirm, uiPrompt, uiActions } from './ui'
 import { clearSession, displayName } from './session'
 
 interface Tile {
@@ -143,6 +143,19 @@ async function logout() {
   clearSession()
   router.replace('/login')
 }
+// 🆕 2026-09-23：「···」从「直接退出」改成两项菜单。
+//   推广到全公司后手机是绝大多数人唯一的入口，改密码不能只有电脑上能做。
+async function openMore() {
+  const pick = await uiActions({
+    title: displayName.value || '我',
+    actions: [
+      { key: 'pwd', label: '修改密码' },
+      { key: 'out', label: '退出登录', danger: true },
+    ],
+  })
+  if (pick === 'pwd') return router.push({ name: 'password' })
+  if (pick === 'out') return logout()
+}
 // 🆕 #382 待办角标：只取个数，失败静默（首页不该因为一个角标报错）
 // 2026-09-19 待办页对齐网页版后，角标口径也对齐：别人交办的 + 自己记的，合成一个数
 // （业务 2026-08-12 在网页版拍过同样的板，见 ManagementTodoFloating）
@@ -185,7 +198,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshOnRetu
             待办<b v-if="todoCount > 0" class="tdot">{{ todoCount > 99 ? '99+' : todoCount }}</b>
           </button>
           <button class="tbtn" @click="editing = true">定制</button>
-          <button class="more" @click="logout" aria-label="退出">···</button>
+          <button class="more" @click="openMore" aria-label="更多">···</button>
         </template>
       </header>
 

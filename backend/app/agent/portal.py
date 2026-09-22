@@ -32,6 +32,11 @@ CATALOG: list[dict] = [
      "glyph": "￥", "tone": "blue", "q": "待我审批的请款单", "tool": None, "kind": "approve"},
     {"key": "morning_report", "label": "今日晨报", "desc": "一条消息看完全部要紧事",
      "glyph": "报", "tone": "blue", "q": "今日晨报", "tool": "morning_report"},
+    # 🆕 2026-09-23 推广到全公司：装配/钣金/封板/设计/电工的人打开门户，
+    #    原来只有「今日晨报」和一张对他们永远 0 条的「部门逾期」——
+    #    等于一屏没用的东西。这张卡查的是 worker_id == 自己，谁点都有意义。
+    {"key": "my_tasks", "label": "我手上的活", "desc": "派给我、还没做完的：哪个项目、还剩几天",
+     "glyph": "活", "tone": "blue", "q": "我手上的活", "tool": "my_tasks"},
     {"key": "balance_due", "label": "尾款到期", "desc": "14 天内到期与已逾期的应收",
      "glyph": "收", "tone": "warn", "q": "尾款到期", "tool": "balance_due"},
     {"key": "overdue_orders", "label": "部门逾期", "desc": "各部门超期未完成的任务",
@@ -134,15 +139,50 @@ _DEFAULTS: dict[str, list[str]] = {
                    "po_arriving", "morning_report"],
     "buyer": ["po_arrival_overdue", "po_overdue_by_supplier",
               "po_arriving", "morning_report"],
+    "buyer_standard": ["po_arrival_overdue", "po_overdue_by_supplier",
+                       "po_arriving", "morning_report"],
+    "buyer_outsource": ["po_arrival_overdue", "po_overdue_by_supplier",
+                        "po_arriving", "morning_report"],
     "sales_lead": ["order_pending", "receivable_blind", "shipment_receiver",
                    "leads_followup", "morning_report"],
     "sales": ["receivable_blind", "balance_due", "leads_followup", "morning_report"],
+    # 🆕 2026-09-23 推广到全公司补的几组。以前这些岗位全落到 _FALLBACK
+    #    （晨报 + 部门逾期 + 采购超期），而后两张对他们要么永远 0 条、要么根本没权限，
+    #    第一次打开就是一屏没用的东西 —— 那是最劝退的第一印象。
+    #    一律把「我手上的活」摆第一张：它是这些人唯一天天要看的东西。
+    "warehouse_lead": ["my_tasks", "po_arriving", "po_arrival_overdue", "morning_report"],
+    "warehouse": ["my_tasks", "po_arriving", "po_arrival_overdue", "morning_report"],
+    # ⚠️ 物流**没有**主管角色（seed.ROLES 里只有 logistics 一个），别凭感觉补 logistics_lead——
+    #    写一个不存在的 code 进去，这组默认永远不会命中，而且一点报错都不会有。
+    "logistics": ["my_tasks", "shipment_receiver", "delivery_watch", "morning_report"],
+    "pm_lead": ["my_tasks", "overdue_orders", "delivery_watch", "morning_report"],
+    "design_lead": ["my_tasks", "overdue_orders", "delivery_watch", "morning_report"],
+    "electric_lead": ["my_tasks", "overdue_orders", "delivery_watch", "morning_report"],
+    # 一线工人：只有「自己的活」和晨报两件事，别摆他点不动的卡
+    "designer": ["my_tasks", "morning_report"],
+    "electrician": ["my_tasks", "morning_report"],
+    "assembler": ["my_tasks", "morning_report"],
+    "sheetmetal": ["my_tasks", "morning_report"],
+    "sealing": ["my_tasks", "morning_report"],
+    # 售后在 seed 里是 as_worker / as_lead 两个 code，不叫 aftersales
+    "as_lead": ["my_tasks", "morning_report"],
+    "as_worker": ["my_tasks", "morning_report"],
+    "production_clerk": ["my_tasks", "overdue_orders", "morning_report"],
+    "hr": ["morning_report"],
 }
 # 查找顺序：先管理层、再主管、再普通岗。杨坛同时是 manager/sales_lead/finance_lead，
 # 命中第一个 manager，拿到含请款审批的那组。
 _ROLE_ORDER = ("admin", "manager", "finance_lead", "buyer_lead", "sales_lead",
-               "finance", "buyer", "sales")
-_FALLBACK = ["morning_report", "overdue_orders", "po_arrival_overdue"]
+               "pm_lead", "design_lead", "electric_lead", "warehouse_lead",
+               "finance", "buyer", "sales", "warehouse", "logistics",
+               # 两个老采购 code（buyer_standard / buyer_outsource）和 buyer 同一套：
+               # 它们是并入采购部前的历史角色，权限口径一样，漏了就落兜底、摆错卡
+               "buyer_standard", "buyer_outsource",
+               "designer", "electrician", "assembler", "sheetmetal", "sealing",
+               "as_lead", "as_worker", "production_clerk", "hr")
+# 🆕 兜底组把「我手上的活」放第一：它不设门控、只取本人的行，
+#    任何一个没匹配到具体岗位的账号至少有一张点了有东西的卡。
+_FALLBACK = ["my_tasks", "morning_report", "overdue_orders", "po_arrival_overdue"]
 
 
 def visible_catalog(allowed_tools: set[str]) -> list[dict]:

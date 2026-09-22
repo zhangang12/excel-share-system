@@ -29,6 +29,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
+from . import perm
 from ..routers.sales_router import _all_view
 
 _FIND_MAX = 8          # 候选给太多，模型反而挑不定
@@ -150,12 +151,18 @@ async def find_entity(db: AsyncSession, current: models.User, q: str,
     like = f"%{text}%"
     out: dict[str, list] = {}
 
+    # 🆕 2026-09-23：模糊搜索原来一条行级隔离都没有 —— 四类全给所有登录用户。
+    #   推广到全公司前按网页口径收口：项目按目录可见性，客户（= 销售台账）按台账口径。
+    allowed = await perm.visible_pids(db, current)
+
     if kind in (None, "project"):
         rows = (await db.execute(
             select(models.Project)
             .where(models.Project.is_deleted == False,  # noqa: E712
                    or_(models.Project.code.ilike(like), models.Project.name.ilike(like)))
-            .order_by(models.Project.id.desc()).limit(_FIND_MAX))).scalars().all()
+            .order_by(models.Project.id.desc()).limit(_FIND_MAX * 4))).scalars().all()
+        # 先多取几倍再过滤：受限岗位命中的多半不是自己的，直接 limit 会把自己的挤没
+        rows = [p for p in rows if perm.project_visible(p, allowed, current)][:_FIND_MAX]
         # ⚠️ 带上 status 和客户。杨坛最高频的问法是「200L 的设备有哪几个编号」
         #    「5L 的设备有几台」——他真正要分的是**在建还是已完成**，
         #    以及是哪家的货。只给编号+名称，他还得再问一轮。
@@ -170,17 +177,22 @@ async def find_entity(db: AsyncSession, current: models.User, q: str,
                            "status": p.status, "customer": cust.get(p.id, "")}
                           for p in rows]
 
-    if kind in (None, "customer"):
+    if kind in (None, "customer") and perm.money_scope(current) != "none":
         # 客户在台账上是自由文本，没有独立主数据表 —— 只能去重取名
-        rows = (await db.execute(
-            _live(select(models.SalesLedger.customer, func.count().label("n"))
+        q = _live(select(models.SalesLedger.customer, func.count().label("n"))
                   .where(models.SalesLedger.customer.ilike(like),
                          models.SalesLedger.customer != ""))
-            .group_by(models.SalesLedger.customer)
-            .order_by(func.count().desc()).limit(_FIND_MAX))).all()
+        if not perm.sales_read_all(current):
+            q = q.where(models.SalesLedger.sales_uid == current.id)   # 销售只搜自己的客户
+        rows = (await db.execute(
+            q.group_by(models.SalesLedger.customer)
+             .order_by(func.count().desc()).limit(_FIND_MAX))).all()
         out["customer"] = [{"customer": r[0], "ledger_rows": r[1]} for r in rows]
 
-    if kind in (None, "supplier"):
+    # 供应商主数据在网页上是采购/仓库/财务的页面，销售、设计、装配打不开
+    if kind in (None, "supplier") and current.has_role(
+            "buyer", "buyer_lead", "buyer_standard", "buyer_outsource",
+            "warehouse", "warehouse_lead", "finance", "finance_lead", "admin", "manager"):
         rows = (await db.execute(
             select(models.Supplier).where(models.Supplier.name.ilike(like))
             .limit(_FIND_MAX))).scalars().all()
@@ -222,8 +234,13 @@ async def get_customer(db: AsyncSession, current: models.User, name: str) -> dic
     nm = (name or "").strip()
     if not nm:
         return {"error": "要查哪个客户？"}
+    # 🆕 2026-09-23：客户全景整个是「钱」，没有台账口径的人一律不给
+    #   （仓库/装配/设计在网页上根本打不开销售台账）。
+    if perm.money_scope(current) == "none":
+        return {"customer": nm, "found": False,
+                "hint": "客户与合同信息属于销售台账，你的账号看不到这部分"}
     q = _live(select(models.SalesLedger).where(models.SalesLedger.customer.ilike(f"%{nm}%")))
-    if not _all_view(current):
+    if not perm.sales_read_all(current):
         q = q.where(models.SalesLedger.sales_uid == current.id)
     leds = list((await db.execute(q)).scalars().all())
     if not leds:
@@ -286,8 +303,15 @@ _ORDER_CN = {"pending_assign": "待分派", "assigned": "待接单",
              "dispatched": "已派工"}
 
 
-async def _project_snapshot(db: AsyncSession, p: models.Project) -> dict:
-    """单个项目的全链路快照。get_project 与交期看板共用，**口径只有这一份**。"""
+async def _project_snapshot(db: AsyncSession, p: models.Project,
+                            current: models.User | None = None) -> dict:
+    """单个项目的全链路快照。get_project 与交期看板共用，**口径只有这一份**。
+
+    ⚠️ current 必传（默认 None 只为兼容老调用，等于「按无权限处理」）。
+       台账段（客户/合同额/四段款）由 perm.redact_ledger 决定给不给 ——
+       2026-09-23 推广到全公司前发现：只要有「项目详单」菜单就能通过智能体
+       问出合同额和客户，而网页上这些只在销售台账页，仓库/设计/电工根本打不开。
+    """
     led = (await db.execute(select(models.SalesLedger).where(
         models.SalesLedger.project_id == p.id)
         .order_by(models.SalesLedger.id).limit(1))).scalars().first()
@@ -332,13 +356,14 @@ async def _project_snapshot(db: AsyncSession, p: models.Project) -> dict:
     return {
         "project": p.code, "name": p.name, "found": True, "status": p.status,
         "deliver_date": deliver, "days_left": left,
-        "ledger": None if not led else {
+        "ledger": perm.redact_ledger(None if not led else {
+            "sales_uid": led.sales_uid,      # 内部字段，redact_ledger 判完就剔除
             "customer": led.customer, "contract": float(led.amount or 0),
             "prepay": float(led.prepay or 0), "before_ship": float(led.before_ship or 0),
             "ship_receivable": float(led.ship_receivable or 0),
             "balance": float(led.balance or 0), "balance_date": led.balance_date or "",
             "order_state": led.order_state,
-        },
+        }, current),
         "dept_orders": [{"dept": o.dept, "dept_name": _DEPT_CN.get(o.dept, o.dept),
                          "worker": who.get(o.worker_id or 0, ""),
                          "status": o.status, "due_date": o.due_date,
@@ -546,10 +571,15 @@ async def get_project(db: AsyncSession, current: models.User, code: str,
     if not c:
         return {"error": "要查哪个项目？给编号"}
     ps = await _match_projects(db, c)
+    # 🆕 2026-09-23：受限岗位（设计/电工/装配/钣金/封板/销售）只看自己经手的，与网页项目目录同口径。
+    #   注意「查无此项目」和「你看不到这个项目」这里合并成同一句 —— 分开说等于告诉对方
+    #   「有这么个项目，只是不给你看」，那本身也是信息。
+    allowed = await perm.visible_pids(db, current)
+    ps = [p for p in ps if perm.project_visible(p, allowed, current)]
     if not ps:
         return {"project": c, "found": False, "hint": "查无此项目，先用 find_entity 找"}
 
-    snaps = [await _project_snapshot(db, p) for p in ps]
+    snaps = [await _project_snapshot(db, p, current) for p in ps]
     items, cols = _project_items(snaps, detail)
     if len(snaps) == 1:
         return {**snaps[0], "items": items, "columns": cols,
@@ -587,7 +617,9 @@ async def sales_summary(db: AsyncSession, current: models.User,
         .join(models.SalesLedger, models.SalesLedger.project_id == models.Project.id)
         .where(models.Project.is_deleted == False)  # noqa: E712
     )).all())
-    if not _all_view(current):
+    if perm.money_scope(current) == "none":
+        return {"error": "销售额属于销售台账，你的账号看不到这部分"}
+    if not perm.sales_read_all(current):
         rows = [(p, l) for p, l in rows if l.sales_uid == current.id]
     # 🆕 金额审计(2026-09-09)：待主管审批/被退回草稿的订单还没生效，不进销售额（与 sales_report / 台账合计同口径）
     rows = [(p, l) for p, l in rows if (l.order_state or None) not in ("pending", "draft")]
@@ -671,10 +703,12 @@ async def project_progress(db: AsyncSession, current: models.User,
     ps = list((await db.execute(select(models.Project).where(
         models.Project.is_deleted == False,  # noqa: E712
         models.Project.status == "进行中"))).scalars().all())
+    allowed = await perm.visible_pids(db, current)
+    ps = [p for p in ps if perm.project_visible(p, allowed, current)]
 
     rows: list[dict] = []
     for p in ps:
-        s = await _project_snapshot(db, p)
+        s = await _project_snapshot(db, p, current)
         left = s["days_left"]
         if within_days is not None:
             if left is None:
@@ -727,8 +761,11 @@ async def project_progress(db: AsyncSession, current: models.User,
         },
         "items": [{
             "project": r["project"], "name": r["name"],
-            "customer": (r["ledger"] or {}).get("customer") or "",
-            "contract": float((r["ledger"] or {}).get("contract") or 0),
+            # 台账被脱敏（或项目本来就没台账）时，这两个键**整个不出现** ——
+            # 留一个 contract: 0 会被模型读成「合同额是 0」，比不给更糟
+            **({"customer": (r["ledger"] or {}).get("customer") or "",
+                "contract": float((r["ledger"] or {}).get("contract") or 0)}
+               if r["ledger"] else {}),
             "deliver_date": r["deliver_date"], "days_left": r["days_left"],
             # 分组用的档位。46 个项目拉平成一串等长的行，人得一行行数才知道哪些真急；
             # 分了档才扫得动。档名由代码给死，模型不参与命名，各次回答才一致。
@@ -758,8 +795,14 @@ async def get_supplier(db: AsyncSession, current: models.User, name: str) -> dic
     if not sup:
         return {"supplier": nm, "found": False, "hint": "查无此供应商，先用 find_entity 找"}
 
-    items = list((await db.execute(select(models.PurchaseItem).where(
-        models.PurchaseItem.supplier_id == sup.id))).scalars().all())
+    # 🆕 2026-09-23：受限采购员（外购/标准件）只算自己经手的单 —— 与网页采购明细同口径
+    #   （purchase_mgmt_router._buyer_restricted）。原来这里把该供应商**全公司**的
+    #   在途明细、项目编号都给出来了，等于绕过了采购之间的隔离。
+    from ..routers.purchase_mgmt_router import _buyer_restricted
+    q = select(models.PurchaseItem).where(models.PurchaseItem.supplier_id == sup.id)
+    if _buyer_restricted(current):
+        q = q.where(models.PurchaseItem.buyer_id == current.id)
+    items = list((await db.execute(q)).scalars().all())
     today = date.today()
     on_time = late = 0
     late_days: list[int] = []

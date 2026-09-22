@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import models
+from .. import perm
 from ...routers.purchase_mgmt_router import _buyer_restricted, _resolve_pr_account
 from . import token as card_token
 
@@ -49,6 +50,13 @@ async def pending_pay_reqs(db: AsyncSession, current: models.User) -> list[model
     注意这里刻意 **不** 过滤掉「自己提交的」——那种单要出现在列表里但按钮置灰，
     否则用户会以为单子丢了（手册 3.5.3：宁可说明原因，不要静默消失）。
     """
+    # 🆕 2026-09-23 推广到全公司前堵的泄露：这里原来只对采购员做隔离，**其余所有登录用户都拿到全部待审请款**
+    #   ——装配、设计、仓库、人事打开手机首页就能看到每笔请款的供应商、金额、账号后 4 位和采购内容。
+    #   网页版这张列表只给采购和财务（purchase_mgmt_router.list_payment_requests），审批只给财务。
+    #   口径：能审批的（财务/管理层）看全部；采购员看自己相关的（他要知道自己那张走到哪了）；其余一律空。
+    if not (perm.can_approve_pay_req(current) or current.has_role(
+            "buyer", "buyer_lead", "buyer_standard", "buyer_outsource")):
+        return []
     stmt = (select(models.PaymentRequest)
             .where(models.PaymentRequest.status == "pending")
             .order_by(models.PaymentRequest.id.desc()))
@@ -171,6 +179,11 @@ async def assemble_pay_req_cards(db: AsyncSession, current: models.User,
             if f:
                 flags.append(f)
 
+        # 🆕 2026-09-23：批不了的人（采购员看自己那张）按钮要置灰——
+        #   以前按钮是亮的，点下去才被端点 403 挡住，用户以为系统坏了。
+        if not perm.can_approve_pay_req(current):
+            flags.append({"code": "not_approver", "level": "block",
+                          "msg": "请款审批由财务处理，这里只给你看进度"})
         blocked = {f["code"] for f in flags if f["level"] == "block"}
         disabled_by = next(iter(blocked), None)
 
