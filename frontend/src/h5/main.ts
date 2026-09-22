@@ -16,6 +16,13 @@ import { notifyReady, notifyFailed } from './native'
 import { tryWecomLogin } from './wecom'
 import '../styles/h5-tokens.css'
 
+// 🆕 2026-09-22 在 Android APP 壳里给页头留出状态栏高度（见 h5-tokens.css 的 --h5-safe-top）。
+//   Capacitor 在壳里会往 window 上挂 Capacitor；浏览器/企微里没有，保持原样。
+try {
+  const cap = (window as any).Capacitor
+  if (cap?.getPlatform?.() === 'android') document.documentElement.classList.add('h5-shell-android')
+} catch { /* 取不到平台信息就按浏览器处理 */ }
+
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [

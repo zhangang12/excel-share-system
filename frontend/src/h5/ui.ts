@@ -25,7 +25,7 @@ function ensureStyle() {
   const el = document.createElement('style')
   el.id = 'h5-ui-kit'
   el.textContent = `
-.h5k-toasts{position:fixed;top:calc(12px + env(safe-area-inset-top));left:0;right:0;
+.h5k-toasts{position:fixed;top:calc(12px + var(--h5-safe-top, env(safe-area-inset-top)));left:0;right:0;
   display:flex;flex-direction:column;align-items:center;gap:8px;z-index:99;pointer-events:none}
 .h5k-toast{display:flex;align-items:center;gap:7px;max-width:86vw;
   background:rgba(23,24,26,.88);color:#fff;font:500 13.5px/1.5 var(--h5-font);

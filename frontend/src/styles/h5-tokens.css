@@ -24,6 +24,14 @@
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+1E00-1E9F, U+20A0-20AB, U+20AD-20C0;
 }
 
+/* ── 🆕 2026-09-22 顶部安全区：所有页头、顶部浮层一律用 var(--h5-safe-top)，别再直接写 env() ──
+   用户反馈「智能体顶上的待办/定制太靠上，每次按都打不开」。根因：APP 是沉浸式（铺到状态栏下面），
+   而 Android WebView 的 env(safe-area-inset-top) 在很多机型上是 0（只报刘海，不报状态栏），
+   页头于是压在状态栏底下——状态栏那一条是系统窗口，点上去的手指根本到不了网页，按钮就「按不动」。
+   APP 里（main.ts 给 <html> 挂 .h5-shell-android）至少留 32px；浏览器/企微里有自己的状态栏，保持 env()。 */
+:root { --h5-safe-top: env(safe-area-inset-top, 0px); }
+:root.h5-shell-android { --h5-safe-top: max(env(safe-area-inset-top, 0px), 32px); }
+
 :root {
   /* ── 字体：Outfit 是设计稿指定的，中文回落苹方 ── */
   --h5-font: "Outfit", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;

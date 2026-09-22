@@ -522,7 +522,7 @@ onMounted(() => {
 }
 .hd {
   flex: none; display: flex; align-items: center; gap: 10px;
-  padding: calc(env(safe-area-inset-top, 0px) + 16px) 18px 12px;
+  padding: calc(var(--h5-safe-top) + 16px) 18px 12px;   /* 🆕 2026-09-22 同上 */
 }
 .ttl { flex: 1; min-width: 0 }
 .t1 { font-size: 15px; font-weight: 700; color: var(--h5-ink); letter-spacing: .2px }

@@ -691,7 +691,8 @@ onMounted(async () => {
   height: 100%; display: flex; flex-direction: column;
   background: var(--h5-screen-wash), var(--h5-bg);
 }
-.hd { display: flex; align-items: center; gap: 6px; padding: 12px 14px 6px; }
+/* 🆕 2026-09-22 原来顶部只留 12px、没算状态栏：返回键压在状态栏底下点不到 */
+.hd { display: flex; align-items: center; gap: 6px; padding: calc(var(--h5-safe-top) + 12px) 14px 6px; }
 .back { border: 0; background: transparent; font-size: 26px; line-height: 1; color: var(--h5-ink, #111); padding: 0 4px; }
 .ttl { font-size: 17px; font-weight: 700; color: var(--h5-ink, #111); }
 
