@@ -70,6 +70,15 @@ export async function streamAgentChat(
   })
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
 
+  // 🆕 令牌续期（#425）：后端在剩余不足一半时用响应头下发新令牌，用着就不掉线。
+  // ⚠️ 这条**必须在这里也做一遍** —— 两个前端的续期原来都写在 axios 响应拦截器里，
+  //    而流式走的是 fetch，绕过了拦截器。一个长期泡在助手里、很少点别的页面的人
+  //    （推广后的一线正是这样用）就会莫名其妙掉线，还查不出原因。
+  const fresh = res.headers.get('x-pms-refresh-token')
+  if (fresh) {
+    try { localStorage.setItem('pms_token', fresh) } catch { /* 存储不可用就沿用旧令牌 */ }
+  }
+
   const reader = res.body.getReader()
   const dec = new TextDecoder()
   let buf = ''
