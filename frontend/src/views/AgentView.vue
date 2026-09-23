@@ -7,19 +7,34 @@ import { useAuthStore } from '@/stores/auth'
 import { fmtDateTime } from '@/utils/format'
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
+interface AskOption { label: string; send: string }
 interface ChatItem {
   role: 'user' | 'assistant'
   content: string
   sources?: string[]
   fallback?: boolean
   suggestions?: string[]
+  /** 🆕 提问卡：模型问「你要查哪个」，给几个可点的选项，点了直接发 send 那句 */
+  ask?: { q: string; options: AskOption[] } | null
+  /** 🆕 审批卡：模型只能提案（指定 ref），facts/flags 全由后端用当前用户重查后装配 */
+  cards?: AgentCard[]
 }
 
-const QUICK_QUESTIONS = ['今日晨报', '采购未到货', '尾款到期', '逾期任务']
+const QUICK_QUESTIONS = ['待我审批的', '今日晨报', '采购未到货', '尾款到期', '逾期任务']
+
+/**
+ * 🆕 2026-09-24 卡片通道（与 H5 同口径）。这几条是**精确文案**，别改成模糊匹配 ——
+ * H5 那边改过一次，把用户自己打的「查询一下所有的待审批的待办?」也劫持成查请款单了。
+ * 走这条通道时不经模型：待办是确定性的，让模型再想一遍纯属浪费，而且一线最怕等。
+ */
+const CARD_ENTRIES = new Set(['待我审批的', '待我审批的请款单', '待我审批', '请款审批', 'OA审批'])
 
 // 🆕 2026-09-24 会话 id：只用于把审计日志里的多轮串起来分析，不参与鉴权。
 //    刷新页面 = 新会话，与 H5 同口径（H5ChatView 也是每次进页面生成一个）。
-const sessionId = `w-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+const sessionId = newSessionId('w')
+
+/** 「正在查 xxx…」。工具轮次后端不推正文，不给状态人会以为卡住了 */
+const toolHint = ref('')
 
 // 🆕 助手回复按 Markdown 渲染（html:false 防 XSS，原始 HTML 一律转义；用户消息保持纯文本）
 //
@@ -31,6 +46,14 @@ const sessionId = `w-${Date.now().toString(36)}-${Math.random().toString(36).sli
 //        把整段 JSON 原样甩给用户 —— 比裸标记更难看。
 //    现在与 H5/APP 共用 `shared/agentMarkdown.ts` 的同一个实例：谁也不能再单边漏。
 import { renderAgentMd as renderMd } from '@/shared/agentMarkdown'
+// 🆕 2026-09-24 改走流式。收流与分包和 H5 共用一份（见 shared/agentStream.ts）。
+import { streamAgentChat, newSessionId } from '@/shared/agentStream'
+// 🆕 2026-09-24 审批卡。注册表与 H5 共用（端点/字段名只有一份），界面各自一套。
+import { setCardHttp, isKnownCard, type AgentCard } from '@/shared/agentCards'
+import { http } from '@/api'
+import AgentApproveCard from '@/components/AgentApproveCard.vue'
+
+setCardHttp(http)
 
 const auth = useAuthStore()
 // 🆕 LLM 配置入口仅 admin 可见（manager 能用助手/选模型，但看不到配置按钮）
@@ -161,29 +184,118 @@ async function scrollBottom() {
   if (listRef.value) listRef.value.scrollTop = listRef.value.scrollHeight
 }
 
+/** 待办卡通道：不经模型，直接取后端装配好的卡 */
+async function loadCards() {
+  sending.value = true
+  try {
+    const { data } = await http.get('/agent/cards/pending')
+    // 白名单在前端再过一道：后端给了未登记的 type 就整张不渲染（原则三）；
+    // 再把能批的排前面——批不了的压后，别让人先划过一堆灰按钮
+    const cards = (data.cards as AgentCard[])
+      .filter((c) => isKnownCard(c.type))
+      .sort((a, b) => Number(a.flags.some((f) => f.level === 'block'))
+                    - Number(b.flags.some((f) => f.level === 'block')))
+    const dropped = data.cards.length - cards.length
+    messages.value.push({
+      role: 'assistant',
+      content: cards.length === 0
+        ? '现在没有待你审批的单子。想看别的可以直接问我。'
+        : `共 ${cards.length} 单`
+          + (data.blocked ? `，其中 ${data.blocked} 单按职责分离需他人处理` : '')
+          + '。'
+          // ⚠️ 别写成「无法安全展示」——那听着像出了安全事故，而实际原因几乎总是
+          //   **版本差**：后端上了新卡片类型，手上的前端还不认识它（白名单挡掉）。
+          + (dropped
+            ? `（另有 ${dropped} 条是新类型，你这个版本还显示不了：刷新页面；`
+              + `客户端的话等一次自动更新）`
+            : ''),
+      cards: cards.length ? cards : undefined,
+    })
+  } catch (e: any) {
+    messages.value.push({
+      role: 'assistant',
+      content: e?.response?.data?.detail || '取待办失败，请稍后重试',
+    })
+  } finally {
+    sending.value = false
+    await scrollBottom()
+  }
+}
+
 async function send(text?: string) {
   const q = (text ?? input.value).trim()
   if (!q || sending.value) return
   input.value = ''
   messages.value.push({ role: 'user', content: q })
-  sending.value = true
   await scrollBottom()
+  if (CARD_ENTRIES.has(q)) return loadCards()
+  sending.value = true
+  // 只带最近 10 轮上下文（后端同样会截断）
+  const history: ChatHistoryItem[] = messages.value
+    .slice(0, -1)
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .slice(-20)
+    .map((m) => ({ role: m.role, content: m.content }))
+
+  // 🆕 2026-09-24 改走 /chat/stream。不只是为了「逐字出字」——
+  //   **技能、别名展开、口径召回都只写在流式那条路径上**（agent_router._chat_stream），
+  //   非流式的 _chat_with_llm 一条都没有。所以之前同一句话在手机上和电脑上
+  //   会得到不一样的答案，而两边看起来都「正常」，这种不一致最难查。
+  //
+  // ⚠️ 气泡必须先 push 进数组、再用**数组里那个引用**累加文字：
+  //   直接改 push 之前的原始对象改的是 raw target，不走 Vue 的 set 陷阱，
+  //   表现是「只显示第一个字，后面全不动」（H5 踩过，注释留在 H5ChatView）。
+  const draft: ChatItem = { role: 'assistant', content: '' }
+  let bubble = draft
+  let opened = false
+  const open = () => {
+    if (opened) return
+    opened = true
+    sending.value = false          // 收到第一个字就撤掉「思考中」三个点
+    toolHint.value = ''
+    messages.value.push(draft)
+    bubble = messages.value[messages.value.length - 1]
+  }
+
   try {
-    // 只带最近 10 轮上下文（后端同样会截断）
-    const history: ChatHistoryItem[] = messages.value
-      .slice(0, -1)
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .slice(-20)
-      .map((m) => ({ role: m.role, content: m.content }))
-    const resp = await agentApi.chat(q, history, selectedModel.value || undefined, sessionId)
-    messages.value.push({
-      role: 'assistant', content: resp.reply, sources: resp.sources,
-      fallback: resp.fallback, suggestions: resp.suggestions || [],
+    await streamAgentChat({
+      // baseURL 与 axios 同源：桌面客户端打包时 VITE_API_BASE 是绝对地址，
+      // 浏览器构建为空 → '/api'（走 Vite 代理 / nginx）。
+      url: (import.meta.env.VITE_API_BASE ?? '') + '/api/agent/chat/stream',
+      token: localStorage.getItem('pms_token') || '',
+      message: q,
+      history,
+      sessionId,
+      model: selectedModel.value || undefined,
+    }, {
+      onTool: (label) => { toolHint.value = `正在查 ${label}…` },
+      onDelta: (text) => { open(); bubble.content += text; void scrollBottom() },
+      onDone: (d) => {
+        open()
+        bubble.sources = d.sources
+        bubble.fallback = d.fallback
+        bubble.suggestions = d.suggestions || []
+        if (d.ask?.options?.length) bubble.ask = d.ask
+        // type 不在注册表里的整张丢掉，别渲染一张点了没反应的卡
+        if (d.cards?.length) {
+          const cs = (d.cards as AgentCard[]).filter((c) => isKnownCard(c.type))
+          if (cs.length) bubble.cards = cs
+        }
+        toolHint.value = ''
+      },
+      onError: (msg) => { open(); bubble.content += msg },
     })
+    // done 可能一次都不来（网络断/用户关页面），兜一句别留个空气泡
+    if (!opened) {
+      open()
+      bubble.content = '（没有收到回答，请重试）'
+    }
   } catch {
-    messages.value.push({ role: 'assistant', content: '（请求失败，请稍后重试）' })
+    if (!opened) open()
+    bubble.content = bubble.content || '（请求失败，请稍后重试）'
   } finally {
     sending.value = false
+    toolHint.value = ''
     await scrollBottom()
   }
 }
@@ -249,6 +361,24 @@ async function send(text?: string) {
               <el-tag v-if="m.fallback" size="small" type="info" effect="plain">规则模式</el-tag>
               <span v-if="m.sources?.length">数据来源：{{ m.sources.join('、') }}</span>
             </div>
+            <!-- 🆕 2026-09-24 审批卡：点「通过/驳回/确认发出」打的是用户自己的 token，
+                 跟他在业务页面上点是同一个请求（见 shared/agentCards.ts）。 -->
+            <AgentApproveCard
+              v-for="(c, ci) in (m.cards || [])" :key="'c' + ci"
+              :card="c"
+            />
+            <!-- 🆕 2026-09-24 提问卡：模型不猜，把歧义摆出来让人点。
+                 以前网页版拿的是 ask_to_text 降级出来的「1. 2. 3.」纯文本，
+                 用户得自己把选项重打一遍。 -->
+            <div v-if="m.role === 'assistant' && m.ask?.options?.length" class="ask-box">
+              <div class="ask-q">{{ m.ask.q }}</div>
+              <div class="ask-opts">
+                <el-button
+                  v-for="(o, oi) in m.ask.options" :key="oi"
+                  size="small" plain :disabled="sending" @click="send(o.send)"
+                >{{ o.label }}</el-button>
+              </div>
+            </div>
             <!-- 🆕 追问建议 chips：点击直接发送 -->
             <div v-if="m.role === 'assistant' && m.suggestions?.length" class="sugg-row">
               <span
@@ -266,6 +396,8 @@ async function send(text?: string) {
           </div>
           <div class="bubble assistant thinking">
             <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <!-- 🆕 工具轮次后端不推正文，不给状态人会以为卡住了 -->
+            <span v-if="toolHint" class="tool-hint">{{ toolHint }}</span>
           </div>
         </div>
       </div>
@@ -548,4 +680,13 @@ async function send(text?: string) {
 .md-body :deep(.pc-val)   { font-size: 11px; font-weight: 600; text-anchor: end; }
 .md-body :deep(.pc-zero)  { font-size: 10px; fill: var(--el-text-color-placeholder); text-anchor: middle; }
 .md-body :deep(.pc-axis)  { stroke: var(--el-border-color); stroke-width: 1; }
+
+/* 🆕 2026-09-24 提问卡与「正在查…」 */
+.ask-box {
+  margin-top: 6px; padding: 8px 10px; border-radius: 8px;
+  background: var(--el-fill-color-lighter); border: 1px solid var(--el-border-color-lighter);
+}
+.ask-q { font-size: 13px; color: var(--el-text-color-regular); margin-bottom: 6px; }
+.ask-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.tool-hint { margin-left: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
 </style>

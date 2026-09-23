@@ -11,6 +11,7 @@ import { http, errText } from './http'
 import { api } from './apiBase'
 import { clearSession, displayName } from './session'
 import { renderMd } from './markdown'
+import { streamAgentChat, newSessionId } from '../shared/agentStream'
 import { useViewportHeight } from './useViewport'
 import { useSpeech } from './useSpeech'
 import H5ApproveCard from './H5ApproveCard.vue'
@@ -214,13 +215,7 @@ const waveBars = computed(() => {
  * ⚠️ 用 `crypto.randomUUID` 要**留兜底**：它需要安全上下文，
  *   在 http 的网页版（非 localhost）里根本取不到，直接调会抛异常把发消息整条带崩。
  */
-const sessionId = (() => {
-  try {
-    const c = (window as any).crypto
-    if (c?.randomUUID) return c.randomUUID()
-  } catch { /* 取不到就用下面的兜底 */ }
-  return `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-})()
+const sessionId = newSessionId()
 
 async function streamChat(q: string, history: { role: string; content: string }[]) {
   // ⚠️ 关键：push 进去之后必须用**数组里的那个引用**（Vue 的响应式代理）来累加文字。
@@ -230,73 +225,46 @@ async function streamChat(q: string, history: { role: string; content: string }[
   const draft: Extract<Msg, { kind: 'ai' }> = { kind: 'ai', text: '' }
   let bubble = draft
   let opened = false
-  // 走 api()：APP 里是绝对地址（页面在 localhost，API 在服务器）
-  const res = await fetch(api('/agent/chat/stream'), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('pms_token') || ''}`,
-    },
-    // session_id 只用于把日志里的多轮串起来分析（问了几遍才问明白），
-    // 不参与鉴权、不影响任何数据可见性
-    body: JSON.stringify({ message: q, history, session_id: sessionId }),
-  })
-  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
-
-  const reader = res.body.getReader()
-  const dec = new TextDecoder()
-  let buf = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += dec.decode(value, { stream: true })
-    // SSE 以空行分隔事件；最后一段可能不完整，留在缓冲里等下一片
-    const parts = buf.split('\n\n')
-    buf = parts.pop() || ''
-    for (const raw of parts) {
-      let ev = 'message', data = ''
-      for (const line of raw.split('\n')) {
-        if (line.startsWith('event:')) ev = line.slice(6).trim()
-        else if (line.startsWith('data:')) data += line.slice(5).trim()
-      }
-      if (!data) continue
-      let d: any
-      try { d = JSON.parse(data) } catch { continue }
-      if (ev === 'tool') {
-        toolHint.value = `正在查 ${d.label}…`
-      } else if (ev === 'delta') {
-        if (!opened) {
-          opened = true; thinking.value = false; toolHint.value = ''
-          msgs.value.push(draft)
-          bubble = msgs.value[msgs.value.length - 1] as Extract<Msg, { kind: 'ai' }>
-        }
-        bubble.text += d.text
-        await scrollDown()
-      } else if (ev === 'done') {
-        if (!opened) {
-          msgs.value.push(draft)
-          bubble = msgs.value[msgs.value.length - 1] as Extract<Msg, { kind: 'ai' }>
-        }
-        bubble.sources = d.sources
-        if (d.ask?.options?.length) bubble.ask = d.ask
-        // 🆕 本轮模型拟了待办草稿 → 渲染成卡片，点「确认发出」才真发。
-        //    模型自己发不出去（见 agent_router.send_draft），这张卡是唯一的出口。
-        if (d.cards?.length) {
-          const cs = (d.cards as AgentCard[]).filter((c) => isKnownCard(c.type))
-          if (cs.length) msgs.value.push({ kind: 'cards', cards: cs })
-        }
-        if (d.suggestions?.length) suggestions.value = d.suggestions
-        toolHint.value = ''
-      } else if (ev === 'error') {
-        if (!opened) {
-          opened = true
-          msgs.value.push(draft)
-          bubble = msgs.value[msgs.value.length - 1] as Extract<Msg, { kind: 'ai' }>
-        }
-        bubble.text += d.message || '出错了'
-      }
-    }
+  /** 首个 delta/done/error 到达时才把气泡放进列表：在那之前显示的是「正在查…」 */
+  const open = () => {
+    if (opened) return
+    opened = true
+    thinking.value = false
+    toolHint.value = ''
+    msgs.value.push(draft)
+    bubble = msgs.value[msgs.value.length - 1] as Extract<Msg, { kind: 'ai' }>
   }
+
+  // 🆕 2026-09-24 收流与分包搬到 shared/agentStream.ts，与网页版共用同一份解析。
+  //   这里只管往自己的 Vue 状态里写。
+  await streamAgentChat({
+    url: api('/agent/chat/stream'),       // APP 里是绝对地址（页面在 localhost，API 在服务器）
+    token: localStorage.getItem('pms_token') || '',
+    message: q,
+    history,
+    sessionId,
+  }, {
+    onTool: (label) => { toolHint.value = `正在查 ${label}…` },
+    onDelta: (text) => {
+      open()
+      bubble.text += text
+      void scrollDown()
+    },
+    onDone: (d) => {
+      open()
+      bubble.sources = d.sources
+      if (d.ask?.options?.length) bubble.ask = d.ask
+      // 🆕 本轮模型拟了待办草稿 → 渲染成卡片，点「确认发出」才真发。
+      //    模型自己发不出去（见 agent_router.send_draft），这张卡是唯一的出口。
+      if (d.cards?.length) {
+        const cs = (d.cards as AgentCard[]).filter((c) => isKnownCard(c.type))
+        if (cs.length) msgs.value.push({ kind: 'cards', cards: cs })
+      }
+      if (d.suggestions?.length) suggestions.value = d.suggestions
+      toolHint.value = ''
+    },
+    onError: (msg) => { open(); bubble.text += msg },
+  })
 }
 
 /** 列表行的主副文案。卡片的 facts 是后端排好序的，第一条是客户/项目，
