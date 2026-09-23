@@ -470,7 +470,12 @@ onMounted(() => {
 
       <!-- 底部：快捷问答 + 输入 -->
       <footer class="ft">
-        <div v-if="showWelcome" class="sugg">
+        <!-- 🆕 2026-09-24：条件原来是 `showWelcome`（= 一条消息都没有），
+             于是**一旦开聊，后端每轮回来的追问建议就再也不显示**——
+             那批建议恰恰是按刚查过的工具算出来的，越往后越有用，却越看不到。
+             改成「不在思考中就显示」：欢迎页用默认三条，聊起来用后端给的。
+             网页版 AgentView 一直是逐条消息都显示的，这边反而是缺的一侧。 -->
+        <div v-if="!thinking && suggestions.length" class="sugg">
           <button v-for="s in suggestions" :key="s" class="chip" @click="send(s)">{{ s }}</button>
         </div>
         <div v-if="speech.error.value" class="serr">{{ speech.error.value }}</div>
@@ -647,14 +652,16 @@ onMounted(() => {
 .md :deep(th:nth-child(2)), .md :deep(td:nth-child(2)) { width: 26%; white-space: nowrap }
 .md :deep(td:first-child) { color: var(--h5-ink) }
 
-/* 语义着色。后端只发档位（[[danger:…]]），颜色在这里定 —— 见 markdown.ts。
+/* 语义着色。后端只发档位（[[danger:…]]），颜色在这里定 —— 见 shared/agentMarkdown.ts。
    ⚠️ **只给真正要一眼看见的上色**：全都上色等于都没上色。
-   色值用既有语义 token，不另造一套。 */
-.md :deep(.h5-tone) { font-weight: 600 }
-.md :deep(.h5-tone--danger) { color: var(--h5-danger) }
-.md :deep(.h5-tone--warn)   { color: var(--h5-warn) }
-.md :deep(.h5-tone--good)   { color: var(--h5-good) }
-.md :deep(.h5-tone--muted)  { color: var(--h5-ink-4); font-weight: 400 }
+   色值用既有语义 token，不另造一套。
+   🆕 2026-09-24 类名由 .h5-tone 改成 .agent-tone：渲染器已与网页版共用一份，
+      类名再带 h5 前缀就名不副实了（网页版那边用同样的类名配自己的色）。 */
+.md :deep(.agent-tone) { font-weight: 600 }
+.md :deep(.agent-tone--danger) { color: var(--h5-danger) }
+.md :deep(.agent-tone--warn)   { color: var(--h5-warn) }
+.md :deep(.agent-tone--good)   { color: var(--h5-good) }
+.md :deep(.agent-tone--muted)  { color: var(--h5-ink-4); font-weight: 400 }
 
 /* 🆕 图（markdown.ts 的 chartPlugin 拼出来的 SVG）。
    宽度跟着气泡走 —— viewBox 固定 320，靠 width:100% 自适应，

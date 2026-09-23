@@ -2,7 +2,6 @@
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { MagicStick, Promotion, Refresh, Setting } from '@element-plus/icons-vue'
-import MarkdownIt from 'markdown-it'
 import { agentApi, type ChatHistoryItem, type AgentChatLogItem } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 import { fmtDateTime } from '@/utils/format'
@@ -18,9 +17,20 @@ interface ChatItem {
 
 const QUICK_QUESTIONS = ['今日晨报', '采购未到货', '尾款到期', '逾期任务']
 
+// 🆕 2026-09-24 会话 id：只用于把审计日志里的多轮串起来分析，不参与鉴权。
+//    刷新页面 = 新会话，与 H5 同口径（H5ChatView 也是每次进页面生成一个）。
+const sessionId = `w-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
 // 🆕 助手回复按 Markdown 渲染（html:false 防 XSS，原始 HTML 一律转义；用户消息保持纯文本）
-const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
-const renderMd = (text: string) => md.render(text || '')
+//
+// ⚠️ 2026-09-24：这里原来是自己 `new MarkdownIt(...)`，于是后端后来加的两套约定
+//    **一套都没认**，用户截图报上来了：
+//      · 语义着色 `[[danger:30 天]]` `[[muted:—]]` 全部裸露成字面量。而 render.py
+//        把表格里**每个空单元格**都写成 `[[muted:—]]`，30 行的表就是几十处。
+//      · ```pmschart 围栏本该画成 SVG 条形图，这里退化成代码块，
+//        把整段 JSON 原样甩给用户 —— 比裸标记更难看。
+//    现在与 H5/APP 共用 `shared/agentMarkdown.ts` 的同一个实例：谁也不能再单边漏。
+import { renderAgentMd as renderMd } from '@/shared/agentMarkdown'
 
 const auth = useAuthStore()
 // 🆕 LLM 配置入口仅 admin 可见（manager 能用助手/选模型，但看不到配置按钮）
@@ -165,7 +175,7 @@ async function send(text?: string) {
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .slice(-20)
       .map((m) => ({ role: m.role, content: m.content }))
-    const resp = await agentApi.chat(q, history, selectedModel.value || undefined)
+    const resp = await agentApi.chat(q, history, selectedModel.value || undefined, sessionId)
     messages.value.push({
       role: 'assistant', content: resp.reply, sources: resp.sources,
       fallback: resp.fallback, suggestions: resp.suggestions || [],
@@ -517,4 +527,25 @@ async function send(text?: string) {
   background: var(--el-fill-color); border-radius: 4px; padding: 1px 5px;
 }
 .md-body :deep(a) { color: var(--el-color-primary); }
+
+/* 🆕 2026-09-24 语义着色。后端只发档位（[[danger:…]]），颜色在这里定
+   —— 渲染器见 shared/agentMarkdown.ts，两端共用一份，类名也共用。
+   ⚠️ 只给真正要一眼看见的上色；muted 是空值占位（表格里每个空格都会走它），
+      刻意做得很淡，不然满屏破折号比数据还抢眼。 */
+.md-body :deep(.agent-tone) { font-weight: 600; }
+.md-body :deep(.agent-tone--danger) { color: var(--el-color-danger); }
+.md-body :deep(.agent-tone--warn)   { color: var(--el-color-warning); }
+.md-body :deep(.agent-tone--good)   { color: var(--el-color-success); }
+.md-body :deep(.agent-tone--muted)  { color: var(--el-text-color-placeholder); font-weight: 400; }
+
+/* 🆕 2026-09-24 图（shared/agentMarkdown.ts 的 chartPlugin 拼出来的 SVG）。
+   ⚠️ **必须封顶**：viewBox 固定 320 宽、靠 width:100% 自适应，
+      网页版容器比手机宽得多，不封顶就等比放大成一张巨图、字也跟着糊。 */
+.md-body :deep(.pmschart) { margin: 10px 0 2px; }
+.md-body :deep(.pmschart svg) { width: 100%; max-width: 420px; height: auto; display: block; }
+.md-body :deep(.pc-title) { font-size: 12px; font-weight: 600; fill: var(--el-text-color-primary); }
+.md-body :deep(.pc-lab)   { font-size: 11px; fill: var(--el-text-color-regular); }
+.md-body :deep(.pc-val)   { font-size: 11px; font-weight: 600; text-anchor: end; }
+.md-body :deep(.pc-zero)  { font-size: 10px; fill: var(--el-text-color-placeholder); text-anchor: middle; }
+.md-body :deep(.pc-axis)  { stroke: var(--el-border-color); stroke-width: 1; }
 </style>

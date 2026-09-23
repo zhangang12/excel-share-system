@@ -8,8 +8,12 @@ import { fileURLToPath, URL } from 'node:url'
  *   npm run build       → dist/      网页端（不含任何 H5 代码）
  *   npm run build:h5    → dist-h5/   H5（不含 element-plus / vxe-table）
  *
- * 两条构建线互不引用：H5 的源码只在 src/h5/ 下，且不 import 任何 @/ 路径，
- * 所以改 H5 不会让网页端产物有任何变化，反过来也一样。
+ * 两条构建线基本互不引用：H5 的源码在 src/h5/ 下，另外**只允许**引用 src/shared/。
+ * 🆕 2026-09-24 放宽出 src/shared/ 这个口子，是因为「只准各写各的」反而出了事故：
+ *   智能体回复的 markdown 渲染两边各有一份，后端加了语义着色和图表只改了 H5，
+ *   网页版就把 `[[danger:30 天]]` 和整段图表 JSON 原样漏给用户看了好一阵子。
+ *   src/shared/ 的硬规矩是**只许依赖 markdown-it 这类零负担的库，不许引 UI 框架**，
+ *   所以 H5 体积不受影响；这条规矩由 test_agent_render_safety.py 第 13 段把关。
  *
  * base='/h5/'：外层 nginx 以 /h5/ 前缀托管，资源必须走这个前缀才找得到。
  */

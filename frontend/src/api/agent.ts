@@ -54,9 +54,16 @@ export interface AgentChatLogList {
 }
 
 export const agentApi = {
-  chat: (message: string, history: ChatHistoryItem[] = [], model?: string) =>
-    http.post<AgentChatReply>('/agent/chat', { message, history, ...(model ? { model } : {}) })
-      .then((r) => r.data),
+  // 🆕 2026-09-24 补 session_id：后端 _log_chat 用它把同一段对话的多轮串起来
+  //    （审计里能看出「问了几遍才问明白」）。网页版一直没发，于是桌面端的问答
+  //    在日志里是一条条散的，没法按会话归并分析 —— H5 早就在发了。
+  //    ⚠️ 它只进审计日志，不参与鉴权、不影响任何数据可见性。
+  chat: (message: string, history: ChatHistoryItem[] = [], model?: string, sessionId?: string) =>
+    http.post<AgentChatReply>('/agent/chat', {
+      message, history,
+      ...(model ? { model } : {}),
+      ...(sessionId ? { session_id: sessionId } : {}),
+    }).then((r) => r.data),
 
   getModels: () => http.get<AgentModelsReply>('/agent/models').then((r) => r.data),
 

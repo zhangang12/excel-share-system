@@ -172,5 +172,86 @@ chk("[[danger:已过 1 天]]" in out12, "着色照常")
 chk("<span" not in out12 and "class=" not in out12,
     "后端只发语义标记，不拼任何 HTML（拼了就绕过了 markdown-it 的 XSS 防线）")
 
+print("\n===== 13. 前后端契约：后端吐的每一种标记/围栏，两个前端都得认 =====")
+# 🆕 2026-09-24 用户截图报的 bug 的防复发测试。
+#
+# 当初「语义着色 + UI 表格」只改了后端和 H5，**AgentView.vue 自己 new 了一个
+# MarkdownIt**，谁也没想起来给它装插件。结果网页版和桌面客户端里每张表都漏出
+# `[[danger:30 天]]` `[[muted:—]]`，而 render.py 把**每个空单元格**都写成
+# `[[muted:—]]` —— 一张 30 行的表就是几十处。后来的 ```pmschart 图更糟：
+# 退化成代码块，把整段 JSON 甩给用户。
+#
+# 光靠「记得两边都改」防不住，所以在这里用**源码静态检查**钉死：
+#   ① 除了那份共用渲染器，谁都不许自己 new MarkdownIt；
+#   ② 后端能吐的每一个档位，共用渲染器的白名单里都得有；
+#   ③ 两个前端都得给每个档位配上颜色（少配一个就是「有这档但看不见」）。
+# 这是 Python 测试读前端源码——不优雅，但这个仓库没有前端测试框架，
+# 而这条契约断掉的代价（用户看见乱码）比不优雅大得多。
+import re as _re
+
+FE = os.path.join(os.path.dirname(os.getcwd()), "frontend", "src")
+SHARED = os.path.join(FE, "shared", "agentMarkdown.ts")
+CLIENTS = {
+    "网页版/桌面客户端": os.path.join(FE, "views", "AgentView.vue"),
+    "H5/APP": os.path.join(FE, "h5", "H5ChatView.vue"),
+}
+
+def _read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _code_only(src: str) -> str:
+    """剥掉注释再查。否则「注释里解释这个坑时写了 new MarkdownIt」也会被判违规——
+    第一版就这么误报了一次，而那条注释恰恰是最该留着的东西。"""
+    src = _re.sub(r"/\*.*?\*/", "", src, flags=_re.S)
+    return "\n".join(l for l in src.split("\n") if not l.lstrip().startswith(("//", "*")))
+
+chk(os.path.exists(SHARED), f"共用渲染器还在：{SHARED}")
+if os.path.exists(SHARED):
+    shared = _read(SHARED)
+
+    # ① 只有共用渲染器可以 new MarkdownIt
+    offenders = []
+    for root, _dirs, files in os.walk(FE):
+        for fn in files:
+            if not fn.endswith((".ts", ".vue")):
+                continue
+            fp = os.path.join(root, fn)
+            if os.path.abspath(fp) == os.path.abspath(SHARED):
+                continue
+            if "new MarkdownIt" in _code_only(_read(fp)):
+                offenders.append(os.path.relpath(fp, FE))
+    chk(not offenders,
+        f"**除 shared/agentMarkdown.ts 外没有第二处 new MarkdownIt** —— "
+        f"自己 new 就是这次 bug 的成因 → 违规文件: {offenders}")
+
+    # ② 后端能吐的档位，白名单里都得有
+    backend_tones = set(_re.findall(r'return "(danger|warn|good|muted)"', _read(
+        os.path.join(os.getcwd(), "app", "agent", "render.py"))))
+    backend_tones.add("muted")          # 空单元格占位，写在 _TONE_MARK.format 里
+    m = _re.search(r"TONES\s*=\s*new Set\(\[([^\]]*)\]\)", shared)
+    fe_tones = set(_re.findall(r"'([a-z]+)'", m.group(1))) if m else set()
+    missing = sorted(backend_tones - fe_tones)
+    chk(not missing,
+        f"后端会吐的档位前端白名单里都有（少一个就原样漏 `[[x:…]]` 给用户）→ 缺: {missing}")
+
+    # ③ 图表围栏：后端发什么名字，前端就得接什么名字
+    fence = _re.search(r'return "```(\w+)', _read(
+        os.path.join(os.getcwd(), "app", "agent", "render.py")))
+    if fence:
+        chk(fence.group(1) in shared,
+            f"共用渲染器接住了后端的 ```{fence.group(1)} 围栏 —— "
+            f"接不住就退化成代码块，把整段 JSON 甩给用户")
+
+    # ④ 两个前端都要给每个档位配色
+    for who, path in CLIENTS.items():
+        if not os.path.exists(path):
+            chk(False, f"{who} 的界面文件找不到：{path}")
+            continue
+        css = _read(path)
+        lack = sorted(t for t in fe_tones if f"agent-tone--{t}" not in css)
+        chk(not lack, f"{who} 给每个档位都配了色（配漏 = 有这档但看不出来）→ 缺: {lack}")
+
 print("\nPASSED" if not FAIL else f"\n{len(FAIL)} FAILURES")
 sys.exit(1 if FAIL else 0)
