@@ -593,6 +593,14 @@ async def create_spare_order(
     n = data.qty if isinstance(data.qty, int) and data.qty >= 1 else 1
     _writeback_overview(p, "数量", f"{n}{u}")
     _writeback_overview(p, "销售", f"备机·{_uname(current)}")  # 标记备机便于在项目目录区分
+    # 🆕 2026-09-24 反馈#435「设计师下的单子跑到销售部来了」：
+    #   备机身份原来**只靠上面那个显示字符串**（一览「销售」列里的 "备机·XXX"）来认，
+    #   而那一格用户在项目目录里能直接改。2026-09-19 有人把 2026-080.. 的这一格
+    #   从「备机·陈立新」改成「陈立新」，下一次后端启动 backfill_sales_ledger 就
+    #   认不出它是备机了 → 给它补了一行销售台账，还按姓名匹配把 sales_uid 设成了
+    #   一个**设计师**。结果备机出现在销售部列表里，销售一栏写着设计师的名字。
+    #   现在另存一个**用户碰不到**的标记，判据以它为准（见 data_migration 的 _is_spare）。
+    p.extra = {**(p.extra or {}), "__spare__": True}
     if sign_d:
         _writeback_overview(p, "签订日期", sign_d)     # alias 自动双写详单表头「下单日期」
     if deliver_d:

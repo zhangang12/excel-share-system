@@ -234,25 +234,75 @@ const payeeLabel = computed(() => (isPrivatePay.value ? '收款人' : '收款单
 
 // 🆕 反馈#365：用过的收款账户。数据来自历史付款申请（后端 /oa/payee-accounts 抽的），
 //   不另建表——另起一张表就得管"改了账号谁去同步"，会出现历史单据和账户库两个版本。
-interface PayeeAcct { payee: string; account: string; bank: string; used: number }
+interface PayeeAcctItem { account: string; bank: string; used: number }
+interface PayeeAcct { payee: string; account: string; bank: string; used: number
+                      accounts?: PayeeAcctItem[] }
 const payeeBook = ref<PayeeAcct[]>([])
 const payeeFilled = ref(false)   // 这次是不是自动带出来的（带出来就提示核对一眼）
+/** 上一次自动带出来的值。用来判断「框里这个账号是我填的还是人手敲的」 */
+const payeeAuto = ref({ account: '', bank: '' })
 async function loadPayeeBook() {
   try { payeeBook.value = (await http.get<PayeeAcct[]>('/oa/payee-accounts')).data }
   catch { payeeBook.value = [] }   // 拿不到就退回纯手输，不挡提交
 }
+
+/** 当前收款单位用过的账号（给「收款账号」下拉用）。没选单位时给全部用过的。 */
+const payeeAcctOptions = computed<PayeeAcctItem[]>(() => {
+  const hit = payeeBook.value.find(a => a.payee === (subForm.p_payee || '').trim())
+  if (hit) return hit.accounts?.length ? hit.accounts : [{ account: hit.account, bank: hit.bank, used: hit.used }]
+  return []
+})
+
+/** 框里的值是不是「上一次自动带出来的」——是的话换单位时可以安全覆盖 */
+function _isAutoFilled(): boolean {
+  return subForm.p_account.trim() === payeeAuto.value.account
+      && subForm.p_bank.trim() === payeeAuto.value.bank
+}
+
 function onPayeePick(v: string) {
   payeeFilled.value = false
   const hit = payeeBook.value.find(a => a.payee === (v || '').trim())
-  if (!hit) return
-  // ⚠️ 只在两个字段都空的时候带：人已经手填过就别覆盖他，
-  //    偷偷改掉他填的账号是这类"智能填充"最容易闯的祸。
-  if (!subForm.p_account.trim() && !subForm.p_bank.trim()) {
+  const empty = !subForm.p_account.trim() && !subForm.p_bank.trim()
+
+  // 🆕 2026-09-24 反馈#436。原来只有「两个字段都空」才带，于是**换收款单位时
+  //   上一家的账号会原样留在框里** —— 这不只是麻烦，是能把钱打错：
+  //   选了 A 带出 A 的账号，改选 B，账号还是 A 的，提示语又消失了，
+  //   一眼扫过去很容易就这么提交了。
+  //   现在：框里的值如果是上次**自动带出来的**，就跟着换/清掉；
+  //   是人**手敲的**，一个字都不动（偷偷改掉人手填的账号是这类功能最容易闯的祸），
+  //   但要当面告诉他「这个账号不是这家的」，别让他不知情地提交。
+  if (!hit) {
+    // 换成了一个没记录的新单位：上一家的账号必须清掉，不能留着
+    if (!empty && _isAutoFilled()) {
+      subForm.p_account = ''
+      subForm.p_bank = ''
+      payeeAuto.value = { account: '', bank: '' }
+    }
+    return
+  }
+  if (empty || _isAutoFilled()) {
     subForm.p_account = hit.account
     subForm.p_bank = hit.bank
+    payeeAuto.value = { account: hit.account, bank: hit.bank }
     payeeFilled.value = true
   }
 }
+
+/** 从「收款账号」下拉里选一个：开户行跟着走 */
+function onAcctPick(v: string) {
+  const hit = payeeAcctOptions.value.find(a => a.account === (v || '').trim())
+  if (!hit) return
+  subForm.p_bank = hit.bank
+  payeeAuto.value = { account: hit.account, bank: hit.bank }
+  payeeFilled.value = true
+}
+
+/** 框里的账号与所选单位的历史账号都对不上 → 当面提醒（不阻止提交：新账号是正常的） */
+const acctMismatch = computed(() => {
+  const acct = subForm.p_account.trim()
+  if (!acct || !payeeAcctOptions.value.length) return false
+  return !payeeAcctOptions.value.some(a => a.account === acct)
+})
 const PAYBACK_TYPES = ['预付款', '进度款', '到货款', '尾款', '质保金', '全款']
 // 单行提成（分转整，避免浮点误差）
 function rowCommission(r: CommissionItem) {
@@ -1273,7 +1323,22 @@ onMounted(async () => {
             <el-col :xs="24" :sm="12"><el-form-item label="期望付款日期（选填）"><el-date-picker v-model="subForm.p_pay_date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" /></el-form-item></el-col>
             <!-- 🆕 反馈#348（杨坛）：批完还得回头问收款账户，钱才付得出去。
                  账号和开户行都必填——少一样财务照样打不出款。 -->
-            <el-col v-if="showBankFields" :xs="24" :sm="12"><el-form-item label="收款账号 *"><el-input v-model="subForm.p_account" :placeholder="isPrivatePay ? '本人银行卡号' : '银行卡号 / 对公账号'" /></el-form-item></el-col>
+            <el-col v-if="showBankFields" :xs="24" :sm="12">
+              <el-form-item label="收款账号 *">
+                <!-- 🆕 反馈#436：用过的账号直接选，不用每次手敲。
+                     allow-create：新账号照样直接输，不挡人。
+                     同一个单位有多个账号时这里会列出来（现网确实有两家是这样）。 -->
+                <el-select v-model="subForm.p_account" filterable allow-create default-first-option
+                           clearable style="width:100%" @change="onAcctPick"
+                           :placeholder="isPrivatePay ? '本人银行卡号' : '银行卡号 / 对公账号'">
+                  <el-option v-for="a in payeeAcctOptions" :key="a.account"
+                             :label="`${a.account}　${a.bank}`" :value="a.account" />
+                </el-select>
+                <div class="fi-hint" v-if="acctMismatch" style="color:var(--el-color-warning)">
+                  这个账号不是「{{ subForm.p_payee }}」以前用过的，确认一下别打错
+                </div>
+              </el-form-item>
+            </el-col>
             <el-col v-if="showBankFields" :xs="24" :sm="12"><el-form-item label="开户行 *"><el-input v-model="subForm.p_bank" placeholder="如 工商银行无锡分行营业部" /></el-form-item></el-col>
             <el-col v-else :span="24">
               <el-alert type="info" :closable="false" title="现金付款不需要填银行账户；如果对方要走银行转账，公司账户选「对公付款申请」，个人账户选「对私付款申请」。" />

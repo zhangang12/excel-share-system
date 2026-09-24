@@ -1372,6 +1372,53 @@ async def backfill_datasheet_imported_at(db: AsyncSession) -> dict:
     return {"filled": filled}
 
 
+def _is_spare(p) -> bool:
+    """这个项目是不是备机。
+
+    🆕 2026-09-24 反馈#435：判据**以 `extra["__spare__"]` 为准**，不再只看一览
+    「销售」列里的 "备机·XXX" 字符串 —— 那一格用户在项目目录里能直接改，
+    改完这里就认不出来了，下次启动本模块就会给备机补一行销售台账（实际发生过，
+    2026-080.. 因此跑进了销售部，销售一栏还是个设计师的名字）。
+    字符串判据保留，只为兜住 `__spare__` 标记补齐之前的老数据。
+    """
+    extra = p.extra or {}
+    if extra.get("__spare__"):
+        return True
+    return str(extra.get("__o__销售") or "").strip().startswith("备机")
+
+
+async def backfill_spare_marker(db: AsyncSession) -> dict:
+    """🆕 2026-09-24 给存量备机项目补 `extra["__spare__"]`。
+
+    认定来源有两处，取并集：
+      ① 审计日志里有 `create_spare`（最可靠，用户改不了审计）；
+      ② 一览「销售」列仍以「备机」开头（还没被人改过的那些）。
+    ⚠️ 必须排在 `backfill_sales_ledger` **之前**跑，否则同一次启动里
+       标记还没打上，台账又被补出来了。幂等。
+    """
+    res = await db.execute(
+        select(models.AuditLog.target_id).where(
+            models.AuditLog.action == "create_spare",
+            models.AuditLog.target_type == "project"))
+    spare_ids = {r[0] for r in res.all() if r[0]}
+
+    res = await db.execute(
+        select(models.Project).where(models.Project.is_deleted == False))  # noqa: E712
+    n = 0
+    for p in res.scalars().all():
+        extra = p.extra or {}
+        if extra.get("__spare__"):
+            continue
+        by_name = str(extra.get("__o__销售") or "").strip().startswith("备机")
+        if p.id in spare_ids or by_name:
+            p.extra = {**extra, "__spare__": True}
+            n += 1
+    if n:
+        await db.commit()
+        log.info("[backfill_spare_marker] 给 %d 个存量备机项目补上 __spare__ 标记", n)
+    return {"marked": n}
+
+
 async def backfill_sales_ledger(db: AsyncSession) -> dict:
     """🆕 v3 M02 存量回填：给没有台账行的未删项目补 sales_ledger。
 
@@ -1400,10 +1447,10 @@ async def backfill_sales_ledger(db: AsyncSession) -> dict:
     for p in projects:
         if p.id in have:
             continue
+        if _is_spare(p):        # 🆕 备机下单项目不进销售台账
+            continue
         extra = p.extra or {}
         sales_name = str(extra.get("__o__销售") or "").strip()
-        if sales_name.startswith("备机"):   # 🆕 备机下单项目不进销售台账
-            continue
         uid = None
         if sales_name and len(by_name.get(sales_name, [])) == 1:
             uid = by_name[sales_name][0]
@@ -1443,11 +1490,20 @@ async def backfill_shipments(db: AsyncSession) -> dict:
         return {"created": 0}
     res = await db.execute(select(models.Shipment.project_id))
     have = {r[0] for r in res.all()}
+    # 🆕 2026-09-24：待主管审批/被退回草稿的下单**还不是生效订单**，不补发货行。
+    #   两个理由：① 它们本来就不该出现在物流发货看板里（还没批呢）；
+    #   ② 更要命的是，先补出这一行会把**审批本身卡死** —— sales_router 的
+    #      _materialize_order_downstream 那时是无条件 insert，撞 uq_shipment_project
+    #      直接 409「数据已存在，不能重复」，主管点多少次都过不去（2026-090 实测）。
+    #   那一侧已经改成「有就用」，这里再加一道，从源头别造这行。
+    res = await db.execute(select(models.SalesLedger.project_id).where(
+        models.SalesLedger.order_state.in_(("pending", "draft"))))
+    not_live = {r[0] for r in res.all()}
     created = 0
     for p in projects:
-        if p.id in have:
+        if p.id in have or p.id in not_live:
             continue
-        if str((p.extra or {}).get("__o__销售") or "").startswith("备机"):
+        if _is_spare(p):
             continue  # 备机下单不进物流发货看板
         db.add(models.Shipment(project_id=p.id))
         created += 1
@@ -2518,6 +2574,11 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_datasheet_imported_at(db)
     except Exception as e:
         log.warning("backfill_datasheet_imported_at failed: %s", e)
+    try:
+        # ⚠️ 必须在 backfill_sales_ledger 之前：标记没打上，下面就会给备机补台账
+        await backfill_spare_marker(db)
+    except Exception as e:
+        log.warning("backfill_spare_marker failed: %s", e)
     try:
         await backfill_sales_ledger(db)
     except Exception as e:

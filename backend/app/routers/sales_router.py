@@ -426,13 +426,28 @@ async def _materialize_order_downstream(db: AsyncSession, p: models.Project, dep
     await _add_all_active_users_as_members(db, p.id)
     # 发货待办：所有订单都建（含调货——调货也要同步发货部确认发货）
     name_, phone_, addr_, company_ = (list(receiver) + [None, None, None, None])[:4]
-    db.add(models.Shipment(
-        project_id=p.id,
-        receiver_name=(name_ or "").strip() or None,
-        receiver_company=(company_ or "").strip() or None,
-        receiver_phone=(phone_ or "").strip() or None,
-        receiver_addr=(addr_ or "").strip() or None,
-    ))
+    # 🆕 2026-09-24 反馈（截图「数据已存在，不能重复」）：这里原来是**无条件 insert**，
+    #   一旦项目已经有发货行就撞 uq_shipment_project → 409，
+    #   而这个 409 会把**整个审批卡死**：主管点多少次「通过」都过不去。
+    #   已经有行是常态，不是异常 —— `backfill_shipments` 每次后端启动都跑，
+    #   只要「销售下单」和「主管审批」之间隔了一次发版，那行就先被补出来了
+    #   （2026-090 实测：发货行建于 09-23 17:22，正是一次发版重启）。
+    #   所以改成「有就用、没有才建」，与 update_receiver 同一个写法。
+    sr = await db.execute(select(models.Shipment).where(models.Shipment.project_id == p.id))
+    ship = sr.scalar_one_or_none()
+    if ship is None:
+        ship = models.Shipment(project_id=p.id)
+        db.add(ship)
+    # ⚠️ 收件信息只在**本次下单真的填了**时才覆盖：审批前物流可能已经补过收件人，
+    #   拿一堆空值盖掉等于把人家填的抹了。
+    if (name_ or "").strip():
+        ship.receiver_name = name_.strip()
+    if (company_ or "").strip():
+        ship.receiver_company = company_.strip()
+    if (phone_ or "").strip():
+        ship.receiver_phone = phone_.strip()
+    if (addr_ or "").strip():
+        ship.receiver_addr = addr_.strip()
     order_ids = []
     for d in depts:  # 调货订单 depts=[] → 不派生产部门任务
         o = await create_order_internal(db, project=p, dept=d, req_text=req_text, created_by=creator.id)

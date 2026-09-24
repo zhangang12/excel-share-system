@@ -159,10 +159,19 @@ async def list_payee_accounts(
             continue
         hit = out.get(payee)
         if hit is None:
-            # 第一次遇到 = 最近一次用的（已按 id 倒序），账号以它为准
-            out[payee] = {"payee": payee, "account": acct, "bank": bank, "used": 1}
+            # 第一次遇到 = 最近一次用的（已按 id 倒序），account/bank 以它为准
+            out[payee] = {"payee": payee, "account": acct, "bank": bank, "used": 1,
+                          "accounts": [{"account": acct, "bank": bank, "used": 1}]}
         else:
             hit["used"] += 1
+            # 🆕 2026-09-24 反馈#436：同一个收款单位**可能有多个账号**（现网有两家），
+            #   原来只留最近一个，另一个还得手敲。这里把用过的都列出来，
+            #   前端让「收款账号」也能直接选。顺序 = 最近用过的在前。
+            a = next((x for x in hit["accounts"] if x["account"] == acct), None)
+            if a is None:
+                hit["accounts"].append({"account": acct, "bank": bank, "used": 1})
+            else:
+                a["used"] += 1
     return sorted(out.values(), key=lambda x: (-x["used"], x["payee"]))
 
 
