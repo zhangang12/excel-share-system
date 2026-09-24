@@ -129,13 +129,29 @@ async def list_feedback(
         page=page, page_size=page_size, stats=stats)
 
 
+async def require_feedback_handler(
+    current: models.User = Depends(get_current_user),
+) -> models.User:
+    """能处理用户反馈的人。
+
+    🆕 2026-09-24 反馈#437「杨倩账号加上修改反馈功能」：口径从写死的
+    `require_admin_or_manager` 改成**按菜单判** —— 谁的账号上配了「用户反馈」菜单，
+    谁就能标记已处理/回复。admin/manager 在 user_menu_keys 里本来就拿全量，不受影响。
+    这么改是为了下次别再改代码：老板想让谁管反馈，在「用户管理」里勾一下菜单就行。
+    """
+    from ..menus import user_menu_keys
+    if "user-feedback" not in user_menu_keys(current):
+        raise HTTPException(403, "无权处理用户反馈（需要「用户反馈」菜单权限）")
+    return current
+
+
 @router.post("/{fid}/done", response_model=schemas.Msg)
 async def mark_done(
     fid: int,
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(require_feedback_handler),
     db: AsyncSession = Depends(get_db),
 ):
-    """管理层标记已处理。"""
+    """标记已处理。谁能点见 require_feedback_handler（按「用户反馈」菜单判）。"""
     r = await db.execute(select(models.UserFeedback).where(models.UserFeedback.id == fid))
     fb = r.scalar_one_or_none()
     if not fb:
@@ -156,10 +172,10 @@ class ReplyIn(BaseModel):
 async def reply_feedback(
     fid: int,
     body: ReplyIn,
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(require_feedback_handler),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 管理层回复处理意见（系统回信）。回复即视为已处理；提出人下次登录右下角弹窗提醒查看。
+    """🆕 回复处理意见（系统回信）。谁能回见 require_feedback_handler。回复即视为已处理；提出人下次登录右下角弹窗提醒查看。
     🆕 2026-07-29：回复同时 push_message 给提出人（站内消息 + 企微双通道，绑了企微即微信可达）。"""
     text = (body.reply or "").strip()
     if not text:

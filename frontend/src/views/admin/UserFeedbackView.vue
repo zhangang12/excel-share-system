@@ -1,5 +1,8 @@
 <script setup lang="ts">
-// 🆕 v3 用户反馈管理后台（仅 admin/manager）
+// 🆕 v3 用户反馈管理后台。
+// 🆕 2026-09-24 反馈#437：能进这一页 = 账号上配了「用户反馈」菜单（路由 meta.menuKey 管着），
+//   后端 done/reply 的口径同源（user_feedback_router.require_feedback_handler）。
+//   原来写死 admin/manager，老板想让财务/人事也能处理就得改代码——现在勾个菜单就行。
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Download, Refresh, ChatLineRound } from '@element-plus/icons-vue'

@@ -125,9 +125,71 @@ async def main():
         m_s = (await c.get("/api/auth/menus", headers=Hs)).json()
         chk("user-feedback" not in [x["key"] for x in m_s["menus"]], "销售员菜单不含 user-feedback")
 
+        # 🆕 反馈#437：处理反馈的口径改成按菜单判（见文件末尾 _menu_perm_case）
+        print("\n=== 反馈#437：谁能处理反馈，按「用户反馈」菜单判 ===")
+        chk(await _menu_perm_case(c, H, rid), "菜单门控这一组全部通过")
+
     await engine.dispose()
     print("PASSED" if not FAIL else f"{len(FAIL)} FAILURES\n" + "\n".join("  - " + x for x in FAIL))
     shutil.rmtree(tmp, ignore_errors=True)
     sys.exit(1 if FAIL else 0)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🆕 2026-09-24 反馈#437「杨倩账号加上修改反馈功能」
+# 处理反馈的口径从写死 admin/manager 改成**按菜单判**：
+# 谁的账号上配了「用户反馈」菜单，谁就能标记已处理/回复。
+# 这么改是为了下次别再改代码——老板想让谁管，在用户管理里勾一下就行。
+# ═══════════════════════════════════════════════════════════════
+async def _menu_perm_case(c, H, rid):
+    ok = []
+
+    async def chk2(cond, msg):
+        print(("  PASS " if cond else "  FAIL: ") + msg)
+        ok.append(bool(cond))
+
+    async def mk(name, codes, menus):
+        r = await c.post("/api/admin/users", headers=H, json={
+            "username": name, "password": "pass123", "full_name": name,
+            "role_ids": [rid[x] for x in codes]})
+        assert r.status_code == 200, r.text
+        uid = r.json()["id"]
+        r2 = await c.put(f"/api/admin/users/{uid}/menus", headers=H, json={"menus": menus})
+        assert r2.status_code == 200, r2.text
+        return uid
+
+    async def login(u):
+        r = await c.post("/api/auth/login", json={"username": u, "password": "pass123"})
+        return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+    BASE = ["catalog", "finance", "hr", "messages"]
+    await mk("fb_caiwu", ["finance", "hr"], BASE)                      # 没配「用户反馈」
+    await mk("fb_yangqian", ["finance", "hr"], BASE + ["user-feedback"])  # 配了
+    Hno = await login("fb_caiwu")
+    Hyes = await login("fb_yangqian")
+
+    # 造一条反馈
+    r = await c.post("/api/user-feedback", headers=Hno,
+                     data={"kind": "bug", "content": "菜单门控验证用"})
+    await chk2(r.status_code == 200, f"提交反馈（谁都能提）: {r.status_code}")
+    fid = r.json()["id"]
+
+    r = await c.post(f"/api/user-feedback/{fid}/reply", headers=Hno, json={"reply": "不该能回"})
+    await chk2(r.status_code == 403,
+               f"**没配「用户反馈」菜单的财务：回不了** → {r.status_code}")
+    r = await c.post(f"/api/user-feedback/{fid}/done", headers=Hno)
+    await chk2(r.status_code == 403, f"也标记不了已处理 → {r.status_code}")
+
+    r = await c.post(f"/api/user-feedback/{fid}/reply", headers=Hyes, json={"reply": "已安排"})
+    await chk2(r.status_code == 200,
+               f"**配了菜单的（杨倩这种财务+人事）能回** —— 改之前这里是 403，"
+               f"只有管理层能点 → {r.status_code} {r.text[:80]}")
+    await chk2(r.status_code == 200 and r.json().get("status") == "done",
+               "回复即视为已处理")
+
+    r = await c.post(f"/api/user-feedback/{fid}/done", headers=H)
+    await chk2(r.status_code == 200, f"管理层照常能点（别为了放开把原来的搞坏）: {r.status_code}")
+    return all(ok)
+
 
 asyncio.run(main())
