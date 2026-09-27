@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { MagicStick, Promotion, Refresh, Setting } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { MagicStick, Promotion, Refresh, Setting, Star, StarFilled, CopyDocument, Collection, Plus } from '@element-plus/icons-vue'
 import { agentApi, type ChatHistoryItem, type AgentChatLogItem } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 import { fmtDateTime } from '@/utils/format'
@@ -20,7 +20,30 @@ interface ChatItem {
   cards?: AgentCard[]
 }
 
-const QUICK_QUESTIONS = ['待我审批的', '今日晨报', '采购未到货', '尾款到期', '逾期任务']
+// 🆕 2026-09-27 提示词面板。原来这里写死 5 个快捷问题，所有人看到的一样 ——
+//   装配工点「尾款到期」得到「无权查询」，财务点「采购未到货」也一样，
+//   5 个里有 3 个对他是死按钮；而真正能问的（项目体检、回款画像、给谁派待办）一个都没摆。
+//   现在按权限从后端拿（GET /agent/prompts，与门户同一道门），见 backend/app/agent/prompts.py。
+interface PromptItem { label: string; q: string; kind: 'send' | 'fill'; desc?: string }
+interface PromptGroup { name: string; items: PromptItem[] }
+const promptGroups = ref<PromptGroup[]>([])
+const recentQs = ref<string[]>([])
+const savedQs = ref<string[]>([])
+const maxSaved = ref(20)
+const promptDrawer = ref(false)
+const promptTab = ref<'scene' | 'recent' | 'saved'>('scene')
+
+/** 顶上那一排：收藏的在前，然后是「今天要盯的」。填空模板不放这排——一排按钮点了没反应会让人困惑 */
+const quickChips = computed<PromptItem[]>(() => {
+  const saved = savedQs.value.map((q) => ({ label: q, q, kind: (/\{[^}]+\}/.test(q) ? 'fill' : 'send') as PromptItem['kind'] }))
+  const first = (promptGroups.value[0]?.items || []).filter((x) => x.kind === 'send')
+  const out: PromptItem[] = []
+  for (const it of [...saved, ...first]) {
+    if (!out.some((o) => o.q === it.q)) out.push(it)
+    if (out.length >= 7) break
+  }
+  return out
+})
 
 /**
  * 🆕 2026-09-24 卡片通道（与 H5 同口径）。这几条是**精确文案**，别改成模糊匹配 ——
@@ -31,7 +54,7 @@ const CARD_ENTRIES = new Set(['待我审批的', '待我审批的请款单', '�
 
 // 🆕 2026-09-24 会话 id：只用于把审计日志里的多轮串起来分析，不参与鉴权。
 //    刷新页面 = 新会话，与 H5 同口径（H5ChatView 也是每次进页面生成一个）。
-const sessionId = newSessionId('w')
+let sessionId = newSessionId('w')
 
 /** 「正在查 xxx…」。工具轮次后端不推正文，不给状态人会以为卡住了 */
 const toolHint = ref('')
@@ -64,17 +87,29 @@ const userInitial = computed(() => {
   return name.trim().charAt(0) || '我'
 })
 
-const messages = ref<ChatItem[]>([
-  {
+/**
+ * 欢迎语按**这个人能问的**来写。原来写死「晨报/采购/尾款」，装配工一进来看到的
+ * 三样全是他问不了的 —— 第一印象就是「这东西跟我没关系」。
+ */
+function welcome(): ChatItem {
+  const groups = promptGroups.value
+  if (!groups.length) {
+    return { role: 'assistant', content: '你好，我是 ERP 数据助手（只读），所有数字都来自系统实时查询。直接问就行。' }
+  }
+  const lines = groups.slice(0, 5).map((g) => {
+    const names = g.items.filter((x) => x.kind === 'send').slice(0, 3).map((x) => `**${x.label}**`)
+    return names.length ? `- ${g.name}：${names.join('、')}` : ''
+  }).filter(Boolean)
+  return {
     role: 'assistant',
-    content: '你好，我是 ERP 数据助手（只读），所有数字都来自系统实时查询。可以问我：\n'
-      + '- **今日晨报**：采购未到货 / 逾期任务 / 尾款 / 人事到期一览\n'
-      + '- **采购未到货**、**哪个供应商拖期**、**未来一周到货**\n'
-      + '- **尾款到期**、**逾期任务**\n'
-      + '- 单项目进度：带上项目编号，如「TH-2501 进度」',
-    suggestions: QUICK_QUESTIONS.slice(0, 3),
-  },
-])
+    content: '你好，我是 ERP 数据助手（只读），所有数字都来自系统实时查询。按你的权限，可以问我：\n'
+      + lines.join('\n')
+      + '\n\n点右上角「提示词」看全部，带 {…} 的是填空模板，填上编号或名字就能问。',
+    suggestions: (groups[0]?.items || []).filter((x) => x.kind === 'send').slice(0, 3).map((x) => x.q),
+  }
+}
+
+const messages = ref<ChatItem[]>([welcome()])
 const input = ref('')
 const sending = ref(false)
 const listRef = ref<HTMLElement | null>(null)
@@ -184,6 +219,127 @@ async function scrollBottom() {
   if (listRef.value) listRef.value.scrollTop = listRef.value.scrollHeight
 }
 
+// ==================== 🆕 2026-09-27 提示词 / 收藏 / 复制 / 新对话 ====================
+
+async function loadPrompts() {
+  try {
+    const { data } = await http.get('/agent/prompts')
+    promptGroups.value = data.groups || []
+    recentQs.value = data.recent || []
+    savedQs.value = data.saved || []
+    maxSaved.value = data.limits?.max_saved || 20
+    // 欢迎语跟着权限走：只在还没开聊时替换，聊起来了就别动用户眼前的东西
+    if (messages.value.length === 1 && messages.value[0].role === 'assistant') {
+      messages.value = [welcome()]
+    }
+  } catch { /* 拿不到就只剩手输，不挡聊天 */ }
+}
+
+const inputRef = ref<any>(null)
+/** 占位符：`{项目编号}` 这种。发送前还有它 = 模板没填完 */
+const PLACEHOLDER_RE = /\{[^{}]+\}/
+
+/** 把输入框里第一个 {…} 选中：人直接打字就替换掉了，不用先删 */
+async function selectPlaceholder() {
+  await nextTick()
+  const el: HTMLTextAreaElement | undefined = inputRef.value?.textarea
+  if (!el) return
+  // ⚠️ preventScroll：窗口矮的时候聊天卡片本身会溢出，普通 focus() 会把卡片内容
+  //   往上滚一截，顶上那排快捷按钮就被顶出视野了（1024×768 实测滚了 63px）。
+  el.focus({ preventScroll: true })
+  const m = PLACEHOLDER_RE.exec(input.value)
+  if (m) el.setSelectionRange(m.index, m.index + m[0].length)
+}
+
+/** 点一条提示词：send 直接发；fill 填进输入框、选中占位，等人补 */
+function usePrompt(it: PromptItem | string) {
+  const item: PromptItem = typeof it === 'string'
+    ? { label: it, q: it, kind: PLACEHOLDER_RE.test(it) ? 'fill' : 'send' }
+    : it
+  promptDrawer.value = false
+  if (item.kind === 'fill') {
+    input.value = item.q
+    void selectPlaceholder()
+    return
+  }
+  void send(item.q)
+}
+
+const isSaved = (q: string) => savedQs.value.includes(q.trim())
+
+/** 收藏/取消收藏。先改本地再存后端，存失败就退回去 —— 别让星星亮着而后端没存上 */
+async function toggleSave(q: string) {
+  const t = q.trim()
+  if (!t) return
+  const before = [...savedQs.value]
+  if (isSaved(t)) {
+    savedQs.value = savedQs.value.filter((x) => x !== t)
+  } else {
+    if (savedQs.value.length >= maxSaved.value) {
+      ElMessage.warning(`收藏最多 ${maxSaved.value} 条，先删掉几条不常用的`)
+      return
+    }
+    savedQs.value = [t, ...savedQs.value]
+  }
+  try {
+    const { data } = await http.put('/agent/prompts/saved', { items: savedQs.value })
+    savedQs.value = data.saved || []
+    ElMessage.success(isSaved(t) ? '已收藏，顶上那排能直接点' : '已取消收藏')
+  } catch {
+    savedQs.value = before
+  }
+}
+
+/** 复制回答。复制的是**渲染后的文字**（表格按行、不带 markdown 符号），贴到微信里能直接看 */
+async function copyAnswer(i: number) {
+  const el = document.querySelectorAll('.msg-list .md-body')[
+    messages.value.slice(0, i + 1).filter((m) => m.role === 'assistant').length - 1] as HTMLElement | undefined
+  const text = (el?.innerText || messages.value[i]?.content || '').trim()
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // http 的网页版（非 localhost）里 clipboard API 不可用，退回老办法
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    ta.remove()
+  }
+  ElMessage.success('已复制')
+}
+
+/**
+ * 新对话：清掉上下文、换一个会话 id。
+ * ⚠️ 聊了几轮之后模型会带着前面的上下文答（「那 071 呢」这种追问靠它），
+ *    换话题时旧上下文反而会串味 —— 这就是要有「新对话」的原因。
+ *    有内容时先确认：页头那个「刷新」只重拉配置、不清对话，别让人把两者搞混。
+ */
+async function newChat() {
+  if (sending.value) return
+  if (messages.value.some((m) => m.role === 'user')) {
+    try {
+      await ElMessageBox.confirm('当前对话会清空，重新开始？', '新对话',
+        { confirmButtonText: '清空重来', cancelButtonText: '取消', type: 'warning' })
+    } catch { return }
+  }
+  sessionId = newSessionId('w')
+  messages.value = [welcome()]
+  input.value = ''
+}
+
+/** 把一句问过的话放回输入框改一改再问（常见场景：换个编号问同一件事） */
+function editAgain(q: string) {
+  input.value = q
+  void selectPlaceholder()
+  // 聚焦交给 selectPlaceholder（它带 preventScroll），这里不再二次 focus
+}
+
+onMounted(loadPrompts)
+
 /** 待办卡通道：不经模型，直接取后端装配好的卡 */
 async function loadCards() {
   sending.value = true
@@ -225,8 +381,18 @@ async function loadCards() {
 async function send(text?: string) {
   const q = (text ?? input.value).trim()
   if (!q || sending.value) return
+  // 🆕 模板没填完（还留着 {项目编号} 这种）就别发：发出去模型只会回「没找到项目 {项目编号}」，
+  //   白等十几秒还占一次额度。把没填的那一段选中，人直接打字就行。
+  if (PLACEHOLDER_RE.test(q)) {
+    input.value = q
+    ElMessage.warning('把 {…} 那一段换成具体的编号或名字再发')
+    void selectPlaceholder()
+    return
+  }
   input.value = ''
   messages.value.push({ role: 'user', content: q })
+  // 「最近问过」本地先记上，不用等下次打开面板才从后端刷
+  recentQs.value = [q, ...recentQs.value.filter((x) => x !== q)].slice(0, 8)
   await scrollBottom()
   if (CARD_ENTRIES.has(q)) return loadCards()
   sending.value = true
@@ -334,15 +500,25 @@ async function send(text?: string) {
            ⚠️ 只重拉模型列表/审计日志，**不动对话记录**——
            聊天页上一个「刷新」很容易被当成"清空对话"，那是最不该发生的误解。 -->
       <PageRefresh :load="reloadMeta" size="small" />
+      <!-- 🆕 2026-09-27 提示词面板 + 新对话 -->
+      <el-button size="small" :icon="Collection" style="margin-left: 10px"
+                 @click="promptDrawer = true">提示词</el-button>
+      <el-button size="small" :icon="Plus" :disabled="sending" @click="newChat">新对话</el-button>
     </div>
 
     <el-card shadow="never" class="chat-card">
       <!-- 快捷问题 -->
+      <!-- 🆕 2026-09-27 按权限下发：收藏的在前（带星），然后是「今天要盯的」 -->
       <div class="quick-row">
         <el-button
-          v-for="q in QUICK_QUESTIONS" :key="q"
-          size="small" round :disabled="sending" @click="send(q)"
-        >{{ q }}</el-button>
+          v-for="it in quickChips" :key="it.q"
+          size="small" round :disabled="sending" @click="usePrompt(it)"
+        >
+          <el-icon v-if="isSaved(it.q)" class="chip-star"><StarFilled /></el-icon>{{ it.label }}
+        </el-button>
+        <el-button size="small" round text type="primary" @click="promptDrawer = true">
+          更多提示词 ›
+        </el-button>
       </div>
 
       <!-- 消息列表 -->
@@ -360,6 +536,21 @@ async function send(text?: string) {
             <div v-if="m.role === 'assistant' && (m.sources?.length || m.fallback)" class="bubble-meta">
               <el-tag v-if="m.fallback" size="small" type="info" effect="plain">规则模式</el-tag>
               <span v-if="m.sources?.length">数据来源：{{ m.sources.join('、') }}</span>
+            </div>
+            <!-- 🆕 2026-09-27 气泡小动作。鼠标移上去才显出来，平时不抢眼 -->
+            <div class="bubble-acts" :class="m.role">
+              <span v-if="m.role === 'assistant' && i > 0 && m.content" class="bact"
+                    title="复制这条回答" @click="copyAnswer(i)">
+                <el-icon><CopyDocument /></el-icon>复制
+              </span>
+              <span v-if="m.role === 'user'" class="bact" :class="{ on: isSaved(m.content) }"
+                    :title="isSaved(m.content) ? '取消收藏' : '收藏这句，下次顶上一排直接点'"
+                    @click="toggleSave(m.content)">
+                <el-icon><StarFilled v-if="isSaved(m.content)" /><Star v-else /></el-icon>
+                {{ isSaved(m.content) ? '已收藏' : '收藏' }}
+              </span>
+              <span v-if="m.role === 'user'" class="bact" title="放回输入框改一改再问"
+                    @click="editAgain(m.content)">改一改再问</span>
             </div>
             <!-- 🆕 2026-09-24 审批卡：点「通过/驳回/确认发出」打的是用户自己的 token，
                  跟他在业务页面上点是同一个请求（见 shared/agentCards.ts）。 -->
@@ -405,16 +596,66 @@ async function send(text?: string) {
       <!-- 输入区：Enter 发送，Shift+Enter 换行 -->
       <div class="input-row">
         <el-input
+          ref="inputRef"
           v-model="input"
           type="textarea"
           :autosize="{ minRows: 1, maxRows: 5 }"
-          placeholder="输入问题，Enter 发送、Shift+Enter 换行（如：采购未到货吗 / TH-2501 进度）"
+          placeholder="直接问，Enter 发送、Shift+Enter 换行（如：2026-080 卡在哪 / 这月销售额多少）"
           :disabled="sending"
           @keydown.enter.exact.prevent="send()"
         />
         <el-button type="primary" :loading="sending" :icon="Promotion" @click="send()">发送</el-button>
       </div>
     </el-card>
+
+    <!-- 🆕 2026-09-27 提示词面板：按场景（按权限下发）/ 最近问过 / 我的收藏 -->
+    <!-- size 用 min()：客户端窗口拖窄时 420px 会盖住大半个屏幕 -->
+    <el-drawer v-model="promptDrawer" title="提示词" direction="rtl" size="min(420px, 92vw)">
+      <el-tabs v-model="promptTab" class="prompt-tabs">
+        <el-tab-pane label="按场景" name="scene">
+          <div v-if="!promptGroups.length" class="p-empty">加载中，或者你的账号暂时没有可查的数据域</div>
+          <div v-for="g in promptGroups" :key="g.name" class="p-group">
+            <div class="p-gname">{{ g.name }}</div>
+            <div v-for="it in g.items" :key="it.q" class="p-item" @click="usePrompt(it)">
+              <div class="p-main">
+                <span class="p-label">{{ it.label }}</span>
+                <el-tag v-if="it.kind === 'fill'" size="small" effect="plain" type="warning">填空</el-tag>
+              </div>
+              <!-- 问法和标题一样时不重复显示（「今日晨报 / 今日晨报」看着像 bug） -->
+              <div v-if="it.q !== it.label" class="p-q">{{ it.q }}</div>
+              <div v-if="it.desc" class="p-desc">{{ it.desc }}</div>
+              <el-icon class="p-star" :class="{ on: isSaved(it.q) }"
+                       :title="isSaved(it.q) ? '取消收藏' : '收藏'"
+                       @click.stop="toggleSave(it.q)">
+                <StarFilled v-if="isSaved(it.q)" /><Star v-else />
+              </el-icon>
+            </div>
+          </div>
+          <div class="p-tip">带「填空」的点了不会直接发，会放进输入框、把 {…} 选中，你打编号或名字就行。</div>
+        </el-tab-pane>
+
+        <el-tab-pane :label="`最近问过（${recentQs.length}）`" name="recent">
+          <div v-if="!recentQs.length" class="p-empty">还没问过。问过的会记在这里，点一下再问一遍。</div>
+          <div v-for="q in recentQs" :key="q" class="p-item" @click="usePrompt(q)">
+            <div class="p-q strong">{{ q }}</div>
+            <el-icon class="p-star" :class="{ on: isSaved(q) }" @click.stop="toggleSave(q)">
+              <StarFilled v-if="isSaved(q)" /><Star v-else />
+            </el-icon>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane :label="`我的收藏（${savedQs.length}）`" name="saved">
+          <div v-if="!savedQs.length" class="p-empty">
+            还没收藏。在「按场景」或「最近问过」里点星星，或者在对话里点你问过的那句下面的「收藏」。
+            收藏的会排在顶上那一排，一点就问。
+          </div>
+          <div v-for="q in savedQs" :key="q" class="p-item" @click="usePrompt(q)">
+            <div class="p-q strong">{{ q }}</div>
+            <el-icon class="p-star on" title="取消收藏" @click.stop="toggleSave(q)"><StarFilled /></el-icon>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </el-drawer>
 
     <!-- 🆕 审计日志卡片（仅 admin 可见）：问答全量记录，可按用户名过滤，行展开看全文 -->
     <el-card v-if="isAdmin" shadow="never" class="audit-card">
@@ -689,4 +930,36 @@ async function send(text?: string) {
 .ask-q { font-size: 13px; color: var(--el-text-color-regular); margin-bottom: 6px; }
 .ask-opts { display: flex; flex-wrap: wrap; gap: 6px; }
 .tool-hint { margin-left: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
+
+/* 🆕 2026-09-27 提示词 / 气泡小动作 */
+.chip-star { color: var(--el-color-warning); margin-right: 3px; }
+.bubble-acts {
+  display: flex; gap: 12px; margin-top: 3px; font-size: 12px;
+  color: var(--el-text-color-placeholder); opacity: 0; transition: opacity .15s;
+}
+.bubble-acts.user { justify-content: flex-end; }
+.msg-row:hover .bubble-acts { opacity: 1; }
+.bact { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+.bact:hover { color: var(--el-color-primary); }
+.bact.on { color: var(--el-color-warning); opacity: 1; }
+.prompt-tabs { margin-top: -12px; }
+.p-group { margin-bottom: 14px; }
+.p-gname { font-size: 12px; font-weight: 600; color: var(--el-text-color-secondary); margin: 4px 0 6px; }
+.p-item {
+  position: relative; padding: 8px 34px 8px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--el-border-color-lighter); margin-bottom: 6px;
+}
+.p-item:hover { border-color: var(--el-color-primary-light-5); background: var(--el-color-primary-light-9); }
+.p-main { display: flex; align-items: center; gap: 6px; }
+.p-label { font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); }
+.p-q { font-size: 12px; color: var(--el-text-color-regular); margin-top: 2px; word-break: break-all; }
+.p-q.strong { font-size: 13px; color: var(--el-text-color-primary); margin-top: 0; }
+.p-desc { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
+.p-star {
+  position: absolute; right: 10px; top: 10px; font-size: 16px;
+  color: var(--el-text-color-placeholder);
+}
+.p-star:hover, .p-star.on { color: var(--el-color-warning); }
+.p-empty { font-size: 13px; color: var(--el-text-color-secondary); line-height: 1.8; padding: 12px 2px; }
+.p-tip { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 8px; line-height: 1.7; }
 </style>

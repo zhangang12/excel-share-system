@@ -2102,6 +2102,43 @@ async def reset_portal(
     return {"tiles": portal.expand(portal.default_tiles(current, allowed))}
 
 
+# ==================== 🆕 常用提示词（网页版「提示词」面板） ====================
+
+@router.get("/prompts")
+async def get_prompts(
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """提示词面板要的三样，一次给齐：按场景分组的常用提示词 / 我最近问过 / 我的收藏。
+
+    分组按 _allowed_tools 过滤（与门户同一道门）——没权限的条目压根不下发，
+    免得摆出一个点了只会得到「无权查询」的按钮。详见 agent/prompts.py。
+    """
+    from ..agent import prompts as _p
+    allowed = _allowed_tools(current)
+    return {
+        "groups": _p.visible_groups(allowed),
+        "recent": await _p.recent_questions(db, current),
+        "saved": await _p.get_saved(db, current),
+        "limits": {"max_saved": _p.MAX_SAVED, "max_len": _p.MAX_LEN},
+    }
+
+
+class SavedPromptsIn(BaseModel):
+    items: list[str] = []
+
+
+@router.put("/prompts/saved")
+async def save_prompts(
+    body: SavedPromptsIn,
+    current: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """整份覆盖保存「我的收藏」。去空、限长、去重、封顶都在后端做，前端传什么都兜得住。"""
+    from ..agent import prompts as _p
+    return {"saved": await _p.set_saved(db, current, body.items)}
+
+
 # ==================== 🆕 直答：门户卡片不经 LLM ====================
 # 生产实测：一次 LLM 往返 ~8-10s，答案每字 12-15ms，p50 17s / p95 34s。
 # 而门户卡片是**确定性**的——「今日晨报」就是调 morning_report，没有歧义，
