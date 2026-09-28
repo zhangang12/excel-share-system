@@ -180,6 +180,7 @@ interface PurchaseItemOut {
 interface ItemSummary { received_total: number; uninvoiced: number; paid_total: number; outstanding: number; count: number }
 interface SupplierStatementRow {
   supplier_id: number; supplier_name: string; category?: string | null
+  settlement_type?: string | null; credit_days?: number | null   // 🆕 2026-09-29 账期
   opening_balance: number; received_total: number; invoice_total: number
   paid_total: number; outstanding: number; uninvoiced: number; item_count: number
   pending_total?: number; prepaid_total?: number   // 🆕 应付口径：未到货订单额 / 未到货已付(预付)，不进欠款
@@ -1998,17 +1999,23 @@ async function saveOpeningBalance() {
   } catch { /* handled */ } finally { openingBalanceSaving.value = false }
 }
 
-// 🆕 供应商账目合计行（列对齐：供应商/分类/状态/收货/开票/待开票/已付/欠款/未到货/预付/明细数/操作；期初欠款列已隐藏）
-//   ⚠️ summary-method 按数组下标对列：加/删列必须同步改这里（#361 踩过）。2026-09-09 应付口径加了「未到货」「预付」两列 → 12 项。
-function stmtSummary() {
+// 🆕 供应商账目合计行。
+//   🆕 2026-09-29 改成**按列的 prop 对**，不再按数组下标对：
+//   原来是写死一个 12 项的数组，加/删一列就整行错位 —— #361 踩过一次，
+//   这次加「账期」列又踩了一次（收货合计的数字跑到了账期那一列下面）。现在加列不用再动这里。
+const STMT_SUM_PROPS: (keyof SupplierStatementRow)[] = [
+  'received_total', 'invoice_total', 'uninvoiced', 'paid_total', 'outstanding',
+  'pending_total', 'prepaid_total']
+function stmtSummary({ columns }: { columns: { property?: string; label?: string }[] }) {
   const rows = filteredStatementRows.value
   const sum = (k: keyof SupplierStatementRow) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0)
-  return ['合计', '', '',
-    fmtMoney(sum('received_total')),
-    fmtMoney(sum('invoice_total')), fmtMoney(sum('uninvoiced')),
-    fmtMoney(sum('paid_total')), fmtMoney(sum('outstanding')),
-    fmtMoney(sum('pending_total')), fmtMoney(sum('prepaid_total')),
-    String(rows.reduce((a, r) => a + (r.item_count || 0), 0)), '']
+  return columns.map((col, i) => {
+    if (i === 0) return '合计'
+    const p = col.property as keyof SupplierStatementRow | undefined
+    if (p && STMT_SUM_PROPS.includes(p)) return fmtMoney(sum(p))
+    if (col.label === '明细数') return String(rows.reduce((a, r) => a + (r.item_count || 0), 0))
+    return ''
+  })
 }
 
 // 🆕 请款记录页签：采购员能看到自己请款单的审批状态/驳回原因（后端已按角色过滤：普通采购员只看自己的）
@@ -2776,6 +2783,18 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             </el-table-column>
             <!-- 🆕 反馈：期初欠款列不需要，隐藏（维护期初的功能保留在编辑供应商里） -->
             <!-- 🆕 应付口径(2026-09-09 老板定)：到货才算应付；期初日期之前的明细不累计；未到货的订单额/预付款单列 -->
+            <!-- 🆕 2026-09-29 老板要求在账目里显示账期。对着「欠款余额」一眼看出这家给了多少天。
+                 「月结」却没填天数的标黄：这种算不出哪天该付，「应付到期」里会落到「账期未填」。 -->
+            <el-table-column label="账期" width="104" sortable
+                             :sort-method="(a: SupplierStatementRow, b: SupplierStatementRow) => (a.credit_days ?? 9999) - (b.credit_days ?? 9999)">
+              <template #default="{ row }">
+                <span v-if="row.credit_days != null">{{ row.settlement_type || '账期' }} {{ row.credit_days }} 天</span>
+                <el-tooltip v-else-if="row.settlement_type === '月结'" content="月结但没填账期天数，算不出哪天该付——在「编辑供应商」里补上" placement="top">
+                  <span class="warn-text">月结·未填</span>
+                </el-tooltip>
+                <span v-else class="muted">{{ row.settlement_type || '—' }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="received_total" label="收货合计(已到货)" width="136" align="right" sortable>
               <template #default="{ row }"><b>{{ fmtMoney(row.received_total) }}</b></template>
             </el-table-column>
@@ -4259,4 +4278,6 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .bank-acct-row .ba-bank { flex: 1 1 160px; }
 .bank-acct-row .ba-acct { flex: 1.4 1 200px; }
 .bank-acct-row .ba-note { flex: 1 1 140px; }
+/* 🆕 2026-09-29 账期列：月结但没填天数 */
+.warn-text { color: var(--el-color-warning); font-weight: 600; cursor: help; }
 </style>

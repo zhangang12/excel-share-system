@@ -196,6 +196,16 @@ async def main():
         rows4 = [r for r in ws4.iter_rows(min_row=3, values_only=True) if r[3] and r[0] != "合计"]
         chk(len(rows4) == 3, f"受限采购员导出也只有自己的 3 条（导出不能绕过行级隔离）→ {len(rows4)}")
 
+        print("\n=== 3c. 供应商账目里显示账期 ===")
+        st = await c.get("/api/purchase-mgmt/statements", headers=Hfin)
+        chk(st.status_code == 200, f"供应商账目 → {st.status_code}")
+        by = {r["supplier_name"]: r for r in st.json()["rows"]}
+        chk(by.get("月结三十供应商", {}).get("credit_days") == 30
+            and by["月结三十供应商"].get("settlement_type") == "月结",
+            f"账目里带上结算方式和账期天数 → {by.get('月结三十供应商', {}).get('credit_days')}")
+        chk("现金供应商" in by and by["现金供应商"].get("credit_days") is None,
+            "没填账期的给空，不编一个 0")
+
         print("\n=== 4. 权限 ===")
         r1 = (await c.get("/api/purchase-mgmt/payables-due", headers=Hb1)).json()
         mine = {x["item_id"] for x in r1["rows"]}

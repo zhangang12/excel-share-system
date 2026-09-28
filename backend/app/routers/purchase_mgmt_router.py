@@ -2689,6 +2689,7 @@ async def supplier_statements(
         uninvoiced = round(g["received"] - g["invoice"], 2)
         rows.append(schemas.SupplierStatementRow(
             supplier_id=s.id, supplier_name=s.name, category=s.category,
+            settlement_type=s.settlement_type, credit_days=s.credit_days,
             opening_balance=ob, received_total=round(g["received"], 2),
             invoice_total=round(g["invoice"], 2), paid_total=round(g["paid"], 2),
             outstanding=outstanding, uninvoiced=uninvoiced,

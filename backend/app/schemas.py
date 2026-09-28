@@ -1670,6 +1670,10 @@ class SupplierStatementRow(BaseModel):
     supplier_id: int
     supplier_name: str
     category: Optional[str] = None
+    # 🆕 2026-09-29 老板要求供应商账目里显示账期：对着欠款一眼看出「这家给了多少天」。
+    #   数据来自供应商资料（7/20 采购批量导入为主），填错了在「编辑供应商」里改。
+    settlement_type: Optional[str] = None
+    credit_days: Optional[int] = None
     opening_balance: float = 0
     received_total: float = 0
     invoice_total: float = 0
