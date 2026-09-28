@@ -1753,7 +1753,13 @@ async def project_cost(
     rows = [{"project_id": pid, "code": pmap.get(pid, ("", ""))[0],
              "name": pmap.get(pid, ("", ""))[1], "cost": round(cost, 2)}
             for pid, cost in by_proj.items()]
-    rows.sort(key=lambda x: x["cost"], reverse=True)
+    # 🆕 2026-09-28 反馈#438（赵仁辉，第二次提；8/24 的 #408 是同一件事）：按**项目编号**排，
+    #   不再按材料成本从大到小。#408 当时只加了「点表头排序」、默认仍按金额——
+    #   他要的是一打开就按编号，跟销售部台账一个顺序，好对着找。
+    #   规则与销售台账同源（sales_router.code_sort_key）：年 → 序号 → 字母后缀，非标准编号排最后。
+    #   想看谁占钱多，点「材料成本」表头即可。
+    from .sales_router import code_sort_key
+    rows.sort(key=lambda x: code_sort_key(x.get("code")))
     return {"rows": rows, **extra}
 
 

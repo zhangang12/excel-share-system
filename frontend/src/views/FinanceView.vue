@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compareProjectCode } from '@/utils/projectCode'
 // 🆕 v3 M09 财务部：待开票 / 已开票 / 售后费用 / 请款审批 四 tab
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -1509,9 +1510,13 @@ async function revokeInvoice(row: ViewRow) {
                     </div>
                   </template>
                 </el-table-column>
-                <!-- 🆕 #408：他圈的就是这一列——默认按成本从大到小排，要按项目编号找就点「项目」表头。
-                     ⚠️ 用 prop 指定排序依据（code / cost），光写 sortable 而列是模板列的话排不动。 -->
-                <el-table-column prop="code" label="项目" min-width="120" sortable><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
+                <!-- 🆕 #408 → #438：赵仁辉两次圈的都是这一列。#408 只加了点表头排序、默认仍按金额，
+                     他第二次提（「没按顺序排序」）才明白：要的是**一打开就按项目编号**，跟销售部台账一个顺序。
+                     现在默认顺序由后端按编号排好（warehouse_router.project_cost）；点表头用同一套规则
+                     （utils/projectCode.ts，与后端 code_sort_key 一致），071A/071B、041M补 不再排乱。
+                     想看谁占钱多，点「材料成本」表头。 -->
+                <el-table-column prop="code" label="项目" min-width="120" sortable
+                                 :sort-method="(a: any, b: any) => compareProjectCode(a.code, b.code)"><template #default="{ row }"><b class="code">{{ row.code }}</b> {{ row.name }}</template></el-table-column>
                 <el-table-column prop="cost" label="材料成本" width="136" align="right" sortable><template #default="{ row }"><b>{{ fmtMoney(row.cost) }}</b></template></el-table-column>
               </el-table>
               <EmptyHint v-if="!invLoading && !projCost.length" text="暂无项目材料成本" size="sm" />

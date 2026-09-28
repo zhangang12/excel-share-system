@@ -61,12 +61,21 @@ def _is_no_invoice(tax: Optional[str]) -> bool:
 
 # 🆕 项目编号自然排序键（与前端 sortByCode 同序）：标准编号 YYYY-NNN[后缀] 按 年→序号→后缀 在前，其余按字符串在后
 _STD_CODE_RE = re.compile(r"^(\d{4})-0*(\d+)([A-Za-z]*)$")
-def _ledger_sort_key(l: "models.SalesLedger"):
-    code = (l.project.code if l.project else "") or ""
+
+
+def code_sort_key(code: str | None):
+    """项目编号的自然排序键。🆕 2026-09-28 从 _ledger_sort_key 抽出来，给别的列表共用
+    （反馈#438：财务「项目材料成本」没按编号排）。全站按编号排的地方都该走这一个，
+    别各写各的——各写各的就会出现「销售部是一个顺序、财务部是另一个顺序」。"""
+    code = code or ""
     m = _STD_CODE_RE.match(code)
     if m:
         return (0, int(m.group(1)), int(m.group(2)), m.group(3), "")
     return (1, 0, 0, "", code)
+
+
+def _ledger_sort_key(l: "models.SalesLedger"):
+    return code_sort_key(l.project.code if l.project else "")
 
 
 async def _ledger_or_404(db: AsyncSession, lid: int) -> models.SalesLedger:
