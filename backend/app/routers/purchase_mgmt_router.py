@@ -2718,8 +2718,8 @@ def _ap_bucket(item, ob) -> str:
       'ap'  期初之后、已到货：计入收货/开票/已付/欠款
     ⚠️ received_amount 下单时就等于订单金额（不是"收货后才有"），所以"到没到货"只能看 arrival_date。
     账目一览 / 对账单导出 / 汇总报表 KPI / 明细页欠款 四处共用，别各写一份。"""
-    if ob is not None and getattr(ob, "balance_date", None) and item.delivery_date \
-            and item.delivery_date <= ob.balance_date:
+    from ..payables import is_before_opening   # 🆕 2026-09-29 期初判定收到一处，资金面板也用它
+    if is_before_opening(item, ob):
         return "ob"
     return "ap" if item.arrival_date else "pre"
 
@@ -3553,6 +3553,187 @@ async def _report_items(db: AsyncSession, current: models.User):
     if _buyer_restricted(current):
         stmt = stmt.where(models.PurchaseItem.buyer_id == current.id)
     return list((await db.execute(stmt)).scalars().all())
+
+
+# ==================== 🆕 应付到期（按账期算哪天该付） ====================
+
+_DUE_BUCKET_CN = {"overdue": "已过期", "week": "7 天内到期", "month": "30 天内到期",
+                  "later": "30 天以后", "nocredit": "账期未填"}
+
+
+async def _payables_due_data(db: AsyncSession, current: models.User) -> dict:
+    """🆕 2026-09-29 应付到期表：已到货、还没付清的采购明细，按「哪天该付」排好。
+
+    起因：有人提「账期比如 30 天，货到了以后要提醒他们该付款了，能不能给采购部一张表」。
+    查下来系统里其实已经有一半 —— 供应商有账期天数（64 家月结里 62 家填了），
+    财务「资金面板」也已经按「到货日 + 账期」算过到期日，但**只在财务那一页**，采购看不到。
+    生产上当时：已过期没付 17 家 ¥13.1 万（最久拖了 54 天），14 天内到期 16 家 ¥3 万。
+
+    老板拍板：从**到货**那天算；**先不推送，只要这张表**。
+    口径在 app/payables.py，与资金面板共用 —— 两边的「已过期」合计必须一致。
+
+    行级隔离与采购明细同口径：受限采购员只看自己下的单（_buyer_restricted）。
+    """
+    from ..overdue import _CN_TZ
+    from ..payables import (item_outstanding, item_due_date, due_bucket,
+                            is_before_opening, opening_balances)
+    today = datetime.now(_CN_TZ).date()     # 按北京时间取「今天」，容器是 UTC
+
+    # 与资金面板同一个取数范围：收过货（received_amount > 0）的明细；
+    # 期初余额里已经含了的不重复算（与供应商账目同口径，否则这张表和账目对不上）
+    stmt = select(models.PurchaseItem).where(models.PurchaseItem.received_amount > 0)
+    if _buyer_restricted(current):
+        stmt = stmt.where(models.PurchaseItem.buyer_id == current.id)
+    obs = await opening_balances(db)
+    items = [i for i in (await db.execute(stmt)).scalars().all()
+             if item_outstanding(i) > 0.01 and (i.arrival_date or "").strip()
+             and not is_before_opening(i, obs.get(i.supplier_id))]
+
+    # 请款走到哪一步了：只标「在途」的两种（待审批 / 已批待付款）。
+    # 已付的钱已经回写进 paid_amount、不在这张表里；被驳回/撤回的当没请过。
+    req_state: dict[int, str] = {}
+    if items:
+        rows = (await db.execute(
+            select(models.PaymentRequestItem.item_id, models.PaymentRequest.status)
+            .join(models.PaymentRequest,
+                  models.PaymentRequest.id == models.PaymentRequestItem.request_id)
+            .where(models.PaymentRequestItem.item_id.in_([i.id for i in items]),
+                   models.PaymentRequest.status.in_(("pending", "approved"))))).all()
+        rank = {"pending": 1, "approved": 2}
+        for iid, st in rows:
+            if rank[st] > rank.get(req_state.get(iid, ""), 0):
+                req_state[iid] = st
+    _REQ_CN = {"pending": "请款审批中", "approved": "已批待付款"}
+
+    buyer_ids = {i.buyer_id for i in items if i.buyer_id}
+    buyers = {}
+    if buyer_ids:
+        buyers = {u.id: (u.full_name or u.username) for u in (await db.execute(
+            select(models.User).where(models.User.id.in_(buyer_ids)))).scalars().all()}
+
+    out = []
+    for i in items:
+        sup = i.supplier
+        due = item_due_date(i, sup)
+        b = due_bucket(due, today)
+        out.append({
+            "item_id": i.id,
+            "supplier": sup.name if sup else "未知供应商",
+            "settlement_type": (sup.settlement_type if sup else None) or "",
+            "credit_days": sup.credit_days if sup else None,
+            "po_no": i.po_no or "",
+            "project_code": i.project_code or "",
+            "item_name": i.item_name or "",
+            "spec": i.spec or "",
+            "buyer": buyers.get(i.buyer_id, ""),
+            "payment_method": i.payment_method or "",
+            "received_amount": round(i.received_amount or 0, 2),
+            "paid_amount": round(i.paid_amount or 0, 2),
+            "outstanding": item_outstanding(i),
+            "arrival_date": i.arrival_date,
+            "due_date": due.isoformat() if due else None,
+            "days_left": (due - today).days if due else None,
+            "bucket": b,
+            "bucket_label": _DUE_BUCKET_CN[b],
+            "request_state": _REQ_CN.get(req_state.get(i.id, ""), "未请款"),
+        })
+
+    # 排序：有到期日的按到期日升序（最早该付的在最上面，已过期的自然排在前头）；
+    # 账期未填的放最后，按到货日期排
+    out.sort(key=lambda r: (r["due_date"] is None, r["due_date"] or "", r["arrival_date"] or ""))
+
+    summary = {}
+    for k in _DUE_BUCKET_CN:
+        rs = [r for r in out if r["bucket"] == k]
+        summary[k] = {"label": _DUE_BUCKET_CN[k], "count": len(rs),
+                      "suppliers": len({r["supplier"] for r in rs}),
+                      "amount": round(sum(r["outstanding"] for r in rs), 2)}
+    return {"today": today.isoformat(), "rows": out, "summary": summary,
+            "total": round(sum(r["outstanding"] for r in out), 2)}
+
+
+def _due_filter(rows: list[dict], bucket: str, q: str) -> list[dict]:
+    """与前端同一套筛选：分档 + 关键字（供应商/单号/项目/物料/规格/采购员）。导出用它，
+    保证「屏幕上看到什么，导出来就是什么」。"""
+    if bucket:
+        rows = [r for r in rows if r["bucket"] == bucket]
+    kw = (q or "").strip().lower()
+    if kw:
+        rows = [r for r in rows if any(kw in str(r.get(k) or "").lower() for k in
+                ("supplier", "po_no", "project_code", "item_name", "spec", "buyer"))]
+    return rows
+
+
+@router.get("/payables-due")
+async def payables_due(
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """应付到期表数据。口径与说明见 _payables_due_data。"""
+    return await _payables_due_data(db, current)
+
+
+@router.get("/payables-due/export")
+async def export_payables_due(
+    bucket: str = Query(""),
+    q: str = Query(""),
+    current: models.User = Depends(require_roles(*_PURCHASE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """导出应付到期表（.xlsx）。带上屏幕上的筛选条件，导出来和看到的一致。
+    走 M16 导出闸门（目前生产上没开；开了以后非管理层要先申请）。"""
+    from ..deps import ensure_can_export
+    ensure_can_export(current)
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    data = await _payables_due_data(db, current)
+    rows = _due_filter(data["rows"], bucket, q)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "应付到期"
+    ws.append([f"应付到期表（{data['today']}，到期日 = 到货日期 + 供应商账期天数；期初余额已含的不重复算）"])
+    ws["A1"].font = Font(bold=True, size=12)
+    head = ["到期日", "还剩天数", "状态", "供应商", "结算方式", "账期(天)", "采购单号", "项目编号",
+            "物料", "规格", "采购员", "到货日期", "收货金额", "已付", "欠款", "请款"]
+    ws.append(head)
+    for c in ws[2]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F3A5F")
+        c.alignment = Alignment(horizontal="center")
+    red = PatternFill("solid", fgColor="FDE2E1")
+    for r in rows:
+        ws.append([r["due_date"] or "", r["days_left"] if r["days_left"] is not None else "",
+                   r["bucket_label"], r["supplier"], r["settlement_type"],
+                   r["credit_days"] if r["credit_days"] is not None else "",
+                   r["po_no"], r["project_code"], r["item_name"], r["spec"], r["buyer"],
+                   r["arrival_date"], r["received_amount"], r["paid_amount"], r["outstanding"],
+                   r["request_state"]])
+        if r["bucket"] == "overdue":
+            for c in ws[ws.max_row]:
+                c.fill = red
+    ws.append([])
+    ws.append(["合计", "", "", f"{len(rows)} 条", "", "", "", "", "", "", "", "", "", "",
+               round(sum(r["outstanding"] for r in rows), 2), ""])
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    for row in ws.iter_rows(min_row=3):
+        for idx in (12, 13, 14):          # 收货/已付/欠款 三列按金额格式
+            row[idx].number_format = "#,##0.00"
+    for col, w in zip("ABCDEFGHIJKLMNOP", (12, 9, 11, 28, 9, 8, 18, 12, 18, 16, 9, 12, 12, 12, 12, 11)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A3"
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = f"应付到期表_{data['today']}.xlsx"
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
 
 
 @router.get("/reports/overview", response_model=schemas.PurchaseKPI)

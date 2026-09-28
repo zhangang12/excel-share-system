@@ -963,16 +963,18 @@ async def fund_panel(
     early_days_sum = 0.0
     missing_credit: dict = defaultdict(float)
     due_schedule: list = []   # (due_date, outstanding, item_id) → 13周排程流出
+    # 🆕 2026-09-29 欠多少 / 哪天该付 改为调 app/payables.py —— 采购「应付到期」表用的是同一份，
+    #   两边数字必须对得上（test_payables_due.py 锁着这条）。行为与原来逐字一致。
+    from ..payables import item_outstanding, item_due_date, is_before_opening, opening_balances
+    # 🆕 2026-09-29 期初余额里已含的明细不再算应付（老板 2026-09-09 定的口径；供应商账目早就这么算，
+    #   资金面板漏了 —— 腾丰那 ¥12,492 在这里一直被重复算）。
+    _obs = await opening_balances(db)
+    pay_items = [i for i in pay_items if not is_before_opening(i, _obs.get(i.supplier_id))]
     for i in pay_items:
         sup = i.supplier
         sup_name = sup.name if sup else "未知供应商"
-        outstanding = round((i.received_amount or 0) - (i.paid_amount or 0), 2)
-        due = None
-        if i.arrival_date and sup and sup.credit_days is not None:
-            try:
-                due = date.fromisoformat(i.arrival_date) + timedelta(days=sup.credit_days)
-            except ValueError:
-                due = None
+        outstanding = item_outstanding(i)
+        due = item_due_date(i, sup)
         if outstanding > 0.01 and i.arrival_date and (sup is None or sup.credit_days is None):
             missing_credit[sup_name] += outstanding   # 有应付但没维护账期 → 补主数据
         if due is None:

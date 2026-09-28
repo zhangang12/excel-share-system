@@ -99,6 +99,7 @@ ROLE_DEFAULT_MENUS: dict[str, list[str]] = {
 TAB_REGISTRY: list[dict] = [
     {"menu_key": "purchase_mgmt", "menu_label": "采购管理", "tabs": [
         ("purchase", "采购部"), ("items", "采购明细"), ("statements", "供应商账目"),
+        ("duepay", "应付到期"),   # 🆕 2026-09-29 按账期算哪天该付
         ("payreq", "请款记录"), ("preq", "采购申请"), ("reports", "汇总报表")]},
     {"menu_key": "finance", "menu_label": "财务部", "tabs": [
         ("pending", "待开票"), ("invoiced", "已开票"), ("aftersales", "安装/售后费用"),

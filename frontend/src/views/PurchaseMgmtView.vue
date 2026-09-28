@@ -13,6 +13,7 @@ import EmptyHint from '@/components/EmptyHint.vue'
 import LineChart from '@/components/LineChart.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'   // 🆕 反馈#296 凭证/回执在线预览
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
+import PayablesDueTab from '@/components/PayablesDueTab.vue'   // 🆕 2026-09-29 应付到期（按账期算哪天该付）
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
@@ -1540,11 +1541,13 @@ onMounted(async () => {
   }
 })
 
+const dueTabRef = ref<InstanceType<typeof PayablesDueTab> | null>(null)
 async function onTabChange(name: string) {
   if (name === 'purchase') await loadPurchaseRows()
   else if (name === 'items') await loadItems()
   else if (name === 'statements') { await loadSuppliers(); await loadStatements() }
   else if (name === 'payreq') await loadPayReqs()
+  else if (name === 'duepay') await dueTabRef.value?.load()   // 组件首次挂载时自己会拉；这里管「刷新」
   else if (name === 'preq') await loadIncomingReqs()
   else if (name === 'reports' && (isLeadOrAbove.value || canWrite.value)) { await loadReports(); await loadProjectReport() }
 }
@@ -2822,6 +2825,13 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
               <EmptyHint :text="stmtNameFilter || stmtCatFilter ? '没有匹配的供应商，试试清空筛选' : '暂无供应商，点右上角「新增供应商」开始'" size="sm" />
             </template>
           </el-table>
+        </el-tab-pane>
+
+        <!-- ==================== 🆕 Tab: 应付到期（2026-09-29） ====================
+             已到货没付清的，按「到货日 + 供应商账期天数」算出哪天该付、排好。
+             放在「请款记录」前面：先看哪些该付了，再去提请款。 -->
+        <el-tab-pane v-if="tv('duepay')" label="应付到期" name="duepay" lazy>
+          <PayablesDueTab ref="dueTabRef" />
         </el-tab-pane>
 
         <!-- ==================== Tab: 请款记录（采购员跟进审批进度） ==================== -->
