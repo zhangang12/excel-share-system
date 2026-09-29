@@ -30,8 +30,12 @@ def is_finance(u: models.User | None) -> bool:
 
 def can_approve_pay_req(u: models.User | None) -> bool:
     """能不能审批请款。与 purchase_mgmt_router.approve_payment_request 的 require_roles("finance") 同口径
-    （require_roles 自带 admin/manager 兜底）。"""
-    return is_finance(u)
+    （require_roles 自带 admin/manager 兜底）。
+
+    🆕 2026-09-30：还要「财务部 → 请款审批」页签没被隐藏。管理员对某个财务账号藏了这个页签，
+       网页上他就批不了；智能体的审批卡不认的话，等于绕过了这条配置（王芹就是这种配置）。
+    """
+    return is_finance(u) and tab_visible(u, "finance:pay_requests")
 
 
 def can_approve_sales_order(u: models.User | None) -> bool:
@@ -48,7 +52,11 @@ def money_scope(u: models.User | None) -> str:
     """
     if not u:
         return "none"
-    if is_mgmt(u) or u.has_role("sales_lead", *_FIN):
+    if is_mgmt(u) or u.has_role("sales_lead"):
+        return "all"
+    # 🆕 2026-09-30：财务的「全部」来自财务部的资金面板/项目毛利。这两个页签都被藏了
+    #    （agent_menu_keys 里没有 finance），网页上他就看不到这些钱，智能体也不给。
+    if u.has_role(*_FIN) and "finance" in agent_menu_keys(u):
         return "all"
     if u.has_role("sales"):
         return "own"
@@ -115,3 +123,46 @@ def can_send_todo(u: models.User | None) -> bool:
     与 management_todo_router.require_todo_sender 同一条判据。"""
     from ..menus import has_capability
     return has_capability(u, "todo-send")
+
+
+# ── 隐藏页签（2026-09-30 越权审计）──────────────────────────────
+# 「用户管理」里能对账号隐藏二级页签（User.hidden_tabs，前端 auth.isTabHidden 判，对管理层也生效）。
+# 网页后端不校验、只在界面上藏；但对这个人来说「看不到」就是看不到。智能体原来只认一级菜单，
+# 于是被藏了「资金面板/项目毛利」的财务账号问智能体「九月份销售额」照样拿到 ¥83.5 万（生产 09-28 实例）。
+#
+# 口径：智能体的每个数据域对应网页上能看到同样数据的那几个页签，**全被藏了**才算没有这个域。
+#   · purchase_mgmt（采购未到货/供应商画像）← 采购部 / 采购明细 / 供应商账目
+#   · finance（应收/尾款/合同额/销售额/客户全景）← 资金面板 / 项目毛利
+#   · hr（晨报的人事到期）← 员工花名册
+#   · warehouse（物料/库存）← 库存总览 / 收发存汇总 / 出入库流水 / 物料主数据
+# 「待开票」「请款审批」各自单独看自己的页签（tab_visible）。
+_DOMAIN_TABS: dict[str, tuple[str, ...]] = {
+    "purchase_mgmt": ("purchase_mgmt:purchase", "purchase_mgmt:items", "purchase_mgmt:statements"),
+    "finance": ("finance:fund", "finance:pnl"),
+    "hr": ("hr:roster",),
+    "warehouse": ("warehouse:ov", "warehouse:sum", "warehouse:txn", "warehouse:mat"),
+}
+
+
+def tab_visible(u: models.User | None, key: str) -> bool:
+    """网页上这个人看得到某个页签吗（key 形如 "finance:pending"）：有这个一级菜单，且页签没被藏。"""
+    if not u:
+        return False
+    from ..menus import user_menu_keys
+    menu = key.split(":", 1)[0]
+    return menu in user_menu_keys(u) and key not in (u.hidden_tabs or [])
+
+
+def agent_menu_keys(u: models.User) -> set[str]:
+    """智能体用的菜单集合 = 一级菜单，再扣掉「对应页签全被藏了」的数据域。
+
+    ⚠️ 智能体里所有按菜单判权的地方（_allowed_tools、_run_tool_inner、简报、技能）都要用它，
+       别再直接调 menus.user_menu_keys —— 那样隐藏页签又会被绕过去。
+    """
+    from ..menus import user_menu_keys
+    keys = set(user_menu_keys(u))
+    hidden = set(u.hidden_tabs or [])
+    for menu, tabs in _DOMAIN_TABS.items():
+        if menu in keys and all(t in hidden for t in tabs):
+            keys.discard(menu)
+    return keys

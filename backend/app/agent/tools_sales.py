@@ -95,6 +95,11 @@ async def tool_receivable_blind(db: AsyncSession, current: models.User) -> dict:
 
 # ────────────────────────── 2. 待填收货人 ──────────────────────────
 
+def _ship_read_all(current: models.User) -> bool:
+    """待填收货人看全部的人：物流（发货看板本来就是全量）+ 看全部台账的人。"""
+    return current.has_role("logistics") or perm.sales_read_all(current)
+
+
 async def tool_shipment_receiver(db: AsyncSession, current: models.User) -> dict:
     """已建但还没填收货人的发货单。填了才能安排送货与签收。
 
@@ -105,6 +110,14 @@ async def tool_shipment_receiver(db: AsyncSession, current: models.User) -> dict
          .where(or_(models.Shipment.receiver_name.is_(None),
                     models.Shipment.receiver_name == ""))
          .order_by(models.Shipment.id.desc()))
+    # 🆕 2026-09-30 越权审计：原来不分人，6 个销售每人都能看到全公司 80~90 张待填发货单
+    #    （含别人的客户名、客户历史收货人姓名电话）。
+    #    口径：物流（发货看板本来就是全量）和看全部台账的人（管理层/销售主管/财务）给全部；
+    #    其余（普通销售）只给自己负责台账的项目——网页上销售填收货人也是在自己的台账里填。
+    if not _ship_read_all(current):
+        q = q.where(models.Shipment.project_id.in_(
+            select(models.SalesLedger.project_id).where(
+                models.SalesLedger.sales_uid == current.id)))
     ships = list((await db.execute(q)).scalars().all())
 
     # ⚠️ 客户名必须沿 project_id 取，**不能**用 shipment.receiver_company ——
@@ -126,9 +139,15 @@ async def tool_shipment_receiver(db: AsyncSession, current: models.User) -> dict
     # 历史收货人：**按客户名**归集，供前端做候选（同一客户往往重复用同一个收货人）。
     # ⚠️ 索引键必须和查找键一致。曾经索引用 receiver_company、查找用客户名 ——
     #    两套键永远对不上，候选功能等于没有。
-    filled = list((await db.execute(select(models.Shipment).where(
+    hq = select(models.Shipment).where(
         models.Shipment.receiver_name.isnot(None),
-        models.Shipment.receiver_name != ""))).scalars().all())
+        models.Shipment.receiver_name != "")
+    if not _ship_read_all(current):
+        # 候选也只从自己台账的发货单里取：别人项目上留的收货人姓名电话不外带
+        hq = hq.where(models.Shipment.project_id.in_(
+            select(models.SalesLedger.project_id).where(
+                models.SalesLedger.sales_uid == current.id)))
+    filled = list((await db.execute(hq)).scalars().all())
     hist_pids = {x.project_id for x in filled if x.project_id}
     hist_cust: dict[int, str] = {}
     if hist_pids:
@@ -188,11 +207,16 @@ async def tool_leads_followup(db: AsyncSession, current: models.User) -> dict:
     """还没闭环（既没成交也没丢单）的销售线索。
 
     行级隔离按 owner_uid：非管理层只看分给自己的。
+
+    🆕 2026-09-30 越权审计：原来用 perm.sales_read_all，财务也算「看全部」，于是杨倩、王芹
+       能问出全部线索的客户和联系人 —— 网页线索页只给销售/销售主管（leads_router 是
+       require_roles("sales","sales_lead")，全量用 _all_view）。门控见 agent_router._allowed_tools，
+       这里的全量判据也换回与网页同一条 _all_view。
     """
     q = select(models.SalesLead).where(
         models.SalesLead.status.notin_(_LEAD_CLOSED)
     ).order_by(models.SalesLead.id.desc())
-    if not perm.sales_read_all(current):
+    if not _all_view(current):
         q = q.where(models.SalesLead.owner_uid == current.id)
     rows = [{"id": x.id, "customer": x.customer or "—", "status": x.status or "—",
              "contact": x.contact or "", "age_days": _age_days(x.created_at)}
@@ -203,9 +227,15 @@ async def tool_leads_followup(db: AsyncSession, current: models.User) -> dict:
 # ────────────────────────── 5. 待审批销售订单 ──────────────────────────
 
 async def tool_order_pending(db: AsyncSession, current: models.User) -> dict:
-    """销售下单后等销售主管审批的订单（order_state='pending'）。"""
-    q = _scope(_live(select(models.SalesLedger).where(
-        models.SalesLedger.order_state == "pending")), current)
+    """销售下单后等销售主管审批的订单（order_state='pending'）。
+
+    🆕 2026-09-30 越权审计：全量只给销售主管/管理层（网页待审列表是 require_roles("sales_lead")），
+       销售看自己提交的；财务不再算全量 —— 待审单还没生效，财务网页上的毛利/资金面板都不计它。
+    """
+    q = _live(select(models.SalesLedger).where(
+        models.SalesLedger.order_state == "pending"))
+    if not _all_view(current):
+        q = q.where(models.SalesLedger.sales_uid == current.id)
     rows = [_row(led) | {"amount": led.amount or 0,
                          "age_days": _age_days(led.created_at)}
             for led in (await db.execute(q)).scalars().all()]
@@ -216,8 +246,14 @@ async def tool_order_pending(db: AsyncSession, current: models.User) -> dict:
 
 async def tool_invoice_pending(db: AsyncSession, current: models.User) -> dict:
     """已申请开票、等财务出票的台账行（invoice_state='pending_invoice'）。"""
-    q = _scope(_live(select(models.SalesLedger).where(
-        models.SalesLedger.invoice_state == "pending_invoice")), current)
+    q = _live(select(models.SalesLedger).where(
+        models.SalesLedger.invoice_state == "pending_invoice"))
+    # 🆕 2026-09-30：财务看全量的依据是「财务部 → 待开票」这一页（finance_router.pending_invoices），
+    #    所以单看这个页签，不跟着资金面板走 —— 只管开票的财务（藏了资金面板/毛利）照样要看到全部待开票，
+    #    否则又回到「待开票回没有 ✅」那个坑。
+    if not (perm.sales_read_all(current)
+            or (perm.is_finance(current) and perm.tab_visible(current, "finance:pending"))):
+        q = q.where(models.SalesLedger.sales_uid == current.id)
     rows = [_row(led) | {"amount": led.amount or 0,
                          "age_days": _age_days(led.created_at)}
             for led in (await db.execute(q)).scalars().all()]

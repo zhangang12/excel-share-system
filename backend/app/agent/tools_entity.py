@@ -166,13 +166,18 @@ async def find_entity(db: AsyncSession, current: models.User, q: str,
         # ⚠️ 带上 status 和客户。杨坛最高频的问法是「200L 的设备有哪几个编号」
         #    「5L 的设备有几台」——他真正要分的是**在建还是已完成**，
         #    以及是哪家的货。只给编号+名称，他还得再问一轮。
+        # 🆕 2026-09-30 越权审计：客户名和合同额同属台账，按 perm.can_see_ledger 给——
+        #    09-23 收口时只脱敏了 get_project 的台账，这里漏了，结果仓库/设计/装配 15 个
+        #    没有看钱权限的账号搜项目能顺带看到客户名（网页项目目录不显示客户）。
         cust: dict[int, str] = {}
         if rows:
-            for pid, c in (await db.execute(
-                    select(models.SalesLedger.project_id, models.SalesLedger.customer)
+            for pid, c, suid in (await db.execute(
+                    select(models.SalesLedger.project_id, models.SalesLedger.customer,
+                           models.SalesLedger.sales_uid)
                     .where(models.SalesLedger.project_id.in_([p.id for p in rows]),
                            models.SalesLedger.customer != ""))).all():
-                cust.setdefault(pid, c)
+                if perm.can_see_ledger(current, suid):
+                    cust.setdefault(pid, c)
         out["project"] = [{"id": p.id, "code": p.code, "name": p.name,
                            "status": p.status, "customer": cust.get(p.id, "")}
                           for p in rows]
@@ -386,7 +391,10 @@ async def _project_snapshot(db: AsyncSession, p: models.Project,
         "purchase_overdue_count": sum(1 for i in po_pending
                                       if (_over_days(i.expected_arrival) or -1) >= 0),
         "shipment_status": sh.status if sh else None,
-        "shipment_receiver": (sh.receiver_name or "") if sh else None,
+        # 收货人是客户那边的联系人，和客户名同级：物流、能看这张台账的人才给
+        "shipment_receiver": ((sh.receiver_name or "") if (current is not None and current.has_role("logistics")
+                              or perm.can_see_ledger(current, led.sales_uid if led else None)) else "")
+                             if sh else None,
         **_diagnose(deliver, left, live_orders, orders, groups, po_pending, sh),
     }
 

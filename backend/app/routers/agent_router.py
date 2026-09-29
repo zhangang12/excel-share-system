@@ -342,7 +342,10 @@ async def tool_project_status(db: AsyncSession, code: str, current: models.User 
         "po_pending": po_pending[:10],
     }
     # 🆕 尾款金额仅财务/销售菜单可见，其余剔除该字段
-    if menu_keys is None or (menu_keys & {"finance", "sales"}):
+    # 🆕 2026-09-30 越权审计：光有菜单不够，还要能看**这张**台账（perm.can_see_ledger，与 get_project 同口径）。
+    #    原来只看菜单：方步森（销售兼采购，有项目详单）问别人的项目能拿到客户、合同额、四段款。
+    if (menu_keys is None or (menu_keys & {"finance", "sales"})) and (
+            current is None or _perm.can_see_ledger(current, led.sales_uid if led else None)):
         out["ledger"] = ledger
     return out
 
@@ -611,22 +614,37 @@ _DEPT_MENU_KEYS = ("design", "electric", "produce")
 
 
 def _deny(*need: str) -> dict:
-    """无权查询的统一错误结果（作为工具返回值，不进异常链）。"""
-    return {"error": f"你无权查询该域数据（需要 {' 或 '.join(_MENU_LABELS.get(k, k) for k in need)} 菜单权限）"}
+    """无权查询的统一错误结果（作为工具返回值，不进异常链）。
+
+    🆕 2026-09-30：权限不再只看一级菜单（还认隐藏页签、岗位），「需要 X 菜单权限」
+       对「明明有财务部菜单、只是资金面板被藏了」的人是错话。改成「网页上你看不到这部分」。
+       ⚠️ 前缀「你无权查询该域数据」有测试和降级回复在认，别改。
+    """
+    return {"error": "你无权查询该域数据（网页上你的账号看不到这部分，相关页面："
+                     f"{' / '.join(_MENU_LABELS.get(k, k) for k in need)}；需要的话请找管理员开通）"}
 
 
 def _allowed_tools(user: models.User) -> set[str]:
     """用户菜单可用的数据工具集合（morning_report 只要晨报任一数据域可用即可，工具内再按域聚合；
     project_status 不算晨报域）。"""
-    keys = set(menus.user_menu_keys(user))
+    # 🆕 2026-09-30：用 perm.agent_menu_keys（扣掉「对应页签全被藏了」的数据域），
+    #    不再直接用 menus.user_menu_keys —— 否则管理员在网页上给账号藏的页签，智能体照样给。
+    keys = _perm.agent_menu_keys(user)
     out: set[str] = set()
     if "purchase_mgmt" in keys:
         out |= {"po_arrival_overdue", "po_arriving", "po_overdue_by_supplier"}
     if keys & {"finance", "sales"}:
         # 🆕 销售/台账域第二批：与 balance_due 同一道菜单门控。
         #   admin/manager 走 menus.user_menu_keys 的全量分支，自动拿到全部。
-        out |= {"balance_due", "receivable_blind", "ledger_incomplete",
-                "order_pending", "invoice_pending", "leads_followup"}
+        out |= {"balance_due", "receivable_blind", "ledger_incomplete", "invoice_pending"}
+    # 🆕 2026-09-30 越权审计：待开票单看「财务部 → 待开票」页签（只管开票、藏了资金面板的财务也要有）
+    if _perm.is_finance(user) and _perm.tab_visible(user, "finance:pending"):
+        out.add("invoice_pending")
+    # 🆕 2026-09-30 越权审计：线索、待审订单是销售部自己的东西，网页上只给销售/销售主管
+    #    （leads_router / sales_router.order_pending_list 都是 require_roles("sales"...)）。
+    #    原来跟着「财务或销售菜单」一起给，财务能问出全部线索的客户联系人和全部待审订单。
+    if "sales" in keys and (_perm.is_mgmt(user) or user.has_role("sales", "sales_lead")):
+        out |= {"order_pending", "leads_followup"}
     if keys & {"finance", "sales", "logistics"}:
         out.add("shipment_receiver")
     if keys & set(_DEPT_MENU_KEYS):
@@ -756,7 +774,7 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
             return _deny("list", "finance", "sales", "purchase_mgmt", "warehouse")
         return await _V2[name]()
     """执行数据工具（只读）。按调用者菜单门控数据域，无权域返回 {"error": ...} 而非数据。"""
-    keys = set(menus.user_menu_keys(current))
+    keys = _perm.agent_menu_keys(current)
     if name == "morning_report":
         # 不硬拒：按可用域聚合；全无任何可用域才提示
         domains: set[str] = set()
@@ -2481,7 +2499,7 @@ async def chat_stream(
             #    劫持成预设编排 —— v1 那个贪婪正则把「查询一下所有的待审批的待办?」
             #    劫持成查请款单，教训还在。
             from ..agent import skills as _sk, memory as _mem2
-            _menu = set(menus.user_menu_keys(current))
+            _menu = _perm.agent_menu_keys(current)
             _hit = _sk.match(await _mem2.expand(db, text))
             if _hit and (not _hit["needs"] or set(_hit["needs"]) & _menu):
                 try:
@@ -2834,4 +2852,4 @@ async def add_alias(
 async def list_skills(current: models.User = Depends(get_current_user)):
     """当前用户能用的技能。命中触发词就走固定编排，不进 ReAct。"""
     from ..agent import skills as sk
-    return {"items": sk.available(set(menus.user_menu_keys(current)))}
+    return {"items": sk.available(_perm.agent_menu_keys(current))}

@@ -376,8 +376,7 @@ async def build(current: models.User, top: int = 3,
     那种串行版：三路本来互不依赖，串起来白等两轮往返。
     所以这里不收外部 session，自己开——收了反而会诱使人复用它。
     """
-    from .. import menus as _menus
-    keys = set(_menus.user_menu_keys(current))
+    keys = perm.agent_menu_keys(current)   # 🆕 2026-09-30：认隐藏页签，与 _allowed_tools 同口径
     picked_fns = [fn for fn, need in _FETCHERS if not need or (need & keys)]
     # 权限只决定「能不能看」，**不决定「该先看哪个」**。
     # 两位管理层菜单都是全量，光按权限过滤两人收到的一模一样。
