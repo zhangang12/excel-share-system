@@ -19,10 +19,10 @@ DEPTS: dict[str, dict] = {
         "lead_role": "design_lead",
         "sheet_check": True,
         # 🆕 2026-06-19：图纸包改为「CAD激光图纸」并推送采购部；新增「外购附图」也推采购部
-        # 🆕 2026-07-22：CAD激光图纸(sheetpkg)推送时除采购外同步推钣金组(start_push 特判)，钣金组工作台图纸列同源可见
+        # 🆕 2026-07-22：CAD激光图纸(sheetpkg)推送时除采购外同步推钣金组 —— 🆕 2026-09-29 反馈#439 已撤回，只推采购
         # 🆕 #303：上传≠推送——上传后待推送(pushed=0)，点「推送」才下发对应 to_role 并推消息
         # 🆕 #324：to_domain=按采购员分工域(BUYER_SHEET_MAP)路由推送，只推该域采购员；
-        #   域内无匹配活跃用户时回退原 to_role 池（防没人收到）。sheetpkg 同步推钣金组不变。
+        #   域内无匹配活跃用户时回退原 to_role 池（防没人收到）。（sheetpkg 同步推钣金组已于 2026-09-29 按反馈#439 撤回）
         "start_outputs": [
             {"k": "sheetpkg", "label": "CAD激光图纸", "to_role": "buyer", "to_domain": "laser"},
             {"k": "outsource_img", "label": "外购附图", "to_role": "buyer", "to_domain": "standard"},

@@ -86,7 +86,7 @@ async def main():
         msgs = (await c.get("/api/messages", headers=Hbu)).json()
         chk(not any("CAD激光图纸" in m["text"] for m in msgs), "#324 非域内采购(bu)不收CAD激光图纸推送")
         msgs = (await c.get("/api/messages", headers=Hsm)).json()
-        chk(any("CAD激光图纸" in m["text"] for m in msgs), "推送后钣金组仍收CAD激光图纸推送")
+        chk(not any("CAD激光图纸" in m["text"] for m in msgs), "#439 钣金组不再收CAD激光图纸推送（反馈#439（2026-09-29）撤回了「CAD激光图纸同步推钣金组」）")
         row = [x for x in (await c.get("/api/sheetmetal/projects", headers=Hsm)).json() if x["code"]==code][0]
         chk(len(row["pkg_files"])==2, f"推送后钣金可见2个图纸包附件: {len(row['pkg_files'])}")
         # 钣金下载图纸包

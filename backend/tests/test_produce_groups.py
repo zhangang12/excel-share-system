@@ -129,8 +129,9 @@ async def main():
         smrows = (await c.get("/api/produce/sheetmetal-projects", headers=Hsm)).json()
         chk([f["name"] for f in smrows[0].get("coldwork_files", [])] == ["冷作图A.dwg"],
             f"钣金组行聚合冷作图纸: {smrows[0].get('coldwork_files')}")
-        chk([f["name"] for f in smrows[0].get("laser_files", [])] == ["激光图A.dwg"],
-            f"钣金组行聚合CAD激光图纸(sheetpkg): {smrows[0].get('laser_files')}")
+        # 反馈#439（2026-09-29）撤回了「CAD激光图纸同步推钣金组」，钣金组行不再聚合这份图纸（封板组照旧）
+        chk(not smrows[0].get("laser_files"),
+            f"#439 钣金组行不再聚合CAD激光图纸(sheetpkg): {smrows[0].get('laser_files')}")
 
         # 备齐判定：给「标准件清单」每条记录的「进度」列填「完成」→ standard_ready=True
         async with SessionLocal() as db:

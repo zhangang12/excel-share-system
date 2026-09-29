@@ -1544,6 +1544,19 @@ async function revokeInvoice(row: ViewRow) {
     <!-- 记录付款弹窗（🆕 需求十六：展示收款账户信息 + 关联采购单）-->
     <el-dialog v-model="payDialogVisible" title="记录付款" width="600px">
       <div v-if="payingPr" class="pay-info">
+        <!-- 🆕 2026-09-29 反馈#442（杨坛）：付款时要看到**提交人写的备注**——
+             请款时采购填的付款说明（账期、分几次付、先付多少……）原来只在「付款」列表的备注列里，
+             点开「记录付款」就看不到了，得关掉弹窗回去翻。放在最上面：付之前先看这句。 -->
+        <div class="pay-info-block pay-req-note">
+          <div class="pay-info-title">请款说明</div>
+          <div class="pay-info-row"><span class="k">提交人</span>{{ payingPr.requester_name || '—' }}
+            <span v-if="payingPr.approver_name" class="muted small" style="margin-left:12px">审批：{{ payingPr.approver_name }}</span>
+          </div>
+          <div class="pay-info-row"><span class="k">备注</span>
+            <span v-if="payingPr.notes" class="pay-note-text">{{ payingPr.notes }}</span>
+            <span v-else class="muted">提交人没写备注</span>
+          </div>
+        </div>
         <div class="pay-info-block">
           <div class="pay-info-title">收款账户信息（供应商：{{ payingPr.supplier_name }}<el-button v-if="payingPr.supplier_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_name)">复制</el-button>）</div>
           <div class="pay-info-row"><span class="k">开户行</span>{{ payingPr.supplier_bank_name || '—' }}<el-button v-if="payingPr.supplier_bank_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_name)">复制</el-button></div>
@@ -1625,4 +1638,7 @@ async function revokeInvoice(row: ViewRow) {
 .pay-info-title { font-weight: 600; font-size: 13.5px; margin-bottom: 6px; color: var(--el-text-color-primary); }
 .pay-info-row { font-size: 13px; line-height: 1.9; color: var(--el-text-color-regular); }
 .pay-info-row .k { display: inline-block; min-width: 72px; color: var(--el-text-color-secondary); }
+/* 🆕 #442 请款说明：备注要一眼看见，保留换行 */
+.pay-req-note { border-left: 3px solid var(--el-color-warning); }
+.pay-note-text { white-space: pre-wrap; color: var(--el-text-color-primary); font-weight: 500; }
 </style>

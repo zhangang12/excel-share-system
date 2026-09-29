@@ -122,13 +122,14 @@ async def main():
         row = [x for x in (await c.get("/api/sheetmetal/projects", headers=Hsm)).json() if x["project_id"]==pid][0]
         chk(len(row["pkg_files"]) == 2, f"推送后钣金图纸包可见2: {len(row['pkg_files'])}")
         grow = [x for x in (await c.get("/api/produce/sheetmetal-projects", headers=Hsm)).json() if x["project_id"]==pid][0]
-        chk(len(grow["laser_files"]) == 2, f"推送后钣金组图纸列可见2: {len(grow['laser_files'])}")
+        # 反馈#439（2026-09-29）撤回了「CAD激光图纸同步推钣金组」，钣金组工作台那一列也去掉了
+        chk(not grow.get("laser_files"), f"#439 钣金组工作台不再聚合CAD激光图纸: {grow.get('laser_files')}")
         prow = [x for x in (await c.get("/api/purchase/projects", headers=Hbu)).json() if x["project_id"]==pid][0]
         chk(len(prow["cad_laser_files"]) == 2, f"推送后采购CAD激光图纸可见2: {len(prow['cad_laser_files'])}")
         msgs = (await c.get("/api/messages", headers=Hbu)).json()
         chk(any("CAD激光图纸" in m["text"] for m in msgs), "推送后采购(buyer)收到图纸消息")
         msgs = (await c.get("/api/messages", headers=Hsm)).json()
-        chk(any("CAD激光图纸" in m["text"] for m in msgs), "推送后钣金组(sheetmetal)收到图纸消息(双推)")
+        chk(not any("CAD激光图纸" in m["text"] for m in msgs), "#439 钣金组(sheetmetal)不再收CAD激光图纸消息（反馈#439（2026-09-29）撤回了「CAD激光图纸同步推钣金组」）")
         ps = (await c.get("/api/orders/push-state", headers=Hd1, params={"dept":"design"})).json()
         chk(ps.get(str(od), {}).get("sheetpkg") is None, f"推送后 push-state 清零: {ps}")
 

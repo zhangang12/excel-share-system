@@ -1503,16 +1503,10 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <!-- 🆕 CAD激光图纸：设计部上传推送钣金组（状态 + 打包下载抽屉，交互同封板组 cd221a5） -->
-            <el-table-column label="CAD激光图纸" min-width="150" align="center">
-              <template #default="{ row }">
-                <StatusPill :text="(row.laser_files || []).length ? `已推送 ${(row.laser_files || []).length}` : '待推送'"
-                            :variant="(row.laser_files || []).length ? 'success' : 'muted'" />
-                <el-button v-if="(row.laser_files || []).length" size="small" link type="primary" :icon="Download"
-                           title="预览 / 打包下载" @click="openCellPack(row, row.laser_files, 'CAD激光图纸')">打包下载</el-button>
-              </template>
-            </el-table-column>
-            <!-- 🆕 #269/#295 冷作图纸：设计部上传推送钣金组（状态 + 打包下载抽屉，交互同 CAD激光图纸列） -->
+            <!-- 🆕 2026-09-29 反馈#439（赵仁辉）：钣金组「CAD激光图纸」这一列去掉，这份图纸不再推钣金组。
+                 7/22 加的「sheetpkg 同步推钣金组」一并撤掉（orders_router.start_push）。
+                 CAD激光图纸照常推采购（激光域）和封板组，封板组 tab 那一列没动。 -->
+            <!-- 🆕 #269/#295 冷作图纸：设计部上传推送钣金组（状态 + 打包下载抽屉） -->
             <el-table-column label="冷作图纸" min-width="150" align="center">
               <template #default="{ row }">
                 <!-- 文件不罗列在列表中：状态 + 打包下载（开抽屉预览/勾选/打包 zip） -->

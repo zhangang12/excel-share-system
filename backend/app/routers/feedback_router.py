@@ -149,28 +149,38 @@ async def my_projects(
     current: models.User = Depends(require_roles(*_FEEDBACK_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    """在手项目列表：返回派给本人且进行中的项目供提交问题反馈时选择。
+    """可提交问题反馈的项目列表。
     生产三组=ProduceGroupTask 分组派单（🆕 反馈#210 下拉与提交校验同源）；
-    🆕 2026-07-26 电工部=DeptOrder 电工任务（assigned/in_progress），两路并集。"""
+    🆕 2026-07-26 电工部=DeptOrder 电工任务（assigned/in_progress），两路并集。
+
+    🆕 2026-09-29 反馈#440（赵仁辉）：「生产部对已完成的项目不能提交问题反馈」。
+      原来这里只列「进行中」的项目，项目一完成就从下拉里消失 —— 可恰恰是做完、装完、
+      甚至发货以后才发现的设计问题最该反馈回去（下一台别再犯）。提交接口本身从来不拦状态，
+      拦住人的只是这个下拉。现在生产三组**做过的项目都能选**（进行中的排前面，已完成的标出来）。
+      电工部仍只列在手任务：这次反馈说的是生产部，电工那条路没动。
+    """
+    from ..routers.sales_router import code_sort_key
     r = await db.execute(
-        select(models.Project.id, models.Project.code, models.Project.name)
+        select(models.Project.id, models.Project.code, models.Project.name, models.Project.status)
         .join(models.ProduceGroupTask, models.ProduceGroupTask.project_id == models.Project.id)
         .where(models.ProduceGroupTask.group.in_(_FEEDBACK_GROUPS),
                models.ProduceGroupTask.worker_id == current.id,
-               models.Project.status == "进行中", models.Project.is_deleted == False)
-        .distinct().order_by(models.Project.code)
+               models.Project.is_deleted == False)  # noqa: E712
+        .distinct()
     )
-    seen = {i: (i, c, n) for i, c, n in r.all()}
+    seen = {i: (i, c, n, st) for i, c, n, st in r.all()}
     r2 = await db.execute(
-        select(models.Project.id, models.Project.code, models.Project.name)
+        select(models.Project.id, models.Project.code, models.Project.name, models.Project.status)
         .join(models.DeptOrder, models.DeptOrder.project_id == models.Project.id)
         .where(_electric_in_hand_cond(current.id),
-               models.Project.status == "进行中", models.Project.is_deleted == False)
-        .distinct().order_by(models.Project.code)
+               models.Project.status == "进行中", models.Project.is_deleted == False)  # noqa: E712
+        .distinct()
     )
-    for i, c, n in r2.all():
-        seen.setdefault(i, (i, c, n))
-    return [schemas.FeedbackProjOption(id=i, code=c, name=n) for i, c, n in sorted(seen.values(), key=lambda x: x[1])]
+    for i, c, n, st in r2.all():
+        seen.setdefault(i, (i, c, n, st))
+    # 进行中的在前（多数反馈还是在做的项目），已完成的在后；各自按项目编号排（与全站同一套规则）
+    rows = sorted(seen.values(), key=lambda x: (x[3] != "进行中", code_sort_key(x[1])))
+    return [schemas.FeedbackProjOption(id=i, code=c, name=n, status=st) for i, c, n, st in rows]
 
 
 @router.post("", response_model=schemas.Msg)

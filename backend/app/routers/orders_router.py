@@ -797,10 +797,9 @@ async def start_push(
     else:
         await push_message(db, to_role=to_role, kind="info", text=text,
                            biz_type="order", biz_id=o.id)
-    # 🆕 CAD激光图纸(sheetpkg)：配置目标(采购)之外同步推钣金组——钣金组工作台「CAD激光图纸」列同源可见
-    if o.dept == "design" and data.kind == "sheetpkg":
-        await push_message(db, to_role="sheetmetal", kind="info", text=text,
-                           biz_type="order", biz_id=o.id)
+    # 🆕 2026-09-29 反馈#439（赵仁辉「钣金组这个不推送了」）：撤掉 7/22 加的
+    #   「CAD激光图纸(sheetpkg) 在采购之外同步推钣金组」。钣金组工作台那一列也去掉了。
+    #   CAD激光图纸照常推采购（激光域）；封板组工作台仍能看到。
     await write_audit(db, user=current, action="push", target_type="dept_order",
                       target_id=o.id, detail=f"start-push:{data.kind} x{len(atts)}")
     return schemas.Msg(message=f"已推送 {len(atts)} 个文件到下游")

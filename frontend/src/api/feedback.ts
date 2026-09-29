@@ -36,7 +36,7 @@ export const feedbackApi = {
     http.get<Feedback[]>('/feedbacks', { params: { mine: true, include_done: includeDone || undefined } })
       .then((r) => r.data),
   byProject: (pid: number) => http.get<Feedback[]>('/feedbacks', { params: { project_id: pid } }).then((r) => r.data),
-  myProjects: () => http.get<{ id: number; code: string; name: string }[]>('/feedbacks/projects').then((r) => r.data),
+  myProjects: () => http.get<{ id: number; code: string; name: string; status?: string | null }[]>('/feedbacks/projects').then((r) => r.data),
   // 🆕 #193 multipart：可附现场照片(多张,选填)
   create: (project_id: number, content: string, files: File[] = []) => {
     const fd = new FormData()

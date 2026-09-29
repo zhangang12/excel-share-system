@@ -68,7 +68,7 @@ const title = computed(() => {
 // 生产三组(装配/钣金/封板)提交
 const submitVisible = ref(false)
 const form = reactive({ project_id: undefined as number | undefined, content: '' })
-const projOptions = ref<{ id: number; code: string; name: string }[]>([])
+const projOptions = ref<{ id: number; code: string; name: string; status?: string | null }[]>([])
 const fbImages = ref<File[]>([])   // 🆕 #193 现场照片(选填,多张)
 async function openSubmit() {
   projOptions.value = await feedbackApi.myProjects()
@@ -209,7 +209,9 @@ async function act(fb: Feedback, fn: 'designAccept' | 'designReject') {
       <el-form label-position="top">
         <el-form-item label="项目（在手）" required>
           <el-select v-model="form.project_id" filterable placeholder="选择在手项目" style="width: 100%">
-            <el-option v-for="p in projOptions" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
+            <!-- 🆕 #440 已完成的项目也能选（做完以后发现的设计问题最该反馈回去），标出来免得选错 -->
+            <el-option v-for="p in projOptions" :key="p.id"
+                       :label="`${p.code} · ${p.name}${p.status && p.status !== '进行中' ? `（${p.status}）` : ''}`" :value="p.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="问题内容" required>

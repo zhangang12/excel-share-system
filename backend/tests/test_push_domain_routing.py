@@ -105,7 +105,8 @@ async def main():
         chk(has(await msgs(Hwq), "CAD激光图纸", code2), "#324 CAD激光图纸推给 laser 域(王芹)")
         chk(not has(await msgs(Hlxx), "CAD激光图纸", code2), "#324 李新新不收CAD激光图纸推送")
         chk(not has(await msgs(Hfbs), "CAD激光图纸", code2), "#324 方步森不收CAD激光图纸推送")
-        chk(has(await msgs(Hsm), "CAD激光图纸", code2), "#324 钣金组仍收CAD激光图纸推送")
+        # 反馈#439（2026-09-29）撤回了「CAD激光图纸同步推钣金组」：钣金组不再收
+        chk(not has(await msgs(Hsm), "CAD激光图纸", code2), "#439 钣金组不再收CAD激光图纸推送")
         # 首次推送为原文案（不含【更新】）
         first = [m["text"] for m in await msgs(Hwq) if "CAD激光图纸" in m["text"] and code2 in m["text"]]
         chk(all("【更新】" not in t for t in first), "#323 首次推送维持原文案")
@@ -116,7 +117,7 @@ async def main():
         chk(any("CAD激光图纸" in t and "新增 1 个文件" in t and "请以最新为准" in t for t in upd),
             f"#323 二次推送王芹收【更新】文案: {upd}")
         upd_sm = [m["text"] for m in await msgs(Hsm) if code2 in m["text"] and "【更新】" in m["text"]]
-        chk(any("CAD激光图纸" in t for t in upd_sm), "#323 钣金组同步收【更新】文案")
+        chk(not any("CAD激光图纸" in t for t in upd_sm), "#439 钣金组也不再收【更新】文案（反馈#439（2026-09-29）撤回了「CAD激光图纸同步推钣金组」）")
         # 外购附图二次推送 → 李新新收【更新】
         await upload_push(od2, "outsource_img", "外购附图C.pdf", b"F3")
         upd_lxx = [m["text"] for m in await msgs(Hlxx) if code2 in m["text"] and "【更新】" in m["text"]]

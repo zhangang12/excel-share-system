@@ -454,7 +454,7 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
     if group == "assembly":
         fitter_files_by_pid = await _laser_files_by_pid(db, pids, "fitter_pkg")
     if group == "sheetmetal":
-        laser_files_by_pid = await _laser_files_by_pid(db, pids)   # 🆕 CAD激光图纸(sheetpkg)也推钣金组
+        # 🆕 2026-09-29 反馈#439：CAD激光图纸不再推钣金组，这里也不再聚合（前端那一列已去掉）
         coldwork_files_by_pid = await _laser_files_by_pid(db, pids, "coldwork_pkg")
     if group == "sealing":
         laser_ds_by_pid = await _sheets_by_pid(db, pids, ("激光件清单",))
@@ -493,7 +493,6 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
             row.laser_files = laser_files_by_pid.get(p.id, [])
             row.sealing_files = sealing_files_by_pid.get(p.id, [])
         if group == "sheetmetal":
-            row.laser_files = laser_files_by_pid.get(p.id, [])         # 🆕 CAD激光图纸(sheetpkg,同封板组口径)
             row.coldwork_files = coldwork_files_by_pid.get(p.id, [])   # 🆕 #269 冷作图纸
         rows.append(row)
     rows.sort(key=lambda x: x.code, reverse=True)

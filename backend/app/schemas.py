@@ -455,6 +455,7 @@ class FeedbackProjOption(BaseModel):
     id: int
     code: str
     name: str
+    status: Optional[str] = None   # 🆕 反馈#440：已完成的项目也能选，前端据此标「已完成」
 
 
 # ---------- 🆕 仓库组 ----------
