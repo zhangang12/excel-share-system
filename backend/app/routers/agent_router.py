@@ -639,7 +639,9 @@ def _allowed_tools(user: models.User) -> set[str]:
     #    ⚠️ 用角色判而不是菜单键——这个功能没有独立菜单键，
     #       而它的端点（/api/management-todos/sent）就是 require_admin_or_manager。
     #       工具的门必须和端点的门一致，否则模型调得到、接口拒绝，白跑一轮还报错。
-    if user.has_role("admin", "manager"):
+    # 🆕 2026-09-29 反馈#441：不再写死 admin/manager，改为「下发待办」权限（用户管理里可勾），
+    #   与 management_todo_router.require_todo_sender 同一条判据（agent/perm.can_send_todo）。
+    if _perm.can_send_todo(user):
         out.add("mgmt_todo_watch")
         out.add("mgmt_todo_peers")
         out.add("mgmt_todo_send")
@@ -1931,7 +1933,7 @@ def _stale(dt: datetime, cutoff: datetime) -> bool:
 @router.post("/drafts/{draft_id}/send")
 async def send_draft(
     draft_id: int,
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 把智能体拟好的待办草稿真发出去。**这是唯一会写待办的入口。**
@@ -1945,6 +1947,9 @@ async def send_draft(
     """
     from ..agent.cards import mgmt_send as _mgmt_send
     from ..notify import push_message
+    # 🆕 2026-09-29 反馈#441：门从 admin/manager 换成「下发待办」权限，与待办接口同一条判据
+    if not _perm.can_send_todo(current):
+        raise HTTPException(403, "你的账号没有「下发待办」权限")
 
     dft = await db.get(models.AgentDraft, draft_id)
     if dft is None or dft.action != "mgmt_todo_send":
@@ -1983,7 +1988,9 @@ async def send_draft(
     # 「管理层是在电脑上发的还是手机上发的」收到两种不同的通知
     who = worker.full_name or worker.username
     sender = _uname(current)
-    tag = "【紧急】" if todo.priority == "urgent" else "【管理层待办】"
+    # 被授权的主管派的叫「【待办】」，别冒充管理层（与 management_todo_router 同口径）
+    tag = "【紧急】" if todo.priority == "urgent" else (
+        "【管理层待办】" if current.has_role("admin", "manager") else "【待办】")
     due_txt = f"（要求 {due} 前完成）" if due else ""
     await push_message(
         db, to_user_id=uid, kind="warn",

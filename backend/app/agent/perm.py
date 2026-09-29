@@ -107,3 +107,11 @@ def project_visible(p, allowed: set[int] | None, u: models.User | None) -> bool:
     if allowed is None:
         return True
     return p.id in allowed or bool(u and u.id in ((p.extra or {}).get("__viz_uids__") or []))
+
+
+# ── 下发待办（2026-09-29 反馈#441）─────────────────────────────
+def can_send_todo(u: models.User | None) -> bool:
+    """能不能下发「管理层待办」。管理层恒有；其他人要在「用户管理」里勾上「下发待办」。
+    与 management_todo_router.require_todo_sender 同一条判据。"""
+    from ..menus import has_capability
+    return has_capability(u, "todo-send")

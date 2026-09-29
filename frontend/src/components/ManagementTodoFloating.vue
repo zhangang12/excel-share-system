@@ -9,10 +9,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { EditPen, Plus } from '@element-plus/icons-vue'   // 反馈#366/#380：发出列表的「编辑」按钮
 import { http } from '@/api'   // 🆕 #363 个人待办挂项目时取项目列表
 import { useAuthStore } from '@/stores/auth'
-import { adminApi } from '@/api/admin'
 import { managementTodoApi, type MyTodoRow, type MgmtTodo, type TodoAttachment } from '@/api/managementTodo'
 import { personalTodoApi, type PersonalTodo } from '@/api/personalTodo'   // 🆕 #363 个人待办
-import type { User } from '@/types'
 import { fmtRelative } from '@/utils/format'
 import AttachmentPreview from './AttachmentPreview.vue'   // 🆕 #311 待办附图在线预览
 
@@ -31,7 +29,10 @@ const previewRef = ref<InstanceType<typeof AttachmentPreview>>()
 function previewAtt(a: TodoAttachment) { previewRef.value?.open({ id: a.id, name: a.name }) }
 
 const auth = useAuthStore()
-const isMgr = computed(() => auth.isAdmin) // hasRole('admin','manager')
+// 🆕 2026-09-29 反馈#441：「下发 / 监控」不再只给管理层——「用户管理」里勾了「下发待办」的人也有。
+//   非管理层只看得到、改得了自己派出去的（后端 management_todo_router 按 created_by 过滤）。
+//   变量名保留 isMgr 免得改动面太大；含义已是「能下发待办」。
+const isMgr = computed(() => auth.isAdmin || auth.hasMenu('todo-send'))
 
 const visible = ref(false)
 const activeTab = ref<'mine' | 'personal' | 'sent'>('mine')
@@ -140,7 +141,7 @@ async function loadSent() {
 }
 
 const createDlg = ref(false)
-const users = ref<User[]>([])
+const users = ref<{ id: number; username: string; full_name: string; role_names?: string[] }[]>([])
 const createForm = ref<{ title: string; content: string; priority: string; due_date: string; recipient_ids: number[] }>(
   { title: '', content: '', priority: 'normal', due_date: '', recipient_ids: [] })
 // 🆕 #311 附件（选填，图片多张）：照 OA #264 链路——先选文件，待办创建成功后逐张上传
@@ -166,7 +167,7 @@ async function openCreate() {
   createFiles.value = []
   createDlg.value = true
   if (!users.value.length) {
-    try { users.value = await adminApi.listUsers() } catch { /* 静默 */ }
+    try { users.value = await managementTodoApi.recipients() } catch { /* 静默 */ }
   }
 }
 async function openEdit(t: MgmtTodo) {
@@ -179,7 +180,7 @@ async function openEdit(t: MgmtTodo) {
   createFiles.value = []   // 编辑不动附图：附图是按待办 id 挂的，这里只改文字与收件人
   createDlg.value = true
   if (!users.value.length) {
-    try { users.value = await adminApi.listUsers() } catch { /* 静默 */ }
+    try { users.value = await managementTodoApi.recipients() } catch { /* 静默 */ }
   }
 }
 const creating = ref(false)

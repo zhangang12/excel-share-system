@@ -49,7 +49,15 @@ ADMIN_MENU_DEFS: list[dict] = [
     {"key": "user-feedback",  "label": "用户反馈"},  # 🆕 收集所有用户提交的问题/建议
     {"key": "desktop",        "label": "桌面端"},      # 🆕 桌面客户端在线版本分布（admin/manager 专属，只读统计）
     {"key": "gate-config",    "label": "外网访问"},    # 🆕 外网登录验证码闸门配置（admin/manager 专属）
+    # 🆕 2026-09-29 反馈#441（赵仁辉）：下面两个**不是页面，是功能开关**，借菜单这套勾选来按账号授权
+    #   （与 #437「谁能处理用户反馈」同一个办法）。管理层在 user_menu_keys 里本来就拿全量 = 默认都有；
+    #   其他人要在「用户管理」里单独勾上。前端 auth.deptMenus 把它们跳过，侧栏不会冒出两个空菜单。
+    {"key": "feedback-entry", "label": "反馈入口"},    # 右下角「反馈」按钮（提系统问题/建议）
+    {"key": "todo-send",      "label": "下发待办"},    # 给别人派待办、盯进展、批自己派出去的顺延申请
 ]
+
+# 🆕 功能开关类的 key（不是页面）。前端侧栏要跳过它们；判断权限请用 has_capability。
+CAPABILITY_KEYS = {"feedback-entry", "todo-send"}
 
 _ALL_KEYS = [m["key"] for m in MENU_DEFS]
 _ADMIN_KEYS = [m["key"] for m in ADMIN_MENU_DEFS]
@@ -159,3 +167,8 @@ def user_can_view_detail(user: models.User) -> bool:
     """是否可进入项目详单/项目详情（2026-06-12 收紧口径：销售/电工/装配/售后不可）。
     与菜单配置同源：有 'list' 菜单即可进详单。"""
     return "list" in user_menu_keys(user)
+
+
+def has_capability(user: models.User | None, key: str) -> bool:
+    """🆕 2026-09-29 功能开关（CAPABILITY_KEYS）判定：管理层恒有；其他人看账号上勾没勾。"""
+    return bool(user) and key in user_menu_keys(user)

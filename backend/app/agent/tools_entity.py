@@ -993,8 +993,8 @@ async def mgmt_todo_peers(db: AsyncSession, current: models.User) -> dict:
     ⚠️ 只返回**在职**的人。给一个已停用的人当选项，点下去创建接口会把他滤掉，
        表现是「发了但没人收到」，比报错还难查。
     """
-    if not current.has_role("admin", "manager"):
-        return {"error": "只有管理层能下发待办"}
+    if not perm.can_send_todo(current):     # 🆕 2026-09-29 #441：按「下发待办」权限，不再写死管理层
+        return {"error": "你的账号没有「下发待办」权限"}
     def _q(mine: bool):
         q = (select(models.User.id, models.User.full_name, models.User.username,
                     func.max(models.ManagementTodo.created_at).label("last"))
@@ -1060,8 +1060,8 @@ async def mgmt_todo_send(db: AsyncSession, current: models.User, *,
     改法：草稿落库（`AgentDraft`），前端渲染成卡片，**用户点按钮**才打业务端点写。
     模型不在写的链路里 —— 和请款审批、销售订单审批是同一条路。
     """
-    if not current.has_role("admin", "manager"):
-        return {"error": "只有管理层能下发待办"}
+    if not perm.can_send_todo(current):     # 🆕 2026-09-29 #441：按「下发待办」权限，不再写死管理层
+        return {"error": "你的账号没有「下发待办」权限"}
     t = (title or "").strip()
     if not t:
         return {"error": "这条待办是什么事？给个名字就行"}

@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import models
+from .. import perm
 from . import token as card_token
 
 _MAX_CARDS = 5
@@ -66,7 +67,7 @@ async def assemble_send_cards(db: AsyncSession, current: models.User,
       · 草稿不属于当前用户 / 已用过 / 过期 → 端点 404 或 400，这里干脆不出卡
       · 收件人被停用                      → block，点了也发不出去（创建接口会滤掉）
     """
-    if not current.has_role("admin", "manager"):
+    if not perm.can_send_todo(current):     # 🆕 2026-09-29 #441：与 send_draft 端点同一条判据
         return []
     cards = []
     for dft in (await pending_drafts(db, current, refs))[:_MAX_CARDS]:

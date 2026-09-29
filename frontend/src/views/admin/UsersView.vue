@@ -30,6 +30,8 @@ const form = reactive({
 
 // 🆕 菜单权限弹窗：一级菜单按账号配置（角色矩阵已废除）+ 二级菜单(tab)按账号隐藏
 const tabRegistry = ref<{ menu_key: string; menu_label: string; tabs: { key: string; label: string }[] }[]>([])
+// 🆕 2026-09-29 功能开关类的 key（与后端 menus.CAPABILITY_KEYS 一致），在菜单权限弹窗里单独成组
+const CAPABILITY_KEYS = ['feedback-entry', 'todo-send']
 const menuDefs = ref<{ business: { key: string; label: string }[]; admin: { key: string; label: string }[] }>({ business: [], admin: [] })
 const tabDlgVisible = ref(false)
 const tabDlgUser = ref<User | null>(null)
@@ -295,8 +297,20 @@ onMounted(load)
       </div>
       <div style="margin-bottom:14px">
         <div style="margin-bottom:6px"><b>管理组菜单</b></div>
-        <el-checkbox v-for="m in menuDefs.admin" :key="m.key" :model-value="menuSet.has(m.key)"
+        <el-checkbox v-for="m in menuDefs.admin.filter(x => !CAPABILITY_KEYS.includes(x.key))" :key="m.key" :model-value="menuSet.has(m.key)"
                      @change="(v: any) => toggleMenu(m.key, !!v)" style="margin-right:18px">{{ m.label }}</el-checkbox>
+      </div>
+      <!-- 🆕 2026-09-29 反馈#441：这两个不是页面，是功能开关（默认只有管理层有），单独一组免得被当成菜单 -->
+      <div style="margin-bottom:14px">
+        <div style="margin-bottom:6px"><b>功能权限</b>
+          <span style="color:var(--el-text-color-secondary);font-size:12px;margin-left:8px">不是页面，勾上就开通对应功能</span>
+        </div>
+        <el-checkbox v-for="m in menuDefs.admin.filter(x => CAPABILITY_KEYS.includes(x.key))" :key="m.key" :model-value="menuSet.has(m.key)"
+                     @change="(v: any) => toggleMenu(m.key, !!v)" style="margin-right:18px">{{ m.label }}</el-checkbox>
+        <div style="color:var(--el-text-color-secondary);font-size:12px;margin-top:4px;line-height:1.7">
+          反馈入口 = 右下角「反馈」按钮，能提系统问题/建议；
+          下发待办 = 能给别人派待办、看进展、批顺延（只管得到自己派出去的）。
+        </div>
       </div>
       <div style="margin:4px 0 10px"><b>二级菜单(tab)隐藏</b></div>
       <div v-for="g in tabRegistry" :key="g.menu_key" style="margin-bottom:14px">

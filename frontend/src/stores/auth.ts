@@ -70,7 +70,9 @@ export const useAuthStore = defineStore('auth', () => {
   // 🆕 业务部门菜单（新增模块；排除老的 catalog/list 与管理组）
   const deptMenus = computed<MenuItem[]>(() => {
     if (!menus.value) return []
-    const skip = new Set(['catalog', 'list', 'admin-users', 'admin-perms', 'admin-audit', 'dict-admin'])
+    // 🆕 2026-09-29 'feedback-entry' / 'todo-send' 是功能开关不是页面（见后端 menus.CAPABILITY_KEYS），侧栏跳过
+    const skip = new Set(['catalog', 'list', 'admin-users', 'admin-perms', 'admin-audit', 'dict-admin',
+                          'feedback-entry', 'todo-send'])
     return menus.value.filter((m) => !skip.has(m.key))
   })
 

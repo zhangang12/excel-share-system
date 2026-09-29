@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from ... import models
+from .. import perm
 from . import token as card_token
 
 _MAX_CARDS = 20
@@ -45,7 +46,9 @@ async def pending_extends(db: AsyncSession, current: models.User,
     #    对应的动作端点是 `require_admin_or_manager`，装配这边不加同样的闸，
     #    任何登录用户都能读到全部顺延申请：谁在拖、事项标题、他写的说明。
     #    批不了但看得见，照样是越权。
-    if not current.has_role("admin", "manager"):
+    # 🆕 2026-09-29 反馈#441：闸从「管理层」换成「下发待办」权限；
+    #   非管理层只看**自己派出去的**待办上的申请（与 decide_extend 端点的 _assert_own_todo 同口径）。
+    if not perm.can_send_todo(current):
         return []
     q = (select(models.ManagementTodoTarget)
          .options(joinedload(models.ManagementTodoTarget.todo)
@@ -56,7 +59,10 @@ async def pending_extends(db: AsyncSession, current: models.User,
          .order_by(models.ManagementTodoTarget.id.desc()))
     if refs is not None:
         q = q.where(models.ManagementTodoTarget.id.in_(refs))
-    return list((await db.execute(q)).scalars().all())
+    rows = list((await db.execute(q)).scalars().all())
+    if not current.has_role("admin", "manager"):
+        rows = [t for t in rows if t.todo and t.todo.created_by == current.id]
+    return rows
 
 
 async def assemble_extend_cards(db: AsyncSession, current: models.User,

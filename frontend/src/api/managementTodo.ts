@@ -89,6 +89,11 @@ export const managementTodoApi = {
   requestExtend: (targetId: number, extend_to: string, reason: string) =>
     http.post<MyTodoRow>(`/management-todos/${targetId}/extend`, { extend_to, reason }).then((r) => r.data),
 
+  // 🆕 2026-09-29 反馈#441：派待办选人用的名单（只含 id/姓名/岗位）。
+  //   原来直接用 /admin/users，那个只开给管理层/人事、还带着整套账号信息；放开给主管派待办后改走这里。
+  recipients: () => http.get<{ id: number; username: string; full_name: string; role_names: string[] }[]>(
+    '/management-todos/recipients').then((r) => r.data),
+
   // 🆕 #311 待办附图：创建后逐张上传（biz_type=management_todo, biz_id=待办ID），同 OA #264 链路
   uploadAttachment: (todoId: number, file: File) => {
     const fd = new FormData()

@@ -436,6 +436,11 @@ async function submitReject() {
 
 const payVoucherFile = ref<File | null>(null)
 const payingPr = ref<PaymentRequestOut | null>(null)   // 🆕 需求十六：付款弹窗展示的请款单
+/** 银行账号 4 位一组显示，核对时不容易看串行。复制按钮复制的仍是库里的原值。 */
+function fmtAcct(a?: string | null): string {
+  const t = (a || '').replace(/\s+/g, '')
+  return t ? t.replace(/(.{4})(?=.)/g, '$1 ') : '—'
+}
 function openPay(pr: PaymentRequestOut) {
   payTargetId.value = pr.id
   payingPr.value = pr
@@ -1541,70 +1546,138 @@ async function revokeInvoice(row: ViewRow) {
       </template>
     </el-dialog>
 
-    <!-- 记录付款弹窗（🆕 需求十六：展示收款账户信息 + 关联采购单）-->
-    <el-dialog v-model="payDialogVisible" title="记录付款" width="600px">
-      <div v-if="payingPr" class="pay-info">
-        <!-- 🆕 2026-09-29 反馈#442（杨坛）：付款时要看到**提交人写的备注**——
-             请款时采购填的付款说明（账期、分几次付、先付多少……）原来只在「付款」列表的备注列里，
-             点开「记录付款」就看不到了，得关掉弹窗回去翻。放在最上面：付之前先看这句。 -->
-        <div class="pay-info-block pay-req-note">
-          <div class="pay-info-title">请款说明</div>
-          <div class="pay-info-row"><span class="k">提交人</span>{{ payingPr.requester_name || '—' }}
-            <span v-if="payingPr.approver_name" class="muted small" style="margin-left:12px">审批：{{ payingPr.approver_name }}</span>
+    <!-- 记录付款弹窗（🆕 需求十六：展示收款账户信息 + 关联采购单）
+         🆕 2026-09-29 老板：「显得太挤了，不好看」。原来 600px 宽、五块从上到下硬堆，
+         采购单号在标题里挤成两行、表单标签和输入框挤在一行。重排成：
+           顶部一行摘要（请款金额 / 账期到期 / 提交人）→ 请款备注提示条 →
+           左「收款账户」右「本次付款」两栏 → 底部关联明细（单号在表里点就能下 PDF）。
+         信息一样没少，只是按「付钱时先看什么」排了顺序。 -->
+    <el-dialog v-model="payDialogVisible" width="min(820px, 96vw)" top="5vh" class="pay-dlg">
+      <template #header>
+        <div class="pd-head">
+          <span class="pd-title">记录付款</span>
+          <span v-if="payingPr" class="pd-sub">{{ payingPr.supplier_name }} · 请款单 #{{ payingPr.id }}</span>
+        </div>
+      </template>
+
+      <div v-if="payingPr" class="pd-body">
+        <!-- 摘要 -->
+        <div class="pd-summary">
+          <div class="pd-stat">
+            <div class="k">请款金额</div>
+            <div class="v amt">{{ fmtMoney(payingPr.requested_amount) }}</div>
           </div>
-          <div class="pay-info-row"><span class="k">备注</span>
-            <span v-if="payingPr.notes" class="pay-note-text">{{ payingPr.notes }}</span>
-            <span v-else class="muted">提交人没写备注</span>
+          <div class="pd-stat">
+            <div class="k">账期到期</div>
+            <div class="v">
+              <template v-if="payingPr.earliest_due">
+                {{ payingPr.earliest_due }}
+                <el-tag size="small" effect="plain" style="margin-left:6px"
+                        :type="(payingPr.due_in_days ?? 0) < 0 ? 'danger' : (payingPr.due_in_days ?? 0) <= 7 ? 'warning' : 'success'">
+                  {{ (payingPr.due_in_days ?? 0) < 0 ? `已过期 ${-(payingPr.due_in_days ?? 0)} 天`
+                     : payingPr.due_in_days === 0 ? '今天到期' : `还剩 ${payingPr.due_in_days} 天` }}
+                </el-tag>
+              </template>
+              <span v-else class="muted">—</span>
+            </div>
+          </div>
+          <div class="pd-stat">
+            <div class="k">提交人</div>
+            <div class="v">{{ payingPr.requester_name || '—' }}</div>
+            <div v-if="payingPr.approver_name" class="s">审批：{{ payingPr.approver_name }}</div>
           </div>
         </div>
-        <div class="pay-info-block">
-          <div class="pay-info-title">收款账户信息（供应商：{{ payingPr.supplier_name }}<el-button v-if="payingPr.supplier_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_name)">复制</el-button>）</div>
-          <div class="pay-info-row"><span class="k">开户行</span>{{ payingPr.supplier_bank_name || '—' }}<el-button v-if="payingPr.supplier_bank_name" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_name)">复制</el-button></div>
-          <div class="pay-info-row"><span class="k">银行账号</span><b>{{ payingPr.supplier_bank_account || '—' }}</b><el-button v-if="payingPr.supplier_bank_account" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_bank_account)">复制</el-button></div>
-          <div class="pay-info-row"><span class="k">税号</span>{{ payingPr.supplier_tax_no || '—' }}<el-button v-if="payingPr.supplier_tax_no" size="small" link type="primary" style="margin-left:8px" @click="copyText(payingPr.supplier_tax_no)">复制</el-button></div>
-          <div v-if="!payingPr.supplier_bank_account" class="muted small">该供应商未维护银行账号，请先在采购管理补全供应商档案。</div>
-          <!-- 🆕 #426 多账号供应商：醒目提示本单指定的是哪一个，别凭记忆打到另一个账号 -->
-          <el-alert v-else-if="(payingPr.supplier_account_count || 0) > 1" type="warning" :closable="false" show-icon
-                    style="margin-top:6px"
-                    :title="`该供应商有 ${payingPr.supplier_account_count} 个收款账号，本单指定上面这个${payingPr.bank_account_is_default ? '（默认账号）' : '（非默认账号）'}${payingPr.bank_account_note ? '：' + payingPr.bank_account_note : ''}`" />
+
+        <!-- 🆕 #442 请款备注：有就醒目地放在最上面，付之前先看这句；没有就一行淡字 -->
+        <div v-if="payingPr.notes" class="pd-note">
+          <span class="pd-note-k">请款备注</span>
+          <span class="pd-note-t">{{ payingPr.notes }}</span>
         </div>
-        <div class="pay-info-block">
-          <div class="pay-info-title">关联采购单
-            <template v-if="payingPr.po_nos?.length">
-              <el-button v-for="po in payingPr.po_nos" :key="po" size="small" link type="primary" @click="downloadPoPdf(po)">{{ po }}</el-button>
-            </template>
+        <div v-else class="pd-note empty">提交人没写请款备注</div>
+
+        <div class="pd-grid">
+          <!-- 左：收款账户 -->
+          <section class="pd-card">
+            <div class="pd-card-title">收款账户</div>
+            <div class="pd-kv">
+              <div class="row"><span class="k">户名</span>
+                <span class="v">{{ payingPr.supplier_name }}</span>
+                <el-button v-if="payingPr.supplier_name" link type="primary" size="small" @click="copyText(payingPr.supplier_name)">复制</el-button>
+              </div>
+              <div class="row"><span class="k">开户行</span>
+                <span class="v">{{ payingPr.supplier_bank_name || '—' }}</span>
+                <el-button v-if="payingPr.supplier_bank_name" link type="primary" size="small" @click="copyText(payingPr.supplier_bank_name)">复制</el-button>
+              </div>
+              <div class="row"><span class="k">账号</span>
+                <span class="v acct">{{ fmtAcct(payingPr.supplier_bank_account) }}</span>
+                <el-button v-if="payingPr.supplier_bank_account" link type="primary" size="small" @click="copyText(payingPr.supplier_bank_account)">复制</el-button>
+              </div>
+              <div class="row"><span class="k">税号</span>
+                <span class="v">{{ payingPr.supplier_tax_no || '—' }}</span>
+                <el-button v-if="payingPr.supplier_tax_no" link type="primary" size="small" @click="copyText(payingPr.supplier_tax_no)">复制</el-button>
+              </div>
+            </div>
+            <el-alert v-if="!payingPr.supplier_bank_account" type="error" :closable="false" show-icon class="pd-alert"
+                      title="该供应商没维护银行账号，先到采购管理补全供应商档案" />
+            <!-- 🆕 #426 多账号供应商：醒目提示本单指定的是哪一个，别凭记忆打到另一个账号 -->
+            <el-alert v-else-if="(payingPr.supplier_account_count || 0) > 1" type="warning" :closable="false" show-icon class="pd-alert"
+                      :title="`该供应商有 ${payingPr.supplier_account_count} 个收款账号，本单指定上面这个${payingPr.bank_account_is_default ? '（默认账号）' : '（非默认账号）'}${payingPr.bank_account_note ? '：' + payingPr.bank_account_note : ''}`" />
+          </section>
+
+          <!-- 右：本次付款 -->
+          <section class="pd-card">
+            <div class="pd-card-title">本次付款</div>
+            <el-form :model="payForm" label-position="top" class="pd-form">
+              <el-form-item label="付款金额">
+                <!-- 🆕 金额审计：上限=请款金额；parser 把粘进来的 "12,500.00" 还原成数字（EP 原生 parseFloat 会截成 12） -->
+                <el-input-number v-model="payForm.paid_amount" :min="0.01" :max="payingPr?.requested_amount || undefined"
+                                 :precision="2" :parser="moneyParser" :controls="false" style="width:100%" />
+              </el-form-item>
+              <div class="pd-form-2">
+                <el-form-item label="付款日期">
+                  <el-date-picker v-model="payForm.paid_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+                </el-form-item>
+                <el-form-item label="付款方式">
+                  <el-select v-model="payForm.payment_method" style="width:100%">
+                    <el-option value="银行转账" label="银行转账" />
+                    <el-option value="现金" label="现金" />
+                    <el-option value="支票" label="支票" />
+                    <el-option value="其他" label="其他" />
+                  </el-select>
+                </el-form-item>
+              </div>
+              <el-form-item label="付款凭证（选填）">
+                <div class="pd-voucher">
+                  <el-button :icon="UploadFilled" @click="pickVoucher">上传水单 / 回单</el-button>
+                  <span v-if="payVoucherFile" class="pd-voucher-name">{{ payVoucherFile.name }}</span>
+                  <span v-else class="muted small">PDF / 图片 / Excel</span>
+                </div>
+              </el-form-item>
+            </el-form>
+          </section>
+        </div>
+
+        <!-- 关联明细 -->
+        <section class="pd-card">
+          <div class="pd-card-title">关联采购明细
+            <span class="muted small" style="font-weight:400;margin-left:6px">
+              {{ payingPr.po_nos?.length || 0 }} 张采购单 · {{ payingPr.items?.length || 0 }} 条明细 · 点单号下载采购单 PDF
+            </span>
           </div>
-          <el-table show-overflow-tooltip :data="payingPr.items" size="small" border max-height="180">
-            <el-table-column label="采购单号" width="150"><template #default="{ row }"><span class="code">{{ row.po_no || '散件' }}</span></template></el-table-column>
-            <el-table-column label="名称" min-width="120"><template #default="{ row }">{{ row.item_name }}<span v-if="specOf(row.item_name, row.spec)" class="muted small"> · {{ specOf(row.item_name, row.spec) }}</span></template></el-table-column>
-            <el-table-column label="项目" width="100"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>
-            <el-table-column label="本次付款" width="110" align="right"><template #default="{ row }">{{ fmtMoney(row.allocated_amount) }}</template></el-table-column>
+          <el-table show-overflow-tooltip :data="payingPr.items" size="small" max-height="200" class="pd-table">
+            <el-table-column label="采购单号" width="160">
+              <template #default="{ row }">
+                <el-button v-if="row.po_no" link type="primary" size="small" @click="downloadPoPdf(row.po_no)">{{ row.po_no }}</el-button>
+                <span v-else class="muted">散件</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="名称" min-width="160"><template #default="{ row }">{{ row.item_name }}<span v-if="specOf(row.item_name, row.spec)" class="muted small"> · {{ specOf(row.item_name, row.spec) }}</span></template></el-table-column>
+            <el-table-column label="项目" width="110"><template #default="{ row }">{{ row.project_code || '—' }}</template></el-table-column>
+            <el-table-column label="本次付款" width="120" align="right"><template #default="{ row }">{{ fmtMoney(row.allocated_amount) }}</template></el-table-column>
           </el-table>
-        </div>
+        </section>
       </div>
-      <el-form :model="payForm" label-width="90px" style="margin-top:12px">
-        <el-form-item label="付款金额">
-          <!-- 🆕 金额审计：上限=请款金额；parser 把粘进来的 "12,500.00" 还原成数字（EP 原生 parseFloat 会截成 12） -->
-          <el-input-number v-model="payForm.paid_amount" :min="0.01" :max="payingPr?.requested_amount || undefined"
-                           :precision="2" :parser="moneyParser" style="width:100%" />
-        </el-form-item>
-        <el-form-item label="付款日期">
-          <el-date-picker v-model="payForm.paid_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
-        </el-form-item>
-        <el-form-item label="付款方式">
-          <el-select v-model="payForm.payment_method" style="width:100%">
-            <el-option value="银行转账" label="银行转账" />
-            <el-option value="现金" label="现金" />
-            <el-option value="支票" label="支票" />
-            <el-option value="其他" label="其他" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="付款单据">
-          <el-button :icon="UploadFilled" @click="pickVoucher">上传付款凭证</el-button>
-          <span v-if="payVoucherFile" style="margin-left:10px;font-size:13px">{{ payVoucherFile.name }}</span>
-          <div class="muted small" style="margin-top:4px">选填：付款水单 / 回单（PDF / 图片 / Excel）</div>
-        </el-form-item>
-      </el-form>
+
       <template #footer>
         <el-button @click="payDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submitPay">确认付款</el-button>
@@ -1633,12 +1706,43 @@ async function revokeInvoice(row: ViewRow) {
 :deep(.pnl-loss-row) { --el-table-tr-bg-color: var(--el-color-danger-light-9); }
 .code { color: var(--primary, #2563eb); }
 /* 🆕 需求十六：付款弹窗的账户信息/采购单区块 */
-.pay-info { display: flex; flex-direction: column; gap: 12px; }
-.pay-info-block { background: var(--el-fill-color-light); border-radius: 8px; padding: 10px 14px; }
-.pay-info-title { font-weight: 600; font-size: 13.5px; margin-bottom: 6px; color: var(--el-text-color-primary); }
-.pay-info-row { font-size: 13px; line-height: 1.9; color: var(--el-text-color-regular); }
-.pay-info-row .k { display: inline-block; min-width: 72px; color: var(--el-text-color-secondary); }
-/* 🆕 #442 请款说明：备注要一眼看见，保留换行 */
-.pay-req-note { border-left: 3px solid var(--el-color-warning); }
-.pay-note-text { white-space: pre-wrap; color: var(--el-text-color-primary); font-weight: 500; }
+/* 🆕 2026-09-29 记录付款弹窗重排（老板：太挤、不好看） */
+.pd-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.pd-title { font-size: 17px; font-weight: 700; color: var(--el-text-color-primary); }
+.pd-sub { font-size: 13px; color: var(--el-text-color-secondary); }
+.pd-body { display: flex; flex-direction: column; gap: 14px; }
+.pd-summary {
+  display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 12px;
+  background: var(--el-fill-color-lighter); border-radius: 10px; padding: 14px 16px;
+}
+.pd-stat .k { font-size: 12px; color: var(--el-text-color-secondary); }
+.pd-stat .v { font-size: 14px; color: var(--el-text-color-primary); margin-top: 4px; font-weight: 500; }
+.pd-stat .v.amt { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pd-stat .s { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
+.pd-note {
+  display: flex; gap: 12px; align-items: flex-start; padding: 10px 14px; border-radius: 8px;
+  background: var(--el-color-warning-light-9); border: 1px solid var(--el-color-warning-light-7);
+}
+.pd-note.empty { background: none; border: 1px dashed var(--el-border-color); color: var(--el-text-color-placeholder); font-size: 12px; padding: 6px 14px; }
+.pd-note-k { flex: none; font-size: 12px; font-weight: 600; color: var(--el-color-warning-dark-2); padding-top: 1px; }
+.pd-note-t { white-space: pre-wrap; font-size: 14px; line-height: 1.6; color: var(--el-text-color-primary); }
+.pd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.pd-card { border: 1px solid var(--el-border-color-lighter); border-radius: 10px; padding: 12px 16px 6px; }
+.pd-card-title { font-size: 13px; font-weight: 700; color: var(--el-text-color-primary); margin-bottom: 10px; }
+.pd-kv .row { display: flex; align-items: center; gap: 10px; min-height: 30px; font-size: 13px; }
+.pd-kv .k { flex: none; width: 48px; color: var(--el-text-color-secondary); }
+.pd-kv .v { flex: 1; min-width: 0; color: var(--el-text-color-primary); word-break: break-all; }
+.pd-kv .v.acct { font-size: 15px; font-weight: 700; letter-spacing: .5px; font-variant-numeric: tabular-nums; }
+.pd-alert { margin: 8px 0 8px; }
+.pd-form :deep(.el-form-item) { margin-bottom: 12px; }
+.pd-form :deep(.el-form-item__label) { padding-bottom: 4px; line-height: 1.4; }
+.pd-form-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* 付款金额按金额输入的样子来：靠左、加粗、等宽数字（默认的居中数字在宽框里看着发飘） */
+.pd-form :deep(.el-input-number .el-input__inner) { text-align: left; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pd-voucher { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pd-voucher-name { font-size: 13px; color: var(--el-text-color-primary); }
+.pd-table { margin-bottom: 8px; }
+@media (max-width: 720px) {
+  .pd-grid, .pd-summary { grid-template-columns: 1fr; }
+}
 </style>

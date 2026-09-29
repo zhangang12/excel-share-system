@@ -19,6 +19,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from .. import models, schemas
 from ..deps import get_current_user, require_admin_or_manager
+
+
+# 🆕 2026-09-29 反馈#441（赵仁辉「管理层待办 我可以选择给某些角色增加」）：
+#   下发待办不再写死 admin/manager —— 在「用户管理」里勾了「下发待办」的人也能派。
+#   规矩：**管理层看/管全部；其他人只能看、改、撤、批「自己派出去的」**（created_by == 自己）。
+#   这样放开给某个主管，他也碰不到别人（包括管理层）派的待办。
+def _is_mgmt(u: models.User) -> bool:
+    return u.has_role("admin", "manager")
+
+
+async def require_todo_sender(current: models.User = Depends(get_current_user)) -> models.User:
+    from ..menus import has_capability
+    if not has_capability(current, "todo-send"):
+        raise HTTPException(403, "你的账号没有「下发待办」权限，需要管理层在「用户管理」里给你勾上")
+    return current
+
+
+def _assert_own_todo(current: models.User, todo) -> None:
+    """非管理层只能动自己派出去的待办。"""
+    if not _is_mgmt(current) and todo.created_by != current.id:
+        raise HTTPException(403, "只能操作你自己下发的待办")
 from ..notify import push_message
 from ..utils import write_audit
 from .attachments_router import delete_attachment_file
@@ -111,7 +132,7 @@ async def _my_row(db: AsyncSession, t: models.ManagementTodoTarget, today: date)
 @router.post("/", response_model=schemas.MgmtTodoOut, include_in_schema=False)
 async def create_todo(
     body: schemas.MgmtTodoCreate,
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(require_todo_sender),
     db: AsyncSession = Depends(get_db),
 ):
     title = body.title.strip()
@@ -144,7 +165,8 @@ async def create_todo(
     await db.refresh(todo)
 
     # 通知每位收件人回复承诺完成时间
-    tag = "【紧急】" if todo.priority == "urgent" else "【管理层待办】"
+    # 管理层派的沿用「【管理层待办】」（大家认这个字样）；被授权的主管派的叫「【待办】」，别冒充管理层
+    tag = "【紧急】" if todo.priority == "urgent" else ("【管理层待办】" if _is_mgmt(current) else "【待办】")
     due_txt = f"（要求 {due_date} 前完成）" if due_date else ""
     for rid in valid_ids:
         await push_message(
@@ -169,21 +191,39 @@ async def _get_todo_out(db: AsyncSession, todo_id: int) -> schemas.MgmtTodoOut:
 
 @router.get("/sent", response_model=list[schemas.MgmtTodoOut])
 async def list_sent(
-    _: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(require_todo_sender),
     db: AsyncSession = Depends(get_db),
 ):
-    """管理层监控：全部已下发的待办 + 每人处理态（最新在前）。"""
-    res = await db.execute(
-        select(models.ManagementTodo).order_by(models.ManagementTodo.created_at.desc()))
+    """已下发的待办 + 每人处理态（最新在前）。管理层看全部；其他被授权的人只看自己派的。"""
+    stmt = select(models.ManagementTodo).order_by(models.ManagementTodo.created_at.desc())
+    if not _is_mgmt(current):
+        stmt = stmt.where(models.ManagementTodo.created_by == current.id)
+    res = await db.execute(stmt)
     today = _cn_today()
     return [await _todo_out(db, t, today) for t in res.scalars().all()]
+
+
+@router.get("/recipients")
+async def list_recipients(
+    _: models.User = Depends(require_todo_sender),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 2026-09-29 派待办时选人用的名单：只给「id + 姓名」。
+    原来前端直接调 /admin/users（只开给管理层/人事，而且带着角色、菜单、企微号一整套账号信息）——
+    放开给主管派待办以后不能让他们也拿到那一套，所以单开这个只给名字的口子。"""
+    res = await db.execute(select(models.User).where(models.User.is_active == True)  # noqa: E712
+                           .order_by(models.User.id))
+    # 带上岗位名：同名同姓、或只认得岗位的时候靠它分人（原来 /admin/users 下拉就是这么显示的）
+    return [{"id": u.id, "username": u.username, "full_name": u.full_name or u.username,
+             "role_names": [r.name for r in (u.roles or [])]}
+            for u in res.scalars().unique().all() if u.username != "admin"]
 
 
 @router.put("/{todo_id}", response_model=schemas.MgmtTodoOut)
 async def update_todo(
     todo_id: int,
     body: schemas.MgmtTodoUpdate,
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(require_todo_sender),
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 反馈#366/#380：已下发的待办支持编辑。
@@ -203,6 +243,7 @@ async def update_todo(
     todo = res.scalar_one_or_none()
     if not todo:
         raise HTTPException(404, "待办不存在")
+    _assert_own_todo(current, todo)
 
     changed: list[str] = []
     if body.title is not None:
@@ -260,7 +301,8 @@ async def update_todo(
 
     await db.commit()
 
-    tag = "【紧急】" if todo.priority == "urgent" else "【管理层待办】"
+    # 管理层派的沿用「【管理层待办】」（大家认这个字样）；被授权的主管派的叫「【待办】」，别冒充管理层
+    tag = "【紧急】" if todo.priority == "urgent" else ("【管理层待办】" if _is_mgmt(current) else "【待办】")
     due_txt = f"（要求 {todo.due_date} 前完成）" if todo.due_date else ""
     # 新加进来的人：走和新建一样的话术
     for rid in added_ids:
@@ -286,7 +328,7 @@ async def update_todo(
 @router.delete("/{todo_id}", response_model=schemas.Msg)
 async def delete_todo(
     todo_id: int,
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(require_todo_sender),
     db: AsyncSession = Depends(get_db),
 ):
     res = await db.execute(
@@ -294,6 +336,7 @@ async def delete_todo(
     todo = res.scalar_one_or_none()
     if not todo:
         raise HTTPException(404, "待办不存在")
+    _assert_own_todo(current, todo)
     # 🆕 #311 待办附图随撤销一并删除（记录+磁盘文件），同 OA 删除申请口径
     ar = await db.execute(select(models.Attachment).where(
         models.Attachment.biz_type == "management_todo",
@@ -472,10 +515,11 @@ async def request_extend(
 async def decide_extend(
     target_id: int,
     body: schemas.MgmtTodoExtendDecideIn,
-    current: models.User = Depends(require_admin_or_manager),
+    current: models.User = Depends(require_todo_sender),
     db: AsyncSession = Depends(get_db),
 ):
-    """管理层审批顺延申请：同意则改承诺日，否则维持原承诺日。"""
+    """审批顺延申请：同意则改承诺日，否则维持原承诺日。
+    管理层可批全部；其他被授权的人只能批**自己派出去的**那条待办上的申请。"""
     res = await db.execute(
         select(models.ManagementTodoTarget)
         .options(joinedload(models.ManagementTodoTarget.todo).joinedload(models.ManagementTodo.creator),
@@ -484,6 +528,7 @@ async def decide_extend(
     t = res.scalar_one_or_none()
     if not t:
         raise HTTPException(404, "待办不存在")
+    _assert_own_todo(current, t.todo)
     if t.extend_status != "pending" or not t.extend_to:
         raise HTTPException(400, "没有待审批的顺延申请")
     new_date = t.extend_to
@@ -492,10 +537,10 @@ async def decide_extend(
     if body.approve:
         t.committed_at = new_date
         t.extend_status = "approved"
-        msg = f"管理层已同意「{t.todo.title}」顺延到 {new_date}。"
+        msg = f"{_uname(current)} 已同意「{t.todo.title}」顺延到 {new_date}。"
     else:
         t.extend_status = "rejected"
-        msg = f"管理层未同意「{t.todo.title}」顺延{'：' + body.note if body.note else ''}，请按原承诺日 {t.committed_at} 完成。"
+        msg = f"{_uname(current)} 未同意「{t.todo.title}」顺延{'：' + body.note if body.note else ''}，请按原承诺日 {t.committed_at} 完成。"
     await db.commit()
     await db.refresh(t)
     await push_message(db, to_user_id=t.user_id, kind="warn", text=msg,
