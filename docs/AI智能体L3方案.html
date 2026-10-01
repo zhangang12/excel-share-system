@@ -144,6 +144,48 @@ footer a,main a{color:var(--accent)}
 .onoff th{font-size:12px;color:var(--muted);font-weight:600}
 .pill{display:inline-block;padding:0 8px;font-size:12px;line-height:1.7;border:1px solid currentColor;white-space:nowrap}
 .p-bad{color:var(--risk);background:var(--risk-soft)} .p-good{color:var(--ok)} .p-mid{color:var(--accent)}
+
+/* 手机示意 */
+.phone{width:300px;max-width:100%;margin:0 auto;border:8px solid var(--ink);border-radius:26px;background:var(--paper);overflow:hidden;font-size:12.5px;line-height:1.55}
+.phone .bar{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--line)}
+.phone .bar b{font-size:14px}
+.phone .badge{background:var(--risk);color:var(--surface);font-family:var(--mono);font-size:11px;padding:0 6px}
+.phone .body{padding:10px;display:grid;gap:8px;min-height:330px;align-content:start}
+.phone .pc{background:var(--surface);border:1px solid var(--line);padding:10px}
+.phone .pc h5{margin:0 0 4px;font-size:13px}
+.phone .pc .why{color:var(--muted);font-size:11.5px;margin-bottom:6px}
+.phone .row{display:flex;justify-content:space-between;border-bottom:1px dashed var(--line);padding:3px 0}
+.phone .row .new{color:var(--ok);font-weight:600}
+.phone .big{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.phone .big span{text-align:center;padding:9px 0;border:1px solid var(--line);font-weight:600}
+.phone .big span.pri{background:var(--accent);color:var(--surface);border-color:var(--accent)}
+.phone .mini{color:var(--muted);font-size:11.5px}
+.phone .tabs{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);background:var(--surface);text-align:center;font-size:11.5px}
+.phone .tabs span{padding:8px 0;color:var(--muted)} .phone .tabs span.on{color:var(--accent);font-weight:600}
+/* 管理员页示意 */
+.adm{border:1px solid var(--line);background:var(--paper);font-size:12.5px;min-width:620px}
+.adm .hd{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--line)}
+.adm .hd b{font-size:14px}
+.adm .kill{border:1px solid var(--risk);color:var(--risk);padding:3px 10px;font-weight:600}
+.adm .grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:0}
+.adm .grid>div{padding:10px 14px}
+.adm .grid>div+div{border-left:1px solid var(--line)}
+.adm h5{margin:0 0 6px;font-size:12px;color:var(--muted);letter-spacing:.06em}
+.adm table{width:100%;border-collapse:collapse;min-width:0;font-size:12px}
+.adm td,.adm th{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left}
+.adm th{font-weight:600;color:var(--muted);background:transparent;letter-spacing:0}
+.tg{display:inline-block;width:26px;height:14px;border-radius:7px;background:var(--line);position:relative;vertical-align:-2px}
+.tg::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:var(--surface)}
+.tg.on{background:var(--accent)} .tg.on::after{left:14px}
+/* 角色矩阵 */
+.mx{width:100%;border-collapse:collapse;font-size:12.5px;min-width:640px}
+.mx th,.mx td{border:1px solid var(--line);padding:7px 8px;text-align:center;vertical-align:middle}
+.mx th{background:var(--code-bg);color:var(--muted);font-weight:600;font-size:12px}
+.mx td:first-child{text-align:left}
+.mx .y{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.mx .e{background:var(--gate-soft);color:var(--gate);font-weight:600}
+.mx .n{color:var(--muted)}
+.mx small{display:block;color:var(--muted);font-weight:400}
 </style>
 
 <div class="wrap">
@@ -160,21 +202,23 @@ footer a,main a{color:var(--accent)}
     <li><a href="#s7">主动性</a></li>
     <li><a href="#s8">运行时</a></li>
     <li><a href="#s9">13 个模块</a></li>
-    <li><a href="#s10">产品形态</a></li>
-    <li><a href="#s11">评测基准</a></li>
-    <li><a href="#s12">实施路线</a></li>
-    <li><a href="#s13">指标</a></li>
-    <li><a href="#s14">风险与对策</a></li>
-    <li><a href="#s15">拍板结果</a></li>
+    <li><a href="#s10">用户体验与界面</a></li>
+    <li><a href="#s11">执行流畅性</a></li>
+    <li><a href="#s12">权限体系</a></li>
+    <li><a href="#s13">评测基准</a></li>
+    <li><a href="#s14">实施路线</a></li>
+    <li><a href="#s15">指标</a></li>
+    <li><a href="#s16">风险与对策</a></li>
+    <li><a href="#s17">拍板结果</a></li>
   </ol>
 </aside>
 
 <main>
 <header class="top">
-  <div class="eyebrow">方案 v4 · <b>已拍板</b> · 2026-10-01</div>
+  <div class="eyebrow">方案 v5 · <b>已拍板</b> · 2026-10-01</div>
   <h1>同辉智能体 L3 重构方案</h1>
   <p class="lede">做一个通用的 L3 智能体：用户在系统里能查的、能做的，它都能查、能做；给它一个目标，它自己规划步骤、调用系统能力、核对结果，在权限和沙箱里干活，只在关键节点找人确认。</p>
-  <p class="lede-note">本稿取代 2026-08-01 版的第四、五节，以及本方案的 v1–v3。8 月版的三条核心原则继续有效：只走业务接口同一条路径；事实以服务端为准；能力可枚举。v4 写入了 8 条拍板结果（第 15 节），并按 <a href="https://claude.ai/artifact/FXZe576VrTWbuKTugwKko9">Harness 安全审计</a> 改了运行时的设计（第 08 节）。</p>
+  <p class="lede-note">本稿取代 2026-08-01 版的第四、五节，以及本方案的 v1–v3。8 月版的三条核心原则继续有效：只走业务接口同一条路径；事实以服务端为准；能力可枚举。v5 写入了 10 条拍板结果（第 17 节），并按 <a href="https://claude.ai/artifact/FXZe576VrTWbuKTugwKko9">Harness 安全审计</a> 改了运行时的设计（第 08 节）。</p>
 </header>
 
 <section id="s0">
@@ -202,7 +246,7 @@ footer a,main a{color:var(--accent)}
     b4 -->|没达成| b5[换路 · 查数 · 问人] --> b2
     b3 -. 写操作 .-> b7[演练 + 人确认]
   end</pre><figcaption><b>图 1 · SOP 和 L3 智能体的区别。</b>SOP 的步骤是人写死的，遇到没写过的情况就卡住；L3 拿到的是目标，自己规划、执行、核对，答不上就换路。</figcaption></figure>
-  <p>v2 犯的错，是把「挑几个业务流程做成技能」当成了智能体本身，结果更像流程自动化。v3 改成以通用能力为主线。业务场景只出现在两处：<strong>评测考题</strong>（第 11 节），用来衡量能力到没到 L3；<strong>开放顺序</strong>（第 12 节），决定先给谁用。它们不决定架构，也不限制智能体能做什么。</p>
+  <p>v2 犯的错，是把「挑几个业务流程做成技能」当成了智能体本身，结果更像流程自动化。v3 改成以通用能力为主线。业务场景只出现在两处：<strong>评测考题</strong>（第 13 节），用来衡量能力到没到 L3；<strong>开放顺序</strong>（第 14 节），决定先给谁用。它们不决定架构，也不限制智能体能做什么。</p>
   <p>v2 里验证过的结论都保留：零改造演练、事件触发、影子运行、渐进授权、DeepSeek Harness 的定位。</p>
 </section>
 
@@ -549,7 +593,49 @@ flowchart LR
 </section>
 
 <section id="s10">
-  <h2><span class="no">10</span>产品形态</h2>
+  <h2><span class="no">10</span>用户体验与界面</h2>
+  <div class="stats">
+    <div class="stat"><span class="n">83%</span><span class="t">一天的请求来自桌面客户端</span></div>
+    <div class="stat"><span class="n">17 / 27</span><span class="t">近两周在用桌面客户端的人</span></div>
+    <div class="stat"><span class="n">7</span><span class="t">近 30 天用过智能体的人</span></div>
+    <div class="stat"><span class="n">77</span><span class="t">个开放写接口是 R3，永远要人确认</span></div>
+  </div>
+  <figure class="fig"><svg viewBox="0 0 720 108" role="img" aria-label="一天里各端的请求数"><text x="100.0" y="25.0" class="c-tb" text-anchor="end" >桌面客户端</text><rect x="110.0" y="12.0" width="500.0" height="18.0" class="c-a"/><text x="616.0" y="26.0" class="c-n" text-anchor="start" >7,992</text><text x="100.0" y="57.0" class="c-tb" text-anchor="end" >网页浏览器</text><rect x="110.0" y="44.0" width="89.4" height="18.0" class="c-g"/><text x="205.4" y="58.0" class="c-n" text-anchor="start" >1,429</text><text x="100.0" y="89.0" class="c-tb" text-anchor="end" >手机浏览器</text><rect x="110.0" y="76.0" width="2.0" height="18.0" class="c-m"/><text x="118.0" y="90.0" class="c-n" text-anchor="start" >14</text></svg><figcaption><b>图 15 · 一天里各端的请求数（服务器访问日志，9/30–10/01）。</b>桌面客户端占 83%；近两周有 17 个人在用桌面客户端。手机 APP 的请求在日志里分辨不出来，没有单列。</figcaption></figure>
+  <div class="verdict"><p><strong>结论：</strong>桌面端是主战场，工作台按桌面三栏设计；手机只负责「收提醒、看改动、点确认」；企微负责「找到人」。智能体现在没人用，不是因为能力不够，而是要专门打开、专门描述。所以入口要放进业务页面，结果要推到人眼前。</p></div>
+  <h3>七条体验原则</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>原则</th><th>具体做法</th></tr></thead>
+    <tbody>
+      <tr><td class="k">推到眼前，不靠聊天框</td><td>待确认、结果、提醒主动出现在工作台和企微；业务页面里放「让智能体做」按钮，自动带上当前页面选中的数据</td></tr>
+      <tr><td class="k">先给计划再动手</td><td>多步任务先出计划卡，人可以删步骤、改顺序、补要求，确认后才执行</td></tr>
+      <tr><td class="k">每一步都看得见</td><td>进度条、当前步骤、执行轨迹（默认折叠）、预计还要多久；长任务可以先离开，做完企微提醒</td></tr>
+      <tr><td class="k">只看变化</td><td>预览卡只列被改的字段，改前划掉、改后高亮；有风险的标出来说明原因（如「收款账号 3 天前改过」）；敏感字段打码</td></tr>
+      <tr><td class="k">随时能停、能改、能接手</td><td>随时停止；改计划；点「我自己来」跳到对应的网页，已填好的内容带过去</td></tr>
+      <tr><td class="k">做了能撤</td><td>可逆的动作执行后 10 分钟内能撤销；每天一份「智能体替我做了什么」日报</td></tr>
+      <tr><td class="k">少打扰</td><td>同一任务的提醒合并；下班时间只推 R3 和到期事项；同类 R2 确认可以合并成一张卡逐条勾（R3 不合并）</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="fig"><pre class="mermaid">flowchart LR
+  subgraph IN[入口]
+    direction TB
+    e1[桌面端侧栏：智能体工作台]
+    e2[业务页面里的「让智能体做」按钮]
+    e3[企微消息 · 点开直达那张卡]
+    e4[手机 APP：待我确认]
+  end
+  subgraph WB[工作台]
+    direction TB
+    w1[我的任务：计划 · 进度 · 轨迹]
+    w2[待我确认：预览卡 · 审批卡]
+    w3[我的盯守]
+    w4[日报：智能体今天替我做了什么]
+    w5[对话：问问题 · 派任务]
+  end
+  e1 --> WB
+  e2 -->|带上当前页面的上下文| w5
+  e3 --> w2
+  e4 --> w2</pre><figcaption><b>图 16 · 从哪里进、进来看到什么。</b>最重要的是「业务页面里的入口」：在采购明细页选几行点「让智能体对账」，比打开聊天框描述一遍省事得多。</figcaption></figure>
+  <h3>界面</h3>
   <figure class="fig">
 <div class="wb">
   <div class="side">
@@ -587,24 +673,188 @@ flowchart LR
     <div class="kv"><span>自动执行</span><b>0</b></div>
     <div class="kv"><span>可撤销</span><b>0</b></div>
   </div>
-</div><figcaption><b>图 15 · 智能体工作台示意（数据为虚构）。</b>左边是任务和盯守，中间是计划、执行轨迹和变更预览，右边是待我确认。手机上三栏会叠成一栏。电话在预览里打码显示。</figcaption></figure>
+</div><figcaption><b>图 17 · 智能体工作台示意（数据为虚构）。</b>左边是任务和盯守，中间是计划、执行轨迹和变更预览，右边是待我确认。手机上三栏会叠成一栏。电话在预览里打码显示。</figcaption></figure>
+  <figure class="fig">
+<div class="phone">
+  <div class="bar"><b>待我确认</b><span class="badge">2</span></div>
+  <div class="body">
+    <div class="pc">
+      <h5>发货单 2026-0XX · 补收货信息</h5>
+      <div class="why">来自你的任务「补全收货信息并安排发货」第 3 步</div>
+      <div class="row"><span>收货人</span><span class="new">张三</span></div>
+      <div class="row"><span>电话</span><span class="new">139****1234</span></div>
+      <div class="row"><span>地址</span><span class="new">某市某路 8 号</span></div>
+      <div class="big"><span>驳回</span><span class="pri">确认</span></div>
+      <div class="mini" style="margin-top:6px">确认后 10 分钟内可撤销</div>
+    </div>
+    <div class="pc"><h5>请款预审 · 无锡某某五金 ¥12,000</h5><div class="why">⚠ 收款账号 3 天前改过 · 需在电脑上处理</div></div>
+  </div>
+  <div class="tabs"><span class="on">待确认</span><span>任务</span><span>问一问</span></div>
+</div><figcaption><b>图 18 · 手机上的「待我确认」（示意，数据为虚构）。</b>手机只做三件事：收提醒、看改了什么、点确认。一屏一张卡，按钮够大；R3 里涉及钱的（如请款）在手机上只提示，要到电脑上处理。</figcaption></figure>
   <div class="tbl"><table>
-    <thead><tr><th>界面</th><th>给谁</th><th>做什么</th></tr></thead>
+    <thead><tr><th>卡片</th><th>什么时候出现</th><th>现在有没有</th></tr></thead>
     <tbody>
-      <tr><td class="k">对话</td><td>所有人（网页、桌面、APP）</td><td>问问题、派任务</td></tr>
-      <tr><td class="k">任务中心</td><td>所有人</td><td>我发起的任务、计划和进度、待我确认、自动执行日报、我的盯守</td></tr>
-      <tr><td class="k">变更预览卡</td><td>确认人</td><td>改前 → 改后；确认 / 修改 / 驳回</td></tr>
-      <tr><td class="k">企业微信</td><td>所有人</td><td>待确认、日报、盯守提醒推到企微，点开直达</td></tr>
-      <tr><td class="k">管理后台</td><td>管理员</td><td>能力目录（开放哪些接口、风险等级）、各角色审批模式上限、技能审核、轨迹、评测看板、费用</td></tr>
-      <tr><td class="k">MCP 接入</td><td>工程侧</td><td>外部智能体以本人身份接入</td></tr>
+      <tr><td class="k">计划卡</td><td>多步任务开始前</td><td>新做</td></tr>
+      <tr><td class="k">进度与轨迹</td><td>执行中</td><td>新做（网页版已有「正在查询…」的状态提示可复用）</td></tr>
+      <tr><td class="k">提问卡</td><td>有歧义、要人选</td><td>已有，复用</td></tr>
+      <tr><td class="k">变更预览卡</td><td>R2 写操作前</td><td>新做，通用一张，靠演练结果自动生成</td></tr>
+      <tr><td class="k">审批卡</td><td>R3 动作</td><td>已有 6 类（请款、订单、OA 等），改成从同一套预览生成</td></tr>
+      <tr><td class="k">结果卡</td><td>执行后，带撤销按钮</td><td>新做</td></tr>
+      <tr><td class="k">排队提示</td><td>名额已满</td><td>新做</td></tr>
+      <tr><td class="k">盯守卡 · 日报</td><td>按订阅定时推送</td><td>晨报已有，扩展</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="fig"><pre class="mermaid">stateDiagram-v2
+  state "生成预览" as G
+  state "待确认" as W
+  state "确认时重演" as R
+  state "执行中" as X
+  state "已完成，可撤销" as D
+  state "已撤销" as U
+  state "已驳回" as J
+  state "数据变了，请重新确认" as C
+  state "已过期" as E
+  state "失败，已回退" as F
+  [*] --> G
+  G --> W
+  W --> R: 点确认
+  W --> J: 点驳回
+  W --> E: 超过时限没处理
+  R --> X: 和预览一致
+  R --> C: 有人刚改过数据
+  C --> W
+  X --> D
+  X --> F
+  D --> U: 撤销窗口内点撤销</pre><figcaption><b>图 19 · 一张变更预览卡的所有状态。</b>每个状态在卡片上都有明确的文字和颜色，用户不用猜「到底做了没有」。</figcaption></figure>
+  <p>界面复用现有资产：网页版智能体页（965 行，流式对话、卡片、提问卡、常用问法）、网页与手机共用的流式、卡片、Markdown 模块，手机端的对话、审批卡、语音输入和企微登录。新做的部分按 Element Plus 和现有配色走，桌面端、网页、手机一套组件。</p>
+</section>
+
+<section id="s11">
+  <h2><span class="no">11</span>执行流畅性</h2>
+  <p>现在的智能体查一次数：平均 2.5 秒、p90 3.8 秒。换成 Harness 做多步任务后，会多出三种等待：进程启动、多轮规划、等人确认。再加上只有 2 个名额，不专门设计就会卡。</p>
+  <figure class="fig"><pre class="mermaid">flowchart LR
+  Q[用户请求] --> K{要动手的多步任务吗}
+  K -->|不是：查数 · 看卡片 · 晨报| F[快速通道 · 不占名额 · 5 秒内]
+  K -->|是| S{Harness 名额 · 共 2 个}
+  S -->|有空| H[开会话 · 已预热则立即开始]
+  S -->|已满| L[排队：告诉他排第几、大约等多久]
+  L -->|超过 2 分钟| B[转后台：可以先离开，做完企微提醒]
+  L --> H
+  E[事件任务] --> S</pre><figcaption><b>图 20 · 请求怎么分流，2 个名额怎么用。</b>大多数请求是查数，走快速通道，根本不排队；用户交互优先于事件任务；每人同时只占 1 个名额。</figcaption></figure>
+  <figure class="fig"><svg viewBox="0 0 760 122" role="img" aria-label="一个多步任务的耗时预算"><rect x="60.0" y="40.0" width="10.2" height="24.0" class="c-a"/><text x="65.1" y="32.0" class="c-s" text-anchor="middle" >路由</text><text x="65.1" y="56.0" class="c-in" text-anchor="middle" ></text><rect x="73.2" y="40.0" width="17.0" height="24.0" class="c-a"/><text x="81.7" y="82.0" class="c-s" text-anchor="middle" >进程就绪（已预热）</text><text x="81.7" y="56.0" class="c-in" text-anchor="middle" ></text><rect x="93.2" y="40.0" width="272.0" height="24.0" class="c-a"/><text x="229.2" y="32.0" class="c-s" text-anchor="middle" >出计划</text><text x="229.2" y="56.0" class="c-in" text-anchor="middle" >8 秒</text><rect x="368.2" y="40.0" width="102.0" height="24.0" class="c-a"/><text x="419.2" y="82.0" class="c-s" text-anchor="middle" >只读步骤（并行）</text><text x="419.2" y="56.0" class="c-in" text-anchor="middle" >3 秒</text><rect x="473.2" y="40.0" width="68.0" height="24.0" class="c-a"/><text x="507.2" y="32.0" class="c-s" text-anchor="middle" >演练出预览</text><text x="507.2" y="56.0" class="c-in" text-anchor="middle" >2 秒</text><rect x="544.2" y="40.0" width="90.0" height="24.0" class="c-soft"/><line x1="574.2" y1="36" x2="564.2" y2="68" class="c-ax" style="stroke-width:2"/><line x1="614.2" y1="36" x2="604.2" y2="68" class="c-ax" style="stroke-width:2"/><text x="589.2" y="82.0" class="c-s" text-anchor="middle" >等人确认（不占名额）</text><text x="589.2" y="56.0" class="c-s" text-anchor="middle" >人</text><rect x="637.2" y="40.0" width="68.0" height="24.0" class="c-a"/><text x="671.2" y="32.0" class="c-s" text-anchor="middle" >重演 + 执行</text><text x="671.2" y="56.0" class="c-in" text-anchor="middle" >2 秒</text><rect x="708.2" y="40.0" width="34.0" height="24.0" class="c-a"/><text x="725.2" y="82.0" class="c-s" text-anchor="middle" >回读核对</text><text x="725.2" y="56.0" class="c-in" text-anchor="middle" >1 秒</text><text x="60.0" y="110.0" class="c-t" text-anchor="start" >机器时间合计约 17 秒（不含人确认）；简单查询走快速通道，不经过这条链，目标 5 秒内答完。</text></svg><figcaption><b>图 21 · 一个 5 步任务的耗时预算（目标，不是实测）。</b>按秒成比例，「等人确认」那段打断了刻度：人想多久都行，因为等待期间不占 Harness 名额（见下图）。</figcaption></figure>
+  <figure class="fig"><pre class="mermaid">sequenceDiagram
+  participant U as 用户
+  participant B as ERP 后端
+  participant S as 会话管家
+  participant H as Harness 进程
+  H->>B: 第 3 步要写，请求审批
+  B->>U: 推送预览卡（工作台 · 企微）
+  B->>B: 保存任务进度与计划
+  B->>S: 等人超过 30 秒 · 释放名额
+  S->>H: 结束进程
+  Note over U,B: 用户可以过几分钟、几小时再处理
+  U->>B: 确认
+  B->>S: 申请名额
+  S->>H: 新开进程，带上任务进度摘要
+  H->>B: 从第 3 步接着做</pre><figcaption><b>图 22 · 等人确认时不占名额。</b>Harness 的审批等待没有超时，如果一直占着进程，2 个名额很快就被等确认的任务占满。所以等待超过 30 秒就存档、释放，确认后再接着做。</figcaption></figure>
+  <h3>八条做法</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>做法</th><th>解决什么</th></tr></thead>
+    <tbody>
+      <tr><td class="k">分流</td><td>查数、看卡片、晨报走现有快速通道，不进 Harness、不排队</td></tr>
+      <tr><td class="k">预热与保活</td><td>打开工作台时，有空名额就提前启动进程；空闲 15 分钟回收；冷启动耗时第一周实测</td></tr>
+      <tr><td class="k">等人时释放名额</td><td>等确认超过 30 秒就存档进度、结束进程；确认后新开进程带摘要接着做（Harness 的审批等待本身没有超时，必须我们来管）</td></tr>
+      <tr><td class="k">排队透明</td><td>告诉用户排第几、大约等多久；超过 2 分钟转后台，做完企微提醒；用户交互优先于事件任务；每人同时只占 1 个名额</td></tr>
+      <tr><td class="k">流式</td><td>计划、每一步、结果都边做边推，不等全部完成</td></tr>
+      <tr><td class="k">并行与复用</td><td>只读步骤并行跑；同一任务 60 秒内的相同查询复用结果；提示词固定前缀吃模型缓存</td></tr>
+      <tr><td class="k">失败不卡死</td><td>每步有超时，临时错误自动重试一次；大模型不可用换小模型；Harness 整体不可用时退回快速通道，并明确告诉用户</td></tr>
+      <tr><td class="k">长任务后台跑</td><td>用户关掉页面任务照常继续，进度存在后端，换设备也能接上</td></tr>
+    </tbody>
+  </table></div>
+  <div class="tbl"><table>
+    <thead><tr><th>环节</th><th>目标</th></tr></thead>
+    <tbody>
+      <tr><td class="k">简单查询（快速通道）</td><td>首字 1.5 秒内；p90 5 秒内（现在 3.8 秒）</td></tr>
+      <tr><td class="k">多步任务出计划卡</td><td>10 秒内</td></tr>
+      <tr><td class="k">每个只读步骤</td><td>3 秒内</td></tr>
+      <tr><td class="k">演练出预览</td><td>2 秒内</td></tr>
+      <tr><td class="k">确认后执行完并核对</td><td>3 秒内</td></tr>
+      <tr><td class="k">排队等待</td><td>p90 2 分钟内；超过就转后台</td></tr>
+      <tr><td class="k">事件到开始处理</td><td>有空名额时 1 分钟内</td></tr>
     </tbody>
   </table></div>
 </section>
 
-<section id="s11">
-  <h2><span class="no">11</span>评测基准：业务场景用在这里</h2>
+<section id="s12">
+  <h2><span class="no">12</span>权限体系</h2>
+  <p>一句话：<strong>智能体永远不会比本人在网页上的权限大。</strong>它没有自己的账号，每一步都以本人身份调原业务接口；在此之上再叠加开放清单、管理员上限和审批模式，层层取交集。</p>
+  <figure class="fig"><svg viewBox="0 0 720 208" role="img" aria-label="智能体的权限怎么算"><rect x="40.0" y="8.0" width="640.0" height="34.0" class="c-soft"/><text x="360.0" y="30.0" class="c-tb" text-anchor="middle" >本人在网页上能做的</text><rect x="90.0" y="48.0" width="540.0" height="34.0" class="c-asoft"/><text x="360.0" y="70.0" class="c-tb" text-anchor="middle" >∩ 智能体开放清单（读 120 · 写 212）</text><rect x="145.0" y="88.0" width="430.0" height="34.0" class="c-asoft"/><text x="360.0" y="110.0" class="c-tb" text-anchor="middle" >∩ 管理员给他的上限（只读 / 可写 / 可挣得自动）</text><rect x="200.0" y="128.0" width="320.0" height="34.0" class="c-gsoft"/><text x="360.0" y="150.0" class="c-tb" text-anchor="middle" >∩ 这一步的风险等级与审批模式</text><rect x="255.0" y="168.0" width="210.0" height="34.0" class="c-a"/><text x="360.0" y="190.0" class="c-in" text-anchor="middle" >= 智能体这一次实际能做的</text></svg><figcaption><b>图 23 · 智能体的权限是层层取交集算出来的（示意，宽度不代表数量）。</b>结果永远不会比本人在网页上的权限大。</figcaption></figure>
+  <div class="tbl"><table>
+    <thead><tr><th>层</th><th>管什么</th><th>怎么实现</th><th>现在</th></tr></thead>
+    <tbody>
+      <tr><td class="k">身份</td><td>谁在用</td><td>每个会话签发本人令牌（8 小时，和进程绑定）；Harness 进程和用户一对一</td><td>新做</td></tr>
+      <tr><td class="k">功能开关</td><td>能不能让智能体动手、能不能挣得自动</td><td>新增「智能体代办」「智能体自动执行」两个功能权限，沿用 #441 的机制，在用户管理里勾选</td><td>机制已有</td></tr>
+      <tr><td class="k">菜单与隐藏页签</td><td>能看哪些模块</td><td><code>perm.agent_menu_keys</code></td><td>已有</td></tr>
+      <tr><td class="k">行级</td><td>能看、能改哪几条</td><td>原业务接口自带：销售归属、采购员、经办人、项目可见性</td><td>已有，不用另写</td></tr>
+      <tr><td class="k">动作风险</td><td>要不要人确认</td><td>每个写接口登记 R1–R3；初判 R1 7 个、R2 128 个、R3 77 个，人工复核</td><td>新做</td></tr>
+      <tr><td class="k">职责分离与金额</td><td>自己提的不能自己批；超过金额要更高的人</td><td>原接口自带职责分离；ERP MCP 加金额阈值</td><td>部分已有</td></tr>
+      <tr><td class="k">发给模型的数据</td><td>哪些不能让模型看到原文</td><td>银行账号、身份证、工资薪酬、手机号打码</td><td>新做</td></tr>
+      <tr><td class="k">审计</td><td>出了事查得清</td><td>每条写操作记「发起人、智能体代办、确认人」；越权回放每次发版跑</td><td>回放脚本已有</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="fig"><svg viewBox="0 0 720 108" role="img" aria-label="开放写接口的风险等级"><text x="190.0" y="25.0" class="c-tb" text-anchor="end" >R1 可逆草稿</text><rect x="200.0" y="12.0" width="19.7" height="18.0" class="c-ok"/><text x="225.7" y="26.0" class="c-n" text-anchor="start" >7</text><text x="255.7" y="26.0" class="c-s" text-anchor="start" >可自动</text><text x="190.0" y="57.0" class="c-tb" text-anchor="end" >R2 业务写</text><rect x="200.0" y="44.0" width="360.0" height="18.0" class="c-g"/><text x="566.0" y="58.0" class="c-n" text-anchor="start" >128</text><text x="596.0" y="58.0" class="c-s" text-anchor="start" >先建议，可挣得自动</text><text x="190.0" y="89.0" class="c-tb" text-anchor="end" >R3 钱 · 审批 · 删除 · 对外</text><rect x="200.0" y="76.0" width="216.6" height="18.0" class="c-r"/><text x="422.6" y="90.0" class="c-n" text-anchor="start" >77</text><text x="452.6" y="90.0" class="c-s" text-anchor="start" >永远要人确认</text></svg><figcaption><b>图 24 · 212 个开放写接口的风险等级（按路径规则初判，上线前逐个人工复核）。</b>超过三分之一是 R3，永远要人确认，所以确认环节的体验必须做好。</figcaption></figure>
+  <figure class="fig"><table class="mx"><thead><tr><th>人群（角色人次）</th><th>阶段一 · 查</th><th>阶段二 · 写</th><th>阶段三 · 写</th><th>阶段四 · 自动执行</th><th>R3 动作</th></tr></thead><tbody><tr><td><b>管理层</b><small>管理层 2 · 超级管理员 1</small></td><td class="y">✓</td><td class="y">✓<small>建议模式</small></td><td class="y">✓<small>建议模式 · 管理员勾选的骨干</small></td><td class="e">可挣得<small>连续确认 20 次零修改</small></td><td class="y">✓<small>本人有权的，永远确认</small></td></tr><tr><td><b>部门主管</b><small>设计、销售、生产、售后、电工、财务负责人各 1</small></td><td class="y">✓</td><td class="y">✓<small>建议模式</small></td><td class="y">✓<small>建议模式 · 管理员勾选的骨干</small></td><td class="e">可挣得<small>连续确认 20 次零修改</small></td><td class="y">✓<small>本人有权的，永远确认</small></td></tr><tr><td><b>一线 · 单据与钱</b><small>销售 8 · 采购 3 · 仓库 3 · 财务 2 · 物流 1</small></td><td class="y">✓</td><td class="n">—</td><td class="y">✓<small>建议模式 · 管理员勾选的骨干</small></td><td class="e">可挣得<small>连续确认 20 次零修改</small></td><td class="y">✓<small>本人有权的，永远确认</small></td></tr><tr><td><b>一线 · 生产与技术</b><small>设计 3 · 装配 4 · 电工 2 · 钣金 1 · 封板 1</small></td><td class="y">✓</td><td class="n">—</td><td class="y">✓<small>建议模式 · 管理员勾选的骨干</small></td><td class="e">可挣得<small>连续确认 20 次零修改</small></td><td class="n">—<small>多数岗位没有</small></td></tr><tr><td><b>一线 · 其他</b><small>售后 5 · 人事 2</small></td><td class="y">✓</td><td class="n">—</td><td class="y">✓<small>建议模式 · 管理员勾选的骨干</small></td><td class="e">可挣得<small>连续确认 20 次零修改</small></td><td class="n">—<small>多数岗位没有</small></td></tr></tbody></table><figcaption><b>图 25 · 谁在哪个阶段能用到什么。</b>人数是角色人次（一个人可能兼多个角色）。「R3 动作」指付款审批、订单审批这类：只有本人在网页上就有权做的人才能让智能体代为准备，而且永远要本人亲自确认。</figcaption></figure>
+  <h3>几条硬规矩</h3>
+  <ul class="plain">
+    <li><span class="k">审批类动作，智能体只准备、不替人批。</span>请款审批、订单审批、OA 审批永远由有权的人亲自点；智能体可以预审、提示风险、把卡片推到他面前。</li>
+    <li><span class="k">涉及钱的 R3，手机上只提醒。</span>要在电脑上确认（屏幕大、看得全，误点少）。</li>
+    <li><span class="k">临时授权要有到期日。</span>管理员单独给某个骨干开写权限时必须设到期日，到期自动收回。</li>
+    <li><span class="k">权限变了立即生效。</span>见下图。</li>
+  </ul>
+  <figure class="fig"><pre class="mermaid">flowchart LR
+  A1[停用账号] --> X[作废他的智能体令牌]
+  A2[改密码] --> X
+  A3[改角色或菜单] --> Y[下一次调用按新权限判定]
+  A4[管理员一键暂停] --> Z[所有写操作立即拒绝]
+  X --> K[结束他的 Harness 进程]
+  K --> N[未确认的卡片作废]</pre><figcaption><b>图 26 · 权限变了，多快生效。</b>每次工具调用都按数据库里的当前权限重新判定，所以降权下一次调用就生效；停用和改密码会直接结束进程。</figcaption></figure>
+  <figure class="fig">
+<div class="adm">
+  <div class="hd"><b>用户管理 · 智能体权限</b><span class="kill">全员暂停智能体写操作</span></div>
+  <div class="grid">
+    <div><h5>按角色设上限</h5>
+      <table><thead><tr><th>角色</th><th>查</th><th>写</th><th>可挣得自动</th></tr></thead><tbody>
+        <tr><td>管理层</td><td><i class="tg on"></i></td><td><i class="tg on"></i></td><td><i class="tg on"></i></td></tr>
+        <tr><td>部门主管</td><td><i class="tg on"></i></td><td><i class="tg on"></i></td><td><i class="tg on"></i></td></tr>
+        <tr><td>销售员</td><td><i class="tg on"></i></td><td><i class="tg"></i></td><td><i class="tg"></i></td></tr>
+        <tr><td>仓库员</td><td><i class="tg on"></i></td><td><i class="tg"></i></td><td><i class="tg"></i></td></tr>
+      </tbody></table>
+      <h5 style="margin-top:10px">按人单独开（骨干）</h5>
+      <table><tbody><tr><td>某仓库员</td><td>写 <i class="tg on"></i></td><td>到期 12/31</td></tr></tbody></table>
+    </div>
+    <div><h5>动作清单（212）</h5>
+      <table><thead><tr><th>动作</th><th>等级</th><th>开放</th></tr></thead><tbody>
+        <tr><td>填收货人</td><td>R2</td><td><i class="tg on"></i></td></tr>
+        <tr><td>提交请款</td><td>R3</td><td><i class="tg on"></i></td></tr>
+        <tr><td>删除采购明细</td><td>R3</td><td><i class="tg"></i></td></tr>
+      </tbody></table>
+      <h5 style="margin-top:10px">本月</h5>
+      <table><tbody><tr><td>写操作</td><td>—</td></tr><tr><td>驳回 / 撤销</td><td>— / —</td></tr><tr><td>模型费用</td><td>— / ¥1,000</td></tr></tbody></table>
+    </div>
+  </div>
+</div><figcaption><b>图 27 · 管理员配置智能体权限的页面（示意）。</b>放在现有「用户管理」里，和 #441 做过的「功能权限」同一套机制：按角色设上限，按人单独开并设到期日；动作清单可逐个关；右上角一键全员暂停写操作。</figcaption></figure>
+  <h3>复核与告警</h3>
+  <ul class="plain">
+    <li>每月自动出一份智能体权限复核：谁开了什么、用了多少、被驳回和撤销多少，管理员确认一遍。</li>
+    <li>异常告警推给管理员：一个人短时间内写操作激增、下班时间的 R3、连续被驳回、令牌在异常时间段使用。</li>
+    <li>越权回放脚本（<code>ops/agent-perm-replay.py</code>）扩展到写工具，每次发版必须 0 条。</li>
+  </ul>
+</section>
+
+<section id="s13">
+  <h2><span class="no">13</span>评测基准：业务场景用在这里</h2>
   <p>Codex 的能力是在真实代码任务上量出来的。我们的能力，也要在真实业务任务上量。这就是业务场景在 L3 方案里的位置：当考题，不当流程。</p>
-  <figure class="fig"><svg viewBox="0 0 720 212" role="img" aria-label="ERP-Bench 评测金字塔"><polygon points="235,10 365,10 425,72 175,72" class="c-gsoft" style="stroke:var(--line)"/><text x="300.0" y="36.0" class="c-tb" text-anchor="middle" >L3 行动</text><text x="300.0" y="55.0" class="c-s" text-anchor="middle" >多步、含写操作 · 影子库里看数据终态</text><text x="441.0" y="46.0" class="c-n" text-anchor="start" >目标 ≥ 70%</text><polygon points="175,76 425,76 515,138 85,138" class="c-asoft" style="stroke:var(--line)"/><text x="300.0" y="102.0" class="c-tb" text-anchor="middle" >L2 分析</text><text x="300.0" y="121.0" class="c-s" text-anchor="middle" >多接口汇总判断 · 真实提问 + 各部门补题</text><text x="531.0" y="112.0" class="c-n" text-anchor="start" >目标 ≥ 85%</text><polygon points="85,142 515,142 605,204 -5,204" class="c-soft" style="stroke:var(--line)"/><text x="300.0" y="168.0" class="c-tb" text-anchor="middle" >L1 查询</text><text x="300.0" y="187.0" class="c-s" text-anchor="middle" >单接口能答 · 近 30 天 206 条真实提问</text><text x="621.0" y="178.0" class="c-n" text-anchor="start" >目标 ≥ 85%</text></svg><figcaption><b>图 16 · 评测题库（ERP-Bench）分三档。</b>越往上越接近 L3：L3 行动题在生产库的每晚副本里真跑，看数据最后对不对。</figcaption></figure>
+  <figure class="fig"><svg viewBox="0 0 720 212" role="img" aria-label="ERP-Bench 评测金字塔"><polygon points="235,10 365,10 425,72 175,72" class="c-gsoft" style="stroke:var(--line)"/><text x="300.0" y="36.0" class="c-tb" text-anchor="middle" >L3 行动</text><text x="300.0" y="55.0" class="c-s" text-anchor="middle" >多步、含写操作 · 影子库里看数据终态</text><text x="441.0" y="46.0" class="c-n" text-anchor="start" >目标 ≥ 70%</text><polygon points="175,76 425,76 515,138 85,138" class="c-asoft" style="stroke:var(--line)"/><text x="300.0" y="102.0" class="c-tb" text-anchor="middle" >L2 分析</text><text x="300.0" y="121.0" class="c-s" text-anchor="middle" >多接口汇总判断 · 真实提问 + 各部门补题</text><text x="531.0" y="112.0" class="c-n" text-anchor="start" >目标 ≥ 85%</text><polygon points="85,142 515,142 605,204 -5,204" class="c-soft" style="stroke:var(--line)"/><text x="300.0" y="168.0" class="c-tb" text-anchor="middle" >L1 查询</text><text x="300.0" y="187.0" class="c-s" text-anchor="middle" >单接口能答 · 近 30 天 206 条真实提问</text><text x="621.0" y="178.0" class="c-n" text-anchor="start" >目标 ≥ 85%</text></svg><figcaption><b>图 28 · 评测题库（ERP-Bench）分三档。</b>越往上越接近 L3：L3 行动题在生产库的每晚副本里真跑，看数据最后对不对。</figcaption></figure>
   <div class="tbl"><table>
     <thead><tr><th>档位</th><th>题型</th><th>来源</th><th>怎么判分</th></tr></thead>
     <tbody>
@@ -621,12 +871,12 @@ flowchart LR
   R --> S[判分：答案 · 数据终态 · 越权 · 费用]
   S --> G{比上一版退步了吗}
   G -->|没有| OK[放行发版]
-  G -->|退步| NO[拦下 · 出改进单]</pre><figcaption><b>图 17 · 每次发版都要过的评测闸门。</b></figcaption></figure>
+  G -->|退步| NO[拦下 · 出改进单]</pre><figcaption><b>图 29 · 每次发版都要过的评测闸门。</b></figcaption></figure>
   <p><strong>首批试点场景</strong>（用来验证通用能力，不单独开发）：请款预审、仓库建档与出库、采购对账。选它们是因为近 60 天这三块的手工操作占了 55%。每次发版都跑全量题库，分数不退步才放行。</p>
 </section>
 
-<section id="s12">
-  <h2><span class="no">12</span>实施路线（按能力，不按流程）</h2>
+<section id="s14">
+  <h2><span class="no">14</span>实施路线（按能力，不按流程）</h2>
   <p>国庆后开工，约 15 周半，四个阶段。第一周先做审计里的未确认项实测，不通过的项当周调整方案。</p>
   <div class="diagram"><pre class="mermaid">
 gantt
@@ -644,18 +894,18 @@ gantt
   <div class="tbl"><table>
     <thead><tr><th>阶段</th><th>时间</th><th>交付</th><th>开放给谁</th><th>验收</th></tr></thead>
     <tbody>
-      <tr><td class="k">一 · 运行时与通用读</td><td class="num">10/08–10/31</td><td>第一周实测（插件禁用后能否启动、单进程内存、erp-gate 失效时的行为、事件流能否满足工作台）；Harness fork 与加固配置、erp-gate、启动自检；会话管家（2 并发、回收、续接）；模型网关；ERP MCP 服务（读工具 120 个、打码、工具说明补充）；评测 v1；工作台第一版</td><td>全员只读（多步任务受 2 并发限制，简单查询走快速通道）</td><td>审计加固清单全部通过；L1/L2 通过率 ≥ 85%；越权回放 0；容器无法访问公网</td></tr>
-      <tr><td class="k">二 · 通用写</td><td class="num">11/01–11/28</td><td>写接口 212 个登记与风险分级；演练沙箱（含上传文件，在生产 Postgres 上验证）；审批记录绑定；工作台的变更预览与审批；撤销与熔断；影子库；L3 单步题 50 道</td><td>管理层和各部门主管（建议模式，已拍板）</td><td>L3 单步题通过率 ≥ 80%；拔掉 erp-gate 后写操作仍全部被拒；零误写</td></tr>
-      <tr><td class="k">三 · 规划与主动</td><td class="num">11/29–12/26</td><td>多步执行与核对、挂起恢复；ERP 侧事件、订阅与盯守；任务队列；子 Agent 评估；三个试点场景走影子 → 建议</td><td>扩到各部门骨干</td><td>L3 多步题 ≥ 70%；试点场景影子期达标</td></tr>
-      <tr><td class="k">四 · 学习与开放</td><td class="num">12/27–01/23</td><td>渐进授权；纠错样本、失败聚类、技能沉淀；文档理解；管理后台；MCP 对外开放</td><td>按渐进授权逐步放开自动</td><td>走通一次改进闭环；周活 ≥ 20 人</td></tr>
+      <tr><td class="k">一 · 运行时与通用读</td><td class="num">10/08–10/31</td><td>第一周实测（插件禁用后能否启动、单进程内存、erp-gate 失效时的行为、事件流能否满足工作台）；Harness fork 与加固配置、erp-gate、启动自检；会话管家（2 并发、回收、续接）；模型网关；ERP MCP 服务（读工具 120 个、打码、工具说明补充）；评测 v1；工作台第一版（桌面三栏）、分流与排队、预热与保活</td><td>全员只读（多步任务受 2 并发限制，简单查询走快速通道）</td><td>审计加固清单全部通过；L1/L2 通过率 ≥ 85%；越权回放 0；容器无法访问公网</td></tr>
+      <tr><td class="k">二 · 通用写</td><td class="num">11/01–11/28</td><td>写接口 212 个登记与风险分级；演练沙箱（含上传文件，在生产 Postgres 上验证）；审批记录绑定；工作台的变更预览与审批；撤销与熔断；影子库；L3 单步题 50 道；「智能体代办」功能权限与管理员配置页；等人时释放名额；手机「待我确认」</td><td>管理层和各部门主管（建议模式，已拍板）</td><td>L3 单步题通过率 ≥ 80%；拔掉 erp-gate 后写操作仍全部被拒；零误写</td></tr>
+      <tr><td class="k">三 · 规划与主动</td><td class="num">11/29–12/26</td><td>多步执行与核对、挂起恢复；ERP 侧事件、订阅与盯守；任务队列；子 Agent 评估；三个试点场景走影子 → 建议；业务页面「让智能体做」入口扩到主要模块；盯守与日报</td><td>扩到各部门骨干</td><td>L3 多步题 ≥ 70%；试点场景影子期达标</td></tr>
+      <tr><td class="k">四 · 学习与开放</td><td class="num">12/27–01/23</td><td>渐进授权；纠错样本、失败聚类、技能沉淀；文档理解；管理后台；MCP 对外开放；「智能体自动执行」功能权限；权限月度复核与异常告警</td><td>按渐进授权逐步放开自动</td><td>走通一次改进闭环；周活 ≥ 20 人</td></tr>
     </tbody>
   </table></div>
-<figure class="fig"><svg viewBox="0 0 760 170" role="img" aria-label="各阶段开放给谁"><text x="312.0" y="16.0" class="c-s" text-anchor="middle" >一 · 10/08–10/31</text><text x="436.0" y="16.0" class="c-s" text-anchor="middle" >二 · 11/01–11/28</text><text x="560.0" y="16.0" class="c-s" text-anchor="middle" >三 · 11/29–12/26</text><text x="684.0" y="16.0" class="c-s" text-anchor="middle" >四 · 12/27–01/23</text><line x1="250" y1="24" x2="250" y2="166" class="c-grid"/><line x1="374" y1="24" x2="374" y2="166" class="c-grid"/><line x1="498" y1="24" x2="498" y2="166" class="c-grid"/><line x1="622" y1="24" x2="622" y2="166" class="c-grid"/><line x1="746" y1="24" x2="746" y2="166" class="c-grid"/><text x="240.0" y="47.0" class="c-t" text-anchor="end" >全员 · 只读</text><rect x="253.0" y="34.0" width="490.0" height="18.0" class="c-a"/><text x="240.0" y="81.0" class="c-t" text-anchor="end" >管理层 + 各部门主管 · 写（建议模式）</text><rect x="377.0" y="68.0" width="366.0" height="18.0" class="c-g"/><text x="240.0" y="115.0" class="c-t" text-anchor="end" >各部门骨干 · 写（建议模式）</text><rect x="501.0" y="102.0" width="242.0" height="18.0" class="c-g"/><text x="240.0" y="149.0" class="c-t" text-anchor="end" >自动执行 · 渐进授权挣得</text><rect x="625.0" y="136.0" width="118.0" height="18.0" class="c-ok"/></svg><figcaption><b>图 18 · 开放范围随阶段扩大。</b>写能力从第二阶段起只给管理层和主管，且每一步都要确认；自动执行要到第四阶段，靠「连续确认 20 次零修改」挣得。</figcaption></figure>
+<figure class="fig"><svg viewBox="0 0 760 170" role="img" aria-label="各阶段开放给谁"><text x="312.0" y="16.0" class="c-s" text-anchor="middle" >一 · 10/08–10/31</text><text x="436.0" y="16.0" class="c-s" text-anchor="middle" >二 · 11/01–11/28</text><text x="560.0" y="16.0" class="c-s" text-anchor="middle" >三 · 11/29–12/26</text><text x="684.0" y="16.0" class="c-s" text-anchor="middle" >四 · 12/27–01/23</text><line x1="250" y1="24" x2="250" y2="166" class="c-grid"/><line x1="374" y1="24" x2="374" y2="166" class="c-grid"/><line x1="498" y1="24" x2="498" y2="166" class="c-grid"/><line x1="622" y1="24" x2="622" y2="166" class="c-grid"/><line x1="746" y1="24" x2="746" y2="166" class="c-grid"/><text x="240.0" y="47.0" class="c-t" text-anchor="end" >全员 · 只读</text><rect x="253.0" y="34.0" width="490.0" height="18.0" class="c-a"/><text x="240.0" y="81.0" class="c-t" text-anchor="end" >管理层 + 各部门主管 · 写（建议模式）</text><rect x="377.0" y="68.0" width="366.0" height="18.0" class="c-g"/><text x="240.0" y="115.0" class="c-t" text-anchor="end" >各部门骨干 · 写（建议模式）</text><rect x="501.0" y="102.0" width="242.0" height="18.0" class="c-g"/><text x="240.0" y="149.0" class="c-t" text-anchor="end" >自动执行 · 渐进授权挣得</text><rect x="625.0" y="136.0" width="118.0" height="18.0" class="c-ok"/></svg><figcaption><b>图 30 · 开放范围随阶段扩大。</b>写能力从第二阶段起只给管理层和主管，且每一步都要确认；自动执行要到第四阶段，靠「连续确认 20 次零修改」挣得。</figcaption></figure>
   </section>
 
-<section id="s13">
-  <h2><span class="no">13</span>指标</h2>
-  <figure class="fig"><svg viewBox="0 0 720 232" role="img" aria-label="关键指标的现状与目标"><text x="220.0" y="30.0" class="c-tb" text-anchor="end" >周活跃用户（人）</text><text x="220.0" y="45.0" class="c-s" text-anchor="end" >越高越好</text><rect x="230.0" y="14.0" width="140.0" height="16.0" class="c-m"/><text x="376.0" y="26.0" class="c-n" text-anchor="start" >现状 7</text><rect x="230.0" y="34.0" width="400.0" height="16.0" class="c-a"/><text x="636.0" y="46.0" class="c-n" text-anchor="start" >目标 20</text><text x="220.0" y="86.0" class="c-tb" text-anchor="end" >可用工具（个）</text><text x="220.0" y="101.0" class="c-s" text-anchor="end" >越高越好</text><rect x="230.0" y="70.0" width="37.3" height="16.0" class="c-m"/><text x="273.3" y="82.0" class="c-n" text-anchor="start" >现状 31</text><rect x="230.0" y="90.0" width="400.0" height="16.0" class="c-a"/><text x="636.0" y="102.0" class="c-n" text-anchor="start" >目标 332</text><text x="220.0" y="142.0" class="c-tb" text-anchor="end" >请款审批 p90（小时）</text><text x="220.0" y="157.0" class="c-s" text-anchor="end" >越低越好</text><rect x="230.0" y="126.0" width="400.0" height="16.0" class="c-m"/><text x="636.0" y="138.0" class="c-n" text-anchor="start" >现状 24.7</text><rect x="230.0" y="146.0" width="129.6" height="16.0" class="c-a"/><text x="365.6" y="158.0" class="c-n" text-anchor="start" >目标 8</text><text x="220.0" y="198.0" class="c-tb" text-anchor="end" >试点场景人工操作（次 / 60 天）</text><text x="220.0" y="213.0" class="c-s" text-anchor="end" >越低越好</text><rect x="230.0" y="182.0" width="400.0" height="16.0" class="c-m"/><text x="636.0" y="194.0" class="c-n" text-anchor="start" >现状 2,468</text><rect x="230.0" y="202.0" width="200.0" height="16.0" class="c-a"/><text x="436.0" y="214.0" class="c-n" text-anchor="start" >目标 1,234</text></svg><figcaption><b>图 19 · 关键指标：现状 → 目标。</b>每一行用自己的刻度，只比同一行的两根柱子。可用工具现状 31 = 25 个查询工具 + 6 类卡片。</figcaption></figure>
+<section id="s15">
+  <h2><span class="no">15</span>指标</h2>
+  <figure class="fig"><svg viewBox="0 0 720 232" role="img" aria-label="关键指标的现状与目标"><text x="220.0" y="30.0" class="c-tb" text-anchor="end" >周活跃用户（人）</text><text x="220.0" y="45.0" class="c-s" text-anchor="end" >越高越好</text><rect x="230.0" y="14.0" width="140.0" height="16.0" class="c-m"/><text x="376.0" y="26.0" class="c-n" text-anchor="start" >现状 7</text><rect x="230.0" y="34.0" width="400.0" height="16.0" class="c-a"/><text x="636.0" y="46.0" class="c-n" text-anchor="start" >目标 20</text><text x="220.0" y="86.0" class="c-tb" text-anchor="end" >可用工具（个）</text><text x="220.0" y="101.0" class="c-s" text-anchor="end" >越高越好</text><rect x="230.0" y="70.0" width="37.3" height="16.0" class="c-m"/><text x="273.3" y="82.0" class="c-n" text-anchor="start" >现状 31</text><rect x="230.0" y="90.0" width="400.0" height="16.0" class="c-a"/><text x="636.0" y="102.0" class="c-n" text-anchor="start" >目标 332</text><text x="220.0" y="142.0" class="c-tb" text-anchor="end" >请款审批 p90（小时）</text><text x="220.0" y="157.0" class="c-s" text-anchor="end" >越低越好</text><rect x="230.0" y="126.0" width="400.0" height="16.0" class="c-m"/><text x="636.0" y="138.0" class="c-n" text-anchor="start" >现状 24.7</text><rect x="230.0" y="146.0" width="129.6" height="16.0" class="c-a"/><text x="365.6" y="158.0" class="c-n" text-anchor="start" >目标 8</text><text x="220.0" y="198.0" class="c-tb" text-anchor="end" >试点场景人工操作（次 / 60 天）</text><text x="220.0" y="213.0" class="c-s" text-anchor="end" >越低越好</text><rect x="230.0" y="182.0" width="400.0" height="16.0" class="c-m"/><text x="636.0" y="194.0" class="c-n" text-anchor="start" >现状 2,468</text><rect x="230.0" y="202.0" width="200.0" height="16.0" class="c-a"/><text x="436.0" y="214.0" class="c-n" text-anchor="start" >目标 1,234</text></svg><figcaption><b>图 31 · 关键指标：现状 → 目标。</b>每一行用自己的刻度，只比同一行的两根柱子。可用工具现状 31 = 25 个查询工具 + 6 类卡片。</figcaption></figure>
   <div class="tbl"><table>
     <thead><tr><th>类别</th><th>指标</th><th>现状</th><th>目标</th></tr></thead>
     <tbody>
@@ -666,14 +916,16 @@ gantt
       <tr><td class="k">采用</td><td>周活跃用户；每周任务数</td><td>7 人；—</td><td>20 人以上；持续增长</td></tr>
       <tr><td class="k">效率</td><td>试点场景人工操作次数；请款审批 p90</td><td>近 60 天 2,468 次；24.7 小时</td><td>降 50%；8 小时内</td></tr>
       <tr><td class="k">体验</td><td>查询 p90；计划卡出现时间</td><td>3.8 秒；—</td><td>&lt; 5 秒；&lt; 10 秒</td></tr>
+      <tr><td class="k">体验</td><td>排队等待 p90；从推送到确认的中位数</td><td>—；—</td><td>≤ 2 分钟；持续下降</td></tr>
+      <tr><td class="k">体验</td><td>预览卡驳回率；用户点赞比例</td><td>—；—</td><td>持续下降；≥ 80%</td></tr>
       <tr><td class="k">成本</td><td>每个任务的费用；月度总额</td><td>未记账</td><td>模型网关逐次记账；月度上限 1000 元（临时）</td></tr>
     </tbody>
   </table></div>
 </section>
 
-<section id="s14">
-  <h2><span class="no">14</span>风险与对策</h2>
-  <figure class="fig"><svg viewBox="0 0 720 300" role="img" aria-label="采取对策后的残余风险"><rect x="80" y="174" width="138" height="78" class="c-soft" style="stroke:var(--line)"/><rect x="80" y="94" width="138" height="78" class="c-soft" style="stroke:var(--line)"/><rect x="80" y="14" width="138" height="78" class="c-gsoft" style="stroke:var(--line)"/><rect x="220" y="174" width="138" height="78" class="c-soft" style="stroke:var(--line)"/><rect x="220" y="94" width="138" height="78" class="c-gsoft" style="stroke:var(--line)"/><rect x="220" y="14" width="138" height="78" class="c-rsoft" style="stroke:var(--line)"/><rect x="360" y="174" width="138" height="78" class="c-soft" style="stroke:var(--line)"/><rect x="360" y="94" width="138" height="78" class="c-gsoft" style="stroke:var(--line)"/><rect x="360" y="14" width="138" height="78" class="c-rsoft" style="stroke:var(--line)"/><text x="150.0" y="272.0" class="c-s" text-anchor="middle" >低</text><text x="70.0" y="218.0" class="c-s" text-anchor="end" >低</text><text x="290.0" y="272.0" class="c-s" text-anchor="middle" >中</text><text x="70.0" y="138.0" class="c-s" text-anchor="end" >中</text><text x="430.0" y="272.0" class="c-s" text-anchor="middle" >高</text><text x="70.0" y="58.0" class="c-s" text-anchor="end" >高</text><text x="290.0" y="290.0" class="c-t" text-anchor="middle" >发生的可能性 →</text><text x="18.0" y="134.0" class="c-t" text-anchor="middle" transform="rotate(-90 18 134.0)">影响 →</text><circle cx="108" cy="54.0" r="13" class="c-a"/><text x="108.0" y="58.0" class="c-in" text-anchor="middle" >1</text><circle cx="142" cy="54.0" r="13" class="c-a"/><text x="142.0" y="58.0" class="c-in" text-anchor="middle" >4</text><circle cx="388" cy="134.0" r="13" class="c-a"/><text x="388.0" y="138.0" class="c-in" text-anchor="middle" >2</text><circle cx="388" cy="214.0" r="13" class="c-a"/><text x="388.0" y="218.0" class="c-in" text-anchor="middle" >3</text><circle cx="248" cy="134.0" r="13" class="c-a"/><text x="248.0" y="138.0" class="c-in" text-anchor="middle" >5</text><circle cx="248" cy="214.0" r="13" class="c-a"/><text x="248.0" y="218.0" class="c-in" text-anchor="middle" >6</text><circle cx="108" cy="214.0" r="13" class="c-a"/><text x="108.0" y="218.0" class="c-in" text-anchor="middle" >7</text><circle cx="108" cy="134.0" r="13" class="c-a"/><text x="108.0" y="138.0" class="c-in" text-anchor="middle" >8</text><circle cx="248" cy="54.0" r="13" class="c-a"/><text x="248.0" y="58.0" class="c-in" text-anchor="middle" >9</text><text x="522.0" y="28.0" class="c-t" text-anchor="start" >1  Harness 本身不安全</text><text x="522.0" y="52.0" class="c-t" text-anchor="start" >2  预览版破坏性变更</text><text x="522.0" y="76.0" class="c-t" text-anchor="start" >3  只有 2 个并发名额</text><text x="522.0" y="100.0" class="c-t" text-anchor="start" >4  写错数据</text><text x="522.0" y="124.0" class="c-t" text-anchor="start" >5  提示注入</text><text x="522.0" y="148.0" class="c-t" text-anchor="start" >6  模型调错工具</text><text x="522.0" y="172.0" class="c-t" text-anchor="start" >7  演练占锁 / 预览后数据变了</text><text x="522.0" y="196.0" class="c-t" text-anchor="start" >8  模型费用失控</text><text x="522.0" y="220.0" class="c-t" text-anchor="start" >9  一线不用</text></svg><figcaption><b>图 20 · 采取对策后的残余风险（我的评估）。</b>右上角最该盯。「一线不用」和「Harness 本身不安全」影响最大；后者靠 ERP 侧兜底把可能性压到了低。</figcaption></figure>
+<section id="s16">
+  <h2><span class="no">16</span>风险与对策</h2>
+  <figure class="fig"><svg viewBox="0 0 720 300" role="img" aria-label="采取对策后的残余风险"><rect x="80" y="174" width="138" height="78" class="c-soft" style="stroke:var(--line)"/><rect x="80" y="94" width="138" height="78" class="c-soft" style="stroke:var(--line)"/><rect x="80" y="14" width="138" height="78" class="c-gsoft" style="stroke:var(--line)"/><rect x="220" y="174" width="138" height="78" class="c-soft" style="stroke:var(--line)"/><rect x="220" y="94" width="138" height="78" class="c-gsoft" style="stroke:var(--line)"/><rect x="220" y="14" width="138" height="78" class="c-rsoft" style="stroke:var(--line)"/><rect x="360" y="174" width="138" height="78" class="c-soft" style="stroke:var(--line)"/><rect x="360" y="94" width="138" height="78" class="c-gsoft" style="stroke:var(--line)"/><rect x="360" y="14" width="138" height="78" class="c-rsoft" style="stroke:var(--line)"/><text x="150.0" y="272.0" class="c-s" text-anchor="middle" >低</text><text x="70.0" y="218.0" class="c-s" text-anchor="end" >低</text><text x="290.0" y="272.0" class="c-s" text-anchor="middle" >中</text><text x="70.0" y="138.0" class="c-s" text-anchor="end" >中</text><text x="430.0" y="272.0" class="c-s" text-anchor="middle" >高</text><text x="70.0" y="58.0" class="c-s" text-anchor="end" >高</text><text x="290.0" y="290.0" class="c-t" text-anchor="middle" >发生的可能性 →</text><text x="18.0" y="134.0" class="c-t" text-anchor="middle" transform="rotate(-90 18 134.0)">影响 →</text><circle cx="108" cy="54.0" r="13" class="c-a"/><text x="108.0" y="58.0" class="c-in" text-anchor="middle" >1</text><circle cx="142" cy="54.0" r="13" class="c-a"/><text x="142.0" y="58.0" class="c-in" text-anchor="middle" >4</text><circle cx="388" cy="134.0" r="13" class="c-a"/><text x="388.0" y="138.0" class="c-in" text-anchor="middle" >2</text><circle cx="388" cy="214.0" r="13" class="c-a"/><text x="388.0" y="218.0" class="c-in" text-anchor="middle" >3</text><circle cx="248" cy="134.0" r="13" class="c-a"/><text x="248.0" y="138.0" class="c-in" text-anchor="middle" >5</text><circle cx="248" cy="214.0" r="13" class="c-a"/><text x="248.0" y="218.0" class="c-in" text-anchor="middle" >6</text><circle cx="108" cy="214.0" r="13" class="c-a"/><text x="108.0" y="218.0" class="c-in" text-anchor="middle" >7</text><circle cx="108" cy="134.0" r="13" class="c-a"/><text x="108.0" y="138.0" class="c-in" text-anchor="middle" >8</text><circle cx="248" cy="54.0" r="13" class="c-a"/><text x="248.0" y="58.0" class="c-in" text-anchor="middle" >9</text><text x="522.0" y="28.0" class="c-t" text-anchor="start" >1  Harness 本身不安全</text><text x="522.0" y="52.0" class="c-t" text-anchor="start" >2  预览版破坏性变更</text><text x="522.0" y="76.0" class="c-t" text-anchor="start" >3  只有 2 个并发名额</text><text x="522.0" y="100.0" class="c-t" text-anchor="start" >4  写错数据</text><text x="522.0" y="124.0" class="c-t" text-anchor="start" >5  提示注入</text><text x="522.0" y="148.0" class="c-t" text-anchor="start" >6  模型调错工具</text><text x="522.0" y="172.0" class="c-t" text-anchor="start" >7  演练占锁 / 预览后数据变了</text><text x="522.0" y="196.0" class="c-t" text-anchor="start" >8  模型费用失控</text><text x="522.0" y="220.0" class="c-t" text-anchor="start" >9  一线不用</text></svg><figcaption><b>图 32 · 采取对策后的残余风险（我的评估）。</b>右上角最该盯。「一线不用」和「Harness 本身不安全」影响最大；后者靠 ERP 侧兜底把可能性压到了低。</figcaption></figure>
   <div class="tbl"><table>
     <thead><tr><th>风险</th><th>对策</th></tr></thead>
     <tbody>
@@ -690,8 +942,8 @@ gantt
   </table></div>
 </section>
 
-<section id="s15">
-  <h2><span class="no">15</span>拍板结果</h2>
+<section id="s17">
+  <h2><span class="no">17</span>拍板结果</h2>
   <div class="tbl"><table>
     <thead><tr><th>#</th><th>事项</th><th>结果（2026-10-01）</th></tr></thead>
     <tbody>
