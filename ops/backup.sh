@@ -19,7 +19,8 @@ cd "$PROJECT_DIR"
 BACKUP_DIR="${BACKUP_DIR:-/backup}"
 KEEP_DAYS="${KEEP_DAYS:-30}"
 # 🆕 uploads 备份数量上限：每个约数百 MB，频繁发版会撑爆磁盘，超出只保留最新 N 个（0=不限）
-KEEP_UPLOADS="${KEEP_UPLOADS:-7}"
+# 🆕 2026-10-01 7 → 3：每份是附件全量（约 2.2G），7 份占 16G；老板拍板改成留 3 份
+KEEP_UPLOADS="${KEEP_UPLOADS:-3}"
 # 🆕 SKIP_UPLOADS=1：只备份数据库，跳过 uploads（发版前置备份用——发版不动 uploads 卷，日常 cron 已每日全备）
 SKIP_UPLOADS="${SKIP_UPLOADS:-0}"
 COMPOSE_FILE="docker-compose.prod.yml"

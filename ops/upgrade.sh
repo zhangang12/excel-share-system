@@ -82,6 +82,16 @@ done
 echo "[5/5] 健康检查..."
 if bash "$SCRIPT_DIR/health-check.sh" --quiet; then
     echo "✓ 升级成功：$OLD_COMMIT → $NEW_COMMIT"
+    # 🆕 2026-10-01 发版成功后清理旧镜像。原来从不清：94 个被替换下来的 <none> 镜像、
+    #   255 份旧代码层积到 31G，把磁盘顶到 85%（另一半原因是后端缺 .dockerignore，见 backend/.dockerignore）。
+    #   · image prune 只删悬空镜像（<none>），正在用的不动；回滚是「切 commit + 重建」，不依赖旧镜像。
+    #   · builder prune 只删 72 小时没用过的构建缓存；依赖层每次构建都会用到，不会被删，构建速度不受影响。
+    #   ⚠️ 不要换成 `docker system prune --volumes`——会删数据卷（数据库、附件）。
+    #   ⚠️ 不要在生产上跑 `docker system df`（明确禁止过）。
+    #   清理失败不影响发版结果。
+    docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -f --filter until=72h >/dev/null 2>&1 || true
+    echo "  → 已清理旧镜像和 72 小时没用过的构建缓存（磁盘占用 $(df -h / | awk 'NR==2{print $5}')）"
     exit 0
 else
     echo "✗ 健康检查未通过，回滚"

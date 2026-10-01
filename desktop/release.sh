@@ -169,5 +169,13 @@ EXE="同辉项目管理 Setup ${VERSION}.exe"
 "${SSH[@]}" "mkdir -p '$REMOTE_DIR'"
 "${SCP[@]}" "$DESKTOP_DIR/dist/$EXE" "$DESKTOP_DIR/dist/$EXE.blockmap" "$DESKTOP_DIR/dist/latest.yml" "$DESKTOP_DIR/version.json" "$TARGET:$REMOTE_DIR/"
 
+# 🆕 2026-10-01 服务器上只留最近 5 个版本的安装包（每个约 76MB，原来 71 个全留着，占 5.3G）。
+#   · 只删带版本号的 .exe；客户端自动更新只取 latest.yml 指向的最新一个。
+#   · .blockmap 全部保留（总共才几 MB）：electron-updater 差量更新时要从服务器取「旧版本的 blockmap」，
+#     删了就退回整包下载。
+#   · setup.exe（固定名的下载包）、latest.yml、version.json、fix-white.bat 不动。
+#   清理失败不影响发布结果。
+"${SSH[@]}" "cd '$REMOTE_DIR' && ls 同辉项目管理\\ Setup\\ *.exe 2>/dev/null | sort -V | head -n -5 | xargs -r -d '\\n' rm -f --" || true
+
 echo ""
 echo "✓ 已发布 ${VERSION}，客户端下一轮检查将收到更新。"

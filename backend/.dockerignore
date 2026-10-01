@@ -1,0 +1,17 @@
+# 🆕 2026-10-01 构建上下文排除清单。
+# ⚠️ Docker 构建只认这个文件，**不认 .gitignore**。原来后端没有它，服务器上一个 6 月遗留的
+#    .venv-build（88MB，任何脚本都不用）每次发版都被 `COPY . .` 打进镜像，
+#    于是每版多出约 90MB 的代码层，255 份旧层积到 22G，把磁盘顶到 85%。
+.venv*
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# 本地开发的 SQLite 库和文件（生产用 Postgres + /app/uploads 卷；data/ 启动时 config.py 会自己建）
+data/
+*.db
+*.db.bak*
+# 测试只在本地跑
+tests/
+.env*
+*.log
