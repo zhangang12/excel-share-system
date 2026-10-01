@@ -1,0 +1,460 @@
+<title>同辉智能体 L3 重构方案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --paper:#f4f5f2; --surface:#ffffff; --ink:#1b2430; --muted:#5b6670; --line:#d8ddd7;
+  --accent:#2b5e65; --accent-soft:#e3eeee; --gate:#a86c12; --gate-soft:#f7ecd9;
+  --ok:#3a7650; --risk:#ad3f35; --risk-soft:#f6e3e0; --code-bg:#eef1ee;
+  --display:"Noto Serif SC","Songti SC","STSong",serif;
+  --body:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10151a; --surface:#172027; --ink:#e3e8ea; --muted:#9aa6ae; --line:#29343c;
+    --accent:#7ab6bc; --accent-soft:#1d3135; --gate:#e2a64c; --gate-soft:#33281a;
+    --ok:#7fbf92; --risk:#e98a7f; --risk-soft:#3a2220; --code-bg:#1d272e; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10151a; --surface:#172027; --ink:#e3e8ea; --muted:#9aa6ae; --line:#29343c;
+  --accent:#7ab6bc; --accent-soft:#1d3135; --gate:#e2a64c; --gate-soft:#33281a;
+  --ok:#7fbf92; --risk:#e98a7f; --risk-soft:#3a2220; --code-bg:#1d272e; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.75;padding-inline:16px;padding-block:28px 64px}
+.wrap{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:200px minmax(0,1fr);gap:48px}
+@media (max-width:980px){.wrap{grid-template-columns:minmax(0,1fr);gap:20px}}
+aside.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 20px);align-self:start;font-size:13px}
+@media (max-width:980px){aside.toc{position:static}}
+.toc h2{font-family:var(--body);font-size:12px;letter-spacing:.12em;color:var(--muted);margin:0 0 8px;font-weight:600}
+.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+@media (max-width:980px){.toc ol{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
+.toc a{color:var(--muted);text-decoration:none;display:block;padding:3px 8px;border-left:2px solid transparent}
+.toc a:hover,.toc a:focus-visible{color:var(--accent);border-left-color:var(--accent);outline:none}
+main{min-width:0;max-width:800px}
+header.top{display:grid;gap:10px;padding-bottom:22px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.eyebrow{font-size:12px;letter-spacing:.14em;color:var(--muted);font-weight:600}
+.eyebrow b{color:var(--gate);font-weight:600}
+h1{font-family:var(--display);font-size:clamp(28px,4.4vw,40px);line-height:1.25;margin:0;text-wrap:balance;font-weight:700}
+.lede{font-size:16.5px;color:var(--ink);margin:0;max-width:64ch}
+.lede-note{font-size:13.5px;color:var(--muted);margin:0;max-width:66ch}
+section{padding-top:34px}
+h2{font-family:var(--display);font-size:24px;line-height:1.35;margin:0 0 12px;text-wrap:balance;font-weight:700;display:flex;gap:12px;align-items:baseline}
+h2 .no{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:600;letter-spacing:.04em}
+h3{font-size:16px;margin:22px 0 6px;font-weight:700}
+p{margin:0 0 12px;max-width:68ch}
+ul.plain{margin:0 0 12px;padding-left:1.2em;display:grid;gap:4px;max-width:68ch}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0 18px}
+.stat{background:var(--surface);border:1px solid var(--line);padding:12px 14px;display:grid;gap:2px}
+.stat .n{font-family:var(--mono);font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--accent)}
+.stat .t{font-size:13px;color:var(--muted);line-height:1.5}
+.verdict{background:var(--accent-soft);border-left:3px solid var(--accent);padding:12px 16px;margin:16px 0}
+.verdict p{margin:0}
+.callout{background:var(--gate-soft);border:1px solid color-mix(in srgb,var(--gate) 35%,transparent);padding:14px 16px;margin:16px 0}
+.callout h3{margin-top:0;color:var(--gate)}
+.callout ol{margin:0;padding-left:1.3em;display:grid;gap:8px}
+.tbl{overflow-x:auto;margin:10px 0 16px;border:1px solid var(--line);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6;min-width:620px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{font-size:12px;letter-spacing:.06em;color:var(--muted);font-weight:600;background:var(--code-bg)}
+tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+td .k{font-weight:700}
+.chip{display:inline-block;font-family:var(--mono);font-size:11.5px;font-weight:600;padding:0 7px;border:1px solid currentColor;line-height:1.7;white-space:nowrap}
+.r0{color:var(--muted)} .r1{color:var(--ok)} .r2{color:var(--gate)} .r3{color:var(--risk)}
+.now{color:var(--ok);font-weight:600} .goal{color:var(--accent);font-weight:700} .no-do{color:var(--muted)}
+code{font-family:var(--mono);font-size:12.5px;background:var(--code-bg);padding:1px 5px}
+.mods{display:grid;gap:0;border-top:1px solid var(--line)}
+.mod{display:grid;grid-template-columns:44px minmax(0,1fr);gap:4px 14px;padding:16px 0;border-bottom:1px solid var(--line)}
+.mod .idx{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:600;padding-top:2px}
+.mod h3{margin:0 0 4px}
+.mod dl{margin:0;display:grid;grid-template-columns:52px minmax(0,1fr);gap:4px 10px;font-size:14px}
+.mod dt{color:var(--muted);font-size:12.5px;padding-top:2px}
+.mod dd{margin:0}
+.diagram{background:var(--surface);border:1px solid var(--line);padding:14px;overflow-x:auto;margin:12px 0 16px}
+.diagram pre{margin:0}
+.decide{counter-reset:d;display:grid;gap:10px;margin:12px 0;padding:0;list-style:none}
+.decide li{background:var(--surface);border:1px solid var(--line);padding:12px 14px 12px 48px;position:relative;counter-increment:d}
+.decide li::before{content:counter(d);position:absolute;left:14px;top:12px;font-family:var(--mono);font-weight:600;color:var(--gate);font-size:15px}
+.decide .rec{display:block;color:var(--muted);font-size:13.5px;margin-top:4px}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:grid;gap:6px}
+footer a,main a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:560px){.mod{grid-template-columns:minmax(0,1fr)} .mod dl{grid-template-columns:minmax(0,1fr)} .mod dt{padding-top:6px}}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--gate);border:1px solid currentColor;padding:0 6px;line-height:1.6;margin-left:8px;vertical-align:2px;letter-spacing:.04em}
+.changes{display:grid;gap:0;border-top:1px solid var(--line);margin:8px 0 6px}
+.changes .row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:4px 16px;padding:12px 0;border-bottom:1px solid var(--line);font-size:14px}
+.changes .what{font-weight:700}
+.changes .why{color:var(--muted);font-size:13.5px;margin-top:2px;display:block}
+@media (max-width:560px){.changes .row{grid-template-columns:minmax(0,1fr)}}
+.ladder{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:12px 0 16px}
+.step{background:var(--surface);border:1px solid var(--line);padding:12px 14px;display:grid;gap:4px;align-content:start}
+.step .lv{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600;letter-spacing:.06em}
+.step b{font-size:15px}
+.step span{font-size:13.5px;color:var(--muted);line-height:1.6}
+</style>
+
+<div class="wrap">
+<aside class="toc" aria-label="目录">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s0">L3 不是 SOP</a></li>
+    <li><a href="#s1">现状与差距</a></li>
+    <li><a href="#s2">L3 能力模型</a></li>
+    <li><a href="#s3">对标 Codex</a></li>
+    <li><a href="#s4">通用行动：接口即工具</a></li>
+    <li><a href="#s5">安全执行</a></li>
+    <li><a href="#s6">规划、执行、核对</a></li>
+    <li><a href="#s7">主动性</a></li>
+    <li><a href="#s8">运行时</a></li>
+    <li><a href="#s9">13 个模块</a></li>
+    <li><a href="#s10">产品形态</a></li>
+    <li><a href="#s11">评测基准</a></li>
+    <li><a href="#s12">实施路线</a></li>
+    <li><a href="#s13">指标</a></li>
+    <li><a href="#s14">风险与对策</a></li>
+    <li><a href="#s15">拍板结果</a></li>
+  </ol>
+</aside>
+
+<main>
+<header class="top">
+  <div class="eyebrow">方案 v4 · <b>已拍板，前端路线待定</b> · 2026-10-01</div>
+  <h1>同辉智能体 L3 重构方案</h1>
+  <p class="lede">做一个通用的 L3 智能体：用户在系统里能查的、能做的，它都能查、能做；给它一个目标，它自己规划步骤、调用系统能力、核对结果，在权限和沙箱里干活，只在关键节点找人确认。</p>
+  <p class="lede-note">本稿取代 2026-08-01 版的第四、五节，以及本方案的 v1–v3。8 月版的三条核心原则继续有效：只走业务接口同一条路径；事实以服务端为准；能力可枚举。v4 写入了 8 条拍板结果（第 15 节），并按 <a href="https://claude.ai/artifact/FXZe576VrTWbuKTugwKko9">Harness 安全审计</a> 改了运行时的设计（第 08 节）。</p>
+</header>
+
+<section id="s0">
+  <h2><span class="no">00</span>先回答：L3 智能体不是 SOP</h2>
+  <div class="tbl"><table>
+    <thead><tr><th></th><th>SOP / 流程自动化</th><th>L3 智能体（本方案）</th></tr></thead>
+    <tbody>
+      <tr><td class="k">谁定步骤</td><td>人事先写死，机器照做</td><td>给目标，智能体自己规划，人可以改计划</td></tr>
+      <tr><td class="k">能做哪些事</td><td>只有写过流程的那几件</td><td>用户在系统里能做的，都能做</td></tr>
+      <tr><td class="k">遇到没见过的情况</td><td>卡住，等人改流程</td><td>换路、查数、问人</td></tr>
+      <tr><td class="k">安全靠什么</td><td>流程本身</td><td>沙箱演练、权限、审批模式、撤销</td></tr>
+      <tr><td class="k">SOP 在哪</td><td>SOP 就是系统本身</td><td>SOP 只是它能查阅的知识，帮它做得更稳</td></tr>
+    </tbody>
+  </table></div>
+  <p>v2 犯的错，是把「挑几个业务流程做成技能」当成了智能体本身，结果更像流程自动化。v3 改成以通用能力为主线。业务场景只出现在两处：<strong>评测考题</strong>（第 11 节），用来衡量能力到没到 L3；<strong>开放顺序</strong>（第 12 节），决定先给谁用。它们不决定架构，也不限制智能体能做什么。</p>
+  <p>v2 里验证过的结论都保留：零改造演练、事件触发、影子运行、渐进授权、DeepSeek Harness 的定位。</p>
+</section>
+
+<section id="s1">
+  <h2><span class="no">01</span>现状与差距</h2>
+  <div class="stats">
+    <div class="stat"><span class="n">423</span><span class="t">后端接口（34 个模块），每个都有说明文字</span></div>
+    <div class="stat"><span class="n">≈25 + 6</span><span class="t">智能体现在能用的：手写查询工具 + 确认卡片</span></div>
+    <div class="stat"><span class="n">7 / 27</span><span class="t">近 30 天用过智能体的人 / 在用账号</span></div>
+    <div class="stat"><span class="n">206</span><span class="t">近 30 天提问，几乎全是查数</span></div>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>能力</th><th>现在</th><th>L3 需要</th></tr></thead>
+    <tbody>
+      <tr><td class="k">能看到什么</td><td>约 25 个手写查询工具</td><td>用户能看的都能查：120 个读接口 + 分析工具 + 附件文档</td></tr>
+      <tr><td class="k">能做什么</td><td>6 类确认卡片（请款审批、订单审批等）</td><td>用户能做的都能做：212 个写接口（含上传文件），先演练再执行</td></tr>
+      <tr><td class="k">规划</td><td>单轮问答，最多 5 轮工具调用</td><td>多步计划，可修改，可挂起几天再接着做</td></tr>
+      <tr><td class="k">核对</td><td>无</td><td>每步执行后回读数据，确认真的生效</td></tr>
+      <tr><td class="k">主动</td><td>2 个定时任务（逾期提醒、晨报）</td><td>订阅业务事件；按目标盯守</td></tr>
+      <tr><td class="k">安全</td><td>菜单、行级、隐藏页签；确认卡片</td><td>再加演练沙箱、审批模式、渐进授权、撤销、熔断</td></tr>
+      <tr><td class="k">记忆</td><td>口径库；会话存在前端，刷新就丢</td><td>会话、个人偏好、组织知识、任务进度都在后端</td></tr>
+      <tr><td class="k">可观测</td><td>聊天日志</td><td>每一步的轨迹和成本</td></tr>
+      <tr><td class="k">评测</td><td>无</td><td>业务任务基准集，每次发版跑</td></tr>
+      <tr><td class="k">开放</td><td>无</td><td>MCP：外部智能体能接入，也能接外部工具</td></tr>
+    </tbody>
+  </table></div>
+  <div class="verdict"><p><strong>最大的差距在「能做什么」：</strong>用户在网页上能做的事，智能体绝大多数做不了。这不是多写几个工具能补上的，要换一种思路，见第 04 节。</p></div>
+</section>
+
+<section id="s2">
+  <h2><span class="no">02</span>L3 能力模型</h2>
+  <p>L3 = 条件自治：在权限和沙箱里，自己发现事、规划、执行、核对；钱、对外、不可逆的步骤停下来等人确认。十项能力逐项到位，才算 L3。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>能力</th><th>L1 问答</th><th>L2 分析与推送（现状）</th><th>L3 条件自治（目标）</th></tr></thead>
+    <tbody>
+      <tr><td class="k">感知</td><td>单个查询</td><td>跨模块串联</td><td>全部可读数据 + 附件文档 + 数据字典</td></tr>
+      <tr><td class="k">行动</td><td>不能</td><td>少数确认卡片</td><td>全部开放的写接口，演练后执行</td></tr>
+      <tr><td class="k">规划</td><td>无</td><td>单轮多工具</td><td>多步计划，可修改、可挂起</td></tr>
+      <tr><td class="k">核对</td><td>无</td><td>无</td><td>回读核对；失败就停下、能撤的撤回</td></tr>
+      <tr><td class="k">主动</td><td>无</td><td>定时推送</td><td>事件订阅 + 目标盯守</td></tr>
+      <tr><td class="k">安全</td><td>菜单门控</td><td>行级 + 卡片确认</td><td>沙箱 + 审批模式 + 渐进授权 + 撤销 + 熔断</td></tr>
+      <tr><td class="k">协作</td><td>无</td><td>无</td><td>子 Agent 并行；转交给人、等人确认</td></tr>
+      <tr><td class="k">记忆</td><td>无</td><td>口径库</td><td>会话 + 偏好 + 组织知识 + 任务记忆</td></tr>
+      <tr><td class="k">学习</td><td>无</td><td>靠人改代码</td><td>评测驱动 + 纠错样本 + 技能自动沉淀</td></tr>
+      <tr><td class="k">开放</td><td>无</td><td>无</td><td>MCP 双向</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout">
+    <h3>要改的两条旧红线</h3>
+    <ol>
+      <li><strong>「工具永远只读」改为「写操作只走登记过的接口，先演练、再按审批模式执行」。</strong>智能体没有自己的高权限账号，永远以发起人身份执行。<code>AGENTS.md</code> 第 70 行同步改。</li>
+      <li><strong>「不做多 Agent」改为「主 Agent + 按需子 Agent」。</strong>子 Agent 继承发起人身份，权限不能更大；每次运行有轮次、时间、费用上限。</li>
+    </ol>
+  </div>
+</section>
+
+<section id="s3">
+  <h2><span class="no">03</span>对标 Codex</h2>
+  <p>Codex 的核心不是写死了哪些开发流程，而是给模型一套通用工具（读写文件、跑命令），让它能做开发者能做的任何事；安全靠沙箱和审批模式，而不是少给工具。我们照这个思路做。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Codex</th><th>本方案</th><th>见</th></tr></thead>
+    <tbody>
+      <tr><td>通用工具：读写文件、跑命令</td><td>通用工具：用户有权调用的全部业务接口</td><td>04</td></tr>
+      <tr><td>沙箱</td><td>演练事务：真实跑一遍，整体回滚，截下外发</td><td>05</td></tr>
+      <tr><td>审批模式：只读 / 按需审批 / 自动</td><td>只读 / 建议 / 自动，按人按动作类设定，自动要靠渐进授权挣得</td><td>05</td></tr>
+      <tr><td>改动以 diff 呈现，人审过才合入</td><td>变更预览卡：逐字段「改前 → 改后」</td><td>05</td></tr>
+      <tr><td>先列计划，再逐步执行，跑测试验证</td><td>计划卡 → 逐步执行 → 回读核对</td><td>06</td></tr>
+      <tr><td>云端后台任务</td><td>持久任务队列，可挂起、可恢复</td><td>06、07</td></tr>
+      <tr><td>AGENTS.md 项目约定</td><td>组织知识：口径库 + 各部门 SOP + 数据字典</td><td>09 · M13</td></tr>
+      <tr><td>Skills</td><td>经验包：常做的事沉淀成技能，大多由智能体从成功轨迹里自己总结，人审核</td><td>09 · M3</td></tr>
+      <tr><td>MCP</td><td>ERP MCP Server + Client</td><td>09 · M2</td></tr>
+      <tr><td>子代理</td><td>按需子 Agent，并行调查</td><td>09 · M4</td></tr>
+      <tr><td>在真实代码任务上评测</td><td>在真实业务任务上评测（ERP-Bench）</td><td>11</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s4">
+  <h2><span class="no">04</span>通用行动：接口即工具</h2>
+  <p>用户在网页上能做的每件事，背后都是一个接口。智能体以用户本人的身份调用同一个接口，就能做同一件事，而且权限、校验、审计都和网页完全一样，不用另写一套。</p>
+  <div class="tbl"><table>
+    <thead><tr><th></th><th class="num">开放</th><th class="num">不开放</th><th>不开放的是什么</th></tr></thead>
+    <tbody>
+      <tr><td class="k">读接口 172</td><td class="num">120</td><td class="num">52</td><td>下载导出 17；管理、账号、权限、智能体自身配置、系统反馈 35</td></tr>
+      <tr><td class="k">写接口 251</td><td class="num">212</td><td class="num">39</td><td>管理、账号、权限、智能体自身配置、系统反馈 39（上传文件类 27 个已拍板开放）</td></tr>
+    </tbody>
+  </table></div>
+  <h3>原型验证（经完整 HTTP 链路，零改造）</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>接口</th><th>演练结果</th><th>预览到的改动</th></tr></thead>
+    <tbody>
+      <tr><td>采购 · 提交请款</td><td>HTTP 200，数据库没变</td><td>新增请款单、请款明细、站内消息；发给财务主管的企微被截下</td></tr>
+      <tr><td>物流 · 填收货人</td><td>HTTP 200，数据库没变</td><td>发货单 4 个字段改动 + 审计记录</td></tr>
+      <tr><td>采购 · 新建供应商</td><td>HTTP 200，数据库没变</td><td>新增供应商</td></tr>
+      <tr><td>采购 · 删除采购明细</td><td>HTTP 200，数据库没变</td><td>删除一行 + 审计记录</td></tr>
+      <tr><td>销售演练「提交请款」</td><td>HTTP 403</td><td>原接口的角色检查照常拦截，权限和网页一致</td></tr>
+    </tbody>
+  </table></div>
+  <h3>要解决的几件事</h3>
+  <ul class="plain">
+    <li><span class="k">工具自动生成：</span>名称、说明、参数格式都从接口文档里来，新增接口自动出现。</li>
+    <li><span class="k">接口文档要补：</span>开放范围内的接口，请求体字段 533 个一个说明都没有，路径和查询参数 687 个只有 32 个有说明，说明文字中位数 34 字。自动生成前先加一层中文「工具说明补充」，按使用频率优先（最高频的是改项目详单单元格、仓库批量出库、改采购明细）。</li>
+    <li><span class="k">工具太多：</span>给模型一份 34 个模块的目录，用到哪个模块再加载它的工具；按用户的菜单权限先过滤一遍。</li>
+    <li><span class="k">结果太大：</span>列表接口可能一次返回几千行（采购明细 3,799 行）。全量留在服务端，只给模型统计摘要、前几行和可用的筛选条件。</li>
+    <li><span class="k">敏感字段（已拍板）：</span>银行账号、身份证号、工资薪酬、手机号，发给模型前在 ERP 侧打码。模型拿到的是代号，需要把号码填到别处时，由服务端换回真值；用户看到的明细不受影响。</li>
+    <li><span class="k">上传文件（已拍板开放）：</span>附件都经同一个保存函数落盘，演练时记下新写的文件，回滚后删除。</li>
+    <li><span class="k">写接口白名单：</span>每个开放的写接口登记一行：风险等级、能不能撤销、撤销调哪个接口。没登记的不开放。</li>
+    <li><span class="k">复合工具保留：</span>现有手写的分析工具（资金面板、毛利、交期看板等）保留，一次给出跨表结论；通用接口负责长尾。</li>
+  </ul>
+</section>
+
+<section id="s5">
+  <h2><span class="no">05</span>安全执行：沙箱、审批模式、渐进授权</h2>
+  <ul class="plain">
+    <li><span class="k">演练：</span>写接口原样运行在外层事务里，内部的提交只落到保存点，跑完整体回滚；企微和站内通知只有一个出口，演练时截下不发。拿到逐字段改动，生成变更预览卡。</li>
+    <li><span class="k">确认时重演：</span>人点确认的那一刻再演练一次，和预览不一致（比如别人刚改过）就让人重新确认。</li>
+    <li><span class="k">风险等级：</span><span class="chip r0">R0</span> 只读 · <span class="chip r1">R1</span> 可逆草稿 · <span class="chip r2">R2</span> 业务写 · <span class="chip r3">R3</span> 钱、审批、删除、对外。按接口所属模块和路径自动初判，再人工复核一遍。</li>
+    <li><span class="k">审批模式</span>（按人 × 动作类设定，管理员给每个角色定上限）：<strong>只读</strong>：不能写；<strong>建议</strong>（默认）：每个写操作都出预览，人点确认才执行；<strong>自动</strong>：只对挣得授权的动作类，执行后出日报，留撤销窗口。R3 永远停在「建议」。</li>
+    <li><span class="k">撤销与熔断：</span>可逆的写操作登记对应的撤销接口；每人每天写操作数量、金额都有上限，异常率高了自动降回「建议」。</li>
+    <li><span class="k">审计：</span>每条写操作记两个人：谁发起（智能体代谁）、谁确认。</li>
+  </ul>
+  <div class="ladder">
+    <div class="step"><span class="lv">第 1 级 · 影子</span><b>只演练，不给人看</b><span>对真实事件出方案并演练，和人实际的做法逐条比对。达标才升级。</span></div>
+    <div class="step"><span class="lv">第 2 级 · 建议</span><b>出预览，人点确认</b><span>人改了哪些字段都记下来，作为纠错样本。</span></div>
+    <div class="step"><span class="lv">第 3 级 · 自动</span><b>挣来的，可收回</b><span>某人对某类动作连续确认 20 次、零修改、零撤销，才可改为自动。一次撤销或投诉就退回第 2 级。</span></div>
+  </div>
+</section>
+
+<section id="s6">
+  <h2><span class="no">06</span>规划、执行、核对</h2>
+  <ul class="plain">
+    <li><span class="k">计划卡：</span>复杂任务先列步骤给人看，人可以改、删、加步骤。例：「把 2026-092 的收货信息补全，然后安排发货」→ 查项目 → 查同客户历史收货人 → 填收货人（预览）→ 查发货闸门 → 通知物流。</li>
+    <li><span class="k">执行：</span>逐步执行，只读步骤可以并行；每个写步骤都走演练和审批模式。</li>
+    <li><span class="k">核对：</span>每步执行完回读数据，确认改动真的生效、没有多改别的；不通过就停下报告，能撤的自动撤回。</li>
+    <li><span class="k">挂起与恢复：</span>等审批、等到货时挂起，事件到了自动接着做；任务状态存在后端，过几天也能接上。</li>
+    <li><span class="k">限额：</span>每个任务的步数、时长、费用都有上限；最后一轮只许总结（10-01 已上线的做法）。</li>
+  </ul>
+</section>
+
+<section id="s7">
+  <h2><span class="no">07</span>主动性：事件与盯守</h2>
+  <ul class="plain">
+    <li><span class="k">事件来源：</span>在网关层，给每个成功的写请求发一条事件（哪个接口、谁做的、改了哪个对象），不用改业务代码；再加上定时扫描（已有逾期提醒、晨报）。</li>
+    <li><span class="k">两类订阅：</span><strong>系统规则</strong>，比如「请款提交 → 预审」「到货 → 起草物料档案」；<strong>个人盯守</strong>，比如「盯着 2026-092 直到发货，每天告诉我卡在哪」「有人改了收款账号马上告诉我」。</li>
+    <li><span class="k">任务队列：</span>事件转成任务，由持锁的 worker 执行（先复用现有定时任务的文件锁，之后拆成独立容器）；有超时、重试、死信，每条规则可一键停用。</li>
+  </ul>
+</section>
+
+<section id="s8">
+  <h2><span class="no">08</span>运行时：Harness 管思考，ERP 管动手和刹车</h2>
+  <p>已拍板用 DeepSeek Harness 当生产运行时。<a href="https://claude.ai/artifact/FXZe576VrTWbuKTugwKko9">安全审计</a> 的结论是：默认配置不能上生产（5 项严重、7 项高），但风险项都是独立插件，能逐个关掉。按加固清单改造后可以用，前提是安全边界放在 ERP 这一侧。</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  U[用户：网页 · 桌面 · APP · 企微] --> FE[我们的前端：智能体工作台]
+  FE --> BE[ERP 后端：登录 · 会话存储 · 审批卡片 · 分流]
+  BE -->|简单查询| FAST[现有快速通道：直答 · 卡片 · 晨报]
+  BE -->|多步任务| SV[会话管家：每人一个进程 · 最多 2 个 · 空闲回收]
+  SV -->|标准输入输出| HA[Harness 进程 · 用户甲]
+  SV -->|标准输入输出| HB[Harness 进程 · 用户乙]
+  HA -->|推理| GW[模型网关：记账 · 月度上限 · 剥离多余字段]
+  HB -->|推理| GW
+  GW --> DS[DeepSeek API]
+  HA -->|MCP · 本人令牌| MCP[ERP MCP 服务：工具 · 打码 · 演练 · 审批校验]
+  HB -->|MCP · 本人令牌| MCP
+  MCP --> API[原业务接口] --> DB[(PostgreSQL)]
+  </pre></div>
+  <div class="tbl"><table>
+    <thead><tr><th>谁负责</th><th>负责什么</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Harness</td><td>思考：多步规划、调用工具、上下文管理与压缩、执行轨迹。只保留和 ERP 通信的那一个通道，命令行、文件、上网、脚本、子 Agent、遥测、会话日志上传等插件全部禁用（审计第 05 节 B 项）。</td></tr>
+      <tr><td class="k">erp-gate 插件（自建）</td><td>Harness 内的第一道闸：白名单守卫只允许 ERP 工具；写工具一律转人工审批。</td></tr>
+      <tr><td class="k">会话管家</td><td>每个活跃用户一个 Harness 进程，带本人令牌；同时最多 2 个，其余排队；空闲 15 分钟回收；对话历史存在我们后端，新会话带摘要续接（Harness 不能恢复会话）。</td></tr>
+      <tr><td class="k">模型网关</td><td>Harness 不直连 DeepSeek：逐次记账、月度上限 1000 元（临时）、只转发推理必需字段；API Key 只在后端。</td></tr>
+      <tr><td class="k">ERP MCP 服务</td><td>第二道闸，也是真正的保证：按令牌识别用户，以本人身份调原业务接口；写操作必须有后端签发的审批记录（调用编号 + 参数哈希）才执行；演练、打码、限额、审计都在这里。</td></tr>
+      <tr><td class="k">ERP 后端分流</td><td>只有 2 个并发名额，所以简单查询、确认卡片、晨报继续走现有的快速通道，只有多步任务才交给 Harness。</td></tr>
+    </tbody>
+  </table></div>
+  <p>Harness 是预览版，官方说明会有破坏性变更。所以我们 fork 一份、固定版本；升级前必须先过业务评测、越权回放和加固自检。</p>
+</section>
+
+<section id="s9">
+  <h2><span class="no">09</span>13 个模块</h2>
+  <p>按需求里列的顺序，对应到上面的设计。标了 <span class="tag">v4</span> 的是这一版因 Harness 当运行时改过的。</p>
+  <div class="mods">
+    <div class="mod"><span class="idx">M1</span><div><h3>工具</h3><dl><dt>做什么</dt><dd>接口工具从接口文档自动生成（读 120、写 212），先补中文说明；复合分析工具保留；按模块目录按需加载；大结果留服务端只给摘要；四类敏感字段打码。全部经 ERP MCP 服务提供给 Harness。</dd><dt>验收</dt><dd>新接口上线后自动可用；工具选错率在评测里可量。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M2</span><div><h3>ERP MCP 连接器<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>从第四阶段提前到第一阶段：它是 Harness 和 ERP 之间唯一的通道。按每用户令牌鉴权；不返回说明文字、固定工具清单、不发跳转、限制返回大小、校验资源 URI（防审计里的提示注入面）；写操作核对审批记录。之后再对外开放给其他智能体。</dd><dt>验收</dt><dd>以采购员身份接入，查到的和网页一字不差；没有审批记录的写调用一律被拒；越权回放 0。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M3</span><div><h3>SKILL</h3><dl><dt>做什么</dt><dd>经验包，不是流程边界：常做的事写成技能，命中时给模型参考。Harness 自带的技能插件会读文件系统，审计建议禁用；技能改由 ERP MCP 以只读资源的形式提供，由我们管理、审核、版本化。</dd><dt>验收</dt><dd>有技能和没技能时，同一题的步数和成功率对比可量。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M4</span><div><h3>多 Agent 架构<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>Harness 自带的子 Agent 首期禁用：审计发现它继承父级全部工具，还会在后台无人值守地续跑。阶段三再评估两条路：限定只读工具、前台模式后重新开启；或由会话管家拉起受限的独立进程（受 2 个并发名额约束）。</dd><dt>验收</dt><dd>重新开启前，越权回放证明子 Agent 调不到写工具。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M5</span><div><h3>沙箱<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>真正的沙箱在 ERP 侧：演练事务（已验证，零改造，含上传文件）、确认时重演、影子库。Harness 自带的沙箱只管写文件、不隔离网络，不依赖它；Harness 跑在隔离容器里：不发布端口、只能访问我们自己的后端、根文件系统只读、非 root。</dd><dt>验收</dt><dd>每个开放的写接口：演练改动 = 真实执行改动；演练零外发；容器内无法访问公网。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M6</span><div><h3>权限管理<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>两道闸：Harness 内 erp-gate（白名单 + 写操作转审批）；ERP MCP 服务（令牌识别本人、白名单与风险等级、审批记录核对、职责分离与金额阈值、打码、熔断）。审批模式默认「建议」，连续确认 20 次、零修改零撤销才可转自动，R3 永远要确认（已拍板）。</dd><dt>验收</dt><dd>越权回放 0；拔掉 erp-gate 后写操作仍全部被 ERP 拒绝。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M7</span><div><h3>网关分流<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>两个网关：业务入口在 ERP 后端（鉴权、配额、并发闸、把简单查询分给快速通道、多步任务交给 Harness）；模型网关在 Harness 与 DeepSeek 之间（记账、月度上限 1000 元、剥离多余字段、熔断）。</dd><dt>验收</dt><dd>能答出「这个月花了多少钱、花在谁身上、花在哪类任务上」；到上限自动降级。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M8</span><div><h3>主 Agent 路由<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>ERP 后端先判断：简单查询直接答（现有快速通道，不占并发名额）；要动手的多步任务交给 Harness；事件任务按规则派发。Harness 内部的规划由它自己完成。</dd><dt>验收</dt><dd>分流准确率 ≥ 90%；Harness 并发名额不被简单查询占用。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M9</span><div><h3>多 Agent 协同</h3><dl><dt>做什么</dt><dd>人机协作先行：把某一步转交给人、等某人确认、会签，都在 ERP 的任务板上。Agent 之间的协同等 M4 评估后再上。</dd><dt>验收</dt><dd>转交给人的步骤有人接、有结果，全程可追溯。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M10</span><div><h3>数据埋点</h3><dl><dt>做什么</dt><dd>两处汇总：Harness 的执行轨迹（经会话管家收集）+ ERP 侧的工具调用、审批、演练、执行、撤销、费用。正式记录以 ERP 为准；Harness 落盘的会话日志 7 天清理。</dd><dt>验收</dt><dd>任何一次运行都能完整回看；周报自动生成。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M11</span><div><h3>自学习工程</h3><dl><dt>做什么</dt><dd>不训练模型，学工具说明、技能、组织知识和样例：评测驱动改进；影子比对；人改过的预览存成纠错样本；从成功轨迹总结技能（人审核）；反复被追问的口径由智能体提议入库。</dd><dt>验收</dt><dd>走通一次「失败 → 改进 → 评测通过 → 上线」。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M12</span><div><h3>Loop 工程<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>内循环由 Harness 负责（规划、调用、观察）。Harness 自带的无人值守续跑、后台任务唤醒首期禁用（审计中危项）；事件触发和定时任务放在 ERP 侧的任务队列里，需要智能体时由会话管家开一个受审批约束的会话。</dd><dt>验收</dt><dd>事件到智能体开始处理 &lt; 1 分钟（有空闲名额时）；没有任何写操作在无人确认时执行。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M13</span><div><h3>上下文工程</h3><dl><dt>做什么</dt><dd>Harness 负责单次会话内的上下文组装与压缩；我们负责跨会话：对话历史和任务进度存在 ERP 后端，新会话带摘要续接；组织知识（口径、SOP、数据字典）经 MCP 资源提供。</dd><dt>验收</dt><dd>进程回收、换设备后，任务能接着做。</dd></dl></div></div>
+  </div>
+</section>
+
+<section id="s10">
+  <h2><span class="no">10</span>产品形态</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>界面</th><th>给谁</th><th>做什么</th></tr></thead>
+    <tbody>
+      <tr><td class="k">对话</td><td>所有人（网页、桌面、APP）</td><td>问问题、派任务</td></tr>
+      <tr><td class="k">任务中心</td><td>所有人</td><td>我发起的任务、计划和进度、待我确认、自动执行日报、我的盯守</td></tr>
+      <tr><td class="k">变更预览卡</td><td>确认人</td><td>改前 → 改后；确认 / 修改 / 驳回</td></tr>
+      <tr><td class="k">企业微信</td><td>所有人</td><td>待确认、日报、盯守提醒推到企微，点开直达</td></tr>
+      <tr><td class="k">管理后台</td><td>管理员</td><td>能力目录（开放哪些接口、风险等级）、各角色审批模式上限、技能审核、轨迹、评测看板、费用</td></tr>
+      <tr><td class="k">MCP 接入</td><td>工程侧</td><td>外部智能体以本人身份接入</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s11">
+  <h2><span class="no">11</span>评测基准：业务场景用在这里</h2>
+  <p>Codex 的能力是在真实代码任务上量出来的。我们的能力，也要在真实业务任务上量。这就是业务场景在 L3 方案里的位置：当考题，不当流程。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>档位</th><th>题型</th><th>来源</th><th>怎么判分</th></tr></thead>
+    <tbody>
+      <tr><td class="k">L1 查询</td><td>单接口能答的问题</td><td>近 30 天 206 条真实提问</td><td>答案对不对</td></tr>
+      <tr><td class="k">L2 分析</td><td>多接口汇总、判断</td><td>真实提问 + 各部门补题</td><td>结论和关键数字对不对</td></tr>
+      <tr><td class="k">L3 行动</td><td>多步、含写操作</td><td>审计日志里的真实操作（把「某人做了什么」倒推成任务，他做完后的数据就是标准答案）</td><td>在影子库里跑，看数据终态是否一致；同时记步数、耗时、费用、越权次数</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>首批试点场景</strong>（用来验证通用能力，不单独开发）：请款预审、仓库建档与出库、采购对账。选它们是因为近 60 天这三块的手工操作占了 55%。每次发版都跑全量题库，分数不退步才放行。</p>
+</section>
+
+<section id="s12">
+  <h2><span class="no">12</span>实施路线（按能力，不按流程）</h2>
+  <p>国庆后开工，约 15 周半，四个阶段。第一周先做审计里的未确认项实测，不通过的项当周调整方案。</p>
+  <div class="diagram"><pre class="mermaid">
+gantt
+  dateFormat YYYY-MM-DD
+  axisFormat %m/%d
+  section 阶段一
+  实测 · 加固 · MCP · 模型网关 · 通用读 :b1, 2026-10-08, 24d
+  section 阶段二
+  通用写 · 演练 · 审批绑定 · 工作台审批 :b2, after b1, 28d
+  section 阶段三
+  规划执行 · 事件与盯守 · 子 Agent 评估 :b3, after b2, 28d
+  section 阶段四
+  学习 · 文档 · 管理后台 · 对外开放 :b4, after b3, 28d
+  </pre></div>
+  <div class="tbl"><table>
+    <thead><tr><th>阶段</th><th>时间</th><th>交付</th><th>开放给谁</th><th>验收</th></tr></thead>
+    <tbody>
+      <tr><td class="k">一 · 运行时与通用读</td><td class="num">10/08–10/31</td><td>第一周实测（插件禁用后能否启动、单进程内存、erp-gate 失效时的行为、事件流能否满足工作台）；Harness fork 与加固配置、erp-gate、启动自检；会话管家（2 并发、回收、续接）；模型网关；ERP MCP 服务（读工具 120 个、打码、工具说明补充）；评测 v1；工作台第一版</td><td>全员只读（多步任务受 2 并发限制，简单查询走快速通道）</td><td>审计加固清单全部通过；L1/L2 通过率 ≥ 85%；越权回放 0；容器无法访问公网</td></tr>
+      <tr><td class="k">二 · 通用写</td><td class="num">11/01–11/28</td><td>写接口 212 个登记与风险分级；演练沙箱（含上传文件，在生产 Postgres 上验证）；审批记录绑定；工作台的变更预览与审批；撤销与熔断；影子库；L3 单步题 50 道</td><td>管理层和各部门主管（建议模式，已拍板）</td><td>L3 单步题通过率 ≥ 80%；拔掉 erp-gate 后写操作仍全部被拒；零误写</td></tr>
+      <tr><td class="k">三 · 规划与主动</td><td class="num">11/29–12/26</td><td>多步执行与核对、挂起恢复；ERP 侧事件、订阅与盯守；任务队列；子 Agent 评估；三个试点场景走影子 → 建议</td><td>扩到各部门骨干</td><td>L3 多步题 ≥ 70%；试点场景影子期达标</td></tr>
+      <tr><td class="k">四 · 学习与开放</td><td class="num">12/27–01/23</td><td>渐进授权；纠错样本、失败聚类、技能沉淀；文档理解；管理后台；MCP 对外开放</td><td>按渐进授权逐步放开自动</td><td>走通一次改进闭环；周活 ≥ 20 人</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s13">
+  <h2><span class="no">13</span>指标</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>类别</th><th>指标</th><th>现状</th><th>目标</th></tr></thead>
+    <tbody>
+      <tr><td class="k">能力</td><td>评测通过率（L1/L2 · L3）</td><td>尚无题库</td><td>≥ 85% · ≥ 70%，每次发版不退步</td></tr>
+      <tr><td class="k">能力</td><td>可用工具覆盖</td><td>约 25 个查询 + 6 类卡片</td><td>120 读 + 212 写</td></tr>
+      <tr><td class="k">自主</td><td>任务无需人工修改就完成的比例；自动执行占写操作的比例</td><td>—</td><td>逐月上升，由渐进授权自然形成</td></tr>
+      <tr><td class="k">安全</td><td>越权 / 误写 / 撤销率</td><td>0 / — / —</td><td>0 / 0 / &lt; 2%</td></tr>
+      <tr><td class="k">采用</td><td>周活跃用户；每周任务数</td><td>7 人；—</td><td>20 人以上；持续增长</td></tr>
+      <tr><td class="k">效率</td><td>试点场景人工操作次数；请款审批 p90</td><td>近 60 天 2,468 次；24.7 小时</td><td>降 50%；8 小时内</td></tr>
+      <tr><td class="k">体验</td><td>查询 p90；计划卡出现时间</td><td>3.8 秒；—</td><td>&lt; 5 秒；&lt; 10 秒</td></tr>
+      <tr><td class="k">成本</td><td>每个任务的费用；月度总额</td><td>未记账</td><td>模型网关逐次记账；月度上限 1000 元（临时）</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s14">
+  <h2><span class="no">14</span>风险与对策</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>风险</th><th>对策</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Harness 本身不安全（官方说明未经安全审计，不得用于生产）</td><td>按审计加固清单关掉执行能力和外发；隔离容器不出公网；安全边界放在 ERP 侧，Harness 被攻破也执行不了未审批的写操作</td></tr>
+      <tr><td class="k">Harness 预览版破坏性变更</td><td>fork 并固定版本；升级前过业务评测、越权回放、加固自检</td></tr>
+      <tr><td class="k">只有 2 个并发名额</td><td>简单查询不占名额；多步任务排队并告知预计等待；空闲 15 分钟回收；跑满一个月看排队数据再定是否加机器</td></tr>
+      <tr><td class="k">通用写能力误操作</td><td>白名单；先演练；默认建议模式；自动要渐进授权挣得；R3 永远确认；熔断；可撤销</td></tr>
+      <tr><td class="k">提示注入（ERP 备注、上传文档里夹带指令）</td><td>MCP 不返回说明文字；写操作必须人工确认且 ERP 核对审批记录；前端只渲染同源图片</td></tr>
+      <tr><td class="k">工具太多、接口说明太少，模型调错</td><td>先补中文工具说明；模块目录按需加载；评测里量选错率</td></tr>
+      <tr><td class="k">演练占锁、预览后数据变了</td><td>演练设几秒超时、只演练单个对象；确认时重演</td></tr>
+      <tr><td class="k">模型费用</td><td>模型网关逐次记账，月度上限 1000 元（临时），到上限自动降级；一个月后按实际调</td></tr>
+      <tr><td class="k">一线不用</td><td>工作台 + 企微推送，不靠聊天框；开放范围随能力扩大，每阶段有试点人</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s15">
+  <h2><span class="no">15</span>拍板结果</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>事项</th><th>结果（2026-10-01）</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td>定位</td><td>做通用 L3 智能体，不做 SOP 流程自动化</td></tr>
+      <tr><td class="num">2</td><td>「工具永远只读」红线</td><td>改：写操作只走登记过的接口，先演练、再按审批模式执行；同步改 AGENTS.md</td></tr>
+      <tr><td class="num">3</td><td>不开放清单</td><td>管理、账号、权限、智能体自身配置、系统反馈、下载导出不开放；<strong>上传文件开放</strong></td></tr>
+      <tr><td class="num">4</td><td>审批模式</td><td>默认「建议」；连续确认 20 次、零修改零撤销可转自动；R3 永远确认</td></tr>
+      <tr><td class="num">5</td><td>对模型打码的字段</td><td>银行账号、身份证号、工资薪酬、手机号</td></tr>
+      <tr><td class="num">6</td><td>DeepSeek Harness</td><td><strong>直接当生产运行时</strong>；先做安全审计（<a href="https://claude.ai/artifact/FXZe576VrTWbuKTugwKko9">已完成</a>），按加固清单适配现有系统</td></tr>
+      <tr><td class="num">7</td><td>模型费用月度上限</td><td>临时 1000 元，一个月后按实际调</td></tr>
+      <tr><td class="num">8</td><td>阶段二写能力开放范围</td><td>管理层 + 各部门主管（建议模式）</td></tr>
+      <tr><td class="num">9</td><td>服务器</td><td>先不动，智能体多步任务同时最多 2 人</td></tr>
+    </tbody>
+  </table></div>
+  <h3>还要定的一件事：前端怎么复用</h3>
+  <p>你要求前端页面重构和复用。Harness 自带的前端是 React 写的单人控制台，带终端和插件安装，要运行它的网页服务才能用。审计建议：复用它的交互设计和事件模型（会话、计划、执行轨迹、审批），也复用我们现有智能体页面的组件，在我们的 Vue 前端里重构成「智能体工作台」；Harness 自带网页只给我们自己内网排障用。详见审计报告第 07 节。</p>
+</section>
+
+<footer>
+  <div>依据：生产库只读统计（2026-10-01）；接口清单取自后端 OpenAPI 文档（423 个）；演练原型两版（直接调用接口函数；经完整 HTTP 链路调用 4 个写接口 + 1 个越权用例，本地 SQLite）；代码现状（main 分支 7b6ffe3）；2026-08-01 版方案。</div>
+  <div>DeepSeek Harness 资料：<a href="https://github.com/deepseek-ai/deepseek-harness">官方仓库</a> · <a href="https://codepick.dev/en/guides/deepseek-harness-intro/">codepick 入门</a> · <a href="https://www.datacamp.com/tutorial/deepseek-harness">DataCamp 教程</a> · <a href="https://www.mindstudio.ai/blog/deepseek-harness-coding-agent">MindStudio 介绍</a> · <a href="https://nexforce.ai/en/blog/deepseek-harness-framework-agentes">Nexforce 成本分析</a></div>
+</footer>
+</main>
+</div>

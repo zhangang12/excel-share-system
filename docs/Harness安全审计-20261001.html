@@ -1,0 +1,312 @@
+<title>Harness 安全审计</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --paper:#f4f5f2; --surface:#ffffff; --ink:#1b2430; --muted:#5b6670; --line:#d8ddd7;
+  --accent:#2b5e65; --accent-soft:#e3eeee; --gate:#a86c12; --gate-soft:#f7ecd9;
+  --ok:#3a7650; --risk:#ad3f35; --risk-soft:#f6e3e0; --code-bg:#eef1ee;
+  --display:"Noto Serif SC","Songti SC","STSong",serif;
+  --body:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10151a; --surface:#172027; --ink:#e3e8ea; --muted:#9aa6ae; --line:#29343c;
+    --accent:#7ab6bc; --accent-soft:#1d3135; --gate:#e2a64c; --gate-soft:#33281a;
+    --ok:#7fbf92; --risk:#e98a7f; --risk-soft:#3a2220; --code-bg:#1d272e; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10151a; --surface:#172027; --ink:#e3e8ea; --muted:#9aa6ae; --line:#29343c;
+  --accent:#7ab6bc; --accent-soft:#1d3135; --gate:#e2a64c; --gate-soft:#33281a;
+  --ok:#7fbf92; --risk:#e98a7f; --risk-soft:#3a2220; --code-bg:#1d272e; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.75;padding-inline:16px;padding-block:28px 64px}
+.wrap{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:200px minmax(0,1fr);gap:48px}
+@media (max-width:980px){.wrap{grid-template-columns:minmax(0,1fr);gap:20px}}
+aside.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 20px);align-self:start;font-size:13px}
+@media (max-width:980px){aside.toc{position:static}}
+.toc h2{font-family:var(--body);font-size:12px;letter-spacing:.12em;color:var(--muted);margin:0 0 8px;font-weight:600}
+.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+@media (max-width:980px){.toc ol{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
+.toc a{color:var(--muted);text-decoration:none;display:block;padding:3px 8px;border-left:2px solid transparent}
+.toc a:hover,.toc a:focus-visible{color:var(--accent);border-left-color:var(--accent);outline:none}
+main{min-width:0;max-width:800px}
+header.top{display:grid;gap:10px;padding-bottom:22px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.eyebrow{font-size:12px;letter-spacing:.14em;color:var(--muted);font-weight:600}
+.eyebrow b{color:var(--gate);font-weight:600}
+h1{font-family:var(--display);font-size:clamp(28px,4.4vw,40px);line-height:1.25;margin:0;text-wrap:balance;font-weight:700}
+.lede{font-size:16.5px;color:var(--ink);margin:0;max-width:64ch}
+.lede-note{font-size:13.5px;color:var(--muted);margin:0;max-width:66ch}
+section{padding-top:34px}
+h2{font-family:var(--display);font-size:24px;line-height:1.35;margin:0 0 12px;text-wrap:balance;font-weight:700;display:flex;gap:12px;align-items:baseline}
+h2 .no{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:600;letter-spacing:.04em}
+h3{font-size:16px;margin:22px 0 6px;font-weight:700}
+p{margin:0 0 12px;max-width:68ch}
+ul.plain{margin:0 0 12px;padding-left:1.2em;display:grid;gap:4px;max-width:68ch}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0 18px}
+.stat{background:var(--surface);border:1px solid var(--line);padding:12px 14px;display:grid;gap:2px}
+.stat .n{font-family:var(--mono);font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--accent)}
+.stat .t{font-size:13px;color:var(--muted);line-height:1.5}
+.verdict{background:var(--accent-soft);border-left:3px solid var(--accent);padding:12px 16px;margin:16px 0}
+.verdict p{margin:0}
+.callout{background:var(--gate-soft);border:1px solid color-mix(in srgb,var(--gate) 35%,transparent);padding:14px 16px;margin:16px 0}
+.callout h3{margin-top:0;color:var(--gate)}
+.callout ol{margin:0;padding-left:1.3em;display:grid;gap:8px}
+.tbl{overflow-x:auto;margin:10px 0 16px;border:1px solid var(--line);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6;min-width:620px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{font-size:12px;letter-spacing:.06em;color:var(--muted);font-weight:600;background:var(--code-bg)}
+tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+td .k{font-weight:700}
+.chip{display:inline-block;font-family:var(--mono);font-size:11.5px;font-weight:600;padding:0 7px;border:1px solid currentColor;line-height:1.7;white-space:nowrap}
+.r0{color:var(--muted)} .r1{color:var(--ok)} .r2{color:var(--gate)} .r3{color:var(--risk)}
+.now{color:var(--ok);font-weight:600} .goal{color:var(--accent);font-weight:700} .no-do{color:var(--muted)}
+code{font-family:var(--mono);font-size:12.5px;background:var(--code-bg);padding:1px 5px}
+.mods{display:grid;gap:0;border-top:1px solid var(--line)}
+.mod{display:grid;grid-template-columns:44px minmax(0,1fr);gap:4px 14px;padding:16px 0;border-bottom:1px solid var(--line)}
+.mod .idx{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:600;padding-top:2px}
+.mod h3{margin:0 0 4px}
+.mod dl{margin:0;display:grid;grid-template-columns:52px minmax(0,1fr);gap:4px 10px;font-size:14px}
+.mod dt{color:var(--muted);font-size:12.5px;padding-top:2px}
+.mod dd{margin:0}
+.diagram{background:var(--surface);border:1px solid var(--line);padding:14px;overflow-x:auto;margin:12px 0 16px}
+.diagram pre{margin:0}
+.decide{counter-reset:d;display:grid;gap:10px;margin:12px 0;padding:0;list-style:none}
+.decide li{background:var(--surface);border:1px solid var(--line);padding:12px 14px 12px 48px;position:relative;counter-increment:d}
+.decide li::before{content:counter(d);position:absolute;left:14px;top:12px;font-family:var(--mono);font-weight:600;color:var(--gate);font-size:15px}
+.decide .rec{display:block;color:var(--muted);font-size:13.5px;margin-top:4px}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:grid;gap:6px}
+footer a,main a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:560px){.mod{grid-template-columns:minmax(0,1fr)} .mod dl{grid-template-columns:minmax(0,1fr)} .mod dt{padding-top:6px}}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--gate);border:1px solid currentColor;padding:0 6px;line-height:1.6;margin-left:8px;vertical-align:2px;letter-spacing:.04em}
+.changes{display:grid;gap:0;border-top:1px solid var(--line);margin:8px 0 6px}
+.changes .row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:4px 16px;padding:12px 0;border-bottom:1px solid var(--line);font-size:14px}
+.changes .what{font-weight:700}
+.changes .why{color:var(--muted);font-size:13.5px;margin-top:2px;display:block}
+@media (max-width:560px){.changes .row{grid-template-columns:minmax(0,1fr)}}
+.ladder{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:12px 0 16px}
+.step{background:var(--surface);border:1px solid var(--line);padding:12px 14px;display:grid;gap:4px;align-content:start}
+.step .lv{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600;letter-spacing:.06em}
+.step b{font-size:15px}
+.step span{font-size:13.5px;color:var(--muted);line-height:1.6}
+.sev{display:inline-block;font-family:var(--mono);font-size:11.5px;font-weight:600;padding:0 7px;border:1px solid currentColor;line-height:1.7;white-space:nowrap}
+.s-crit{color:var(--risk);background:var(--risk-soft)} .s-high{color:var(--risk)} .s-mid{color:var(--gate)} .s-low{color:var(--muted)}
+.ev{font-family:var(--mono);font-size:12px;color:var(--muted);word-break:break-all}
+.ok-list li::marker{color:var(--ok)}
+.chk{counter-reset:c;list-style:none;padding:0;margin:8px 0 14px;display:grid;gap:8px}
+.chk>li{background:var(--surface);border:1px solid var(--line);padding:10px 14px 10px 44px;position:relative;counter-increment:c;font-size:14px}
+.chk>li::before{content:counter(c,upper-alpha);position:absolute;left:14px;top:10px;font-family:var(--mono);font-weight:600;color:var(--accent)}
+.chk code{font-size:12px}
+</style>
+
+<div class="wrap">
+<aside class="toc" aria-label="目录">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#a0">结论</a></li>
+    <li><a href="#a1">范围与方法</a></li>
+    <li><a href="#a2">发现清单</a></li>
+    <li><a href="#a3">做得好的地方</a></li>
+    <li><a href="#a4">依赖漏洞</a></li>
+    <li><a href="#a5">部署加固清单</a></li>
+    <li><a href="#a6">适配架构</a></li>
+    <li><a href="#a7">前端复用</a></li>
+    <li><a href="#a8">第一周实测项</a></li>
+  </ol>
+</aside>
+
+<main>
+<header class="top">
+  <div class="eyebrow">安全审计 · 2026-10-01 · DeepSeek Harness 0.2.0-rc.2（master 639ed015）</div>
+  <h1>Harness 安全审计</h1>
+  <p class="lede">老板拍板「Harness 直接当生产运行时」。本报告审它能不能上、怎么上：默认配置下有哪些风险，部署时必须做哪些加固，怎么接进现有系统。</p>
+</header>
+
+<section id="a0">
+  <h2><span class="no">00</span>结论</h2>
+  <div class="stats">
+    <div class="stat"><span class="n" style="color:var(--risk)">5</span><span class="t">严重</span></div>
+    <div class="stat"><span class="n" style="color:var(--risk)">7</span><span class="t">高</span></div>
+    <div class="stat"><span class="n" style="color:var(--gate)">10</span><span class="t">中</span></div>
+    <div class="stat"><span class="n" style="color:var(--muted)">5</span><span class="t">低</span></div>
+  </div>
+  <div class="verdict"><p><strong>默认配置不能上生产；按第 05 节加固后可以作为运行时。前提是安全边界放在 ERP 这一侧，而不是 Harness 里。</strong></p></div>
+  <ul class="plain">
+    <li><span class="k">它是为「一个开发者在自己电脑上用」设计的：</span>没有多用户概念；默认就开着命令行、读写文件、上网、跑脚本这一整套能力；工具调用默认直接执行，不做审批；沙箱只管写文件，不隔离网络。官方安全说明也写明它「尚未接受安全审计，不得视为安全或可用于生产环境的软件」。</li>
+    <li><span class="k">默认还会把数据带出去：</span>每次调用模型都会额外上传整段会话日志（含工具查到的业务数据，每次最多 8MB）；用户点反馈会把整段会话传到 DeepSeek 的遥测服务器；模型能把数据发到任意公网地址。</li>
+    <li><span class="k">好在这些都关得掉：</span>它「一切皆插件」，上面的能力都是独立插件，可以逐个禁用；我们要用的运行模式不监听任何端口；工具执行流水线里有一个「只能拒绝、不能被改成允许」的守卫挂点，适合挂我们的白名单和审批。</li>
+    <li><span class="k">适配思路：Harness 管思考，ERP 管动手和刹车。</span>Harness 只保留和 ERP 通信的那一个通道；身份、权限、演练、审批、打码、限额全部在 ERP 后端强制执行。就算 Harness 被提示注入攻破，没有 ERP 签发的审批记录，写操作也执行不了。</li>
+  </ul>
+</section>
+
+<section id="a1">
+  <h2><span class="no">01</span>范围与方法</h2>
+  <ul class="plain">
+    <li><span class="k">对象：</span>官方仓库 master 分支 639ed015（2026-09-29），版本 0.2.0-rc.2，61 个模块。</li>
+    <li><span class="k">方法：</span>只读源码，不安装、不运行（它的安全说明要求在一次性环境里运行，审计不需要）。分 4 个方向并行审：网络暴露与身份隔离；工具执行、沙箱与审批；数据外发、凭据与供应链；MCP、提示注入与前端。另把锁文件里 1,684 个第三方包版本拿去和公开漏洞库 OSV 比对。</li>
+    <li><span class="k">核实：</span>下表标「已核实」的条目，我逐条打开源码原文对过；其余条目来自审计子任务给出的文件和行号，未逐行复核。</li>
+    <li><span class="k">部署假设：</span>独立容器；每个活跃用户一个 Harness 进程，同时最多 2 个；只接 ERP 的 MCP 工具；模型用 DeepSeek API。</li>
+  </ul>
+</section>
+
+<section id="a2">
+  <h2><span class="no">02</span>发现清单</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>级别</th><th>问题</th><th>证据</th><th>处置</th></tr></thead>
+    <tbody>
+      <tr><td><span class="sev s-crit">严重</span></td><td><b>工具调用默认直接执行，不做任何审批。</b>只有沙箱越权等少数情况才会询问；调用 ERP 写工具时，Harness 这一侧零确认。<br>已核实</td><td class="ev">packages/core/tools/src/index.ts:1505-1508</td><td>自建 erp-gate 插件：写工具一律转人工审批；ERP 侧再强制校验审批记录（B、C、J 项）</td></tr>
+      <tr><td><span class="sev s-crit">严重</span></td><td><b>默认开着整套执行能力：</b>命令行、读写文件、工作流脚本、子 Agent、上网抓取。关掉命令行后，工作流脚本仍能直接调用系统命令和网络，它的文档原话是「VM 不是安全边界」。<br>已核实</td><td class="ev">bundle/base/cordis.patch.yml:267-490；workflow/workflow-ptc/README.md:159</td><td>全部禁用，并加全局白名单守卫兜底（B 项）</td></tr>
+      <tr><td><span class="sev s-crit">严重</span></td><td><b>模型能把数据发到任意公网地址。</b>网页抓取默认开启，只限制「必须是公网」，没有域名白名单，也不审批。</td><td class="ev">web/tool-web/src/index.ts:55-56</td><td>禁用抓取和搜索；容器网络层只放行我们自己的后端（B、E 项）</td></tr>
+      <tr><td><span class="sev s-crit">严重</span></td><td><b>每次调用模型都附带上传整段会话日志</b>（工具结果原文、审批记录、系统提示词，每次最多 8MB）。这和推理需要的对话内容是两回事。它自己的说明是「仅当官方 API 不得接收会话日志时才禁用它」。<br>已核实</td><td class="ev">session/session-log-deepseek/src/index.ts:40-53；base:43</td><td>禁用 session-log-deepseek（B 项）</td></tr>
+      <tr><td><span class="sev s-crit">严重</span></td><td><b>自带的网页版是单人操作台：</b>登录后所有请求都以唯一的「操作员」身份执行，可开终端、装插件、读容器里任意文件。<br>已核实（读任意文件）</td><td class="ev">client/connection/src/rpc-host.ts:103-113；api/session-controller/media-references.ts:1-5</td><td>生产不运行网页版，前端另行处理（见第 07 节）</td></tr>
+      <tr><td><span class="sev s-high">高</span></td><td><b>沙箱只管写文件：</b>不隔离网络，不限制读。<br>已核实</td><td class="ev">sandbox/sandbox-local/src/profiles.ts:16-36</td><td>不依赖它；执行类工具全关，靠容器隔离（E 项）</td></tr>
+      <tr><td><span class="sev s-high">高</span></td><td><b>环境变量全量透传：</b>Python SDK 把父进程的全部环境变量传给 Harness（包括数据库连接串）；Harness 启动时还会自动读取当前目录和主目录下的 .env。<br>已核实</td><td class="ev">python/sdk/.../client.py:76-78；core/app-boot/src/index.ts:234-247</td><td>用 <code>env -i</code> 包装启动，只传白名单变量；启动目录用空目录（D 项）</td></tr>
+      <tr><td><span class="sev s-high">高</span></td><td><b>同一进程里所有会话共用一个 MCP 身份</b>（请求头启动时固定）；SDK 只能新建会话，不能恢复。<br>已核实（不能恢复）</td><td class="ev">mcp/mcp-client/src/transport.ts:40-44；sdk/server/src/server.ts:276-293</td><td>用户与进程一对一；对话由我们后端保存，新会话带摘要续接（A 项）</td></tr>
+      <tr><td><span class="sev s-high">高</span></td><td><b>提示注入面：</b>MCP 服务端返回的说明直接写进系统提示词；工具结果、附件内容进上下文时不区分可信与否。ERP 备注、上传文档里的文字可以诱导模型调用写工具。<br>已核实（说明进系统提示词）</td><td class="ev">mcp/mcp-client/src/server-context.ts:32-38；tools.ts:449-511</td><td>ERP MCP 不返回说明、固定工具清单；写操作在 ERP 侧强制审批（J 项）</td></tr>
+      <tr><td><span class="sev s-high">高</span></td><td><b>Markdown 自动加载远程图片，页面没有 CSP：</b>注入成功后，模型输出一张图片链接，浏览器就会零点击把数据发出去。<br>已核实</td><td class="ev">client/ui-primitives/.../markdown/render.tsx:103-108</td><td>我们自己的前端只渲染同源图片，并加 CSP（第 07 节）</td></tr>
+      <tr><td><span class="sev s-high">高</span></td><td><b>反馈会把整段会话上传到 DeepSeek 的遥测服务器</b>（dsh-otel-collector.deepseeksvc.com），没有内置脱敏。<br>已核实（地址与默认模式）</td><td class="ev">base:204-218；session/session-telemetry-otel/src/index.ts:189-221</td><td>关闭遥测并禁用反馈命令；容器不出公网（B、D、E 项）</td></tr>
+      <tr><td><span class="sev s-high">高</span></td><td><b>sdk-minimal 运行模式写死了「完全放开」：</b>无沙箱，还带命令行。</td><td class="ev">bundle/sdk-minimal/cordis.patch.yml:41-45</td><td>禁止使用这个模式</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>子 Agent 继承父级全部工具；父回合结束后还会在后台无人值守地继续跑</td><td class="ev">subagent/subagent/src/child-agent.ts:247-256；base:374</td><td>禁用子 Agent 全系（B 项）</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>无人值守自动执行：目标模式空闲时自动续跑（最多 256 轮），后台任务完成会唤醒 Agent；代码执行模式下的 run_code 屏蔽不掉</td><td class="ev">core/tools/src/index.ts:1111；bundle/headless/cordis.patch.yml:15-18</td><td>禁用目标、后台任务；工具模式固定为 native（B、D 项）</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>钩子（hooks）失败时默认放行，不能用来做审批</td><td class="ev">hooks/hook-protocol/src/codec.ts:2-4</td><td>审批改用守卫和审批应答器（C 项）</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>每次模型请求都附带持久用户 ID 和已加载插件清单</td><td class="ev">llm/llm-deepseek/src/adapter.ts:120-131</td><td>禁用插件清单；用户 ID 头由模型网关剥掉（F 项）</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>启动目录下的 .env 能改写模型地址，等于能把 API Key 和全部会话转发到别处</td><td class="ev">llm/llm-deepseek/src/config.ts:290</td><td>显式设置模型地址；启动目录不可写（D 项）</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>插件安装没有签名校验；默认加载的 llm-pi-ai 会引入一个带遥测依赖的第三方包</td><td class="ev">boot/plugin-manager/src/index.ts:186；base:127</td><td>禁用插件管理和 llm-pi-ai；镜像构建时锁定依赖（B、H 项）</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>会话日志明文永久落盘，含工具结果原文，没有过期机制</td><td class="ev">session-persistence-jsonl/src/index.ts:1202,1274</td><td>定期清理；正式记录以我们后端的审计为准（G 项）</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>MCP 的 HTTP 通道：不强制 https，没有响应大小上限，令牌启动后不能刷新</td><td class="ev">mcp/mcp-client/src/transport.ts:40-44；index.ts:135</td><td>ERP 侧限制返回大小、禁止跳转；令牌有效期覆盖一次会话，到期重启进程（J 项）</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>进程管理：等待空闲没有总超时，通知队列无上限，忘记关闭会泄漏进程</td><td class="ev">python/sdk/.../api.py:168-181；client.py:417-418</td><td>会话管家强制超时和回收（A 项）</td></tr>
+      <tr><td><span class="sev s-mid">中</span></td><td>网页版：启动令牌会打印到日志；Cookie 30 天、无 Secure；缺 CSP 等安全响应头</td><td class="ev">client/connection/src/browser-auth.ts:122；bundle/web-app/src/index.ts:270</td><td>生产不运行网页版</td></tr>
+      <tr><td><span class="sev s-low">低</span></td><td>配置文件里的 <code>!!js</code> 表达式会被执行</td><td class="ev">vendor/loader/src/config/utils.ts:5-9</td><td>配置只读挂载，主目录模型不可写（D 项）</td></tr>
+      <tr><td><span class="sev s-low">低</span></td><td>会按系统代理设置全局代理，带身份的 ERP 请求可能经过代理</td><td class="ev">util/http-proxy/src/install.ts:209-213</td><td>设置 NO_PROXY（D 项）</td></tr>
+      <tr><td><span class="sev s-low">低</span></td><td>读取资源的工具接受模型传入的任意 URI</td><td class="ev">mcp/mcp-resources/src/tools.ts:51-60</td><td>ERP 侧校验（J 项）</td></tr>
+      <tr><td><span class="sev s-low">低</span></td><td>图片附件会上传到 DeepSeek 文件接口，保留 7 天</td><td class="ev">llm/llm-deepseek/src/defaults.ts:18</td><td>默认模型只收文字，影响有限；需要图片时再评估</td></tr>
+      <tr><td><span class="sev s-low">低</span></td><td>第三方依赖有已知漏洞（见第 04 节），运行时实际受影响的都是中低危</td><td class="ev">pnpm-lock.yaml</td><td>构建时强制升级到修复版（H 项）</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="a3">
+  <h2><span class="no">03</span>做得好的地方</h2>
+  <ul class="plain ok-list">
+    <li>我们要用的运行模式（sdk、acp、headless）都不监听端口，没有对外入口。</li>
+    <li>工具执行流水线有「守卫」挂点：只能拒绝、不能被其他规则改成允许，子 Agent 和代码执行发出的调用也覆盖得到，适合挂白名单。</li>
+    <li>会话 ID 会转义，运行模式名有校验，存储键有安全检查，没发现路径穿越。</li>
+    <li>凭据文件权限是 0600；如果组或其他用户可读，会拒绝启动。</li>
+    <li>网页版的防 DNS 重绑定、CSRF 设计是合理的（Host 白名单、校验来源、SameSite=Strict）。</li>
+    <li>模型输出里的原始 HTML 按纯文本显示，链接只允许 http、https、mailto；附件文件名有清洗，没有命令注入。</li>
+    <li>依赖安装默认拒绝执行安装脚本；Python 运行时打包的二进制都有 SHA256 锁定。</li>
+  </ul>
+</section>
+
+<section id="a4">
+  <h2><span class="no">04</span>依赖漏洞</h2>
+  <p>锁文件里 1,684 个第三方包版本中，29 个在公开漏洞库里有记录。按运行时是否用得到分开看：</p>
+  <div class="tbl"><table>
+    <thead><tr><th>包</th><th>最高级别</th><th>谁在用</th><th>对我们的影响</th></tr></thead>
+    <tbody>
+      <tr><td>undici（网络请求）</td><td>高：TLS 证书校验可被绕过等</td><td>只被构建工具引用（下载 Electron、打包、测试、编译原生模块）</td><td>运行时用的是 Node 自带的网络库，不受影响；保持 Node 22 最新补丁</td></tr>
+      <tr><td>fast-uri</td><td>高：主机名混淆、服务端请求伪造</td><td>经 ajv（参数格式校验）</td><td>只影响 URI 格式判断，实际风险中低；构建时升级</td></tr>
+      <tr><td>ip-address</td><td>高：地址分类可被绕过</td><td>经 express-rate-limit</td><td>我们不起网页服务，影响低；构建时升级</td></tr>
+      <tr><td>js-yaml</td><td>高：恶意 YAML 可耗尽 CPU</td><td>读配置文件</td><td>配置文件由我们提供且只读，影响低；构建时升级</td></tr>
+      <tr><td>extract-zip</td><td>高：借符号链接任意写文件，无修复版</td><td>运行时没有找到引用它的包</td><td>禁用插件管理后不涉及</td></tr>
+      <tr><td>hono、dompurify、mermaid 等</td><td>中</td><td>网页版服务端和前端</td><td>生产不运行网页版，不受影响</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="a5">
+  <h2><span class="no">05</span>部署加固清单（上线前逐项过）</h2>
+  <ol class="chk">
+    <li><b>运行方式：</b>用 acp 或 sdk 模式，经标准输入输出驱动，不起任何网页服务。用户与进程一对一，同时最多 2 个（信号量），空闲 15 分钟回收，单轮设超时。对话历史存在我们后端，新会话带摘要续接。禁止使用 sdk-minimal。</li>
+    <li><b>禁用插件（以配置补丁加载）：</b>命令行与文件（tool-bash、tool-pwsh、bash-sandbox、shell-env、tool-fs、tool-fs-search）；上网（tool-web、web、web-search-deepseek、web-fetch-http）；子 Agent（tool-subagent 全系、subagent-spawn-in-process、subagent-fork-in-process）；脚本与自动续跑（ptc-runtime、workflow-ptc、tool-workflow、goal 全系、tool-jobs、plan-mode）；技能与办公组件（tool-skill、skill、skill-filesystem、skill-office、workspace-dependencies）；数据外发（session-log-deepseek、session-telemetry-otel、command-feedback、plugin-package-inventory-deepseek、llm-pi-ai、deepseek-account、llm-deepseek-account）；管理面（plugin-manager、config-editor、settings、agent-instructions）。</li>
+    <li><b>只插入两个插件：</b><code>erp-mcp</code>（streamable-http，https，请求头 <code>Authorization: Bearer ${ERP_MCP_TOKEN}</code>，启动连不上就失败）；<code>erp-gate</code>（自建）：① 守卫白名单，只允许 <code>mcp__erp__*</code>；② 写工具一律发起审批，审批理由里带工具名和参数；③ 审批应答器把请求转给我们后端，自设超时，记录放行的调用编号。</li>
+    <li><b>环境：</b>用 <code>env -i</code> 包装启动，只传 DSH_HOME（每用户独立目录，0700，模型不可写）、DEEPSEEK_BASE_URL（指向我们后端的模型网关，见 F 项）、网关签发的调用凭据、ERP_MCP_TOKEN（每用户一个）、DSH_TELEMETRY_DISABLED=1、DSH_TELEMETRY_MODE=DISABLED、DSH_PERMISSION_MODE=read-only、DSH_TOOLS_MODE=native、NO_PROXY。启动目录用空目录。配置补丁只读挂载。</li>
+    <li><b>容器：</b>独立容器，不发布端口；网络层出站<strong>只放行我们自己的后端</strong>（MCP 服务和模型网关），不出公网；非 root 运行；根文件系统只读，只有 DSH_HOME 卷可写；启用 --init；设内存上限；umask 077；容器里不放数据库连接串，不挂业务数据卷。</li>
+    <li><b>模型网关：</b>Harness 不直连 DeepSeek，所有模型请求经我们后端转发。网关做三件事：① 逐次记 token 和费用，到月度上限（暂定 1000 元）自动停用；② 只转发推理必需的字段，剥掉会话日志、插件清单、用户 ID 请求头等附加内容（即使 B 项哪一项没关住，这里也会被剥掉）；③ DeepSeek 的 API Key 只存在后端，Harness 容器里没有。</li>
+    <li><b>数据：</b>Harness 的会话落盘和临时溢出文件定期清理（建议 7 天）；正式记录以我们后端的审计为准。银行账号、身份证、工资薪酬、手机号在 ERP MCP 服务端打码后再给模型；模型拿到的是代号，执行时由服务端换回真值。</li>
+    <li><b>构建：</b>把仓库 fork 到我们自己的仓库，固定 commit；用依赖覆盖强制升级第 04 节的包；锁文件安装；镜像构建完再扫一次漏洞。升级 Harness 版本必须先过业务评测、越权回放和本清单自检。</li>
+    <li><b>启动自检：</b>每个进程启动后导出生效配置，确认上面的禁用项都没有加载；会话开始时核对工具清单只有 <code>mcp__erp__*</code>。任何一项不符就不接流量。</li>
+    <li><b>ERP 侧兜底（最重要）：</b>MCP 服务按令牌识别用户，以本人身份调原业务接口；写操作必须有后端签发的审批记录（调用编号 + 参数哈希）才执行，没有就拒绝，不管 Harness 那边说什么；演练、打码、限额、审计全在 ERP。MCP 服务不返回说明文字、不发跳转、固定工具清单、限制返回大小、校验资源 URI。</li>
+  </ol>
+</section>
+
+<section id="a6">
+  <h2><span class="no">06</span>适配架构</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  U[用户：网页 · 桌面 · APP · 企微] --> FE[我们的前端：智能体工作台]
+  FE --> BE[ERP 后端：登录 · 会话存储 · 审批卡片 · 并发闸]
+  BE --> SV[会话管家：每人一个进程 · 空闲回收]
+  SV -->|标准输入输出| HA[Harness 进程 · 用户甲]
+  SV -->|标准输入输出| HB[Harness 进程 · 用户乙]
+  HA -->|推理| GW[模型网关：记账 · 月度上限 · 剥离多余字段]
+  HB -->|推理| GW
+  GW --> DS[DeepSeek API]
+  HA -->|MCP · 本人令牌| MCP[ERP MCP 服务：工具 · 打码 · 演练 · 审批校验]
+  HB -->|MCP · 本人令牌| MCP
+  MCP --> API[原业务接口] --> DB[(PostgreSQL)]
+  </pre></div>
+  <h3>一次写操作怎么走</h3>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant M as Harness（模型）
+  participant G as erp-gate 插件
+  participant B as ERP 后端
+  participant P as 用户
+  participant S as ERP MCP 服务
+  M->>G: 调用写工具（工具名 + 参数）
+  G->>B: 请求审批（调用编号 + 参数）
+  B->>B: 演练：真实跑一遍，整体回滚，截下外发
+  B->>P: 变更预览卡：改前 → 改后
+  P->>B: 确认
+  B->>B: 记录审批（调用编号 + 参数哈希）
+  B-->>G: 放行
+  G->>S: 执行写工具
+  S->>S: 核对审批记录与参数哈希，没有就拒绝
+  S->>B: 以用户本人身份调原业务接口
+  S-->>M: 结果（敏感字段已打码）
+  </pre></div>
+  <p>Harness 那一侧的审批是第一道；ERP MCP 服务核对审批记录是第二道，也是真正的保证：就算 erp-gate 没加载、被绕过，没有后端签发的审批记录，写操作照样执行不了。</p>
+</section>
+
+<section id="a7">
+  <h2><span class="no">07</span>前端复用</h2>
+  <p>Harness 的前端是 React 18（我们是 Vue 3），真正的界面代码在 63 个包里，约 16.7 万行，由插件动态拼装。它本质是带终端和插件安装的单人控制台，安全边界不适合直接给 27 个业务用户。</p>
+  <div class="tbl"><table>
+    <thead><tr><th></th><th>① 原样作子应用（/agent/）</th><th>② 用 Vue 在我们前端里重构</th><th>③ iframe 嵌入</th></tr></thead>
+    <tbody>
+      <tr><td class="k">需要运行</td><td>Harness 网页版（单人操作台）</td><td>不需要，Harness 只用 acp / sdk 模式</td><td>同 ①</td></tr>
+      <tr><td class="k">安全</td><td>要裁掉终端、插件、设置，改登录，补 CSP、改图片加载</td><td>最好：浏览器不直连 Harness</td><td>同 ①，问题更多</td></tr>
+      <tr><td class="k">手机 APP / 桌面端</td><td>移动端适配弱</td><td>复用现有 H5、桌面端</td><td>APP 和桌面端里登录 Cookie 发不出去，用不了</td></tr>
+      <tr><td class="k">风格统一</td><td>否</td><td>是</td><td>否</td></tr>
+      <tr><td class="k">升级维护</td><td>跟上游预览版持续打补丁</td><td>只跟通信协议</td><td>同 ①</td></tr>
+      <tr><td class="k">首版成本（粗估）</td><td>3–5 人周</td><td>从零写 8–12 人周；我们已有智能体页面的流式对话、卡片、提问卡可复用，实际会少，第一周细化</td><td>约 1 人周</td></tr>
+    </tbody>
+  </table></div>
+  <div class="verdict"><p><strong>建议走 ②：</strong>复用 Harness 的交互设计和事件模型（会话、计划、执行轨迹、审批），也复用我们现有智能体页面的组件，在 Vue 里重构成「智能体工作台」。Harness 自带的网页版只给我们自己在内网排障用，不给业务用户。</p></div>
+</section>
+
+<section id="a8">
+  <h2><span class="no">08</span>第一周实测项（审计里标「未确认」的）</h2>
+  <ul class="plain">
+    <li>禁用上面那些插件后能否正常启动（插件之间的依赖关系）。</li>
+    <li>每个 Harness 进程实际占多少内存，2 核 3.5G 跑 2 个并发够不够。</li>
+    <li>erp-gate 插件加载失败时，进程是拒绝启动还是照常运行（后者就全靠启动自检和 ERP 侧兜底）。</li>
+    <li>acp 模式下的审批请求、工具调用事件流，能不能满足工作台展示计划和轨迹的需要。</li>
+    <li>MCP 客户端遇到跳转时，会不会把身份请求头带到别的主机。</li>
+    <li>Harness 实际调用 DeepSeek 的哪几个接口（模型网关要按这些接口透传，包括流式返回）。</li>
+  </ul>
+</section>
+
+<footer>
+  <div>依据：DeepSeek Harness 官方仓库源码（master 639ed015）只读审计；OSV 公开漏洞库（2026-10-01 查询）；官方 SAFETY.zh.md。</div>
+  <div>源码：<a href="https://github.com/deepseek-ai/deepseek-harness">github.com/deepseek-ai/deepseek-harness</a></div>
+</footer>
+</main>
+</div>
