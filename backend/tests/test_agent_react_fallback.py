@@ -116,7 +116,7 @@ async def main():
         print("\n=== 2. sales_summary：按销售员查 / 排名 / 没签订日期的清单 ===")
         async with SessionLocal() as db:
             r = await te.sales_summary(db, u_admin, by="sales")
-            rank = [(x["sales"], x["amount"]) for x in r["items"] if x["sales"] in ("李昌奇", "方步森")]
+            rank = [(x["salesperson"], x["amount"]) for x in r["items"] if x["salesperson"] in ("李昌奇", "方步森")]
             chk(rank == [("李昌奇", 300000.0), ("方步森", 120000.0)],
                 f"按销售员排名（今年、按签订日期），没签订日期的不进 → {rank}")
             nsi = [x["project"] for x in r["no_sign_date_items"]]
@@ -128,9 +128,9 @@ async def main():
             r = await te.sales_summary(db, u_fang, sales="李昌奇")
             chk("error" in r and "只能看自己" in r["error"], f"销售查别人的销售额 → 拒 {r}")
             r = await te.sales_summary(db, u_fang, by="sales")
-            chk([x["sales"] for x in r["items"]] == ["方步森"], f"销售看排名只有自己那一行 → {r['items']}")
+            chk([x["salesperson"] for x in r["items"]] == ["方步森"], f"销售看排名只有自己那一行 → {r['items']}")
             r = await te.sales_summary(db, u_lead, by="sales")
-            chk({x["sales"] for x in r["items"]} >= {"李昌奇", "方步森"}, "销售主管看全部排名")
+            chk({x["salesperson"] for x in r["items"]} >= {"李昌奇", "方步森"}, "销售主管看全部排名")
             r = await te.sales_summary(db, u_admin, sales="不存在的人")
             chk("error" in r and "find_entity" in r["error"], f"人名对不上时引导去 find_entity → {r}")
             via = await ar._run_tool_inner("sales_summary", {"by": "sales"}, db, u_admin)

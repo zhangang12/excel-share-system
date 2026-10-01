@@ -41,6 +41,9 @@ _FIELD_ORDER = [
     # ── ① 认得出是哪一单（编号在名字前，人是按编号对单的）──
     ("project", "", False, "项目"), ("project_code", "", False, "项目"),
     ("code", "", False, "编号"),
+    # 🆕 2026-10-01 销售额按月 / 按销售员排名、找同事：没有这几个，表格只剩孤零零一列「金额」
+    ("month", "", False, "月份"), ("salesperson", "", False, "销售员"),
+    ("person", "", False, "姓名"),
     # 单项目的卡点清单用它当第一列（设计/电工/生产·钣金/采购/发货）
     ("stage", "", False, "环节"),
     ("supplier", "", False, "供应商"), ("customer", "", False, "客户"),
@@ -49,7 +52,10 @@ _FIELD_ORDER = [
     # find_entity 按客户命中时用它：这家客户有几行台账
     ("ledger_rows", "", False, "台账行"),
     # ── ② 多少钱 / 多少个 ──
-    ("amount", "", True, "金额"), ("contract", "合同 ", True, "合同额"),
+    ("amount", "", True, "金额"),
+    # 几笔（销售额按月/按人的单数、供应商汇总的未到货条数）。紧跟金额，合同额之类的排它后面
+    ("count", "", False, "笔数"),
+    ("contract", "合同 ", True, "合同额"),
     ("ship_receivable", "发货款 ", True, "发货款"), ("balance", "尾款 ", True, "尾款"),
     ("unpaid_total", "未收 ", True, "未收"),
     ("qty", "数量 ", False, "数量"), ("stock", "库存 ", False, "库存"),
@@ -63,6 +69,7 @@ _FIELD_ORDER = [
     ("order_state", "", False, "订单"), ("purchase_pending", "待到货 ", False, "待到货"),
     # ── ⑤ 谁负责（要催人时比日期有用）──
     ("worker", "", False, "负责人"), ("buyer", "", False, "采购员"),
+    ("roles", "", False, "岗位"),
     # 管理层下发的待办：事项名。刻意不叫 name —— 见 tools_entity.mgmt_todo_watch
     ("todo", "", False, "事项"),
     ("dept_name", "", False, "部门"),

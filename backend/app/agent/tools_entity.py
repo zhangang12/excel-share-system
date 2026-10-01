@@ -686,7 +686,9 @@ async def sales_summary(db: AsyncSession, current: models.User,
             if not _sign(p).startswith(yr):
                 continue
             nm = names.get(l.sales_uid, "（未指定销售）")
-            a = agg.setdefault(nm, {"sales": nm, "count": 0, "amount": 0.0, "zero_amount": 0})
+            # 键叫 salesperson 不叫 sales：台账明细行里的 sales 是「负责销售」，渲染层排在后面；
+            # 排名表里人是主体，要排第一列（见 render._FIELD_ORDER）
+            a = agg.setdefault(nm, {"salesperson": nm, "count": 0, "amount": 0.0, "zero_amount": 0})
             a["count"] += 1
             a["amount"] += float(l.amount or 0)
             if float(l.amount or 0) <= 0:
