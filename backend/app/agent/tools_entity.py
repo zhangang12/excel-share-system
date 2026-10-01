@@ -733,9 +733,17 @@ async def sales_summary(db: AsyncSession, current: models.User,
     cur_m = today.strftime("%Y-%m")
     prev = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
     cur_b, prev_b = buckets.get(cur_m), buckets.get(prev)
+    # 🆕 2026-10-01 全年合计单独给：items 只有最近 N 个**有数的**月份，模型拿它加总说「今年」，
+    #    生产实测把方步森今年 ¥990,850（14 笔）说成了 ¥802,850（12 笔）—— 1、2 月没进那 6 个月。
+    yr = str(today.year)
+    yr_b = [b for m, b in buckets.items() if m.startswith(yr)]
     return {
         "count": len(items), "shown": len(items), "today": today.isoformat(),
-        "basis": "按项目签订日期归月（不是台账录入时间）",
+        "basis": f"按项目签订日期归月（不是台账录入时间）；items 只含最近 {len(items)} 个有数的月份，"
+                 "说「今年」一律用 this_year_amount / this_year_count",
+        "this_year": yr,
+        "this_year_amount": round(sum(b["amount"] for b in yr_b), 2),
+        "this_year_count": sum(b["count"] for b in yr_b),
         "this_month": cur_m,
         "this_month_amount": round((cur_b or {}).get("amount", 0.0), 2),
         "this_month_count": (cur_b or {}).get("count", 0),

@@ -125,6 +125,14 @@ async def main():
             codes = [p["project"] for m in r["months_detail"] for p in m["projects"]]
             chk(codes == ["2026-971"] and r["sales_filter"] == "李昌奇",
                 f"sales=李昌奇 只看他的 → {codes} / {r.get('sales_filter')}")
+            r = await te.sales_summary(db, u_admin, sales="李昌奇", months=1)
+            chk(r["this_year_amount"] == 300000.0 and r["this_year_count"] == 1,
+                f"全年合计单独给，不受 months 截断（改之前模型拿 6 个月加总当「今年」）→ "
+                f"{r['this_year_amount']} / {r['this_year_count']}")
+            from app.agent import render as _rd
+            t = _rd.table(await te.sales_summary(db, u_admin), plan={"list": "no_sign_date_items"})
+            chk("2026-972" in t and "月份" not in t,
+                f"编排块 list=no_sign_date_items 渲染的是那组清单，不是月度表 → {t[:80]!r}")
             r = await te.sales_summary(db, u_fang, sales="李昌奇")
             chk("error" in r and "只能看自己" in r["error"], f"销售查别人的销售额 → 拒 {r}")
             r = await te.sales_summary(db, u_fang, by="sales")

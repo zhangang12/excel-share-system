@@ -307,6 +307,16 @@ def table(result: dict, *, plan: dict | None = None) -> str:
     模型只需要给这些，**一行数据都不用它打**。
     """
     plan = plan or {}
+    # 🆕 2026-10-01 `list`：要列的不是主清单，而是结果里另一组明细（如 sales_summary 的
+    #    no_sign_date_items、get_supplier 的 in_transit）。没有它时问「哪个项目没填签订日期」，
+    #    结论答对了，底下却挂一张毫不相干的月度表。另起一个只含这组的结果来渲染，
+    #    「另有 N 条」按这组自己的条数算，不沿用主清单的 count。
+    alt = plan.get("list")
+    if isinstance(alt, str) and alt not in ("items", "suppliers", "rows"):
+        rows = result.get(alt)
+        if isinstance(rows, list) and rows and all(isinstance(x, dict) for x in rows):
+            return table({"items": rows, "count": len(rows)},
+                         plan={k: v for k, v in plan.items() if k != "list"})
     items = None
     for k in ("items", "suppliers", "rows"):
         if isinstance(result.get(k), list):

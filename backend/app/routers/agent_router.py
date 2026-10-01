@@ -1032,6 +1032,8 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
 {{"group":"urgency","sort":"days_left","desc":false,"highlight":["2026-045B"]}}
 ```
 - `group` / `sort` / `highlight` 都是**可选**的。
+- 要列的不是主清单、而是结果里**另一组明细**时（如 `no_sign_date_items` 没填签订日期的项目、
+  `in_transit` 在途），加 `"list":"no_sign_date_items"`。答的是那组，就别让主清单的表挂在下面。
 - ⚠️ **`fields` 一般不要给**。给了就必须是**这一轮最后那个工具**返回的字段名；
   写成别的工具的字段名会导致明细排不出来。不确定就整个省掉，代码会自己挑。
 - ⚠️ `group` 同理，只能用最后那个工具真有的字段（交期看板是 `urgency`）。"""
