@@ -103,6 +103,55 @@ footer a,main a{color:var(--accent)}
 .chk>li{background:var(--surface);border:1px solid var(--line);padding:10px 14px 10px 44px;position:relative;counter-increment:c;font-size:14px}
 .chk>li::before{content:counter(c,upper-alpha);position:absolute;left:14px;top:10px;font-family:var(--mono);font-weight:600;color:var(--accent)}
 .chk code{font-size:12px}
+
+.fig{margin:14px 0 18px;background:var(--surface);border:1px solid var(--line);padding:14px 14px 10px;overflow-x:auto}
+.fig figcaption{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.6}
+.fig figcaption b{color:var(--ink);font-weight:600}
+.fig svg{display:block;width:100%;height:auto;min-width:520px}
+.fig pre.mermaid{margin:0;background:transparent}
+.fig svg text{font-family:var(--body)}
+.c-ax{stroke:var(--line);stroke-width:1}
+.c-grid{stroke:var(--line);stroke-width:1;stroke-dasharray:2 3}
+.c-a{fill:var(--accent)} .c-g{fill:var(--gate)} .c-m{fill:var(--muted);opacity:.55} .c-r{fill:var(--risk)} .c-ok{fill:var(--ok)}
+.c-soft{fill:var(--code-bg)} .c-asoft{fill:var(--accent-soft)} .c-gsoft{fill:var(--gate-soft)} .c-rsoft{fill:var(--risk-soft)}
+.c-tgt{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5;stroke-dasharray:4 3}
+.c-t{fill:var(--ink);font-size:12.5px} .c-tb{fill:var(--ink);font-size:13px;font-weight:600}
+.c-s{fill:var(--muted);font-size:11.5px} .c-n{fill:var(--ink);font-size:12px;font-family:var(--mono)}
+.c-in{fill:var(--surface);font-size:11.5px;font-family:var(--mono);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--muted);margin-top:8px}
+.legend i{display:inline-block;width:11px;height:11px;margin-right:5px;vertical-align:-1px}
+.lg-a{background:var(--accent)} .lg-g{background:var(--gate)} .lg-m{background:var(--muted);opacity:.55} .lg-ok{background:var(--ok)}
+.lg-soft{background:var(--code-bg);border:1px solid var(--line)} .lg-tgt{background:var(--accent-soft);border:1.5px dashed var(--accent)}
+/* 工作台示意 */
+.wb{display:grid;grid-template-columns:190px minmax(0,1fr) 190px;gap:0;border:1px solid var(--line);background:var(--paper);font-size:12.5px;line-height:1.55;min-width:640px}
+.wb>div{padding:10px 12px}
+.wb .side{border-right:1px solid var(--line);background:var(--surface)}
+.wb .rail{border-left:1px solid var(--line);background:var(--surface)}
+.wb h4{margin:0 0 8px;font-size:11.5px;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.wb .task{padding:7px 8px;border:1px solid var(--line);margin-bottom:6px;background:var(--paper)}
+.wb .task.on{border-color:var(--accent);background:var(--accent-soft)}
+.wb .task small{display:block;color:var(--muted);font-size:11px}
+.wb .msg-u{align-self:flex-end;background:var(--accent-soft);padding:7px 10px;max-width:80%;margin-left:auto}
+.wb .main{display:flex;flex-direction:column;gap:9px}
+.wb .card{border:1px solid var(--line);background:var(--surface);padding:9px 11px}
+.wb .card h5{margin:0 0 6px;font-size:12.5px}
+.wb .steps{list-style:none;margin:0;padding:0;display:grid;gap:3px}
+.wb .steps li::before{display:inline-block;width:18px;font-family:var(--mono);color:var(--muted)}
+.wb .steps li.done::before{content:"✓";color:var(--ok)} .wb .steps li.run::before{content:"●";color:var(--accent)} .wb .steps li.todo::before{content:"○"}
+.wb .trace{font-family:var(--mono);font-size:11px;color:var(--muted);border-left:2px solid var(--line);padding-left:8px}
+.wb .diff{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:3px 8px;font-size:12px}
+.wb .diff .old{color:var(--muted);text-decoration:line-through} .wb .diff .new{color:var(--ok);font-weight:600}
+.wb .btns{display:flex;gap:6px;margin-top:8px}
+.wb .btns span{border:1px solid var(--line);padding:2px 10px;font-size:12px}
+.wb .btns span.pri{background:var(--accent);color:var(--surface);border-color:var(--accent)}
+.wb .kv{display:flex;justify-content:space-between;border-bottom:1px dashed var(--line);padding:4px 0}
+.wb .kv b{font-family:var(--mono)}
+/* 开关对照 */
+.onoff{width:100%;border-collapse:collapse;font-size:13px;min-width:520px}
+.onoff td,.onoff th{border-bottom:1px solid var(--line);padding:7px 10px;text-align:left}
+.onoff th{font-size:12px;color:var(--muted);font-weight:600}
+.pill{display:inline-block;padding:0 8px;font-size:12px;line-height:1.7;border:1px solid currentColor;white-space:nowrap}
+.p-bad{color:var(--risk);background:var(--risk-soft)} .p-good{color:var(--ok)} .p-mid{color:var(--accent)}
 </style>
 
 <div class="wrap">
@@ -143,7 +192,20 @@ footer a,main a{color:var(--accent)}
     <li><span class="k">好在这些都关得掉：</span>它「一切皆插件」，上面的能力都是独立插件，可以逐个禁用；我们要用的运行模式不监听任何端口；工具执行流水线里有一个「只能拒绝、不能被改成允许」的守卫挂点，适合挂我们的白名单和审批。</li>
     <li><span class="k">适配思路：Harness 管思考，ERP 管动手和刹车。</span>Harness 只保留和 ERP 通信的那一个通道；身份、权限、演练、审批、打码、限额全部在 ERP 后端强制执行。就算 Harness 被提示注入攻破，没有 ERP 签发的审批记录，写操作也执行不了。</li>
   </ul>
-</section>
+<figure class="fig"><pre class="mermaid">flowchart LR
+  I[ERP 备注 · 上传文档里夹带指令] --> M[模型被诱导]
+  M --> W[调用写工具]
+  W --> G1{第一道闸：erp-gate 转人工审批}
+  G1 -->|用户看预览后驳回| X1[拦下]
+  G1 -->|插件失效被绕过| G2{第二道闸：ERP 有审批记录吗}
+  G2 -->|没有| X2[拒绝执行]
+  M --> E[想把数据发出去]
+  E --> N{容器网络只通我们的后端}
+  N --> X3[发不出去]
+  M --> P[输出带数据的图片链接]
+  P --> F{前端只渲染同源图片 + CSP}
+  F --> X4[不加载]</pre><figcaption><b>图 1 · 一次提示注入会被拦在哪。</b>每条攻击路径都至少有一道不依赖 Harness 的闸。</figcaption></figure>
+  </section>
 
 <section id="a1">
   <h2><span class="no">01</span>范围与方法</h2>
@@ -222,6 +284,21 @@ footer a,main a{color:var(--accent)}
 
 <section id="a5">
   <h2><span class="no">05</span>部署加固清单（上线前逐项过）</h2>
+  <figure class="fig"><table class="onoff"><thead><tr><th>能力</th><th>默认</th><th>加固后</th></tr></thead><tbody><tr><td>命令行</td><td><span class="pill p-bad">开</span></td><td><span class="pill p-good">关</span></td></tr><tr><td>读写文件</td><td><span class="pill p-bad">开</span></td><td><span class="pill p-good">关</span></td></tr><tr><td>上网抓取 / 搜索</td><td><span class="pill p-bad">开</span></td><td><span class="pill p-good">关</span></td></tr><tr><td>工作流脚本 / 代码执行</td><td><span class="pill p-bad">开</span></td><td><span class="pill p-good">关</span></td></tr><tr><td>子 Agent</td><td><span class="pill p-bad">开</span></td><td><span class="pill p-good">关</span></td></tr><tr><td>无人值守续跑</td><td><span class="pill p-bad">开</span></td><td><span class="pill p-good">关</span></td></tr><tr><td>插件安装</td><td><span class="pill p-bad">开</span></td><td><span class="pill p-good">关</span></td></tr><tr><td>会话日志随请求上传</td><td><span class="pill p-bad">开</span></td><td><span class="pill p-good">关</span></td></tr><tr><td>遥测与反馈上传</td><td><span class="pill p-bad">开</span></td><td><span class="pill p-good">关</span></td></tr><tr><td>网页控制台（终端、读任意文件）</td><td><span class="pill p-bad">可用</span></td><td><span class="pill p-good">不运行</span></td></tr><tr><td>直连 DeepSeek</td><td><span class="pill p-bad">是</span></td><td><span class="pill p-mid">经模型网关</span></td></tr><tr><td>工具调用审批</td><td><span class="pill p-bad">不审批</span></td><td><span class="pill p-mid">写操作两道闸</span></td></tr><tr><td>ERP 工具</td><td><span class="pill p-bad">—</span></td><td><span class="pill p-mid">只有它</span></td></tr></tbody></table><figcaption><b>图 2 · Harness 的能力开关：默认 vs 加固后。</b>默认是给一个开发者在自己电脑上用的，什么都开着；加固后只剩和 ERP 通信的那一个通道。</figcaption></figure>
+  <figure class="fig"><pre class="mermaid">flowchart LR
+  subgraph D[默认]
+    direction TB
+    H1[Harness] --> A1[DeepSeek API：推理 + 整段会话日志 + 插件清单 + 用户 ID]
+    H1 --> T1[deepseeksvc 遥测]
+    H1 --> W1[任意公网地址]
+    H1 --> S1[搜索服务]
+  end
+  subgraph F[加固后]
+    direction TB
+    H2[Harness] --> B2[我们的后端：MCP + 模型网关]
+    B2 -->|只转发推理必需字段| A2[DeepSeek API]
+    H2 --x W2[公网：网络层拦截]
+  end</pre><figcaption><b>图 3 · 出网：默认 vs 加固后。</b>加固后 Harness 容器只能访问我们自己的后端，DeepSeek 只收到推理必需的内容。</figcaption></figure>
   <ol class="chk">
     <li><b>运行方式：</b>用 acp 或 sdk 模式，经标准输入输出驱动，不起任何网页服务。用户与进程一对一，同时最多 2 个（信号量），空闲 15 分钟回收，单轮设超时。对话历史存在我们后端，新会话带摘要续接。禁止使用 sdk-minimal。</li>
     <li><b>禁用插件（以配置补丁加载）：</b>命令行与文件（tool-bash、tool-pwsh、bash-sandbox、shell-env、tool-fs、tool-fs-search）；上网（tool-web、web、web-search-deepseek、web-fetch-http）；子 Agent（tool-subagent 全系、subagent-spawn-in-process、subagent-fork-in-process）；脚本与自动续跑（ptc-runtime、workflow-ptc、tool-workflow、goal 全系、tool-jobs、plan-mode）；技能与办公组件（tool-skill、skill、skill-filesystem、skill-office、workspace-dependencies）；数据外发（session-log-deepseek、session-telemetry-otel、command-feedback、plugin-package-inventory-deepseek、llm-pi-ai、deepseek-account、llm-deepseek-account）；管理面（plugin-manager、config-editor、settings、agent-instructions）。</li>
