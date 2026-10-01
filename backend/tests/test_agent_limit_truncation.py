@@ -140,7 +140,8 @@ async def main():
     sig = inspect.signature(ar._llm_stream)
     chk("max_tokens" in sig.parameters,
         f"_llm_stream 必须把 max_tokens 当参数收（不是蹭调用方的局部变量）：{sig}")
-    chk("_llm_stream(messages, model, cfg, schemas, max_tokens)" in src,
+    # 🆕 2026-10-01 调用点多了第 6 个参数 tool_choice（最后一轮只许作答），max_tokens 仍在第 5 位
+    chk("_llm_stream(messages, model, cfg, schemas, max_tokens" in src,
         "调用点必须真的把 max_tokens 传进去")
 
     print("\n" + "=" * 56)

@@ -18,6 +18,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import models
+from .. import clock
 from ...routers.sales_router import _all_view
 from . import token as card_token
 
@@ -29,7 +30,7 @@ def _money(x) -> str:
 
 
 def _age(d: datetime | None) -> int | None:
-    return (date.today() - d.date()).days if d else None
+    return (clock.today() - clock.cn_date(d)).days if d else None
 
 
 async def blind_ledgers(db: AsyncSession, current: models.User,

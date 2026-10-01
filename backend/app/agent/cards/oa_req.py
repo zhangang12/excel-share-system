@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from ... import models
+from .. import clock
 from . import token as card_token
 
 _MAX_CARDS = 20
@@ -47,7 +48,7 @@ def _age_days(d: datetime | None) -> int | None:
     if not d:
         return None
     ts = d if d.tzinfo else d.replace(tzinfo=timezone.utc)
-    return max(0, (date.today() - ts.astimezone(timezone.utc).date()).days)
+    return max(0, (clock.today() - clock.cn_date(ts)).days)
 
 
 async def pending_oa_requests(db: AsyncSession, current: models.User,

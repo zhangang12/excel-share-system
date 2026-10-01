@@ -62,7 +62,7 @@ async def main():
     # 第二轮（预算被抬高后）正常作答。复刻生产上那次的形状。
     seen_budgets: list[int] = []
 
-    async def fake_stream(messages, model, cfg, tools, max_tokens=700):
+    async def fake_stream(messages, model, cfg, tools, max_tokens=700, tool_choice="auto"):
         seen_budgets.append(max_tokens)
         if len(seen_budgets) == 1:
             yield {"choices": [{"delta": {"reasoning_content": "唔" * 400}}]}
@@ -94,7 +94,7 @@ async def main():
         ar._llm_stream = orig
 
     print("\n===== 3. 真的什么都没有（不是预算问题）→ 仍然按失败处理 =====")
-    async def empty_stream(messages, model, cfg, tools, max_tokens=700):
+    async def empty_stream(messages, model, cfg, tools, max_tokens=700, tool_choice="auto"):
         yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
 
     ar._llm_stream = empty_stream
@@ -116,7 +116,7 @@ async def main():
         ar._llm_stream = orig
 
     print("\n===== 4. 流里夹带的错误要带出来，不能报成含糊的「空内容」 =====")
-    async def err_stream(messages, model, cfg, tools, max_tokens=700):
+    async def err_stream(messages, model, cfg, tools, max_tokens=700, tool_choice="auto"):
         yield {"error": {"message": "context_length_exceeded"}}
         yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
 
@@ -150,7 +150,7 @@ async def main():
 
     seen_payload = {}
 
-    async def spy_stream(messages, model, cfg, tools, max_tokens=700):
+    async def spy_stream(messages, model, cfg, tools, max_tokens=700, tool_choice="auto"):
         seen_payload.update(ar._thinking_params(cfg))
         yield {"choices": [{"delta": {"content": "好"}}]}
         yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
@@ -179,7 +179,7 @@ async def main():
 
     calls = {"n": 0}
 
-    async def counting(messages, model, cfg, tools, max_tokens=700):
+    async def counting(messages, model, cfg, tools, max_tokens=700, tool_choice="auto"):
         calls["n"] += 1
         async for x in slow_thinking(messages, model, cfg, tools, max_tokens):
             yield x

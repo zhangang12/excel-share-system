@@ -47,6 +47,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
+from . import clock
 from ..database import SessionLocal
 from . import perm
 from .cards import ledger_settle, pay_req, sales_order
@@ -62,7 +63,7 @@ def _age_days(d: datetime | None) -> int:
     if not d:
         return 0
     ts = d if d.tzinfo else d.replace(tzinfo=timezone.utc)
-    return max(0, (date.today() - ts.astimezone(timezone.utc).date()).days)
+    return max(0, (clock.today() - clock.cn_date(ts)).days)
 
 
 def _score(amount: float, age: int, blind: bool) -> float:

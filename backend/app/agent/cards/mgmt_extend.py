@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from ... import models
+from .. import clock
 from .. import perm
 from . import token as card_token
 
@@ -26,7 +27,7 @@ def _days_from_today(d: str | None) -> int | None:
     if not d:
         return None
     try:
-        return (date.fromisoformat(d) - date.today()).days
+        return (date.fromisoformat(d) - clock.today()).days
     except (ValueError, TypeError):
         return None
 

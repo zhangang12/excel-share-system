@@ -22,6 +22,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
+from . import clock
 
 # 与 tools_entity 同一套中文名，别各写各的
 _DEPT_CN = {"design": "设计", "electric": "电工", "produce": "生产"}
@@ -36,7 +37,7 @@ def _left(due: str | None) -> int | None:
     if not d:
         return None
     try:
-        return (date.fromisoformat(d) - date.today()).days
+        return (date.fromisoformat(d) - clock.today()).days
     except ValueError:
         return None
 
@@ -93,7 +94,7 @@ async def my_tasks(db: AsyncSession, current: models.User) -> dict:
     return {
         "count": len(rows),
         "overdue": overdue,
-        "today": date.today().isoformat(),
+        "today": clock.today().isoformat(),
         "columns": ["project", "what", "status", "days_left"],
         "items": rows,
         # 一条都没有时明说「确实没有」，别让模型自己编一句含糊的话。

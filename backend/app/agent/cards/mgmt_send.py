@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import models
+from .. import clock
 from .. import perm
 from . import token as card_token
 
@@ -50,7 +51,7 @@ def _due_text(due: str) -> str:
     if not due:
         return "没定期限"
     try:
-        n = (date.fromisoformat(due) - date.today()).days
+        n = (date.fromisoformat(due) - clock.today()).days
     except (ValueError, TypeError):
         return due
     if n == 0:

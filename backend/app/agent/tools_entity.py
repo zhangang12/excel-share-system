@@ -29,6 +29,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
+from . import clock
 from . import perm
 from ..routers.sales_router import _all_view
 
@@ -40,7 +41,7 @@ def _age(d: datetime | None) -> int | None:
     if not d:
         return None
     ts = d if d.tzinfo else d.replace(tzinfo=timezone.utc)
-    return max(0, (date.today() - ts.astimezone(timezone.utc).date()).days)
+    return max(0, (clock.today() - clock.cn_date(ts)).days)
 
 
 def _over_days(expected: str | None) -> int | None:
@@ -49,7 +50,7 @@ def _over_days(expected: str | None) -> int | None:
     if not e:
         return None
     try:
-        return (date.today() - date.fromisoformat(e)).days
+        return (clock.today() - date.fromisoformat(e)).days
     except ValueError:
         return None
 
@@ -78,7 +79,7 @@ def _days_left(d: str | None) -> int | None:
     if not s:
         return None
     try:
-        return (date.fromisoformat(s) - date.today()).days
+        return (date.fromisoformat(s) - clock.today()).days
     except ValueError:
         return None
 
@@ -108,13 +109,15 @@ async def _match_projects(db: AsyncSession, code: str,
 
 # ══════════════════════════════ find ══════════════════════════════
 
-_KIND_CN = {"project": "项目", "customer": "客户", "supplier": "供应商", "material": "物料"}
+_KIND_CN = {"project": "项目", "customer": "客户", "supplier": "供应商", "material": "物料",
+            "person": "同事"}
 # 每一类该看哪几列。第一列由渲染层把「编号+名称」并成一格，所以这里可以多写一个。
 _KIND_COLS = {
     "project":  ["code", "name", "status", "customer"],
     "customer": ["customer", "ledger_rows"],
     "supplier": ["supplier"],
     "material": ["item_name", "spec"],
+    "person":   ["person", "roles"],
 }
 
 
@@ -212,6 +215,20 @@ async def find_entity(db: AsyncSession, current: models.User, q: str,
             .limit(_FIND_MAX))).scalars().all()
         out["material"] = [{"id": m.id, "code": m.code, "item_name": m.name,
                             "spec": m.spec} for m in rows]
+
+    # 🆕 2026-10-01：也认**人**。生产实测赵仁辉问「方步森销售额」「李昌奇销售额」，
+    #    find_entity 只找项目/客户/供应商/物料，四类都 0 → 模型回「系统里查不到这个人」——
+    #    可他们就是公司的销售员。认出来是谁、什么岗位，模型才知道下一步该去 sales_summary(sales=…)。
+    #    只给姓名和岗位（同事之间本来就知道），不带账号、电话、菜单。
+    if kind in (None, "person"):
+        rows = (await db.execute(
+            select(models.User)
+            .where(models.User.is_active == True,  # noqa: E712
+                   or_(models.User.full_name.ilike(like), models.User.username.ilike(like)))
+            .limit(_FIND_MAX))).scalars().unique().all()
+        out["person"] = [{"id": u.id, "person": u.full_name or u.username,
+                          "roles": "、".join(r.name for r in (u.roles or []))}
+                         for u in rows]
 
     hits = {k: v for k, v in out.items() if v}
     total = sum(len(v) for v in hits.values())
@@ -350,7 +367,7 @@ async def _project_snapshot(db: AsyncSession, p: models.Project,
         sup_name = {s2.id: s2.name for s2 in (await db.execute(select(models.Supplier)
                     .where(models.Supplier.id.in_(sids)))).scalars().all()}
 
-    today = date.today().isoformat()
+    today = clock.today().isoformat()
     deliver = deliver_date(p)
     left = _days_left(deliver)
     # 作废的部门单不算在进度里 —— 2026-008 整个项目九张单全是 voided，
@@ -607,7 +624,9 @@ SIGN_KEY = "__o__签订日期"
 
 
 async def sales_summary(db: AsyncSession, current: models.User,
-                        months: int = 6, limit: int = 200) -> dict:
+                        months: int = 6, limit: int = 200,
+                        sales: str | None = None, by: str | None = None,
+                        year: str | None = None) -> dict:
     """按月统计销售额（合同额），并给出本月/上月对比。
 
     ⚠️⚠️ **口径：按项目的「签订日期」归月，不是按台账录入时间。**
@@ -631,6 +650,57 @@ async def sales_summary(db: AsyncSession, current: models.User,
         rows = [(p, l) for p, l in rows if l.sales_uid == current.id]
     # 🆕 金额审计(2026-09-09)：待主管审批/被退回草稿的订单还没生效，不进销售额（与 sales_report / 台账合计同口径）
     rows = [(p, l) for p, l in rows if (l.order_state or None) not in ("pending", "draft")]
+
+    # 🆕 2026-10-01：按销售员。生产实测「销售员业绩排名」「方步森销售额」都被回成
+    #    「系统里没有销售员字段」—— 台账上明明有 sales_uid，只是这个工具没按它分。
+    names: dict[int, str] = {}
+    uids = {l.sales_uid for _, l in rows if l.sales_uid}
+    if uids or sales:
+        for u in (await db.execute(select(models.User))).scalars().unique().all():
+            names[u.id] = u.full_name or u.username
+    sales_filter = None
+    if sales and sales.strip():
+        want = sales.strip()
+        hit = {uid for uid, nm in names.items() if want in nm}
+        if not hit:
+            return {"error": f"没有叫「{want}」的同事，先用 find_entity 找一下是谁"}
+        if not perm.sales_read_all(current) and hit != {current.id}:
+            return {"error": "你的账号只能看自己负责的销售额，看不到别人的"}
+        rows = [(p, l) for p, l in rows if l.sales_uid in hit]
+        sales_filter = "、".join(sorted(names[u] for u in hit))
+
+    def _sign(p) -> str:
+        return str(((p.extra or {}).get(SIGN_KEY) or "")).strip()
+
+    # 没签订日期的进不了任何月份 —— 光给个数，被问「是哪个」就答不出来（生产实测两次）
+    no_sign_items = [{"project": p.code, "name": p.name, "customer": l.customer or "",
+                      "amount": float(l.amount or 0),
+                      "sales": names.get(l.sales_uid, "（未指定）")}
+                     for p, l in rows if len(_sign(p)) < 7][:50]
+
+    if by == "sales":
+        # 按销售员排名：默认今年（按签订日期的年份）
+        yr = (year or str(clock.today().year)).strip()[:4]
+        agg: dict[str, dict] = {}
+        for p, l in rows:
+            if not _sign(p).startswith(yr):
+                continue
+            nm = names.get(l.sales_uid, "（未指定销售）")
+            a = agg.setdefault(nm, {"sales": nm, "count": 0, "amount": 0.0, "zero_amount": 0})
+            a["count"] += 1
+            a["amount"] += float(l.amount or 0)
+            if float(l.amount or 0) <= 0:
+                a["zero_amount"] += 1
+        items = sorted(agg.values(), key=lambda x: -x["amount"])
+        for a in items:
+            a["amount"] = round(a["amount"], 2)
+        total = round(sum(a["amount"] for a in items), 2)
+        return {"by": "sales", "year": yr, "basis": "按项目签订日期归年（不是台账录入时间）",
+                "sales_filter": sales_filter, "total_amount": total,
+                "count": len(items), "items": items,
+                "no_sign_date": len([1 for p, _ in rows if len(_sign(p)) < 7]),
+                "no_sign_date_items": no_sign_items,
+                "scope": "全部销售" if perm.sales_read_all(current) else "只有你自己"}
 
     buckets: dict[str, dict] = {}
     no_sign = 0
@@ -657,7 +727,7 @@ async def sales_summary(db: AsyncSession, current: models.User,
         b["projects"].sort(key=lambda x: -x["amount"])
         b["projects"] = b["projects"][:_DETAIL_MAX]
 
-    today = date.today()
+    today = clock.today()
     cur_m = today.strftime("%Y-%m")
     prev = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
     cur_b, prev_b = buckets.get(cur_m), buckets.get(prev)
@@ -672,6 +742,8 @@ async def sales_summary(db: AsyncSession, current: models.User,
         "last_month_count": (prev_b or {}).get("count", 0),
         # 没签订日期的进不了任何月份 —— 必须说出来，否则合计对不上没人知道为什么
         "no_sign_date": no_sign,
+        "no_sign_date_items": no_sign_items,
+        "sales_filter": sales_filter,
         "items": [{"month": b["month"], "count": b["count"],
                    "amount": round(b["amount"], 2),
                    "zero_amount": b["zero_amount"]} for b in items],
@@ -739,7 +811,7 @@ async def project_progress(db: AsyncSession, current: models.User,
     return {
         "count": total, "shown": len(shown),
         "truncated": total > len(shown),
-        "today": date.today().isoformat(),
+        "today": clock.today().isoformat(),
         # ⚠️ 明确声明表格该显示哪三列。不声明的话渲染层按全局优先级挑，
         #    会挑到「客户 / 合同额」——这个场景要看的是**还剩多久、卡在哪**。
         "columns": ["project", "days_left", "blocked_at"],
@@ -798,26 +870,46 @@ async def get_supplier(db: AsyncSession, current: models.User, name: str) -> dic
     nm = (name or "").strip()
     if not nm:
         return {"error": "要查哪个供应商？"}
-    sup = (await db.execute(select(models.Supplier).where(
-        models.Supplier.name.ilike(f"%{nm}%")).limit(1))).scalar_one_or_none()
-    if not sup:
+    # 🆕 2026-10-01：原来 `.limit(1)` 随手取第一条。生产上「无锡王易不锈钢」有两条同名档案
+    #    （315 只有李新新 1 条单、340 有王芹 10 条单），取到 315 → 王芹问「王易 未到货」回
+    #    「查不到任何采购记录」，管理员问也只看到 1 条。同名的**合并统计**；
+    #    名字不同的多家（「王易」可能匹配好几家）不替用户挑，返回候选让他选。
+    sups = list((await db.execute(select(models.Supplier).where(
+        models.Supplier.name.ilike(f"%{nm}%")))).scalars().all())
+    if not sups:
         return {"supplier": nm, "found": False, "hint": "查无此供应商，先用 find_entity 找"}
+    distinct = sorted({x.name for x in sups})
+    if len(distinct) > 1:
+        exact = [x for x in sups if x.name == nm]
+        if not exact:
+            return {"supplier": nm, "found": False, "candidates": distinct[:10],
+                    "hint": "匹配到多家供应商，用提问卡问用户是哪一家"}
+        sups = exact
+    sup = sups[0]
+    sup_ids = [x.id for x in sups]
 
     # 🆕 2026-09-23：受限采购员（外购/标准件）只算自己经手的单 —— 与网页采购明细同口径
     #   （purchase_mgmt_router._buyer_restricted）。原来这里把该供应商**全公司**的
     #   在途明细、项目编号都给出来了，等于绕过了采购之间的隔离。
     from ..routers.purchase_mgmt_router import _buyer_restricted
-    q = select(models.PurchaseItem).where(models.PurchaseItem.supplier_id == sup.id)
-    if _buyer_restricted(current):
+    q = select(models.PurchaseItem).where(models.PurchaseItem.supplier_id.in_(sup_ids))
+    restricted = _buyer_restricted(current)
+    if restricted:
         q = q.where(models.PurchaseItem.buyer_id == current.id)
     items = list((await db.execute(q)).scalars().all())
-    today = date.today()
+    today = clock.today()
     on_time = late = 0
     late_days: list[int] = []
     pending = []
+    # 🆕 还没到预计到货日的「在途」也要给：问「王易 未到货」时 10 条全在途（明天到），
+    #    原来只算已超期的，于是回「没有未到货」—— 第二天这 10 条就全变成了到期未到货。
+    in_transit = []
+    no_eta = 0
     for i in items:
         exp = (i.expected_arrival or "").strip()
         if not exp:
+            if not (i.arrival_date or "").strip():
+                no_eta += 1
             continue
         try:
             ed = date.fromisoformat(exp)
@@ -839,10 +931,22 @@ async def get_supplier(db: AsyncSession, current: models.User, name: str) -> dic
             pending.append({"name": i.item_name, "spec": i.spec, "expected_arrival": exp,
                             "over_days": (today - ed).days, "po_no": i.po_no,
                             "project_code": i.project_code})
+        else:
+            in_transit.append({"name": i.item_name, "spec": i.spec, "expected_arrival": exp,
+                               "days_left": (ed - today).days, "po_no": i.po_no,
+                               "project_code": i.project_code})
     pending.sort(key=lambda x: -x["over_days"])
+    in_transit.sort(key=lambda x: x["days_left"])
     total = on_time + late
     return {
         "supplier": sup.name, "found": True,
+        # 同名档案合并了几条（>1 说明供应商主数据有重复，值得提醒采购清理）
+        "supplier_records": len(sup_ids),
+        "scope": "只算你自己下的单" if restricted else "全部采购员",
+        "hint": ("你名下没有这家供应商的采购单（采购员只看得到自己下的单）"
+                 if restricted and not items else None),
+        "in_transit_count": len(in_transit), "in_transit": in_transit[:_DETAIL_MAX],
+        "no_eta_count": no_eta,
         "purchase_items": len(items),
         "on_time": on_time, "overdue": late,
         "on_time_rate": round(on_time / total, 3) if total else None,
@@ -920,7 +1024,7 @@ async def mgmt_todo_watch(db: AsyncSession, current: models.User,
         .where(models.ManagementTodo.created_by == me)
         .order_by(models.ManagementTodo.created_at.desc()))).all())
 
-    today = date.today()
+    today = clock.today()
     items: list[dict] = []
     n_extend = n_overdue = n_silent = 0
     for tgt, todo, who in rows:
@@ -1086,7 +1190,7 @@ async def mgmt_todo_send(db: AsyncSession, current: models.User, *,
     due = (due_date or "").strip() or None
     if due:
         try:
-            if (date.fromisoformat(due) - date.today()).days < 0:
+            if (date.fromisoformat(due) - clock.today()).days < 0:
                 return {"error": f"{due} 已经过去了，要哪天完成？"}
         except (ValueError, TypeError):
             return {"error": "截止日期要写成 2026-08-20 这种格式"}

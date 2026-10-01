@@ -389,11 +389,11 @@ TOOL_LABELS = {
 
 # 🆕 每个工具一句人话说明：给用户看的（门户小字、能力清单），也给模型当选型依据。
 TOOL_DESC = {
-    "find_entity": "说个大概的名字就能找到项目/客户/供应商/物料，不用记编号",
+    "find_entity": "说个大概的名字就能找到项目/客户/供应商/物料/同事，不用记编号",
     "get_customer": "这家客户一共几单、收了多少、还欠多少、卡在哪一步",
     "get_project": "一个项目从台账到发货全看完：交期、收款、各部门任务（含负责人）、生产组、采购在途、卡在哪",
     "project_progress": "在建项目还剩几天交货、哪些已过期、每个卡在哪一环",
-    "sales_summary": "按月看销售额（合同额），本月/上月对比；按签订日期归月",
+    "sales_summary": "按月看销售额（合同额），本月/上月对比；也能按销售员看和排名；按签订日期归月",
     "get_supplier": "这家供应商准时率多少、平均拖几天、现在还欠几批货",
     "get_material": "这个物料还有多少库存、低不低于安全线、最近进出了多少",
     "my_tasks": "派给我、还没做完的活：哪个项目、干什么、还剩几天（含装配/钣金/封板）",
@@ -514,11 +514,12 @@ _LIM_PROP = {"limit": {"type": "integer",
 TOOL_SCHEMAS += [
     {"type": "function", "function": {
         "name": "find_entity",
-        "description": "模糊词找实体（项目/客户/供应商/物料）。用户说「南京那个项目」「迈克斯」"
-                       "「诺朋」这类不完整的名字时**先调它**拿到准确名称，再调 get_*",
+        "description": "模糊词找实体（项目/客户/供应商/物料/**同事**）。用户说「南京那个项目」「迈克斯」"
+                       "「诺朋」这类不完整的名字时**先调它**拿到准确名称，再调 get_*。"
+                       "问题里有人名（如「方步森的销售额」）时也先调它，看他是谁、什么岗位，再决定用哪个工具",
         "parameters": {"type": "object", "properties": {
             "q": {"type": "string", "description": "用户说的那个词，原样传"},
-            "kind": {"type": "string", "enum": ["project", "customer", "supplier", "material"],
+            "kind": {"type": "string", "enum": ["project", "customer", "supplier", "material", "person"],
                      "description": "限定只找某一类；不确定就别传"},
         }, "required": ["q"]}}},
     {"type": "function", "function": {
@@ -577,17 +578,25 @@ TOOL_SCHEMAS += [
             "required": []}}},
     {"type": "function", "function": {
         "name": "sales_summary",
-        "description": "销售额按月统计（合同额）与本月/上月对比。"
-                       "回答「这个月销售额多少」「今年卖了多少」「跟上月比怎么样」用它。"
+        "description": "销售额（合同额）统计：默认按月，本月/上月对比；"
+                       "传 `sales=人名` 只看某个销售员；传 `by=\"sales\"` 按销售员排名（默认今年）。"
+                       "回答「这个月销售额多少」「今年卖了多少」「某某的销售额」「销售员业绩排名」用它。"
+                       "结果里 `no_sign_date_items` 是**没填签订日期、进不了任何月份**的项目清单。"
                        "⚠️ 口径是**按项目签订日期归月**，不是台账录入时间",
         "parameters": {"type": "object", "properties": dict(
             _LIM_PROP,
-            months={"type": "integer", "description": "看最近几个月，默认 6"}),
+            months={"type": "integer", "description": "看最近几个月，默认 6"},
+            sales={"type": "string", "description": "只看这个销售员（人名，可以不全）"},
+            by={"type": "string", "enum": ["month", "sales"],
+                "description": "month=按月（默认）；sales=按销售员排名"},
+            year={"type": "string", "description": "按销售员排名时看哪一年，如 2026；默认今年"}),
             "required": []}}},
     {"type": "function", "function": {
         "name": "get_supplier",
-        "description": "供应商画像：准时率、平均超期天数、最大超期、当前未到货明细。"
-                       "回答「哪家供应商靠不住」「要不要换供应商」用它",
+        "description": "供应商画像：准时率、平均超期天数、最大超期；未到货分两类——"
+                       "`items` 是**已过预计到货日**还没到的，`in_transit` 是**还没到日子**的在途。"
+                       "回答「某供应商还有什么没到」「哪家供应商靠不住」「要不要换供应商」用它。"
+                       "同名档案会合并统计；匹配到多家时返回 candidates，用提问卡问是哪家",
         "parameters": {"type": "object", "properties": dict(
             _LIM_PROP, name={"type": "string", "description": "供应商名，可以不全"}),
             "required": ["name"]}}},
@@ -754,7 +763,8 @@ async def _run_tool_inner(name: str, args: dict, db: AsyncSession, current: mode
         "get_project":  lambda: _te.get_project(db, current, args.get("code", ""),
                                                 detail=args.get("detail") or "blockers"),
         "sales_summary": lambda: _te.sales_summary(
-            db, current, months=int(args.get("months") or 6)),
+            db, current, months=int(args.get("months") or 6),
+            sales=args.get("sales"), by=args.get("by"), year=args.get("year")),
         "mgmt_todo_peers": lambda: _te.mgmt_todo_peers(db, current),
         "mgmt_todo_send": lambda: _te.mgmt_todo_send(
             db, current, title=args.get("title", ""), to=args.get("to", ""),
@@ -886,7 +896,7 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
 
 # 铁律
 1. 只用工具返回的真实数据。严禁编造任何数字、日期、金额、编号、人名。
-2. 工具没返回的就说"系统里查不到"，不推测、不举例。
+2. **换过路还是没有**，才说"系统里查不到"（怎么换路见下一节），不推测、不举例。
 3. **凡是截断都必须说出来。** 工具结果里的 `count` 是总数、`shown` 是本次给了几条、
    `truncated` 是没给的条数。只要 truncated>0，结尾必须写「已列 N 条，另有 M 条未列」。
    **绝不允许**给了 5 条却让人以为那就是全部。
@@ -894,6 +904,23 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
    这种情况不受下面的条数与字数限制。
 5. **除了下发待办，一律只读。**用户要改别的数据时明确拒绝，并说清该去哪个页面改。
    唯一沾写的是 `mgmt_todo_send`，而它**也只是拟草稿**——真正发出去要用户点卡片按钮。
+
+# 🔁 一个工具答不了，先换路再下结论（这条决定长尾问题答不答得出来）
+你可以连续调用多轮工具。**第一个工具里没有这个维度，不等于系统里没有**：
+- 先想清楚问题里的**对象**是什么：人名、项目编号、客户、供应商、物料。
+  拿不准就先 `find_entity`，它能认出**人**（同事）、项目、客户、供应商、物料。
+- 再找**能按这个对象查的工具/参数**，常见的换法：
+  · 「某某（销售员）的销售额 / 业绩 / 排名」→ `sales_summary` 传 `sales=人名` 或 `by="sales"`（按销售员排名）。
+  · 「某某手上 / 某部门 逾期的活」→ `overdue_orders`；「我手上的活」→ `my_tasks`。
+  · 「某供应商 未到货 / 靠不靠谱」→ `get_supplier`（含在途和已超期两类）。
+  · 「哪个项目没填签订日期 / 合同额为 0」→ `sales_summary` 的 `no_sign_date_items`、`ledger_incomplete`。
+  · 某个项目怎么样 → `get_project`；某个物料 → `get_material`；某个客户 → `get_customer`。
+- **至少换一次路**（换工具或换参数）再下「查不到」的结论；真没有就说清楚「能查到的最接近的是什么」，
+  并用提问卡给出 2~3 个能查的问法让他点。
+- ⚠️ **每个新问题都要按新问题重新调工具**。上一轮查的是别的东西，不许拿来答这一轮
+  （例：上一轮查了尾款，这一轮问「我手上的活」，必须调 `my_tasks`，不能把尾款当成他的活）。
+- ⚠️ 工具返回「你无权查询 / 你的账号看不到」时，要说**「你的账号没有这部分权限（网页上也看不到），需要的话找管理员开通」**，
+  **不能**说成「系统里没有这个数据 / 没有这个接口」，更**不能**让他去「ERP / 别的系统」查 —— 这个系统就是公司的 ERP。
 
 # 📌 发待办：缺什么问什么，让他点、别让他打
 管理层说一件事但没说清给谁、什么时候要时，**不要猜，也不要让他重打一遍**：
@@ -1010,8 +1037,30 @@ _SYSTEM_PROMPT = """你是制造业 ERP 系统内置的数据分析助手（只�
 - ⚠️ `group` 同理，只能用最后那个工具真有的字段（交期看板是 `urgency`）。"""
 
 
+# 🆕 2026-10-01：告诉模型「这个账号看不到哪些」。
+#   生产实测：李新新（采购兼仓库）问「9月份销售额」，模型手里没有销售工具，
+#   回的是「系统里没有销售额接口，请到 ERP 的销售模块看」—— 两句都是错的：
+#   数据有，是他没权限；而这个系统就是 ERP。模型不知道工具是被权限拿掉的，只能瞎猜。
+_SCOPE_DOMAINS = (
+    ("销售额 / 合同额 / 客户 / 尾款应收", {"sales_summary", "balance_due", "get_customer"}),
+    ("采购到货 / 供应商", {"po_arrival_overdue", "get_supplier"}),
+    ("库存 / 物料", {"get_material"}),
+    ("项目进度 / 交期", {"get_project", "project_progress"}),
+    ("部门逾期任务", {"overdue_orders"}),
+)
+
+
+def _scope_hint(allowed: set[str]) -> str:
+    missing = [label for label, tools in _SCOPE_DOMAINS if not (tools & allowed)]
+    if not missing:
+        return ""
+    return ("\n\n# 这个账号的权限\n他**看不到**：" + "；".join(missing) +
+            "。被问到这些，直说「你的账号没有这部分权限（网页上也看不到），需要的话找管理员开通」，"
+            "不要说系统里没有、不要说没有接口、不要让他去别的系统查。")
+
+
 async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[dict],
-                       max_tokens: int = _MAX_TOKENS_DEFAULT) -> dict:
+                       max_tokens: int = _MAX_TOKENS_DEFAULT, tool_choice: str = "auto") -> dict:
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
     payload: dict = {
         # 关思考（默认）。见 _thinking_params：开着时正文经常是空的
@@ -1026,7 +1075,7 @@ async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[
     }
     if tools:  # 🆕 只下放调用者有权的数据工具；无可用工具则纯对话（不下发 tools 字段，防空数组被拒）
         payload["tools"] = tools
-        payload["tool_choice"] = "auto"
+        payload["tool_choice"] = tool_choice
     headers = {"Authorization": f"Bearer {cfg['api_key']}"}
     try:
         async with httpx.AsyncClient(timeout=30.0) as cli:
@@ -1040,6 +1089,16 @@ async def _llm_request(messages: list[dict], model: str, cfg: dict, tools: list[
         raise RuntimeError(f"LLM 调用失败（{type(e).__name__}）") from None
 
 
+# 🆕 2026-10-01 ReAct 轮次：5 轮，**最后一轮不许再调工具**（tool_choice=none），必须拿已有结果作答。
+#   提示词要求「一个工具答不了先换路」之后，调用轮次会变多；原来 4 轮跑满就抛「轮次超限」，
+#   整条掉进规则降级，用户看到的是答非所问的功能菜单 —— 换路反而换出个更差的结果。
+_MAX_ROUNDS = 5
+
+
+def _round_choice(rnd: int) -> str:
+    return "none" if rnd >= _MAX_ROUNDS - 1 else "auto"
+
+
 async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
                          model: str, cfg: dict, user: models.User):
     """LLM 主路径：带 tools 请求 → 执行 tool_calls 回灌 → 再请模型总结。返回 (reply, 调用过的工具名列表)。"""
@@ -1051,6 +1110,7 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
     want_list = max_tokens > _MAX_TOKENS_DEFAULT
     # 🆕 只下放该用户菜单可用的数据工具（_run_tool 内仍二次门控，双保险）
     allowed = _allowed_tools(user)
+    sys_prompt += _scope_hint(allowed)
     schemas = [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
     messages = ([{"role": "system", "content": sys_prompt}]
                 + history + [{"role": "user", "content": message}])
@@ -1058,8 +1118,8 @@ async def _chat_with_llm(message: str, history: list[dict], db: AsyncSession,
     seen: set = set()                 # v2：同工具同参数不得重复调用（硬拦，不靠提示词）
     budget_retried = False            # 与流式同一套：预算被思维链吃光时加码重试一次
     t_start = time.perf_counter()
-    for _ in range(4):  # 工具轮次上限，防死循环
-        data = await _llm_request(messages, model, cfg, schemas, max_tokens)
+    for rnd in range(_MAX_ROUNDS):  # 工具轮次上限，防死循环；最后一轮只许作答
+        data = await _llm_request(messages, model, cfg, schemas, max_tokens, _round_choice(rnd))
         choice = data["choices"][0]
         msg = choice["message"]
         tool_calls = msg.get("tool_calls") or []
@@ -2230,7 +2290,7 @@ async def run_tool_direct(
 # 最后一轮的正文才逐块推。
 
 async def _llm_stream(messages: list[dict], model: str, cfg: dict, tools: list[dict],
-                      max_tokens: int = _MAX_TOKENS_DEFAULT):
+                      max_tokens: int = _MAX_TOKENS_DEFAULT, tool_choice: str = "auto"):
     """向 LLM 发流式请求，逐块 yield 原始 delta。
 
     ⚠️ max_tokens 必须**当参数传进来**。我一度直接引用调用方的同名局部变量，
@@ -2244,7 +2304,7 @@ async def _llm_stream(messages: list[dict], model: str, cfg: dict, tools: list[d
                      "temperature": 0.2, "max_tokens": max_tokens, "stream": True}
     if tools:
         payload["tools"] = tools
-        payload["tool_choice"] = "auto"
+        payload["tool_choice"] = tool_choice
     headers = {"Authorization": f"Bearer {cfg['api_key']}"}
     async with httpx.AsyncClient(timeout=60.0) as cli:
         async with cli.stream("POST", url, json=payload, headers=headers) as r:
@@ -2302,6 +2362,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
     max_tokens = _max_tokens_for(message)
     want_list = max_tokens > _MAX_TOKENS_DEFAULT
     allowed = _allowed_tools(user)
+    sys_prompt += _scope_hint(allowed)
     schemas = [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
     messages = ([{"role": "system", "content": sys_prompt}]
                 + history + [{"role": "user", "content": message}])
@@ -2310,7 +2371,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
     seen: set = set()                 # v2：同工具同参数不得重复调用（硬拦，不靠提示词）
     budget_retried = False            # 预算被思维链吃光时只加码重试一次，防死循环
     t_start = time.perf_counter()     # 重试要看还剩多少时间，见 _RETRY_DEADLINE_S
-    for rnd in range(4):              # rnd 只为审计记「跑了几轮」，循环本身不用它
+    for rnd in range(_MAX_ROUNDS):    # 最后一轮 tool_choice=none，只许作答（见 _MAX_ROUNDS）
         content_parts: list[str] = []
         tc_acc: dict = {}
         streamed = 0          # 已推给前端的字符数
@@ -2318,7 +2379,7 @@ async def _chat_stream(message: str, history: list[dict], model: str,
         finish = None         # 最后一个 finish_reason；"length" = 被 max_tokens 截断
         reasoning_chars = 0   # 思维链长度（只用于排障，绝不推给用户）
         stream_err = None     # 流里夹带的错误负载（没有 choices 的那种）
-        async for data in _llm_stream(messages, model, cfg, schemas, max_tokens):
+        async for data in _llm_stream(messages, model, cfg, schemas, max_tokens, _round_choice(rnd)):
             choices = data.get("choices") or []
             if not choices:
                 # ⚠️ 没有 choices 的块以前被直接丢掉 —— 而 LLM 把错误塞在流里时正是这个形状，

@@ -17,6 +17,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
+from . import clock
 from . import perm                                    # ← 智能体权限口径唯一真源
 from ..routers.sales_router import _all_view          # ← 写动作仍用它（与端点同判据）
 
@@ -56,7 +57,7 @@ def _row(led: models.SalesLedger) -> dict:
 
 
 def _age_days(d: datetime | None) -> int | None:
-    return (date.today() - d.date()).days if d else None
+    return (clock.today() - clock.cn_date(d)).days if d else None
 
 
 # ────────────────────────── 1. 盯不住的应收 ──────────────────────────
