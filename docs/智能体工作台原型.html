@@ -1,571 +1,715 @@
-<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>智能体工作台原型</title>
 <style>
 :root{
   --bg:#e9edf3; --page:#eef1f5; --card:#ffffff; --t1:#1f2937; --t2:#4b5563; --t3:#5f6b7a; --line:#e5e7eb; --line2:#f3f4f6;
-  --gold:#c8a24f; --gold-d:#a8842f; --gold-l:#faf4e6; --gold-s:rgba(200,162,79,.14); --link:#8a6418;
+  --gold:#c8a24f; --gold-d:#a8842f; --gold-l:#faf4e6; --link:#8a6418;
   --navy:#16293f; --navy2:#223751; --navy-t:#cbd5e1; --navy-t2:#94a3b8; --navy-act:#f0d99a;
   --ok:#047857; --ok-bg:#ecfdf5; --warn:#a15c07; --warn-bg:#fffbeb; --bad:#b91c1c; --bad-bg:#fef2f2; --info:#1d4ed8; --info-bg:#eff6ff;
-  --r:12px; --r-sm:8px;
-  --sh:0 1px 2px rgba(22,41,63,.06),0 4px 14px rgba(22,41,63,.07);
-  --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Hiragino Sans GB","Helvetica Neue",sans-serif;
+  --r:14px; --r-sm:8px; --r-tag:6px;
+  --sh:inset 0 1px 0 rgba(255,255,255,.85),0 1px 2px rgba(22,41,63,.06),0 2px 8px rgba(22,41,63,.05);
+  --font:-apple-system,BlinkMacSystemFont,"Microsoft YaHei","PingFang SC","Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --h5-font:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --h5-blue:#2B6EF6; --h5-ink:#17181A; --h5-ink2:#4A4F57; --h5-good:#2A7A52; --h5-warn:#A96A08; --h5-bad:#C4362F;
   color-scheme:light;
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-body{margin:0;background:var(--bg);color:var(--t1);font-family:var(--font);font-size:14px;line-height:1.55;padding-inline:16px;padding-block:16px 48px}
-button{font:inherit;cursor:pointer}
-button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--gold-d);outline-offset:2px}
+body{margin:0;background:linear-gradient(160deg,#f2f4f8 0%,#e9edf3 60%,#e5eaf1 100%) fixed;color:var(--t1);font-family:var(--font);font-size:14.5px;line-height:1.55;padding:16px 16px 48px}
+button{font:inherit;cursor:pointer;color:inherit}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--link);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
-/* 原型外壳 */
-.proto{max-width:1400px;margin:0 auto;display:grid;gap:12px}
-.pbar{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 20px}
-.pbar h1{margin:0;font-size:22px;letter-spacing:.02em}
+/* ── 原型外壳 ── */
+.proto{max-width:1480px;margin:0 auto;display:grid;gap:12px}
+.pbar h1{margin:0;font-size:22px}
 .pbar p{margin:2px 0 0;color:var(--t3);font-size:13px}
-.ptabs{display:flex;flex-wrap:wrap;gap:6px}
-.ptab{border:1px solid #cfd6df;background:#fff;color:var(--t2);padding:6px 12px;border-radius:999px;font-size:13px}
+.ptabs{display:flex;flex-wrap:wrap;gap:10px 18px}
+.pg{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.pg-l{font-size:12px;color:var(--t3);font-weight:600;margin-right:2px}
+.ptab{border:1px solid #cfd6df;background:#fff;color:var(--t2);padding:5px 12px;border-radius:999px;font-size:13px}
 .ptab[aria-selected="true"]{background:var(--navy);color:#fff;border-color:var(--navy)}
-.pnote{background:#fff;border:1px solid #d9dfe7;border-radius:10px;padding:10px 14px;font-size:13px;color:var(--t2)}
+.pnote{background:#fff;border:1px solid #d9dfe7;border-radius:10px;padding:10px 14px;font-size:13.5px;color:var(--t2)}
 .pnote b{color:var(--t1)}
-.frame{overflow-x:auto;border-radius:16px;box-shadow:0 20px 50px rgba(22,41,63,.18),0 2px 6px rgba(22,41,63,.08);background:var(--page)}
+.pctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:var(--t2)}
+.seg{display:inline-flex;border:1px solid #cfd6df;border-radius:8px;overflow:hidden;background:#fff}
+.seg button{border:0;background:transparent;padding:4px 12px;font-size:13px;color:var(--t2);border-right:1px solid #e3e7ed}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--gold-l);color:var(--link);font-weight:600}
+details.changes{background:#fff;border:1px solid #d9dfe7;border-radius:10px;padding:8px 14px;font-size:13.5px}
+details.changes summary{cursor:pointer;font-weight:600}
+details.changes ol{margin:8px 0 2px;padding-left:22px;display:grid;gap:3px;color:var(--t2)}
+.frame{overflow-x:auto;border-radius:16px;box-shadow:0 20px 50px rgba(22,41,63,.18),0 2px 6px rgba(22,41,63,.08);background:var(--page);justify-self:start;max-width:100%}
 
-/* 应用外框 */
-.app{min-width:1180px;height:780px;display:grid;grid-template-columns:200px minmax(0,1fr);background:var(--page)}
-.side{background:linear-gradient(175deg,#1b3049 0%,#16293f 45%,#122236 100%);color:var(--navy-t);display:flex;flex-direction:column;padding:14px 10px;gap:4px}
-.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 14px;color:#fff;font-weight:600;font-size:16px}
+/* ── 应用外框：对齐 MainLayout（侧栏 232、无顶栏） ── */
+.app{width:1280px;height:800px;display:grid;grid-template-columns:232px minmax(0,1fr);background:var(--page);transition:width .2s}
+.side{background:var(--navy);color:var(--navy-t);display:flex;flex-direction:column;padding:16px 12px;gap:2px}
+.brand{display:flex;align-items:center;gap:10px;padding:2px 10px 16px;color:#fff;font-weight:600;font-size:16px}
 .logo{width:32px;height:32px;border-radius:9px;background:rgba(255,255,255,.1);display:grid;place-items:center;color:var(--gold);font-weight:700}
-.nav{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;color:var(--navy-t);font-size:13.5px;border:0;background:transparent;width:100%;text-align:left}
-.nav:hover{background:var(--navy2)}
-.nav.on{background:linear-gradient(135deg,rgba(200,162,79,.24),rgba(200,162,79,.1));color:var(--navy-act);font-weight:600}
-.nav .ic{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8}
+.nav{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:9px;color:var(--navy-t);font-size:14px;border:0;background:transparent;width:100%;text-align:left}
+.nav:hover{background:var(--navy2);color:var(--navy-act)}
+.nav.on{background:rgba(200,162,79,.15);color:var(--navy-act);font-weight:600}
+.nav .ic{width:17px;height:17px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8}
 .nav .bdg{margin-left:auto;background:#ef4444;color:#fff;font-size:11px;font-weight:700;border-radius:9px;padding:0 6px;line-height:18px}
-.side .sep{margin:10px 8px 4px;font-size:11px;color:var(--navy-t2);letter-spacing:.08em}
-.side .me{margin-top:auto;display:flex;align-items:center;gap:8px;padding:10px 8px;border-top:1px solid rgba(255,255,255,.08);font-size:12.5px}
-.av{width:28px;height:28px;border-radius:50%;background:var(--gold);color:var(--navy);display:grid;place-items:center;font-weight:700;font-size:12px;flex:none}
+.side .sep{margin:12px 14px 4px;font-size:11px;color:var(--navy-t2);letter-spacing:.08em}
+.side .me{margin-top:auto;display:flex;align-items:center;gap:8px;padding:12px 10px 2px;border-top:1px solid rgba(255,255,255,.08);font-size:13px}
+.side .me small{display:block;color:var(--navy-t2);font-size:12px}
+.av{width:30px;height:30px;border-radius:50%;background:var(--gold);color:var(--navy);display:grid;place-items:center;font-weight:700;font-size:12.5px;flex:none}
+.av.ai{background:var(--navy);color:var(--gold)}
 .main{display:flex;flex-direction:column;min-width:0;min-height:0}
-.top{height:52px;display:flex;align-items:center;gap:12px;padding:0 18px;background:#fff;border-bottom:1px solid var(--line)}
-.crumb{color:var(--t3);font-size:13px}.crumb b{color:var(--t1)}
-.top .sp{flex:1}
-.slots{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--t3)}
-.slot{width:12px;height:12px;border-radius:3px;background:var(--line)}
-.slot.used{background:var(--gold)} .slot.other{background:#94a3b8}
-.content{flex:1;min-height:0;overflow:auto;padding:16px}
+.content{flex:1;min-height:0;overflow:auto;padding:18px 18px;container-type:inline-size;position:relative}
+.screen{height:100%;display:flex;flex-direction:column;min-height:0}
+.screen.scroll{height:auto}
 
-/* 通用 */
-.card{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);border:1px solid rgba(22,41,63,.04)}
-.btn{border:1px solid #d6dbe2;background:#fff;color:var(--t1);border-radius:var(--r-sm);padding:6px 14px;font-size:13px}
-.btn:hover{border-color:var(--gold)}
-.btn.pri{background:var(--gold);border-color:var(--gold);color:#1b2a3c;font-weight:600}
-.btn.pri:hover{background:var(--gold-d);border-color:var(--gold-d);color:#fff}
-.btn.ghost{border-color:transparent;background:transparent;color:var(--link)}
-.btn.danger{color:var(--bad);border-color:#f3c4c4}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.btn.sm{padding:3px 10px;font-size:12.5px}
-.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600;white-space:nowrap}
-.c-ok{background:var(--ok-bg);color:var(--ok)} .c-warn{background:var(--warn-bg);color:var(--warn)} .c-bad{background:var(--bad-bg);color:var(--bad)}
-.c-info{background:var(--info-bg);color:var(--info)} .c-gold{background:var(--gold-l);color:var(--link)} .c-mute{background:var(--line2);color:var(--t3)}
-.rk{font-family:var(--mono);font-size:11px;font-weight:700;border:1px solid currentColor;border-radius:4px;padding:0 5px}
-.rk.r1{color:var(--ok)} .rk.r2{color:var(--warn)} .rk.r3{color:var(--bad)}
-.muted{color:var(--t3)} .small{font-size:12.5px}
-.h{font-size:12px;letter-spacing:.06em;color:var(--t3);font-weight:600;margin:0 0 8px}
-.mono{font-family:var(--mono);font-size:12px}
-.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:50;max-width:min(560px,90vw)}
+/* 页头：沿用 .page-header */
+.phd{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-bottom:14px;padding:2px 4px 0}
+.phd h1{margin:0;font-size:22px;font-weight:600;position:relative;padding-left:14px;white-space:nowrap}
+.phd h1::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:4px;height:20px;border-radius:3px;background:linear-gradient(180deg,var(--gold),var(--gold-d))}
+.phd .desc{color:var(--t3);font-size:13.5px}
+.phd .spacer{flex:1}
 
-/* ① 工作台 */
-.ws{display:grid;grid-template-columns:240px minmax(0,1fr) 270px;gap:14px;height:100%}
-.col{display:flex;flex-direction:column;gap:12px;min-height:0}
-.pane{padding:12px;overflow:auto}
+/* ── 通用 ── */
+.card{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);border:1px solid rgba(22,41,63,.05)}
+.pane{padding:14px}
+.sec{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;margin:0 0 10px}
+.sec::before{content:"";width:3px;height:14px;background:var(--gold);border-radius:2px}
+.btn{border:1px solid #d6dbe2;background:#fff;color:var(--t1);border-radius:var(--r-sm);padding:7px 15px;font-size:14px;white-space:nowrap;transition:box-shadow .15s,transform .15s}
+.btn:hover{box-shadow:0 1px 2px rgba(22,41,63,.06),0 2px 8px rgba(22,41,63,.08)}
+.btn.pri{color:var(--navy);font-weight:600;background:linear-gradient(180deg,#d4b05f,#c09a43);border-color:#b8934a;box-shadow:0 3px 10px rgba(200,162,79,.35),inset 0 1px 0 rgba(255,255,255,.45)}
+.btn.pri:hover{background:linear-gradient(180deg,#dcba6b,#c8a24f)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--link);box-shadow:none;padding-inline:6px}
+.btn.danger{color:var(--bad);border-color:#f0bcbc}
+.btn:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
+.btn.sm{padding:4px 11px;font-size:13px}
+.tg{display:inline-flex;align-items:center;gap:4px;border-radius:var(--r-tag);padding:1px 8px;font-size:12.5px;font-weight:600;white-space:nowrap;line-height:1.6}
+.tg.ok{background:var(--ok-bg);color:var(--ok)} .tg.warn{background:var(--warn-bg);color:var(--warn)} .tg.bad{background:var(--bad-bg);color:var(--bad)}
+.tg.info{background:var(--info-bg);color:var(--info)} .tg.gold{background:var(--gold-l);color:var(--link)} .tg.mute{background:var(--line2);color:var(--t3)}
+/* 风险标签：业务用户看到的是话，不是代号 */
+.lv{display:inline-flex;align-items:center;border-radius:var(--r-tag);padding:1px 8px;font-size:12.5px;font-weight:700;white-space:nowrap;line-height:1.6}
+.lv.l1{color:#475569;border:1px solid #94a3b8;background:#fff}
+.lv.l2{background:#fef3c7;color:#92400e}
+.lv.l3{background:#b91c1c;color:#fff}
+.rk{font-family:var(--mono);font-size:11.5px;font-weight:700;border-radius:4px;padding:0 6px}
+.rk.r1{color:#475569;border:1px solid #94a3b8} .rk.r2{background:#fef3c7;color:#92400e} .rk.r3{background:#b91c1c;color:#fff}
+.r3bar{border-left:4px solid #b91c1c}
+.muted{color:var(--t3)} .small{font-size:13px}
+.mono{font-family:var(--mono);font-size:12.5px}
+.num{text-align:right;font-family:var(--mono)}
+.cnt{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:#ef4444;color:#fff;font-size:12px;font-weight:700}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+.kv{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13.5px}
+.kv:last-child{border-bottom:0}
+.kv b{font-family:var(--mono)}
+.spin{width:12px;height:12px;border:2px solid var(--gold);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;display:inline-block;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.state{font-size:13.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:10px;font-size:13.5px;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:60;max-width:min(600px,92vw);display:flex;gap:12px;align-items:center}
+.toast button{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:6px;padding:2px 10px;font-size:13px}
+.modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.45);display:grid;place-items:center;z-index:50;padding:16px}
+.modal{background:#fff;border-radius:14px;padding:20px;max-width:460px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.modal h3{margin:0 0 8px;font-size:17px}
+.modal p{margin:0 0 6px;color:var(--t2);font-size:14px}
+.modal textarea{width:100%;min-height:84px;border:1px solid #d6dbe2;border-radius:8px;padding:8px 10px;font:inherit;resize:vertical}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.sug{border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 11px;font-size:13px;color:var(--t2)}
+.sug:hover{border-color:var(--gold)}
+.banner{border-radius:10px;padding:9px 14px;font-weight:600;font-size:13.5px;display:flex;gap:10px;align-items:center}
+.banner.bad{background:var(--bad-bg);color:var(--bad);border:1px solid #f3c4c4}
+.banner.warn{background:var(--warn-bg);color:var(--warn);border:1px solid #f5dca6}
+.banner.info{background:var(--info-bg);color:var(--info);border:1px solid #c7d7fb}
+.fab{position:absolute;right:22px;width:46px;height:46px;border-radius:50%;background:var(--navy);color:var(--gold);display:grid;place-items:center;font-size:12px;font-weight:700;box-shadow:0 8px 20px rgba(22,41,63,.3);border:0;z-index:4}
+.fab.f1{bottom:84px} .fab.f2{bottom:26px}
+
+/* ── ① 工作台：220 / 自适应 / 280；窄了收栏 ── */
+.ws{flex:1;min-height:0;display:grid;grid-template-columns:220px minmax(520px,1fr) 280px;gap:14px;position:relative}
+.lcol,.rcol{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto}
+.rbtn,.rclose,.lsel{display:none!important}
+@container (max-width:1059px){
+  .ws{grid-template-columns:220px minmax(0,1fr)}
+  .rcol{position:absolute;top:0;right:0;bottom:0;width:360px;z-index:6;background:var(--page);padding:12px;border-radius:14px 0 0 14px;box-shadow:-14px 0 32px rgba(22,41,63,.2);transform:translateX(110%);visibility:hidden;transition:transform .2s,visibility 0s linear .2s}
+  .rcol.open{transform:none;visibility:visible;transition:transform .2s,visibility 0s}
+  .rbtn{display:inline-flex!important;align-items:center;gap:6px}
+  .rclose{display:inline-flex!important}
+}
+@container (max-width:819px){
+  .ws{grid-template-columns:minmax(0,1fr)}
+  .lcol{display:none}
+  .lsel{display:block!important}
+}
 .task{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px;background:#fff;text-align:left;width:100%;display:block}
 .task.on{border-color:var(--gold);background:var(--gold-l)}
-.task .tt{font-weight:600;font-size:13px}
-.task .ts{font-size:12px;color:var(--t3);display:flex;gap:6px;align-items:center;margin-top:2px}
-.newtask{width:100%;margin-bottom:10px}
-.center{display:flex;flex-direction:column;min-height:0}
-.thead{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
-.thead .tt{font-weight:700;font-size:15px}
+.task .tt{font-weight:600;font-size:13.5px}
+.task .ts{font-size:12.5px;color:var(--t3);display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap}
+.center{display:flex;flex-direction:column;min-height:0;min-width:0}
+.thead{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);flex-wrap:nowrap}
+.thead .tt{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .thread{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
 .msg-u{align-self:flex-end;background:var(--navy);color:#fff;border-radius:12px 12px 2px 12px;padding:8px 12px;max-width:72%}
 .ai{display:flex;gap:10px;align-items:flex-start}
-.ai .av{background:var(--navy);color:var(--gold)}
 .blk{flex:1;min-width:0;display:grid;gap:10px}
+.src{font-size:12.5px;color:var(--t3);border-top:1px dashed var(--line);padding-top:6px;margin-top:6px}
 .plan{padding:12px 14px}
-.plan h4,.pv h4{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}
+.plan h4,.pv h4{margin:0;font-size:15px}
+.ph4{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
 .steps{list-style:none;margin:0;padding:0;display:grid;gap:4px}
 .step{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px}
-.step .dot{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);flex:none;display:grid;place-items:center;font-size:11px;font-weight:700;color:#fff}
+.step .dot{width:20px;height:20px;border-radius:50%;border:2px solid #cbd2db;flex:none;display:grid;place-items:center;font-size:11px;font-weight:700;color:#fff}
 .step.done .dot{background:var(--ok);border-color:var(--ok)}
 .step.run{background:var(--gold-l)} .step.run .dot{border-color:var(--gold);border-top-color:transparent;animation:spin .8s linear infinite}
-.step.wait{background:var(--warn-bg)} .step.wait .dot{border-color:var(--warn);background:var(--warn)}
-.step.skip{opacity:.5;text-decoration:line-through}
-.step .lbl{flex:1}
-.step .meta{font-size:12px;color:var(--t3)}
-.step .del{border:0;background:transparent;color:var(--t3);padding:2px 6px;border-radius:6px}
-.step .del:hover{background:var(--bad-bg);color:var(--bad)}
-@keyframes spin{to{transform:rotate(360deg)}}
-.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
-.trace{font-family:var(--mono);font-size:12px;color:var(--t2);background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.step.wait{background:#fef3c7} .step.wait .dot{border-color:#92400e;background:#92400e}
+.step .lbl{flex:1;min-width:0}
+.step .meta{font-size:12.5px;color:var(--t3);white-space:nowrap}
+.step input{flex:1;min-width:0;border:1px solid #d6dbe2;border-radius:6px;padding:4px 8px;font:inherit}
+.ib-mini{border:1px solid #d6dbe2;background:#fff;border-radius:6px;width:28px;height:28px;display:grid;place-items:center;font-size:13px;color:var(--t2);flex:none}
+.ib-mini:disabled{opacity:.35}
+.fold{width:100%;display:flex;align-items:center;gap:10px;border:0;background:transparent;padding:2px 0;text-align:left;font-size:14px}
+.pbar{flex:1;height:6px;border-radius:3px;background:var(--line);overflow:hidden;min-width:60px}
+.pbar i{display:block;height:100%;background:var(--gold);transition:width .3s}
+.trace{font-family:var(--mono);font-size:12.5px;color:var(--t2);background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
 .trace summary{cursor:pointer;color:var(--t3);font-family:var(--font)}
 .trace div{padding:2px 0}
-.pv{padding:12px 14px;border:1.5px solid var(--gold)}
-.pv.done{border-color:#a7dcc6} .pv.rej{border-color:var(--line);opacity:.8} .pv.chg{border-color:#f0c36d}
-.why{font-size:12.5px;color:var(--t3);margin-bottom:8px}
-.diff{display:grid;grid-template-columns:90px 1fr;gap:4px 12px;font-size:13px}
-.diff .k{color:var(--t3)}
-.old{color:var(--t3);text-decoration:line-through;margin-right:6px}
-.new{color:var(--ok);font-weight:600}
-.mask{font-family:var(--mono)}
-.state{font-size:12.5px;display:flex;align-items:center;gap:6px;margin-top:8px}
-.spin{width:12px;height:12px;border:2px solid var(--gold);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
+.pv{padding:0;border:1.5px solid #e9cf8f;overflow:hidden}
+.pv .in{padding:12px 14px}
+.pv.done{border-color:#a7dcc6} .pv.rej,.pv.void{border-color:var(--line)} .pv.chg{border-color:#f0c36d} .pv.bad{border-color:#f3b4b4}
+.basis{font-size:13px;color:var(--t2);background:#f8fafc;border-radius:8px;padding:6px 10px;margin:8px 0}
+.diff{display:grid;grid-template-columns:88px 1fr;gap:6px 12px;font-size:14px;margin:0}
+.diff dt{color:var(--t3)} .diff dd{margin:0}
+.was{color:var(--t3);margin-right:8px}
+.was.del{text-decoration:line-through}
+.now{color:var(--ok);font-weight:600}
+.mm{font-size:11.5px;color:var(--t3);border:1px dashed #cbd2db;border-radius:4px;padding:0 5px;margin-left:6px;font-weight:400}
+.diff input{border:1px solid #d6dbe2;border-radius:6px;padding:3px 8px;font:inherit;width:100%;max-width:280px}
+.diff input.err{border-color:var(--bad)}
+.risk{font-size:13px;color:#92400e;background:#fffbeb;border-radius:8px;padding:6px 10px;margin-top:8px}
+.pvbar{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .composer{border-top:1px solid var(--line);padding:10px 14px;display:grid;gap:8px}
-.sugs{display:flex;gap:6px;flex-wrap:wrap}
-.sug{border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 10px;font-size:12.5px;color:var(--t2)}
-.inrow{display:flex;gap:8px;align-items:center}
-.inrow input{flex:1;border:1px solid #d6dbe2;border-radius:10px;padding:9px 12px;font:inherit}
-.ibtn{width:36px;height:36px;border-radius:10px;border:1px solid #d6dbe2;background:#fff;display:grid;place-items:center;color:var(--t2)}
+.inrow{display:flex;gap:8px;align-items:flex-end}
+.inrow textarea{flex:1;border:1px solid #d6dbe2;border-radius:10px;padding:9px 12px;font:inherit;resize:none;min-height:42px;max-height:140px;line-height:1.5}
+.ibtn{width:40px;height:40px;border-radius:10px;border:1px solid #d6dbe2;background:#fff;display:grid;place-items:center;color:var(--t2);flex:none}
 .ibtn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8}
-.qi{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px;background:#fff}
-.qi .tt{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
-.kv{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line);font-size:13px}
-.kv b{font-family:var(--mono)}
+.grp{font-size:12.5px;color:var(--t3);font-weight:600;margin:10px 0 6px}
+.grp:first-of-type{margin-top:0}
+.qi{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px;background:#fff;display:grid;gap:3px;text-align:left;width:100%}
+.qi:hover{border-color:var(--gold)}
+.qi b{font-size:13.5px}
+.qi.r3bar{border-left:4px solid #b91c1c}
 
-/* ② 业务页面入口 */
-.biz{position:relative;height:100%}
-.tbl{width:100%;border-collapse:collapse;font-size:13px;background:#fff}
-.tbl th{background:var(--navy);color:#fff;font-weight:600;text-align:left;padding:8px 10px;font-size:12.5px}
-.tbl td{padding:7px 10px;border-bottom:1px solid var(--line2)}
-.tbl tr.sel td{background:var(--gold-l)}
-.num{text-align:right;font-family:var(--mono)}
-.abar{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--navy);color:#fff;border-radius:12px;padding:8px 10px 8px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 12px 30px rgba(22,41,63,.35)}
-.abar .btn{border-color:transparent}
-.drawer{position:absolute;top:0;right:0;bottom:0;width:420px;background:#fff;box-shadow:-12px 0 30px rgba(22,41,63,.15);display:flex;flex-direction:column;transform:translateX(105%);transition:transform .25s}
-.drawer.open{transform:none}
-.drawer .dh{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
-.drawer .db{flex:1;overflow:auto;padding:14px;display:grid;gap:10px;align-content:start}
-.ctx{display:flex;flex-wrap:wrap;gap:6px}
+/* ② 新任务 */
+.blank{max-width:860px;margin:0 auto;width:100%;display:grid;gap:14px}
+.egs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.eg{border:1px solid var(--line);border-radius:10px;background:#fff;padding:9px 12px;text-align:left;width:100%;margin-top:8px;font-size:13.5px}
+.eg:hover{border-color:var(--gold);background:var(--gold-l)}
+.coach{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:45;display:grid;place-items:center;padding:16px}
+.coach .modal{max-width:520px}
+.dots{display:flex;gap:6px;margin:10px 0}
+.dots i{width:8px;height:8px;border-radius:50%;background:#cbd2db}
+.dots i.on{background:var(--gold)}
 
 /* ③ 待我确认 */
-.inbox{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px}
-.ftabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
-.ftab{border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 12px;font-size:12.5px;color:var(--t2)}
-.ftab[aria-pressed="true"]{border-color:var(--gold);background:var(--gold-l);color:var(--link);font-weight:600}
-.ib{padding:14px;margin-bottom:12px}
-.ib h4{margin:0;font-size:14.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.checks{list-style:none;margin:8px 0;padding:0;display:grid;gap:4px;font-size:13px}
+.inbox{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;align-items:start}
+.tabs{display:inline-flex;background:#e7ebf1;border-radius:9px;padding:3px;gap:2px;margin-bottom:12px;flex-wrap:wrap}
+.tabs button{border:0;background:transparent;border-radius:7px;padding:4px 12px;font-size:13.5px;color:var(--t2)}
+.tabs button[aria-pressed="true"]{background:#fff;color:var(--t1);font-weight:600;box-shadow:0 1px 2px rgba(22,41,63,.1)}
+.ib{padding:14px 16px;margin-bottom:12px}
+.ib h4{margin:0;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.due{font-size:12.5px;color:var(--warn);font-weight:600}
+.checks{list-style:none;margin:8px 0;padding:0;display:grid;gap:5px;font-size:13.5px}
 .checks li{display:flex;gap:8px;align-items:flex-start}
 .ico{width:18px;flex:none;text-align:center;font-weight:700}
-.ico.ok{color:var(--ok)} .ico.wa{color:var(--warn)}
-.merge li{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px}
+.ico.ok{color:var(--ok)} .ico.wa{color:var(--warn)} .ico.ba{color:var(--bad)}
+.pick li{padding:6px 0;border-bottom:1px dashed var(--line)}
+.pick label{display:flex;gap:8px;align-items:flex-start;flex:1}
+.pick input{margin-top:4px}
+.gh{font-size:13px;font-weight:700;color:var(--t2);margin:4px 0 8px;display:flex;align-items:center;gap:8px}
 
-/* ④ 排队 */
-.qwrap{max-width:760px;margin:0 auto;display:grid;gap:14px}
-.slotbig{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.sb{padding:14px;border:1px solid var(--line);border-radius:12px;background:#fff}
-.sb .tt{font-weight:700}
-.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:8px}
-.bar i{display:block;height:100%;background:var(--gold);width:40%}
-.qrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed var(--line)}
+/* 业务页面 */
+.biz{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff}
+.tbl th{background:var(--navy);color:#fff;font-weight:600;text-align:left;padding:8px 10px;font-size:13px;white-space:nowrap}
+.tbl td{padding:7px 10px;border-bottom:1px solid var(--line2)}
+.tbl tr.sel td{background:var(--gold-l)}
+.tbl.lite th{background:#f3f5f8;color:var(--t2)}
+.abar{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--navy);color:#fff;border-radius:12px;padding:8px 10px 8px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 12px 30px rgba(22,41,63,.35);z-index:3;white-space:nowrap}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:460px;max-width:100%;background:#fff;box-shadow:-12px 0 30px rgba(22,41,63,.15);display:flex;flex-direction:column;transform:translateX(105%);visibility:hidden;transition:transform .25s,visibility 0s linear .25s;z-index:7;border-radius:14px 0 0 14px}
+.drawer.open{transform:none;visibility:visible;transition:transform .25s,visibility 0s}
+.drawer .dh{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.drawer .db{flex:1;overflow:auto;padding:14px;display:grid;gap:12px;align-content:start}
+.drop{border:1.5px dashed #cbd2db;border-radius:12px;padding:14px;text-align:center;background:#fafbfc}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+.copybox{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13.5px;white-space:pre-wrap}
 
-/* ⑤ 执行轨迹 */
+/* 状态全集 */
+.sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.sc{padding:12px 14px;font-size:13.5px;display:grid;gap:6px;align-content:start}
+.sc .sn{font-size:12px;color:var(--t3);font-weight:600}
+
+/* 轨迹 */
 .tl{list-style:none;margin:0;padding:0 0 0 18px;border-left:2px solid var(--line);display:grid;gap:12px}
 .tl li{position:relative;padding-left:12px}
 .tl li::before{content:"";position:absolute;left:-25px;top:4px;width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid var(--t3)}
 .tl li.ok::before{border-color:var(--ok);background:var(--ok)} .tl li.hm::before{border-color:var(--gold);background:var(--gold)} .tl li.pl::before{border-color:var(--info);background:var(--info)}
-.tl .tm{font-family:var(--mono);font-size:11.5px;color:var(--t3)}
+.tl .tm{font-family:var(--mono);font-size:12px;color:var(--t3)}
 .tl .tt{font-weight:600}
-.tl .dt{font-size:12.5px;color:var(--t2)}
-.trg{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px}
+.tl .dt{font-size:13px;color:var(--t2)}
+.side2{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;align-items:start}
 
-/* ⑥ 日报与盯守 */
-.dr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+/* 设置 */
 .ri{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px dashed var(--line)}
-.ri .tm{font-family:var(--mono);font-size:12px;color:var(--t3);width:44px;flex:none;padding-top:1px}
-.ri .bd{flex:1}
-.form{display:grid;gap:8px;font-size:13px}
-.form label{display:grid;gap:4px;color:var(--t2)}
-.form input,.form select{border:1px solid #d6dbe2;border-radius:8px;padding:7px 10px;font:inherit;background:#fff}
-
-/* ⑦ 手机 */
-.phones{display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:6px 0 20px}
-.ph{width:320px;max-width:100%;border:10px solid #111827;border-radius:34px;background:var(--page);overflow:hidden;box-shadow:0 18px 40px rgba(22,41,63,.25)}
-.ph .hd{background:var(--navy);color:#fff;padding:14px 14px 10px;display:flex;align-items:center;justify-content:space-between}
-.ph .hd b{font-size:15px}
-.ph .bd{padding:10px;display:grid;gap:10px;min-height:470px;align-content:start}
-.ph .tabs{display:grid;grid-template-columns:repeat(3,1fr);background:#fff;border-top:1px solid var(--line)}
-.ph .tabs button{border:0;background:transparent;padding:10px 0;font-size:12px;color:var(--t3)}
-.ph .tabs button.on{color:var(--link);font-weight:700}
-.ph .big{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-.ph .big .btn{padding:11px 0;font-size:14px}
-.wx{background:#ededed}
-.wx .bd{background:#ededed}
-.wxm{background:#fff;border-radius:8px;padding:12px;font-size:13px}
-.wxm .src{font-size:12px;color:#888;margin-bottom:6px}
-.wxm .lk{border-top:1px solid #eee;margin-top:10px;padding-top:8px;color:#576b95;display:flex;justify-content:space-between}
-.ph-cap{text-align:center;font-size:12.5px;color:var(--t3);margin-top:8px}
-
-/* ⑧ 管理员 */
-.adm{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px}
+.ri .tm{font-family:var(--mono);font-size:12.5px;color:var(--t3);width:48px;flex:none;padding-top:1px}
+.ri .bd{flex:1;min-width:0}
 .sw{position:relative;width:38px;height:22px;border-radius:11px;border:0;background:#cbd2db;flex:none;transition:background .15s}
 .sw::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
 .sw[aria-checked="true"]{background:var(--gold)} .sw[aria-checked="true"]::after{left:19px}
-.sw:disabled{opacity:.45}
-.atbl{width:100%;border-collapse:collapse;font-size:13px}
-.atbl th{text-align:left;color:var(--t3);font-weight:600;font-size:12px;padding:6px 8px;border-bottom:1px solid var(--line)}
-.atbl td{padding:7px 8px;border-bottom:1px solid var(--line2)}
+.sw:disabled{opacity:.4;cursor:not-allowed}
+.atbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.atbl th{text-align:left;color:var(--t3);font-weight:600;font-size:12.5px;padding:6px 8px;border-bottom:1px solid var(--line)}
+.atbl td{padding:7px 8px;border-bottom:1px solid var(--line2);vertical-align:middle}
 .kill{border:1.5px solid var(--bad);color:var(--bad);background:#fff;border-radius:8px;padding:6px 14px;font-weight:700}
 .kill.on{background:var(--bad);color:#fff}
-.banner{background:var(--bad-bg);color:var(--bad);border:1px solid #f3c4c4;border-radius:10px;padding:8px 12px;font-weight:600}
-.modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.45);display:grid;place-items:center;z-index:40;padding:16px}
-.modal{background:#fff;border-radius:14px;padding:18px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)}
-.modal h3{margin:0 0 8px;font-size:16px}
-.srch{border:1px solid #d6dbe2;border-radius:8px;padding:6px 10px;font:inherit;width:160px}
+.srch{border:1px solid #d6dbe2;border-radius:8px;padding:5px 10px;font:inherit;font-size:13.5px;width:150px;background:#fff}
+.split{display:flex;height:12px;border-radius:6px;overflow:hidden;margin:8px 0 4px}
+.split i{display:block;height:100%}
+
+/* ── 手机：沿用现有 H5 设计令牌（蓝、圆角 16、按钮 ≥ 46） ── */
+.phones{display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:6px 0 20px}
+.h5ph{width:340px;max-width:100%;height:700px;border:10px solid #111827;border-radius:44px;overflow:hidden;background:linear-gradient(160deg,#EEF1F5,#E4E9F1);box-shadow:0 34px 80px rgba(24,32,50,.16);display:flex;flex-direction:column;font-family:var(--h5-font);color:var(--h5-ink)}
+.h5ph .scr{flex:1;overflow:auto;padding:4px 14px 14px;background:linear-gradient(180deg,rgba(120,168,255,.14),rgba(255,255,255,0) 32%),radial-gradient(circle at 88% 6%,rgba(76,141,255,.14),rgba(76,141,255,0) 42%)}
+.h5hd{display:flex;align-items:center;justify-content:space-between;padding:18px 18px 8px}
+.h5hd b{font-size:19px}
+.h5card{background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.7);border-radius:16px;box-shadow:0 8px 20px rgba(24,32,50,.05);padding:14px;margin-top:12px}
+.h5card .t{font-size:15px;font-weight:600}
+.h5card .s{font-size:13px;color:var(--h5-ink2);margin-top:2px}
+.h5amt{font-size:29px;font-weight:700;letter-spacing:-.5px;line-height:1.2;margin-top:4px;font-variant-numeric:tabular-nums}
+.h5amt .dec{font-size:16px}
+.h5pill{display:inline-flex;white-space:nowrap;flex:none;margin-left:8px;font-size:12px;font-weight:600;border-radius:999px;padding:3px 10px}
+.h5pill.blue{color:var(--h5-blue);background:rgba(76,141,255,.15)} .h5pill.good{color:var(--h5-good);background:rgba(42,122,82,.12)}
+.h5pill.warn{color:var(--h5-warn);background:rgba(169,106,8,.12)} .h5pill.bad{color:#fff;background:var(--h5-bad)}
+.h5field{display:flex;justify-content:space-between;gap:10px;background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.8);border-radius:12px;padding:9px 12px;font-size:14px;margin-top:6px}
+.h5field span:first-child{color:var(--h5-ink2)}
+.h5row{display:grid;grid-template-columns:1fr 1.4fr;gap:10px;margin-top:12px}
+.h5btn{background:linear-gradient(135deg,#4C8DFF,#2B6EF6);color:#fff;border:0;border-radius:16px;box-shadow:0 10px 22px rgba(43,110,246,.32);font-weight:600;font-size:16px;min-height:46px;padding:0 14px}
+.h5btn2{background:rgba(255,255,255,.95);color:var(--h5-ink);border:1px solid #d9dee6;border-radius:16px;min-height:46px;font-size:16px;padding:0 14px}
+.h5btn.full,.h5btn2.full{width:100%;margin-top:12px}
+.h5tabs{display:grid;grid-template-columns:repeat(3,1fr);background:rgba(255,255,255,.92);border-top:1px solid #e5e7eb}
+.h5tabs button{min-height:52px;border:0;background:transparent;font-size:13px;color:var(--h5-ink2)}
+.h5tabs button.on{color:var(--h5-blue);font-weight:700}
+.orbwrap{display:grid;place-items:center;gap:8px;margin:18px 0 6px}
+.orb{width:92px;height:92px;border-radius:50%;background:linear-gradient(145deg,#5C96FF,#2B6EF6);box-shadow:0 16px 34px rgba(43,110,246,.35),inset 0 2px 6px rgba(255,255,255,.5);color:#fff;border:0;font-weight:600;font-size:15px;touch-action:none;user-select:none}
+.orb.rec{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 14px rgba(43,110,246,.15),0 16px 34px rgba(43,110,246,.35)}}
+.bub{background:var(--h5-blue);color:#fff;border-radius:22px 22px 6px 22px;padding:9px 14px;font-size:14.5px;justify-self:end;margin-top:12px;max-width:85%;margin-left:auto;width:max-content}
+.wx{background:#ededed;font-family:var(--font);color:#111}
+.wx .scr{background:#ededed}
+.wxm{background:#fff;border-radius:8px;padding:12px;font-size:14px;margin-top:12px}
+.wxm .src2{font-size:12px;color:#666;margin-bottom:6px}
+.wxm .lk{border-top:1px solid #eee;margin-top:10px;padding-top:8px;color:#576b95;display:flex;justify-content:space-between}
+.ph-cap{text-align:center;font-size:13px;color:var(--t2);margin-top:10px;max-width:340px}
 </style>
-</head>
-<body>
 
 <div class="proto">
   <div class="pbar">
-    <div>
-      <h1>智能体工作台 · 交互原型</h1>
-      <p>对应方案 v5 第 10–12 节 · 所有数据均为虚构 · 按钮都能点</p>
+    <h1>智能体工作台 · 交互原型 v2</h1>
+    <p>对应方案 v6 第 05、10、11、12 节 · 按 5 份评审修改 · 所有数据均为虚构 · 按钮都能点</p>
+  </div>
+  <div class="ptabs" role="tablist" aria-label="原型界面">
+    <div class="pg"><span class="pg-l">销售主管 张经理</span>
+      <button class="ptab" role="tab" data-go="ws">① 工作台</button>
+      <button class="ptab" role="tab" data-go="newtask">② 新任务与引导</button>
+      <button class="ptab" role="tab" data-go="inbox">③ 待我确认</button>
+      <button class="ptab" role="tab" data-go="settings">④ 设置与日报</button>
+      <button class="ptab" role="tab" data-go="trace">⑤ 执行轨迹</button>
     </div>
-    <div class="ptabs" role="tablist" aria-label="原型界面">
-      <button class="ptab" role="tab" data-go="ws" aria-selected="true">① 工作台</button>
-      <button class="ptab" role="tab" data-go="biz" aria-selected="false">② 业务页面入口</button>
-      <button class="ptab" role="tab" data-go="inbox" aria-selected="false">③ 待我确认</button>
-      <button class="ptab" role="tab" data-go="queue" aria-selected="false">④ 名额已满</button>
-      <button class="ptab" role="tab" data-go="trace" aria-selected="false">⑤ 执行轨迹</button>
-      <button class="ptab" role="tab" data-go="daily" aria-selected="false">⑥ 日报与盯守</button>
-      <button class="ptab" role="tab" data-go="mobile" aria-selected="false">⑦ 手机与企微</button>
-      <button class="ptab" role="tab" data-go="admin" aria-selected="false">⑧ 管理员：权限</button>
+    <div class="pg"><span class="pg-l">试点角色</span>
+      <button class="ptab" role="tab" data-go="recon">⑥ 采购员：对账</button>
+      <button class="ptab" role="tab" data-go="wh">⑦ 仓库员：出库与建档</button>
+      <button class="ptab" role="tab" data-go="fin">⑧ 财务主管：请款预审</button>
+    </div>
+    <div class="pg"><span class="pg-l">其他</span>
+      <button class="ptab" role="tab" data-go="mobile">⑨ 手机与企微</button>
+      <button class="ptab" role="tab" data-go="states">⑩ 状态全集</button>
+      <button class="ptab" role="tab" data-go="admin">⑪ 管理员</button>
     </div>
   </div>
+  <details class="changes">
+    <summary>这一版按评审改了什么（13 条）</summary>
+    <ol>
+      <li>不再全是销售主管：加了采购员、仓库员、财务主管、装配工，每人只做自己网页上本来能做的事。</li>
+      <li>1280 宽放得下：三栏改为 220 / 自适应 / 280，窄了右栏收成「待我确认」按钮；上面可以切窗口宽度试。</li>
+      <li>视觉对齐现有系统：侧栏 232、没有顶栏、卡片圆角 14、标签方角、主按钮金底深字；手机改用现有 APP 的蓝色风格。</li>
+      <li>预览卡给本人看真值，旁边标「模型看不到原文」；依据放进卡里；原来为空的写「（原来为空）」，不画删除线。</li>
+      <li>对业务用户不说 R2 / R3：写「需要你确认」「必须本人确认」，后者红底白字、左侧红条、按钮写明金额。</li>
+      <li>手机照常能批现有的审批卡；只有付款、改收款账号、单笔 ≥ 5 万、预审标红的，给「到电脑上提醒我」。</li>
+      <li>驳回别人提交的单子必须填原因（会原样发给提交人）；「全部驳回」改「驳回所选」，5 秒内能撤回。</li>
+      <li>待我确认分三组：别人在等你 / 你的任务停在这一步 / 智能体建议；每张写截止时间；角标和列表条数一致。</li>
+      <li>停止、我自己来、撤销讲清楚：写到一半点停止是「这一步写完就停」；撤销写到几点前；撤销会提示已发的通知收不回。</li>
+      <li>不再出现「名额」：排队只说「智能体正忙，你排第 1 位」，也不显示同事在做什么。</li>
+      <li>删掉没有接口的「合并到已有档案」；「催货」改成拟话术、你复制后自己发；对账从供应商对账单开始。</li>
+      <li>补齐缺的界面：新任务空白页、首次引导、计划编辑、预览修改、改成自动的询问、个人设置、12 种卡片状态、全局提示条。</li>
+      <li>输入框改多行，中文输入法选词时按回车不会误发；键盘和读屏可用（焦点、Esc、按钮名称）。</li>
+    </ol>
+  </details>
   <div class="pnote" id="pnote"></div>
+  <div class="pctl" id="pctl"><span>模拟窗口宽度</span>
+    <div class="seg" role="group" aria-label="模拟窗口宽度"><button data-w="1100">1100（客户端最小）</button><button data-w="1280" aria-pressed="true">1280</button><button data-w="1440">1440</button></div>
+    <span class="muted" id="wHint"></span>
+  </div>
 
   <div class="frame" id="desk">
-  <div class="app">
-    <aside class="side" aria-label="系统导航">
-      <div class="brand"><span class="logo">同</span>同辉项目管理</div>
-      <button class="nav on" data-go="ws"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3l2.5 5 5.5.8-4 3.9.9 5.5L12 15.6 7.1 18.2 8 12.7 4 8.8l5.5-.8z"/></svg>智能体工作台<span class="bdg" id="navBadge">2</span></button>
-      <div class="sep">业务</div>
-      <button class="nav"><svg class="ic" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>项目目录</button>
-      <button class="nav"><svg class="ic" viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>销售部</button>
-      <button class="nav" data-go="biz"><svg class="ic" viewBox="0 0 24 24"><path d="M6 6h15l-2 8H8L6 3H3"/><circle cx="9" cy="19" r="1.5"/><circle cx="18" cy="19" r="1.5"/></svg>采购管理</button>
-      <button class="nav"><svg class="ic" viewBox="0 0 24 24"><path d="M3 9l9-5 9 5v10H3z"/><path d="M9 19v-6h6v6"/></svg>仓库</button>
-      <button class="nav"><svg class="ic" viewBox="0 0 24 24"><path d="M3 7h18v12H3z"/><path d="M3 11h18"/></svg>财务部</button>
-      <button class="nav"><svg class="ic" viewBox="0 0 24 24"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="1.5"/><circle cx="17" cy="18" r="1.5"/></svg>物流发货</button>
-      <div class="sep">管理</div>
-      <button class="nav" data-go="admin"><svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M17 11l2 2 3-3"/></svg>用户管理</button>
-      <div class="me"><span class="av">张</span><div>张经理<div class="muted" style="color:var(--navy-t2)">销售主管</div></div></div>
-    </aside>
-
-    <div class="main">
-      <div class="top">
-        <div class="crumb" id="crumb"><b>智能体工作台</b></div>
-        <div class="sp"></div>
-        <div class="slots" title="智能体多步任务名额（共 2 个）">名额 <span class="slot used" id="sl1"></span><span class="slot" id="sl2"></span> <span id="slotTxt">1 / 2 在用</span></div>
-        <span class="av" aria-hidden="true">张</span>
-      </div>
-      <div class="content">
+  <div class="app" id="app">
+    <aside class="side" aria-label="系统导航" id="side"></aside>
+    <div class="main"><div class="content" id="content">
 
       <!-- ① 工作台 -->
       <section class="screen" id="scr-ws" aria-label="工作台">
+        <div class="phd">
+          <h1>同辉智能体</h1><div class="desc">你说一件事，它查、它做；改数据前都先给你看</div>
+          <span class="spacer"></span>
+          <select class="srch lsel" aria-label="切换任务"><option>补全 2026-0XX 收货信息并安排发货</option><option>核对某某机械本月回款</option></select>
+          <button class="btn rbtn" id="rbtn" aria-controls="rcol" aria-expanded="false">待我确认 <span class="cnt" id="rbtnN">2</span></button>
+        </div>
         <div class="ws">
-          <div class="col">
+          <div class="lcol">
             <div class="card pane" style="flex:1">
-              <button class="btn pri newtask" id="newTask">＋ 新任务</button>
-              <p class="h">我的任务</p>
-              <button class="task on"><div class="tt">补全 2026-0XX 收货信息并安排发货</div><div class="ts"><span class="chip c-gold" id="tkState">待确认计划</span><span id="tkProg">0 / 5</span></div></button>
-              <button class="task"><div class="tt">核对某某五金的 3 张发票</div><div class="ts"><span class="chip c-info">后台运行</span>第 2 / 4 步</div></button>
-              <button class="task"><div class="tt">本周到期的应收款</div><div class="ts"><span class="chip c-ok">已完成</span>10:12</div></button>
-              <p class="h" style="margin-top:14px">我的盯守</p>
-              <button class="task"><div class="tt">2026-0XX 直到发货</div><div class="ts">每天 9:00 · 上次：卡在电工</div></button>
-              <button class="task"><div class="tt">有人改了收款账号就告诉我</div><div class="ts">实时 · 本月触发 0 次</div></button>
+              <button class="btn pri" style="width:100%;margin-bottom:12px" data-go="newtask">＋ 新任务</button>
+              <p class="sec">我的任务</p>
+              <button class="task on"><div class="tt">补全 2026-0XX 收货信息并安排发货</div><div class="ts"><span class="tg gold" id="tkState">待确认计划</span><span id="tkProg">0 / 5</span></div></button>
+              <button class="task"><div class="tt">核对某某机械本月回款</div><div class="ts"><span class="tg info">先去忙了</span>好了企微叫我</div></button>
+              <button class="task"><div class="tt">本周到期的应收款</div><div class="ts"><span class="tg ok">已完成</span>10:12</div></button>
+              <p class="sec" style="margin-top:14px">我的盯守</p>
+              <button class="task" data-go="settings"><div class="tt">2026-0XX 直到发货</div><div class="ts">每天 9:00 · 今天：卡在电工</div></button>
+              <button class="task" data-go="settings"><div class="tt">某某机械尾款到账就告诉我</div><div class="ts">有变化就说 · 本月 0 次</div></button>
             </div>
           </div>
 
           <div class="card center">
             <div class="thead">
               <div class="tt">补全 2026-0XX 收货信息并安排发货</div>
-              <span class="chip c-gold" id="tkState2">待确认计划</span>
+              <span class="tg gold" id="tkState2">待确认计划</span>
               <div style="flex:1"></div>
               <button class="btn sm" id="takeover">我自己来</button>
               <button class="btn sm danger" id="stopBtn" disabled>停止</button>
             </div>
-            <div class="thread" id="thread">
+            <div class="thread" id="thread" aria-live="polite">
               <div class="msg-u">把 2026-0XX 的收货信息补全，然后安排发货</div>
-              <div class="ai"><span class="av">AI</span>
+              <div class="ai"><span class="av ai" aria-hidden="true">智</span>
                 <div class="blk">
-                  <div>好的，这件事分 5 步。第 3 步会改发货单，需要你确认；其余步骤只读或已获授权。</div>
-                  <div class="card plan" id="plan">
-                    <h4>计划 <span class="chip c-mute" id="planTag">可修改</span></h4>
-                    <ol class="steps" id="steps">
-                      <li class="step" data-i="0"><span class="dot"></span><span class="lbl">查项目和发货单</span><span class="meta">只读</span><button class="del" aria-label="删除这一步">删除</button></li>
-                      <li class="step" data-i="1"><span class="dot"></span><span class="lbl">查同一客户的历史收货人</span><span class="meta">只读</span><button class="del" aria-label="删除这一步">删除</button></li>
-                      <li class="step" data-i="2"><span class="dot"></span><span class="lbl">填写收货人</span><span class="meta"><span class="rk r2">R2</span> 需要你确认</span><button class="del" aria-label="删除这一步">删除</button></li>
-                      <li class="step" data-i="3"><span class="dot"></span><span class="lbl">检查发货闸门（设计、电工、生产是否都完成）</span><span class="meta">只读</span><button class="del" aria-label="删除这一步">删除</button></li>
-                      <li class="step" data-i="4"><span class="dot"></span><span class="lbl">通知物流安排发货</span><span class="meta"><span class="rk r2">R2</span> 已挣得自动</span><button class="del" aria-label="删除这一步">删除</button></li>
-                    </ol>
-                    <div class="acts" id="planActs"><button class="btn pri" id="startPlan">确认计划，开始</button><span class="muted small">删掉不需要的步骤，或在下面补充要求</span></div>
-                  </div>
-                  <details class="trace" id="trace" hidden><summary>执行轨迹（<span id="trN">0</span>）</summary><div id="trBody"></div></details>
+                  <div>这件事分 5 步。第 3 步要改发货单，会先给你看；第 5 步「通知物流」你已经连续确认过 20 次，会自动做、做完告诉你，10 分钟内可撤销。</div>
+                  <div class="card plan" id="plan"></div>
+                  <details class="trace" id="trace" hidden><summary>执行轨迹（<span id="trN">0</span>）· <a href="#" data-go="trace" style="color:var(--link)">看完整轨迹</a></summary><div id="trBody"></div></details>
                   <div id="pvSlot"></div>
                   <div id="doneSlot"></div>
                 </div>
               </div>
             </div>
             <div class="composer">
-              <div class="sugs"><button class="sug">顺便查一下这个客户还欠多少</button><button class="sug">发货后提醒我开票</button><button class="sug">换一个收货人</button></div>
-              <div class="inrow"><button class="ibtn" aria-label="添加附件"><svg viewBox="0 0 24 24"><path d="M21 12l-8.5 8.5a5 5 0 01-7-7L14 5a3.5 3.5 0 015 5l-8.5 8.5a2 2 0 01-3-3L15 8"/></svg></button><input id="askIn" aria-label="问问题或派任务" placeholder="问问题，或把一件事交给智能体…"><button class="ibtn" aria-label="语音输入"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button><button class="btn pri" id="askSend">发送</button></div>
+              <div class="chips"><button class="sug">顺便查一下这个客户还欠多少</button><button class="sug">发货后提醒我开票</button><button class="sug">☆ 收藏的问题</button></div>
+              <div class="inrow">
+                <button class="ibtn" aria-label="添加附件"><svg viewBox="0 0 24 24"><path d="M21 12l-8.5 8.5a5 5 0 01-7-7L14 5a3.5 3.5 0 015 5l-8.5 8.5a2 2 0 01-3-3L15 8"/></svg></button>
+                <textarea id="askIn" rows="1" aria-label="问问题或交给智能体一件事" placeholder="问问题，或把一件事交给智能体…（Shift + 回车换行）"></textarea>
+                <button class="ibtn" aria-label="语音输入"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>
+                <button class="btn pri" id="askSend">发送</button>
+              </div>
             </div>
           </div>
 
-          <div class="col">
+          <aside class="rcol" id="rcol" aria-label="待我确认和今天的记录">
             <div class="card pane">
-              <p class="h">待我确认 <span class="chip c-bad" id="inboxN">2</span></p>
-              <div class="qi" id="qiPv" hidden><div class="tt"><span class="rk r2">R2</span>发货单 · 补收货信息</div><div class="small muted">来自当前任务 · 第 3 步</div></div>
-              <div class="qi"><div class="tt"><span class="rk r3">R3</span>订单审批 · 某某机械</div><div class="small muted">合同额 ¥186,000 · 预审有 1 处提醒</div></div>
-              <div class="qi"><div class="tt"><span class="rk r2">R2</span>3 条物料档案草稿</div><div class="small muted">仓库到货触发 · 可合并确认</div></div>
+              <div style="display:flex;align-items:center;gap:8px"><p class="sec" style="margin:0">待我确认</p><span class="cnt" id="inboxN">2</span><span style="flex:1"></span><button class="btn sm rclose" id="rclose">收起</button></div>
+              <div style="margin-top:10px" id="miniInbox"></div>
               <button class="btn ghost sm" data-go="inbox">全部待确认 →</button>
             </div>
             <div class="card pane">
-              <p class="h">今天智能体替我做的</p>
-              <div class="kv"><span>自动执行</span><b id="autoN">2</b></div>
+              <p class="sec">今天替我做的</p>
+              <div class="kv"><span>自动做的</span><b id="autoN">2</b></div>
               <div class="kv"><span>还能撤销</span><b id="undoN">1</b></div>
               <div class="kv"><span>被我驳回</span><b>0</b></div>
-              <button class="btn ghost sm" data-go="daily">看日报 →</button>
+              <button class="btn ghost sm" data-go="settings">看今天的记录 →</button>
             </div>
-            <div class="card pane">
-              <p class="h">依据</p>
-              <div class="small">收货人取自同一客户最近两次发货（2026-0YY、2026-0ZZ），两次一致。</div>
-            </div>
-          </div>
+          </aside>
         </div>
       </section>
 
-      <!-- ② 业务页面入口 -->
-      <section class="screen" id="scr-biz" aria-label="业务页面入口" hidden>
-        <div class="biz">
-          <div class="card" style="padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px">
-            <b>采购明细</b><span class="muted small">供应商：某某五金 · 待对账</span><div style="flex:1"></div><span class="muted small">勾选几行，可以直接交给智能体</span>
+      <!-- ② 新任务与首次引导 -->
+      <section class="screen scroll" id="scr-newtask" aria-label="新任务" hidden>
+        <div class="phd"><h1>交给智能体一件事</h1><div class="desc">说清楚要什么就行；改数据前它都会先给你看</div><span class="spacer"></span><button class="btn" id="coachBtn">看首次引导</button></div>
+        <div class="blank">
+          <div class="card pane">
+            <div class="inrow"><textarea rows="2" id="ntIn" aria-label="要做的事" placeholder="例如：把 2026-0XX 的收货信息补全，然后安排发货"></textarea><button class="btn pri" id="ntGo">交给它</button></div>
+            <div class="small muted" style="margin-top:8px">更快的办法：在业务页面勾选几行，点「让智能体做」，它会带着这些数据开工，不用再描述一遍。</div>
           </div>
-          <div class="card" style="overflow:hidden">
-            <table class="tbl"><thead><tr><th style="width:36px"><input type="checkbox" id="selAll" aria-label="全选"></th><th>采购单号</th><th>物料</th><th>规格</th><th class="num">数量</th><th class="num">金额</th><th>开票号</th><th>对账</th></tr></thead>
-              <tbody id="bizRows"></tbody></table>
+          <div class="egs">
+            <div class="card pane"><p class="sec">查一查</p>
+              <button class="eg">这周要发货的项目，哪些还卡着</button>
+              <button class="eg">某某机械还欠多少，最早哪笔到期</button>
+              <button class="eg">上个月销售额按销售员排一下</button></div>
+            <div class="card pane"><p class="sec">让它做</p>
+              <button class="eg">把 2026-0XX 收货信息补全并安排发货</button>
+              <button class="eg">给 7 天没跟进的线索建跟进待办</button>
+              <button class="eg">把这张名片建成客户档案（上传图片）</button></div>
+            <div class="card pane"><p class="sec">帮我盯着</p>
+              <button class="eg">2026-0XX 直到发货，每天 9 点告诉我</button>
+              <button class="eg">某某机械尾款到账就告诉我</button>
+              <button class="eg">我提交的订单被驳回就告诉我</button></div>
           </div>
-          <div class="abar" id="abar" hidden><span id="abarN">已选 0 行</span><button class="btn pri sm" id="toAgent">让智能体对账</button><button class="btn sm" id="toAgent2">让智能体催货</button><button class="btn sm" id="clearSel">取消</button></div>
-          <div class="drawer" id="drawer" aria-label="智能体">
-            <div class="dh"><span class="av" style="background:var(--navy);color:var(--gold)">AI</span><b>智能体 · 对账</b><div style="flex:1"></div><button class="btn sm" id="closeDrawer">关闭</button></div>
-            <div class="db" id="drawerBody"></div>
-          </div>
+          <div class="small muted">示例按你的权限给：你看不到的模块不会出现在这里。点示例会填进上面的输入框，你可以改完再交给它。</div>
+          <div class="card pane"><p class="sec">任务列表为空时</p><div class="muted">还没有任务。在上面说一件事，或者去业务页面勾选数据交给它。</div></div>
         </div>
       </section>
 
       <!-- ③ 待我确认 -->
-      <section class="screen" id="scr-inbox" aria-label="待我确认" hidden>
+      <section class="screen scroll" id="scr-inbox" aria-label="待我确认" hidden>
+        <div class="phd"><h1>待我确认</h1><div class="desc">先处理别人在等你的；过期的卡作废，不会改任何数据</div><span class="spacer"></span></div>
         <div class="inbox">
           <div>
-            <div class="ftabs" role="group" aria-label="筛选"><button class="ftab" aria-pressed="true">全部 3</button><button class="ftab" aria-pressed="false">R3 · 1</button><button class="ftab" aria-pressed="false">R2 · 2</button><button class="ftab" aria-pressed="false">今天到期 1</button></div>
-            <div class="card ib" id="ibR3">
-              <h4><span class="rk r3">R3</span>订单审批 · 2026-0XX · 某某机械有限公司 <span class="chip c-warn">预审有 1 处提醒</span></h4>
-              <div class="muted small" style="margin:4px 0 8px">销售 李四 提交 · 2 小时前 · 合同额 ¥186,000 · R3 只能逐张处理，不能合并</div>
-              <ul class="checks">
-                <li><span class="ico ok">✓</span>合同额与报价单一致（¥186,000）</li>
-                <li><span class="ico ok">✓</span>该客户近 12 个月无逾期尾款</li>
-                <li><span class="ico wa">!</span>付款条件「30/60/10」与公司模板「30/60/10 + 质保金」不一致，缺质保金条款</li>
-                <li><span class="ico ok">✓</span>交期 11/30：电工排期可满足</li>
-              </ul>
-              <div class="acts"><button class="btn pri" data-r3="ok">批准</button><button class="btn" data-r3="no">退回并说明</button><span class="muted small">你是销售主管，本人有权审批；智能体只做了预审</span></div>
-              <div class="state" id="r3State" hidden></div>
-            </div>
-            <div class="card ib" id="ibMerge">
-              <h4><span class="rk r2">R2</span>3 条物料档案草稿 <span class="chip c-info">仓库到货触发</span></h4>
-              <div class="muted small" style="margin:4px 0 6px">同类 R2 可以合并确认，逐条勾选</div>
-              <ul class="checks merge" id="mergeList">
-                <li><input type="checkbox" checked id="m1"><label for="m1">不锈钢方管 40×40×2 · 新建档案（库里没有同名同规格）</label></li>
-                <li><input type="checkbox" checked id="m2"><label for="m2">密封圈 Φ120 · <b>合并到已有档案</b> 4020400XX（同名同规格）</label></li>
-                <li><input type="checkbox" id="m3"><label for="m3">轴承 6205 · 新建档案 <span class="chip c-warn">规格写法和已有的 6205-2RS 相近，建议你看一下</span></label></li>
-              </ul>
-              <div class="acts"><button class="btn pri" id="mergeOk">确认所选（2）</button><button class="btn" id="mergeNo">全部驳回</button></div>
-              <div class="state" id="mergeState" hidden></div>
-            </div>
-            <div class="card ib">
-              <h4><span class="rk r2">R2</span>发货单 2026-0XX · 补收货信息 <span class="chip c-mute">来自你的任务</span></h4>
-              <div class="muted small" style="margin:4px 0 0">在工作台里处理 · <button class="btn ghost sm" data-go="ws">去处理 →</button></div>
-            </div>
+            <div class="tabs" role="group" aria-label="筛选" id="ibTabs"></div>
+            <div id="ibList"></div>
           </div>
-          <div class="col">
-            <div class="card pane"><p class="h">怎么排序</p><div class="small">先 R3，再按到期时间；同一任务的确认合在一起；下班时间只推 R3 和当天到期的。</div></div>
-            <div class="card pane"><p class="h">我的审批模式</p>
-              <div class="kv"><span>填收货人</span><span class="chip c-gold">建议 · 已确认 12 / 20</span></div>
-              <div class="kv"><span>通知物流</span><span class="chip c-ok">自动（已挣得）</span></div>
-              <div class="kv"><span>物料建档</span><span class="chip c-gold">建议 · 已确认 5 / 20</span></div>
-              <div class="kv"><span>订单审批</span><span class="chip c-bad">R3 · 永远确认</span></div>
-              <p class="small muted" style="margin:8px 0 0">某类动作连续确认 20 次、一次没改、没撤销，就会问你要不要改成自动。</p>
+          <div style="display:grid;gap:12px">
+            <div class="card pane"><p class="sec">怎么排序</p><div class="small">分三组：别人在等你 → 你的任务停在这一步 → 智能体建议。组内：1 小时内过期的 → 必须本人确认的 → 截止早的 → 提交早的。下班时间（18:00–8:30）只推必须本人确认和当天到期的。</div></div>
+            <div class="card pane"><p class="sec">我的确认方式</p>
+              <div class="kv"><span>填收货信息</span><span class="tg gold">每次问我 · 12 / 20</span></div>
+              <div class="kv"><span>通知物流</span><span class="tg ok">自动 · 已连续确认 20 次</span></div>
+              <div class="kv"><span>建跟进待办</span><span class="tg gold">每次问我 · 5 / 20</span></div>
+              <div class="kv"><span>订单审批</span><span class="tg bad">必须本人确认</span></div>
+              <button class="btn ghost sm" data-go="settings">去设置 →</button>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- ④ 名额已满 -->
-      <section class="screen" id="scr-queue" aria-label="名额已满" hidden>
-        <div class="qwrap">
-          <div class="card" style="padding:16px">
-            <p class="h">智能体名额（同时最多 2 个多步任务）</p>
-            <div class="slotbig">
-              <div class="sb"><div class="tt">名额 1 · 同事</div><div class="small muted">核对供应商发票 · 第 3 / 4 步</div><div class="bar"><i style="width:70%"></i></div></div>
-              <div class="sb"><div class="tt">名额 2 · 同事</div><div class="small muted">交期风险联动 · 第 2 / 6 步</div><div class="bar"><i style="width:30%"></i></div></div>
+      <!-- ④ 设置与日报 -->
+      <section class="screen scroll" id="scr-settings" aria-label="设置与日报" hidden>
+        <div class="phd"><h1>我的智能体</h1><div class="desc">今天它替你做了什么、以后怎么问你、盯着哪些事</div><span class="spacer"></span><button class="btn" id="simAuto">模拟：第 20 次确认之后</button></div>
+        <div class="two">
+          <div class="card pane"><p class="sec">今天替我做的 · 10 月 3 日</p><div id="dailyList"></div>
+            <div class="small muted" style="margin-top:8px">这些记录也会出现在「消息中心 › 智能体」分类里。</div></div>
+          <div style="display:grid;gap:12px">
+            <div class="card pane"><p class="sec">每类动作怎么问我</p>
+              <table class="atbl"><thead><tr><th>动作</th><th>现在</th><th></th></tr></thead><tbody id="modeRows"></tbody></table>
+              <div class="small muted" style="margin-top:8px">连续确认 20 次、一次没改、没撤销，才会问你要不要改成自动。看都没看就点确认（少于 2 秒）不计数。必须本人确认的动作永远不会自动。</div>
             </div>
-            <p class="small muted" style="margin:10px 0 0">查数、看卡片、晨报不占名额，照常秒回。等人确认的任务会释放名额，不会一直占着。</p>
-          </div>
-          <div class="card" style="padding:16px" id="qCard">
-            <div class="qrow" style="border:0;padding-top:0"><span class="spin"></span><b>你的任务在排队：排第 1 位，预计 1 分钟</b></div>
-            <div class="small muted">「补全 2026-0XX 收货信息并安排发货」</div>
-            <div class="acts"><button class="btn pri" id="qBg">转到后台，做完企微提醒我</button><button class="btn" id="qCancel">取消</button><span class="muted small">超过 2 分钟会自动转后台</span></div>
-          </div>
-          <div class="card" style="padding:16px">
-            <p class="h">同一时刻的其他请求</p>
-            <div class="qrow"><span class="chip c-ok">快速通道</span>「本月销售额多少」 → 1.8 秒已回答，没有排队</div>
-            <div class="qrow"><span class="chip c-ok">快速通道</span>「2026-0XX 卡在哪」 → 2.3 秒已回答</div>
-            <div class="qrow" style="border:0"><span class="chip c-info">事件任务</span>「请款提交 → 预审」排在你后面（用户操作优先）</div>
+            <div class="card pane"><p class="sec">提醒</p>
+              <div class="kv"><span>企业微信</span><button class="sw" role="switch" aria-checked="true" aria-label="企业微信提醒"></button></div>
+              <div class="kv"><span>站内消息</span><button class="sw" role="switch" aria-checked="true" aria-label="站内消息提醒"></button></div>
+              <div class="kv"><span>免打扰 18:00–8:30（只推必须本人确认和当天到期的）</span><button class="sw" role="switch" aria-checked="true" aria-label="免打扰"></button></div>
+            </div>
+            <div class="card pane"><p class="sec">我的盯守</p><div id="watchList"></div>
+              <form class="acts" id="watchForm" style="margin-top:6px">
+                <select class="srch" id="wObj" aria-label="盯什么"><option>项目 2026-0XY</option><option>客户 某某机械</option></select>
+                <select class="srch" id="wCond" aria-label="直到"><option>直到发货</option><option>直到尾款收回</option></select>
+                <select class="srch" id="wFreq" aria-label="多久说一次" style="width:auto"><option>每天 9:00</option><option>有变化就说</option></select>
+                <button class="btn pri sm" type="submit">开始盯</button>
+              </form>
+              <div class="small muted" style="margin-top:6px">条件达成自动结束；盯的对象被删除或你没权限看了，会告诉你并停掉。</div>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- ⑤ 执行轨迹 -->
-      <section class="screen" id="scr-trace" aria-label="执行轨迹" hidden>
-        <div class="trg">
-          <div class="card" style="padding:16px">
-            <p class="h">任务「补全 2026-0XX 收货信息并安排发货」· 完整轨迹</p>
+      <section class="screen scroll" id="scr-trace" aria-label="执行轨迹" hidden>
+        <div class="phd"><h1>执行轨迹</h1><div class="desc">补全 2026-0XX 收货信息并安排发货 · 本人和管理员可见</div><span class="spacer"></span></div>
+        <div class="side2">
+          <div class="card pane">
             <ol class="tl">
-              <li class="pl"><div class="tm">09:41:02</div><div class="tt">出计划（5 步）</div><div class="dt">张经理确认计划，未修改</div></li>
-              <li class="ok"><div class="tm">09:41:09 · 0.4 秒</div><div class="tt">查项目和发货单</div><div class="dt mono">查询 项目 code=2026-0XX → 1 条 · 发货单状态：待发货，收货人为空</div></li>
-              <li class="ok"><div class="tm">09:41:09 · 0.3 秒</div><div class="tt">查同一客户的历史收货人</div><div class="dt mono">查询 发货单 客户=某某机械 已填收货人 → 2 条，收货人一致</div></li>
-              <li class="pl"><div class="tm">09:41:10</div><div class="tt">策略判定：填收货人 · R2 · 你的模式「建议」→ 需要确认</div></li>
-              <li class="ok"><div class="tm">09:41:11 · 0.9 秒</div><div class="tt">演练：零落库、零外发</div><div class="dt">发货单 4 个字段改动 + 1 条审计记录；电话已对模型打码</div></li>
-              <li class="hm"><div class="tm">09:43:40</div><div class="tt">张经理确认（等待 2 分 29 秒，期间释放了名额）</div></li>
-              <li class="ok"><div class="tm">09:43:41 · 1.1 秒</div><div class="tt">确认时重演一致 → 以张经理身份执行</div><div class="dt">审计：发起人 张经理 · 智能体代办 · 确认人 张经理</div></li>
-              <li class="ok"><div class="tm">09:43:42 · 0.3 秒</div><div class="tt">回读核对：4 个字段已生效，无其他改动</div></li>
-              <li class="ok"><div class="tm">09:43:43 · 0.5 秒</div><div class="tt">检查发货闸门：设计 ✓ 电工 ✓ 生产 ✓</div></li>
-              <li class="ok"><div class="tm">09:43:44 · 0.8 秒</div><div class="tt">通知物流（自动：已挣得授权）</div><div class="dt">站内 + 企微各 1 条 · 10 分钟内可撤回</div></li>
+              <li class="pl"><div class="tm">09:41:02</div><div class="tt">出计划（5 步），存进 ERP</div><div class="dt">张经理确认计划，没有修改</div></li>
+              <li class="ok"><div class="tm">09:41:09 · 0.4 秒</div><div class="tt">查项目和发货单</div><div class="dt mono">发货单状态：待发货；收货人为空</div></li>
+              <li class="ok"><div class="tm">09:41:09 · 0.3 秒</div><div class="tt">查同一客户最近两次的收货人</div><div class="dt mono">2 条，收货人一致</div></li>
+              <li class="pl"><div class="tm">09:41:10</div><div class="tt">判定：填发货单收货信息 · 需要你确认（你这类动作还在「每次问我」）</div></li>
+              <li class="ok"><div class="tm">09:41:11 · 0.9 秒</div><div class="tt">演练：零落库、零外发 → 生成待审批单 AP-1003-0012</div><div class="dt">4 项改动；电话发给模型时打了码，卡片上给你看的是原值</div></li>
+              <li class="hm"><div class="tm">09:43:40</div><div class="tt">张经理确认（等了 2 分 29 秒，这期间不占用智能体）</div></li>
+              <li class="ok"><div class="tm">09:43:41 · 1.1 秒</div><div class="tt">ERP 消费审批单 → 同一事务里重演，和预览一致 → 以张经理身份保存</div><div class="dt">审计：操作人 张经理 · 来源 智能体代办 · 确认人 张经理</div></li>
+              <li class="ok"><div class="tm">09:43:42 · 0.3 秒</div><div class="tt">回读核对：4 项已生效，没有改动别的</div></li>
+              <li class="ok"><div class="tm">09:43:44 · 0.5 秒</div><div class="tt">检查发货条件：设计 ✓ 电工 ✓ 生产 ✓</div></li>
+              <li class="ok"><div class="tm">09:43:45 · 0.8 秒</div><div class="tt">通知物流（自动 · 已连续确认 20 次）</div><div class="dt">站内 + 企微各 1 条 · 09:53 前可撤销（通知收不回，可发更正）</div></li>
             </ol>
           </div>
-          <div class="col">
-            <div class="card pane"><p class="h">这次花了多少</p>
-              <div class="kv"><span>机器时间</span><b>9.1 秒</b></div>
-              <div class="kv"><span>模型调用</span><b>4 次</b></div>
+          <div style="display:grid;gap:12px">
+            <div class="card pane"><p class="sec">这次花了多少</p>
+              <div class="kv"><span>机器时间</span><b>9.2 秒</b></div>
+              <div class="kv"><span>模型调用</span><b>5 次</b></div>
               <div class="kv"><span>费用</span><b>¥0.0X</b></div>
-              <div class="kv"><span>占用名额</span><b>2 段，共 14 秒</b></div>
             </div>
-            <div class="card pane"><p class="h">谁能看这条轨迹</p><div class="small">本人、管理员。轨迹里的敏感字段按打码规则显示。</div></div>
-            <div class="card pane"><p class="h">反馈</p><div class="acts" style="margin:0"><button class="btn sm">👍 做得对</button><button class="btn sm">这里不对…</button></div></div>
+            <div class="card pane"><p class="sec">谁能看</p><div class="small">本人和管理员。银行账号、身份证号、工资、手机号在轨迹里按打码显示。</div></div>
+            <div class="card pane"><p class="sec">做得怎么样</p><div class="acts" style="margin:0"><button class="btn sm">做得对</button><button class="btn sm">这里不对…</button></div></div>
           </div>
         </div>
       </section>
 
-      <!-- ⑥ 日报与盯守 -->
-      <section class="screen" id="scr-daily" aria-label="日报与盯守" hidden>
-        <div class="dr">
-          <div class="card" style="padding:16px">
-            <p class="h">今天智能体替我做的 · 10 月 2 日</p>
-            <div id="dailyList"></div>
+      <!-- ⑥ 采购员：对账 -->
+      <section class="screen" id="scr-recon" aria-label="采购对账" hidden>
+        <div class="phd"><h1>采购明细</h1><div class="desc">供应商：某某五金 · 9 月 · 待对账 6 行</div><span class="spacer"></span><span class="tg info">阶段二影子运行：只出结果、不改数据 · 阶段三开放</span></div>
+        <div class="biz">
+          <div class="card" style="overflow:hidden">
+            <table class="tbl"><thead><tr><th style="width:36px"><input type="checkbox" id="selAll" aria-label="全选"></th><th>采购单号</th><th>物料</th><th>规格</th><th class="num">数量</th><th class="num">金额</th><th>对账</th></tr></thead>
+              <tbody id="bizRows"></tbody></table>
           </div>
-          <div class="col">
-            <div class="card pane">
-              <p class="h">我的盯守</p>
-              <div class="ri"><span class="tm">每天</span><div class="bd"><b>2026-0XX 直到发货</b><div class="small muted">今天 9:00：卡在电工（主板未完成），预计 10/08；物料齐了</div></div><button class="btn sm">暂停</button></div>
-              <div class="ri"><span class="tm">实时</span><div class="bd"><b>有人改了收款账号就告诉我</b><div class="small muted">本月触发 0 次</div></div><button class="btn sm">暂停</button></div>
-            </div>
-            <div class="card pane">
-              <p class="h">新建盯守</p>
-              <form class="form" id="watchForm">
-                <label>盯着<select id="wObj"><option>项目 2026-0XX</option><option>供应商 某某五金</option><option>客户 某某机械</option></select></label>
-                <label>直到<select id="wCond"><option>发货</option><option>全部到货</option><option>尾款收回</option></select></label>
-                <label>多久告诉我一次<select id="wFreq"><option>每天 9:00</option><option>有变化就说</option><option>每周一</option></select></label>
-                <div><button class="btn pri" type="submit">开始盯</button></div>
-              </form>
-            </div>
+          <div class="small muted" style="margin-top:10px">勾选几行，底部会出现「让智能体对账」。</div>
+          <div class="abar" id="abar" hidden><span id="abarN">已选 0 行</span><button class="btn pri sm" id="toRecon">让智能体对账</button><button class="btn sm" id="toChase">拟催货话术</button><button class="btn sm" id="clearSel">取消</button></div>
+          <button class="fab f1" aria-label="反馈">反馈</button><button class="fab f2" aria-label="待办">待办</button>
+          <div class="drawer" id="drawer" role="dialog" aria-labelledby="drawerT">
+            <div class="dh"><span class="av ai" aria-hidden="true">智</span><b id="drawerT">智能体 · 对账</b><div style="flex:1"></div><button class="btn sm" id="closeDrawer">关闭（Esc）</button></div>
+            <div class="db" id="drawerBody"></div>
           </div>
         </div>
       </section>
 
-      <!-- ⑧ 管理员 -->
-      <section class="screen" id="scr-admin" aria-label="管理员：智能体权限" hidden>
-        <div id="killBanner" class="banner" hidden style="margin-bottom:12px">已暂停全员的智能体写操作。查数照常，所有写操作和自动执行都会被拒绝。</div>
-        <div class="adm">
-          <div class="col">
-            <div class="card pane">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><p class="h" style="margin:0">按角色设上限</p><div style="flex:1"></div><button class="kill" id="killBtn">全员暂停智能体写操作</button></div>
-              <table class="atbl"><thead><tr><th>角色</th><th>查</th><th>写（建议模式）</th><th>可挣得自动</th></tr></thead><tbody id="roleRows"></tbody></table>
-              <p class="small muted" style="margin:8px 0 0">上限只能收窄，不能超过这个人在网页上本来就有的权限。</p>
-            </div>
-            <div class="card pane">
-              <p class="h">按人单独开（骨干）</p>
-              <table class="atbl"><thead><tr><th>人</th><th>开了什么</th><th>到期</th><th></th></tr></thead><tbody>
-                <tr><td>王五 · 仓库员</td><td>写（建议模式）</td><td>2026-12-31</td><td><button class="btn sm">收回</button></td></tr>
-                <tr><td>赵六 · 采购</td><td>写（建议模式）</td><td>2026-11-30</td><td><button class="btn sm">收回</button></td></tr>
+      <!-- ⑦ 仓库员 -->
+      <section class="screen scroll" id="scr-wh" aria-label="出库与建档" hidden>
+        <div class="phd"><h1>仓库</h1><div class="desc">出库单 CK-1003-004 · 2026-0XX 主板组件</div><span class="spacer"></span><span class="tg info">阶段二影子运行 · 阶段三开放</span></div>
+        <div class="two">
+          <div class="card pane" id="ckCard">
+            <p class="sec">出库单 · 10 行</p>
+            <div class="small muted">平时要逐行查库存、填库位。点下面的按钮，智能体先查一遍，给你一张出库预览。</div>
+            <div class="acts"><button class="btn pri" id="ckGo">让智能体看看</button></div>
+            <div id="ckRes"></div>
+          </div>
+          <div class="card pane r3bar" style="border-left-color:#94a3b8">
+            <div class="gh"><span class="lv l1">可撤草稿</span>到货触发 · 3 条物料档案草稿</div>
+            <div class="small muted">今天 10:20 某某五金到货 3 种新物料。分类按编码规则：40 原材料 › 02 型材。</div>
+            <ul class="checks pick" id="mdList">
+              <li><label><input type="checkbox" checked>不锈钢方管 40×40×2 · 新建档案<span class="small muted">（库里没有同名同规格）</span></label></li>
+              <li><label><input type="checkbox">密封圈 Φ120 · <span class="tg warn">疑似重复</span> 库里已有同名同规格 4020400XX，建议不建</label></li>
+              <li><label><input type="checkbox">轴承 6205 · 新建档案 <span class="tg warn">和已有的 6205-2RS 相近，建议你看一下</span></label></li>
+            </ul>
+            <div class="acts"><button class="btn pri" id="mdOk">确认所选（1）</button><button class="btn" id="mdNo">驳回所选</button><span class="small muted">建错了 24 小时内可以删除草稿</span></div>
+            <div class="state" id="mdSt" aria-live="polite" hidden></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ⑧ 财务主管 -->
+      <section class="screen scroll" id="scr-fin" aria-label="请款预审" hidden>
+        <div class="phd"><h1>请款审批</h1><div class="desc">待审 3 张 · 最早一张已等 26 小时</div><span class="spacer"></span></div>
+        <div class="side2">
+          <div id="finList"></div>
+          <div style="display:grid;gap:12px">
+            <div class="card pane"><p class="sec">预审查了什么</p>
+              <ul class="checks"><li><span class="ico ok">✓</span>金额和采购单、到货一致</li><li><span class="ico ok">✓</span>同一采购单有没有重复请款</li><li><span class="ico ok">✓</span>发票到没到</li><li><span class="ico ok">✓</span>收款账号最近有没有改过、谁改的</li><li><span class="ico ok">✓</span>项目预算还剩多少</li></ul>
+              <div class="small muted">智能体只做预审（只读）。通过、驳回是你本人的操作，和现在一样，审计记在你名下。</div></div>
+            <div class="card pane"><p class="sec">手机上</p><div class="small">≤ 5 万、预审没标红的，手机上照常能批。标红的和 ≥ 5 万的，手机上给「到电脑上提醒我」。</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ⑩ 状态全集 -->
+      <section class="screen scroll" id="scr-states" aria-label="状态全集" hidden>
+        <div class="phd"><h1>卡片与页面状态</h1><div class="desc">每个状态都有明确的文字；颜色只是辅助</div><span class="spacer"></span></div>
+        <p class="sec">全局提示条（页面顶部）</p>
+        <div style="display:grid;gap:8px;margin-bottom:16px">
+          <div class="banner bad" role="status">管理员暂停了智能体改数据。查数照常；待确认的卡暂时不能确认。</div>
+          <div class="banner warn" role="status">智能体暂时不可用，已切回只查数。正在跑的任务停在当前步骤，恢复后从这里继续。</div>
+          <div class="banner info" role="status">网络断了，正在重连。断网期间点的确认不会发出。</div>
+        </div>
+        <p class="sec">变更预览卡的 12 种状态</p>
+        <div class="sgrid" id="stateGrid"></div>
+        <p class="sec" style="margin-top:18px">排队与其他</p>
+        <div class="sgrid">
+          <div class="card sc"><span class="sn">排队（智能体正忙）</span><div style="display:flex;gap:8px;align-items:center"><span class="spin"></span><b>智能体正忙，你排第 1 位，约 1 分钟</b></div><div class="acts" style="margin:0"><button class="btn pri sm">先去忙，好了企微叫我</button><button class="btn sm">取消</button></div><div class="small muted">超过 2 分钟自动转后台。查数不排队。</div></div>
+          <div class="card sc"><span class="sn">某一步比平时慢（超过 30 秒）</span><div><span class="spin"></span> 比平时慢，还在做…</div></div>
+          <div class="card sc"><span class="sn">超时</span><div>已停下，没改数据。</div><div class="acts" style="margin:0"><button class="btn sm">重试</button><button class="btn sm">我自己来</button></div></div>
+          <div class="card sc"><span class="sn">没权限</span><div>你没有「作废销售订单」的权限，智能体也不能替你改。</div></div>
+          <div class="card sc"><span class="sn">任务列表为空</span><div class="muted">还没有任务，在下面说一件事。</div></div>
+          <div class="card sc"><span class="sn">盯守结束</span><div>2026-0XY 已发货，这个盯守自动结束了。<button class="btn ghost sm">再盯一次</button></div></div>
+        </div>
+      </section>
+
+      <!-- ⑪ 管理员 -->
+      <section class="screen scroll" id="scr-admin" aria-label="管理员：智能体权限" hidden>
+        <div class="phd"><h1>智能体权限</h1><div class="desc">用户管理 › 智能体 · 只能收窄，不能超过这个人在网页上本来的权限</div><span class="spacer"></span><button class="kill" id="killBtn">全员暂停智能体改数据</button></div>
+        <div id="killBanner" class="banner bad" hidden style="margin-bottom:12px">已暂停全员的智能体改数据。查数照常；所有写操作和自动执行都会被拒绝。</div>
+        <div class="two">
+          <div style="display:grid;gap:12px">
+            <div class="card pane"><p class="sec">按角色设上限</p>
+              <table class="atbl"><thead><tr><th>角色</th><th>查</th><th>智能体代办</th><th>自动执行</th></tr></thead><tbody id="roleRows"></tbody></table>
+              <div class="small muted" style="margin-top:8px">「智能体代办」= 能让智能体提交待确认的改动；「自动执行」= 允许这个角色的人挣得自动，单独存在 agent_grants 表里，管理层也不默认打开。</div></div>
+            <div class="card pane"><p class="sec">按人临时开（必须设到期日）</p>
+              <table class="atbl"><thead><tr><th>人</th><th>开了什么</th><th>到期</th><th></th></tr></thead><tbody id="grantRows">
+                <tr><td>王五 · 仓库员</td><td>智能体代办</td><td>2026-12-31</td><td><button class="btn sm">收回</button></td></tr>
+                <tr><td>赵六 · 采购员</td><td>智能体代办</td><td>2026-11-30</td><td><button class="btn sm">收回</button></td></tr>
               </tbody></table>
-              <p class="small muted" style="margin:8px 0 0">单独开权限必须设到期日，到期自动收回。</p>
-            </div>
+              <div class="acts"><button class="btn sm" id="addGrant">＋ 给某人临时开</button><span class="small muted">每月 1 日把所有临时授权发给你复核一次</span></div></div>
           </div>
-          <div class="col">
+          <div style="display:grid;gap:12px">
             <div class="card pane">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><p class="h" style="margin:0">动作清单（212）</p><div style="flex:1"></div><input class="srch" id="actQ" placeholder="搜动作" aria-label="搜索动作"><select class="srch" style="width:auto" id="actR" aria-label="按风险等级筛选"><option value="">全部等级</option><option>R1</option><option>R2</option><option>R3</option></select></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap"><p class="sec" style="margin:0">动作清单（212）</p><div style="flex:1"></div><input class="srch" id="actQ" placeholder="搜动作" aria-label="搜索动作"><select class="srch" style="width:auto" id="actR" aria-label="按风险等级筛选"><option value="">全部等级</option><option>R1</option><option>R2</option><option>R3</option></select></div>
               <table class="atbl"><thead><tr><th>动作</th><th>模块</th><th>等级</th><th>开放</th></tr></thead><tbody id="actRows"></tbody></table>
+              <div class="small muted" style="margin-top:8px">等级代号只在这里给管理员看。管理、账号、权限、智能体自身配置、系统反馈、下载导出不开放（拍板第 3 条），开关锁定。</div></div>
+            <div class="card pane"><p class="sec">本月</p>
+              <div class="kv"><span>智能体改数据</span><b>186 次</b></div>
+              <div class="kv"><span>驳回 / 撤销</span><b>9 / 2</b></div>
+              <div class="kv"><span>模型费用</span><b>¥312 / ¥1,000</b></div>
+              <div class="split" aria-label="费用分账"><i style="width:24%;background:var(--gold)"></i><i style="width:4%;background:#94a3b8"></i><i style="width:3%;background:#60a5fa"></i><i style="width:69%;background:var(--line)"></i></div>
+              <div class="small muted">交互 ¥240（上限 70%）· 事件与影子 ¥42（上限 15%）· 评测 ¥30（上限 15%）。用到 70% 告警，80% 先停评测和影子，90% 停事件和盯守，100% 只留查数。</div>
             </div>
-            <div class="card pane">
-              <p class="h">本月</p>
-              <div class="kv"><span>写操作</span><b>—</b></div>
-              <div class="kv"><span>驳回 / 撤销</span><b>— / —</b></div>
-              <div class="kv"><span>模型费用</span><b>— / ¥1,000</b></div>
-              <div class="kv"><span>异常告警</span><b>0</b></div>
+            <div class="card pane"><p class="sec">告警</p>
+              <div class="kv"><span>1 小时内同一人改数据 &gt; 20 次</span><span class="tg mute">本月 0</span></div>
+              <div class="kv"><span>智能体想调用没开放的动作</span><span class="tg warn">本月 3 · 查看</span></div>
+              <div class="kv"><span>确认前数据被别人改了</span><span class="tg mute">本月 1</span></div>
             </div>
           </div>
         </div>
       </section>
 
-      </div>
-    </div>
+    </div></div>
   </div>
   </div>
 
-  <!-- ⑦ 手机与企微 -->
+  <!-- ⑨ 手机与企微 -->
   <section id="scr-mobile" aria-label="手机与企微" hidden>
     <div class="phones">
       <div>
-        <div class="ph">
-          <div class="hd"><b>待我确认</b><span class="chip c-bad" id="mN">2</span></div>
-          <div class="bd" id="mBody">
-            <div class="card" style="padding:12px" id="mCard">
-              <b>发货单 2026-0XX · 补收货信息</b>
-              <div class="why" style="margin:4px 0 6px">你的任务「补全收货信息并安排发货」第 3 步</div>
-              <div class="kv"><span>收货人</span><span class="new">张三</span></div>
-              <div class="kv"><span>电话</span><span class="new mask">139****1234</span></div>
-              <div class="kv"><span>地址</span><span class="new">某市某路 8 号</span></div>
-              <div class="big"><button class="btn" id="mNo">驳回</button><button class="btn pri" id="mOk">确认</button></div>
-              <div class="small muted" style="margin-top:6px">确认后 10 分钟内可撤销</div>
+        <div class="h5ph">
+          <div class="h5hd"><b>待我确认</b><span class="h5pill blue" id="mN">3 张</span></div>
+          <div class="scr" id="mScr">
+            <div class="h5card" id="mC1">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span class="t">请款 QK-0931 · 某某五金</span><span class="h5pill good">预审 4 项通过</span></div>
+              <div class="h5amt">¥12,000<span class="dec">.00</span></div>
+              <div class="h5field"><span>采购单</span><span>TH20260925-003</span></div>
+              <div class="h5field"><span>收款账号</span><span>6222 0210 0011 2233</span></div>
+              <div class="h5row"><button class="h5btn2" id="mNo">驳回</button><button class="h5btn" id="mOk">通过 ¥12,000</button></div>
             </div>
-            <div class="card" style="padding:12px"><b>订单审批 · 某某机械 ¥186,000</b><div class="why" style="margin:4px 0 0">⚠ 付款条件缺质保金条款 · 涉及钱的审批请在电脑上处理</div></div>
+            <div class="h5card">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span class="t">请款 QK-0933 · 某某钣金</span><span class="h5pill bad">预审标红</span></div>
+              <div class="h5amt">¥23,400<span class="dec">.00</span></div>
+              <div class="s">收款账号 3 天前改过，建议先电话核实。这类在手机上只提醒。</div>
+              <button class="h5btn2 full" data-remind>到电脑上提醒我</button>
+            </div>
+            <div class="h5card">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span class="t">请款 QK-0932 · 某某电气</span><span class="h5pill warn">≥ 5 万</span></div>
+              <div class="h5amt">¥86,500<span class="dec">.00</span></div>
+              <div class="s">单笔 5 万以上，在电脑上处理。</div>
+              <button class="h5btn2 full" data-remind>到电脑上提醒我</button>
+            </div>
           </div>
-          <div class="tabs"><button class="on">待确认</button><button>任务</button><button>问一问</button></div>
+          <div class="h5tabs"><button class="on">待确认</button><button>任务</button><button>问一问</button></div>
         </div>
-        <div class="ph-cap">手机：收提醒、看改动、点确认</div>
+        <div class="ph-cap"><b>财务主管 · 手机待我确认。</b>现有审批卡照常能批；付款、改收款账号、≥ 5 万、预审标红的只提醒。</div>
       </div>
       <div>
-        <div class="ph wx">
-          <div class="hd" style="background:#ededed;color:#111"><b>同辉智能体</b><span class="small" style="color:#888">企业微信</span></div>
-          <div class="bd">
-            <div class="wxm"><div class="src">09:41</div><b>有 1 张变更等你确认</b><div style="margin-top:4px">发货单 2026-0XX：补收货人、电话、地址（共 4 项）</div><div class="lk"><span>点开处理</span><span>›</span></div></div>
-            <div class="wxm"><div class="src">09:43</div><b>任务完成</b><div style="margin-top:4px">「补全 2026-0XX 收货信息并安排发货」5 步全部完成，已通知物流。10 分钟内可撤销。</div><div class="lk"><span>查看</span><span>›</span></div></div>
-            <div class="wxm"><div class="src">每天 9:00</div><b>盯守：2026-0XX</b><div style="margin-top:4px">卡在电工（主板未完成），预计 10/08；物料已齐。</div><div class="lk"><span>查看</span><span>›</span></div></div>
+        <div class="h5ph">
+          <div class="h5hd"><b>我手上的活</b><span class="h5pill blue">装配 · 孙师傅</span></div>
+          <div class="scr" id="vScr">
+            <div class="h5card"><div class="t">2026-0XX · 主板接线</div><div class="s">今天要完成 · 电工图纸 v3</div></div>
+            <div class="h5card"><div class="t">2026-0XY · 机架装配</div><div class="s">明天 · 缺 M12 螺栓 40 颗</div></div>
+            <div id="vOut"></div>
+            <div class="orbwrap"><button class="orb" id="orb" aria-label="按住说话，松开发送">按住说话</button><span class="s" id="orbTip" style="font-size:13px;color:var(--h5-ink2)">可以说：「主板接线做完了」「机架缺螺栓」</span></div>
+          </div>
+          <div class="h5tabs"><button class="on">我的活</button><button>待确认</button><button>问一问</button></div>
+        </div>
+        <div class="ph-cap"><b>装配工 · 按住说话。</b>只能做白名单里的小事：看手上的活、标记完成、报缺料。语音识别要配项目号、物料的词表。</div>
+      </div>
+      <div>
+        <div class="h5ph wx">
+          <div class="h5hd" style="background:#ededed"><b>同辉智能体</b><span style="font-size:12px;color:#666">企业微信</span></div>
+          <div class="scr">
+            <div class="wxm"><div class="src2">09:41</div><b>有 1 张改动待你确认</b><div style="margin-top:4px">发货单 2026-0XX：补收货人、电话、地址（共 4 项）· 今天 18:00 前</div><div class="lk"><span>点开直达这张卡</span><span>›</span></div></div>
+            <div class="wxm"><div class="src2">09:43</div><b>任务完成</b><div style="margin-top:4px">「补全 2026-0XX 收货信息并安排发货」5 步都完成了，已通知物流。09:53 前可撤销。</div><div class="lk"><span>查看</span><span>›</span></div></div>
+            <div class="wxm"><div class="src2">每天 9:00</div><b>盯守：2026-0XX</b><div style="margin-top:4px">卡在电工（主板接线未完成），预计 10/08；物料已齐。</div><div class="lk"><span>查看</span><span>›</span></div></div>
           </div>
         </div>
-        <div class="ph-cap">企微：负责「找到人」，点开直达那张卡</div>
+        <div class="ph-cap"><b>企微：负责找到人。</b>点开直达那张卡（现在的链接只到首页，要改）。29 人里有 22 人绑了企微，没绑的走站内消息。</div>
       </div>
     </div>
   </section>
@@ -576,212 +720,460 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 
 <script>
 (function(){
-  const $ = (s, r=document) => r.querySelector(s);
-  const $$ = (s, r=document) => [...r.querySelectorAll(s)];
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  function toast(msg){ const h=$('#toastHost'); h.innerHTML=''; const d=document.createElement('div'); d.className='toast'; d.textContent=msg; h.appendChild(d); setTimeout(()=>{ if(d.parentNode) d.remove(); }, 3200); }
+  const $=(s,r=document)=>r.querySelector(s);
+  const $$=(s,r=document)=>[...r.querySelectorAll(s)];
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let toastT=null;
+  function toast(msg, act){
+    const h=$('#toastHost'); h.innerHTML=''; clearTimeout(toastT);
+    const d=document.createElement('div'); d.className='toast'; d.setAttribute('role','status');
+    const sp=document.createElement('span'); sp.textContent=msg; d.appendChild(sp);
+    if(act){ const b=document.createElement('button'); b.textContent=act.label; b.addEventListener('click',()=>{ d.remove(); act.fn(); }); d.appendChild(b); }
+    h.appendChild(d); toastT=setTimeout(()=>{ if(d.parentNode) d.remove(); }, act?5000:3400);
+  }
+  let lastFocus=null;
+  function modal(html, onMount){
+    lastFocus=document.activeElement;
+    $('#modalHost').innerHTML=`<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mh">${html}</div></div>`;
+    const m=$('#modalHost .modal'); onMount && onMount(m);
+    $('#modalHost .modal-bg').addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+  }
+  function closeModal(){ $('#modalHost').innerHTML=''; if(lastFocus && lastFocus.focus) lastFocus.focus(); }
+
+  // ── 角色与侧栏 ──
+  const IC={
+    agent:'<path d="M12 3l2.5 5 5.5.8-4 3.9.9 5.5L12 15.6 7.1 18.2 8 12.7 4 8.8l5.5-.8z"/>',
+    proj:'<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/>',
+    sales:'<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>',
+    buy:'<path d="M6 6h15l-2 8H8L6 3H3"/><circle cx="9" cy="19" r="1.5"/><circle cx="18" cy="19" r="1.5"/>',
+    wh:'<path d="M3 9l9-5 9 5v10H3z"/><path d="M9 19v-6h6v6"/>',
+    fin:'<path d="M3 7h18v12H3z"/><path d="M3 11h18"/>',
+    ship:'<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="1.5"/><circle cx="17" cy="18" r="1.5"/>',
+    msg:'<path d="M6 8a6 6 0 0112 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4"/>',
+    user:'<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M17 11l2 2 3-3"/>'
+  };
+  const N={agent:'同辉智能体',proj:'项目目录',sales:'销售部',buy:'采购管理',wh:'仓库',fin:'财务部',ship:'物流发货',msg:'消息中心',user:'用户管理'};
+  const P={
+    sales:{n:'张经理',r:'销售主管',a:'张',m:[['agent','ws'],['proj'],['sales'],['ship'],['msg','settings']]},
+    buyer:{n:'赵六',r:'采购员',a:'赵',m:[['agent'],['proj'],['buy','recon'],['wh'],['msg']]},
+    wh:{n:'王五',r:'仓库员',a:'王',m:[['agent'],['wh','wh'],['buy'],['msg']]},
+    fin:{n:'钱敏',r:'财务主管',a:'钱',m:[['agent'],['fin','fin'],['buy'],['msg']]},
+    admin:{n:'周总',r:'管理层',a:'周',m:[['agent'],['proj'],['sales'],['buy'],['wh'],['fin'],['ship'],['msg'],null,['user','admin']]}
+  };
+  const WHO={ws:'sales',newtask:'sales',inbox:'sales',settings:'sales',trace:'sales',states:'sales',recon:'buyer',wh:'wh',fin:'fin',admin:'admin'};
+  const AGENT_SCR=['ws','newtask','inbox','settings','trace','states'];
+  let inboxN=2;
+  function renderSide(pid, scr){
+    const p=P[pid];
+    const items=p.m.map(it=>{
+      if(!it) return '<div class="sep">管理</div>';
+      const [k,go]=it; const on = go===scr || (k==='agent' && AGENT_SCR.includes(scr));
+      const goAttr = k==='agent' ? (pid==='sales'?'data-go="ws"':'data-soon="1"') : (go?`data-go="${go}"`:'data-soon="1"');
+      const bdg = k==='agent' && pid==='sales' ? `<span class="bdg" id="navBadge">${inboxN}</span>` : '';
+      return `<button class="nav${on?' on':''}" ${goAttr} ${on?'aria-current="page"':''}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${IC[k]}</svg>${N[k]}${bdg}</button>`;
+    }).join('');
+    $('#side').innerHTML=`<div class="brand"><span class="logo">同</span>同辉项目管理</div>${items}<div class="me"><span class="av">${p.a}</span><div>${p.n}<small>${p.r}</small></div></div>`;
+  }
+  document.addEventListener('click',e=>{ const s=e.target.closest('[data-soon]'); if(s) toast('原型只画了和这个角色相关的页面'); });
 
   // ── 界面切换 ──
-  const NOTES = {
-    ws:'<b>① 工作台。</b>点「确认计划，开始」走一遍：前两步只读自动跑，第 3 步要改发货单，会出一张变更预览卡等你确认；第 5 步「通知物流」你已挣得自动授权，直接执行。可以试试删掉某一步、点「停止」、或者点「我自己来」。',
-    biz:'<b>② 业务页面里的入口。</b>在采购明细里勾几行，底部会浮出操作条，点「让智能体对账」：右侧抽屉直接带上你选的数据开工，不用再描述一遍。',
-    inbox:'<b>③ 待我确认。</b>R3（订单审批）逐张处理、显示预审结论；同类 R2（物料建档草稿）合并成一张卡逐条勾。右边是你每类动作当前的审批模式和进度。',
-    queue:'<b>④ 名额已满。</b>只有 2 个多步任务名额时的样子：告诉你排第几、大约多久，可以转后台；查数类请求走快速通道，不排队。',
-    trace:'<b>⑤ 执行轨迹。</b>一个任务每一步做了什么、花了多久、策略怎么判、谁确认的、等待期间释放了名额。本人和管理员可见。',
-    daily:'<b>⑥ 日报与盯守。</b>智能体今天替你做的事，能撤的可以直接撤；右边管理盯守，试试新建一个。',
-    mobile:'<b>⑦ 手机与企微。</b>手机只做三件事：收提醒、看改动、点确认；涉及钱的 R3 只提醒、要到电脑上处理。企微负责把人叫过来。',
-    admin:'<b>⑧ 管理员：智能体权限。</b>放在「用户管理」里。按角色设上限、按人临时开（必须带到期日）、动作清单逐个开关、一键全员暂停写操作。开关都能点。'
+  const NOTES={
+    ws:'<b>① 工作台（销售主管）。</b>点「确认计划，开始」走一遍：前两步只读；第 3 步出变更预览卡（给你看真值，模型看不到原文）；第 5 步「通知物流」已连续确认 20 次，自动做。可以试：「改计划」、执行中点「停止」、「我自己来」、确认后「撤销」。上面切到 1280 时右栏收成「待我确认」按钮。',
+    newtask:'<b>② 新任务与首次引导。</b>空白页按权限给示例；点「看首次引导」看三步说明。',
+    inbox:'<b>③ 待我确认。</b>分三组、每张写截止时间。订单审批是「必须本人确认」：红条、按钮写明金额、驳回必须填原因。线索待办可以勾选后「确认所选 / 驳回所选」，驳回 5 秒内能撤回。先在①跑到第 3 步，这里会多出「你的任务停在这一步」。',
+    settings:'<b>④ 设置与日报。</b>今天替你做的事按各自的撤销期限撤；每类动作怎么问你；点「模拟：第 20 次确认之后」看改成自动的询问。',
+    trace:'<b>⑤ 执行轨迹。</b>每一步做了什么、怎么判定、谁确认的；写操作由 ERP 消费审批单后执行。本人和管理员可见。',
+    recon:'<b>⑥ 采购员：对账。</b>勾选几行 → 「让智能体对账」→ 拖入供应商对账单。差异不自动处理，留给你；也可以「拟催货话术」，复制后自己发。抽屉按 Esc 关闭，打开时右下角两个悬浮按钮会隐藏。',
+    wh:'<b>⑦ 仓库员：出库与建档。</b>「让智能体看看」生成 10 行出库预览，库存不够的那行不出；右边是到货触发的建档草稿，疑似重复的默认不勾。',
+    fin:'<b>⑧ 财务主管：请款预审。</b>智能体只做预审。标红的那张要先勾「已电话核实」才能通过；驳回必须填原因。',
+    mobile:'<b>⑨ 手机与企微。</b>手机沿用现有 APP 的蓝色风格。左：财务主管在手机上照常批小额请款；中：装配工按住说话标记完成（按住圆按钮，或用键盘按空格）；右：企微点开直达那张卡。',
+    states:'<b>⑩ 状态全集。</b>预览卡的 12 种状态、3 种全局提示条、排队和其他状态。业务用户看到的都是话，没有代号和「名额」。',
+    admin:'<b>⑪ 管理员：智能体权限。</b>按角色设上限（查 / 智能体代办 / 自动执行）、按人临时开（必须设到期日）、动作清单、一键暂停、费用分账和告警。开关都能点。'
   };
-  const CRUMB = {ws:'<b>智能体工作台</b>', biz:'采购管理 › <b>采购明细</b>', inbox:'智能体工作台 › <b>待我确认</b>', queue:'智能体工作台 › <b>排队中</b>', trace:'智能体工作台 › <b>执行轨迹</b>', daily:'智能体工作台 › <b>日报与盯守</b>', admin:'用户管理 › <b>智能体权限</b>'};
   function go(id){
-    $$('.ptab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.go===id)));
-    const mobile = id==='mobile';
-    $('#desk').hidden = mobile; $('#scr-mobile').hidden = !mobile;
-    $$('.screen').forEach(s => s.hidden = s.id !== 'scr-'+id);
-    $$('.nav').forEach(n => n.classList.toggle('on', n.dataset.go===id || (id!=='biz' && id!=='admin' && n.dataset.go==='ws')));
-    if (CRUMB[id]) $('#crumb').innerHTML = CRUMB[id];
-    $('#pnote').innerHTML = NOTES[id];
-    try { history.replaceState(null,'','#'+id); } catch(e){}
+    $$('.ptab').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.go===id)));
+    const mob=id==='mobile';
+    $('#desk').hidden=mob; $('#scr-mobile').hidden=!mob; $('#pctl').hidden=mob;
+    $$('.screen').forEach(s=>s.hidden = s.id!=='scr-'+id);
+    if(!mob) renderSide(WHO[id], id);
+    $('#pnote').innerHTML=NOTES[id];
+    if(id==='inbox') renderInbox();
+    if(id!=='recon') closeDrawer(true);
+    $('#content').scrollTop=0;
+    try{ history.replaceState(null,'','#'+id); }catch(e){}
   }
-  document.addEventListener('click', e => { const g=e.target.closest('[data-go]'); if(g){ go(g.dataset.go); } });
+  document.addEventListener('click',e=>{ const g=e.target.closest('[data-go]'); if(g){ e.preventDefault(); go(g.dataset.go); } });
 
-  // ── ① 工作台：计划 → 执行 → 预览 → 确认 → 完成 ──
-  const steps = $$('#steps .step');
-  let running=false, stopped=false, undoTimer=null, inboxN=2;
-  const setState = (txt, cls) => { ['#tkState','#tkState2'].forEach(s=>{ const el=$(s); el.textContent=txt; el.className='chip '+cls; }); };
-  const setProg = () => { $('#tkProg').textContent = steps.filter(s=>s.classList.contains('done')).length + ' / ' + steps.filter(s=>!s.classList.contains('skip')).length; };
-  const setInbox = d => { inboxN+=d; $('#inboxN').textContent=inboxN; $('#navBadge').textContent=inboxN; $('#navBadge').hidden = inboxN<=0; };
-  const tr = (txt) => { const t=$('#trace'); t.hidden=false; const d=document.createElement('div'); d.textContent=txt; $('#trBody').appendChild(d); $('#trN').textContent=$('#trBody').children.length; };
-  steps.forEach(s => $('.del', s).addEventListener('click', () => { if(running) return; s.classList.toggle('skip'); $('.del',s).textContent = s.classList.contains('skip') ? '恢复' : '删除'; setProg(); }));
-  async function runStep(i, ms, traceTxt){
-    const s=steps[i]; if(s.classList.contains('skip') || stopped) return;
-    s.classList.add('run'); await sleep(ms); if(stopped) return;
-    s.classList.remove('run'); s.classList.add('done'); $('.dot',s).textContent='✓'; tr(traceTxt); setProg();
-  }
-  $('#startPlan').addEventListener('click', async () => {
-    if(running) return; running=true; stopped=false;
-    $('#planActs').innerHTML='<span class="muted small">执行中…可以随时停止</span>'; $('#planTag').textContent='执行中'; $('#planTag').className='chip c-info';
-    $$('.del').forEach(b=>b.hidden=true); $('#stopBtn').disabled=false; setState('执行中','c-info');
-    $('#sl2').classList.add('used'); $('#slotTxt').textContent='2 / 2 在用';
-    await runStep(0, 700, '查询 项目 2026-0XX · 0.4 秒 · 1 条');
-    await runStep(1, 700, '查询 历史收货人 · 0.3 秒 · 2 条');
-    if(stopped) return;
-    const s3=steps[2];
-    if(s3.classList.contains('skip')) return finishRest();
-    s3.classList.add('run'); await sleep(600); s3.classList.remove('run'); s3.classList.add('wait'); $('.dot',s3).textContent='!';
-    tr('演练 填写收货人 · 0.9 秒 · 零落库零外发');
-    setState('等你确认','c-warn'); $('#qiPv').hidden=false; setInbox(+1);
-    $('#sl2').classList.remove('used'); $('#slotTxt').textContent='1 / 2 在用';
-    showPreview();
-  });
-  function showPreview(){
-    $('#pvSlot').innerHTML = `
-      <div class="card pv" id="pv">
-        <h4><span class="rk r2">R2</span>变更预览 · 发货单 2026-0XX</h4>
-        <div class="why">只列会被改的字段。电话发给模型时打了码，这里显示的是你能看到的值。</div>
-        <div class="diff">
-          <span class="k">收货人</span><span><span class="old">空</span><span class="new">张三</span></span>
-          <span class="k">收货单位</span><span><span class="old">空</span><span class="new">某某机械有限公司</span></span>
-          <span class="k">电话</span><span><span class="old">空</span><span class="new mask">139 0000 1234</span></span>
-          <span class="k">地址</span><span><span class="old">空</span><span class="new">某市某区某路 8 号</span></span>
-        </div>
-        <div class="acts" id="pvActs"><button class="btn pri" id="pvOk">确认</button><button class="btn" id="pvEdit">修改</button><button class="btn" id="pvNo">驳回</button><span class="muted small">等待期间不占名额，可以先去做别的</span></div>
-        <div class="state" id="pvState" hidden></div>
-      </div>`;
-    $('#pvOk').addEventListener('click', confirmPreview);
-    $('#pvNo').addEventListener('click', rejectPreview);
-    $('#pvEdit').addEventListener('click', () => toast('原型：打开同一张卡的编辑态，改完再确认；改过的字段会记成纠错样本'));
-  }
-  async function confirmPreview(){
-    const st=$('#pvState'); $('#pvActs').hidden=true; st.hidden=false;
-    $('#sl2').classList.add('used'); $('#slotTxt').textContent='2 / 2 在用';
-    st.innerHTML='<span class="spin"></span>确认时重演一次，核对和预览是否一致…'; await sleep(900);
-    st.innerHTML='<span class="spin"></span>以你的身份执行…'; await sleep(800);
-    st.innerHTML='<span class="spin"></span>回读核对…'; await sleep(600);
-    $('#pv').classList.add('done');
-    st.innerHTML='<span class="chip c-ok">已完成</span> 4 个字段已生效，没有改动别的。<button class="btn sm" id="undo1">撤销（<span id="cd">10:00</span>）</button>';
-    startUndo();
-    tr('执行 填写收货人 · 1.1 秒 · 回读一致');
-    const s3=steps[2]; s3.classList.remove('wait'); s3.classList.add('done'); $('.dot',s3).textContent='✓'; setProg();
-    $('#qiPv').hidden=true; setInbox(-1); setState('执行中','c-info');
-    finishRest();
-  }
-  function startUndo(){
-    let left=600; clearInterval(undoTimer);
-    undoTimer=setInterval(()=>{ left--; const el=$('#cd'); if(!el){clearInterval(undoTimer);return;} el.textContent=String(Math.floor(left/60)).padStart(2,'0')+':'+String(left%60).padStart(2,'0'); if(left<=0){clearInterval(undoTimer); const b=$('#undo1'); if(b){b.disabled=true;b.textContent='已过撤销期';}} },1000);
-    $('#undo1').addEventListener('click', async ()=>{ clearInterval(undoTimer); const st=$('#pvState'); st.innerHTML='<span class="spin"></span>撤销中：调用对应的撤销接口…'; await sleep(900); st.innerHTML='<span class="chip c-mute">已撤销</span> 发货单已恢复原样，审计里留了记录'; $('#pv').classList.remove('done'); toast('已撤销第 3 步；后面的步骤不受影响，可以重新让它填'); });
-  }
-  function rejectPreview(){
-    $('#pvActs').hidden=true; const st=$('#pvState'); st.hidden=false;
-    st.innerHTML='<span class="chip c-mute">已驳回</span> 任务停在第 3 步。告诉它哪里不对，它会换个办法再来。';
-    $('#pv').classList.add('rej'); $('#qiPv').hidden=true; setInbox(-1); setState('已暂停','c-mute');
-    $('#stopBtn').disabled=true; running=false; $('#askIn').focus();
-  }
-  async function finishRest(){
-    await runStep(3, 700, '检查发货闸门 · 0.5 秒 · 设计✓ 电工✓ 生产✓');
-    if(stopped) return;
-    const s5=steps[4];
-    if(!s5.classList.contains('skip')){
-      s5.classList.add('run'); await sleep(800); if(stopped) return;
-      s5.classList.remove('run'); s5.classList.add('done'); $('.dot',s5).textContent='✓';
-      tr('自动执行 通知物流（已挣得授权）· 0.8 秒 · 站内+企微各 1 条'); setProg();
-      $('#autoN').textContent='3'; $('#undoN').textContent='2';
+  // ── 窗口宽度模拟 ──
+  const HINT={1100:'内容区约 832px：右栏收成「待我确认」按钮，左栏保留',1280:'内容区约 1012px：右栏收成按钮，中栏约 780px',1440:'内容区约 1172px：三栏都放得下'};
+  function setW(w){ $('#app').style.width=w+'px'; $$('.seg [data-w]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.w==w))); $('#wHint').textContent=HINT[w]; $('#rcol').classList.remove('open'); $('#rbtn').setAttribute('aria-expanded','false'); }
+  $$('.seg [data-w]').forEach(b=>b.addEventListener('click',()=>setW(+b.dataset.w)));
+  $('#rbtn').addEventListener('click',()=>{ const o=$('#rcol').classList.toggle('open'); $('#rbtn').setAttribute('aria-expanded',String(o)); if(o) $('#rclose').focus(); });
+  $('#rclose').addEventListener('click',()=>{ $('#rcol').classList.remove('open'); $('#rbtn').setAttribute('aria-expanded','false'); $('#rbtn').focus(); });
+
+  // ── ① 工作台 ──
+  let steps=[{t:'查项目和发货单',k:'read'},{t:'查同一客户最近两次的收货人',k:'read'},{t:'填写发货单收货信息',k:'confirm'},{t:'检查发货条件（设计、电工、生产是否都完成）',k:'read'},{t:'通知物流安排发货',k:'auto'}].map(s=>({...s,st:'todo'}));
+  let draft=null, mode='review', open=true, running=false, stopReq=false, writing=false, pending=null, waitingPv=false, notified=false, autoN=2, undoN=1;
+  const META={read:'<span class="meta">只读</span>',confirm:'<span class="lv l2">需要你确认</span>',auto:'<span class="tg ok">自动 · 已连续确认 20 次</span>',new:'<span class="meta">新加 · 开始时再判定要不要确认</span>'};
+  function setTask(txt,cls){ ['#tkState','#tkState2'].forEach(s=>{ const el=$(s); el.textContent=txt; el.className='tg '+cls; }); }
+  function prog(){ const d=steps.filter(s=>s.st==='done').length; $('#tkProg').textContent=d+' / '+steps.length; return d; }
+  function renderPlan(){
+    const el=$('#plan'); const d=prog(), total=steps.length;
+    if(mode==='edit'){
+      el.innerHTML=`<div class="ph4"><h4>改计划</h4><span class="tg info">编辑中</span></div>
+        <ol class="steps">${draft.map((s,i)=>`<li class="step"><button class="ib-mini" data-mv="${i},-1" ${i===0?'disabled':''} aria-label="第 ${i+1} 步上移">↑</button><button class="ib-mini" data-mv="${i},1" ${i===draft.length-1?'disabled':''} aria-label="第 ${i+1} 步下移">↓</button><input value="${esc(s.t)}" data-ed="${i}" aria-label="第 ${i+1} 步内容">${META[s.k]}<button class="btn ghost sm" data-rm="${i}" aria-label="删除第 ${i+1} 步：${esc(s.t)}">删除</button></li>`).join('')}</ol>
+        <div class="acts"><button class="btn sm" id="addStep">＋ 加一步</button></div>
+        <div class="small muted" style="margin-top:6px">改的是它要做什么；要不要你确认，由系统按动作判定，这里改不了。</div>
+        <div class="acts"><button class="btn pri" id="saveStart">按改后的计划开始</button><button class="btn" id="cancelEdit">放弃修改</button></div>`;
+      return;
     }
-    $('#sl2').classList.remove('used'); $('#slotTxt').textContent='1 / 2 在用';
-    $('#planTag').textContent='已完成'; $('#planTag').className='chip c-ok';
-    $('#planActs').innerHTML='<span class="muted small">全部完成</span>';
-    $('#doneSlot').innerHTML='<div class="card plan"><h4><span class="chip c-ok">任务完成</span></h4><div class="small">收货信息已补全，发货闸门全部通过，物流已收到通知（站内 + 企微）。第 3 步、第 5 步 10 分钟内可撤销。<button class="btn ghost sm" data-go="trace">看完整轨迹 →</button></div></div>';
-    setState('已完成','c-ok'); $('#stopBtn').disabled=true; running=false;
+    const cur=Math.min(d+1,total), pct=Math.round(d/total*100);
+    const tag = mode==='review'?'<span class="tg mute">可修改</span>': mode==='done'?'<span class="tg ok">已完成</span>': mode==='stopped'?'<span class="tg mute">已停止</span>':'<span class="tg info">执行中</span>';
+    if(mode!=='review' && !open){
+      el.innerHTML=`<button class="fold" id="fold" aria-expanded="false"><b>计划</b>${tag}<span>${mode==='done'?'5 步都完成了':'第 '+cur+' / '+total+' 步'}${mode==='run'?' · 约 '+Math.max(4,(total-d)*5)+' 秒':''}</span><span class="pbar"><i style="width:${pct}%"></i></span><span style="color:var(--link)">展开</span></button>`;
+      $('#fold').addEventListener('click',()=>{ open=true; renderPlan(); $('#fold2') && $('#fold2').focus(); });
+      return;
+    }
+    el.innerHTML=`<div class="ph4"><h4>计划</h4>${tag}<span style="flex:1"></span>${mode!=='review'?'<button class="btn ghost sm" id="fold2" aria-expanded="true">收起</button>':''}</div>
+      <ol class="steps">${steps.map((s,i)=>`<li class="step ${s.st==='todo'?'':s.st}"><span class="dot">${s.st==='done'?'✓':s.st==='wait'?'!':''}</span><span class="lbl">${i+1}. ${esc(s.t)}</span>${META[s.k]}</li>`).join('')}</ol>
+      <div class="acts" id="planActs">${
+        mode==='review' ? '<button class="btn pri" id="startPlan">确认计划，开始</button><button class="btn" id="editPlan">改计划</button><span class="muted small">预计约 25 秒；等你确认的时间不算</span>'
+        : mode==='stopped' ? `<span class="small">已停在第 ${cur} 步。完成的步骤保留，能撤销的在「今天替我做的」里撤销。</span><button class="btn pri sm" id="resume">从第 ${cur} 步继续</button>`
+        : mode==='done' ? '<span class="muted small">全部完成</span>' : '<span class="muted small">执行中，可以随时停止</span>'}</div>`;
+    $('#startPlan') && $('#startPlan').addEventListener('click',()=>run(0));
+    $('#editPlan') && $('#editPlan').addEventListener('click',()=>{ draft=steps.map(s=>({...s})); mode='edit'; renderPlan(); $('[data-ed="0"]').focus(); });
+    $('#resume') && $('#resume').addEventListener('click',()=>run(steps.findIndex(s=>s.st!=='done')));
+    $('#fold2') && $('#fold2').addEventListener('click',()=>{ open=false; renderPlan(); $('#fold').focus(); });
   }
-  $('#stopBtn').addEventListener('click', ()=>{ stopped=true; running=false; steps.forEach(s=>s.classList.remove('run')); setState('已停止','c-mute'); $('#planActs').innerHTML='<span class="muted small">已停止。已经完成的步骤保留；可逆的可以在日报里撤销。</span>'; $('#stopBtn').disabled=true; $('#sl2').classList.remove('used'); $('#slotTxt').textContent='1 / 2 在用'; toast('已停止'); });
-  $('#takeover').addEventListener('click', ()=>toast('原型：跳到「物流发货 › 发货看板」，已把智能体查到的收货人、电话、地址填进表单，你核对后自己保存'));
-  $('#newTask').addEventListener('click', ()=>{ $('#askIn').focus(); toast('在下面的输入框说要做什么；也可以去业务页面勾选数据后交给它'); });
-  $('#askSend').addEventListener('click', ()=>{ const v=$('#askIn').value.trim(); if(!v) return; const u=document.createElement('div'); u.className='msg-u'; u.textContent=v; $('#thread').appendChild(u); $('#askIn').value=''; const a=document.createElement('div'); a.className='ai'; a.innerHTML='<span class="av">AI</span><div class="blk"><div class="small muted">原型：这里会先判断是简单查询（走快速通道，几秒内回答）还是要动手的任务（出计划卡）。</div></div>'; $('#thread').appendChild(a); $('#thread').scrollTop=1e6; });
-  $('#askIn').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); $('#askSend').click(); } });
-  $$('.sug').forEach(b=>b.addEventListener('click',()=>{ $('#askIn').value=b.textContent; $('#askIn').focus(); }));
-
-  // ── ② 业务页面入口 ──
-  const ROWS=[['TH20260925-003','不锈钢方管','40×40×2',120,'8,640.00','—','待对账'],['TH20260925-003','不锈钢板','δ3 304',8,'6,240.00','—','待对账'],['TH20260926-011','法兰','DN50 PN16',24,'1,920.00','—','待对账'],['TH20260926-011','密封圈','Φ120',50,'600.00','—','待对账'],['TH20260927-002','轴承','6205',30,'1,050.00','—','待对账'],['TH20260927-002','螺栓','M12×40',400,'480.00','—','待对账']];
-  $('#bizRows').innerHTML = ROWS.map((r,i)=>`<tr data-i="${i}"><td><input type="checkbox" class="rsel" aria-label="选择第 ${i+1} 行"></td><td class="mono">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="num">${r[3]}</td><td class="num">${r[4]}</td><td>${r[5]}</td><td><span class="chip c-warn">${r[6]}</span></td></tr>`).join('');
-  function updSel(){ const n=$$('.rsel').filter(c=>c.checked).length; $$('#bizRows tr').forEach(tr=>tr.classList.toggle('sel', $('.rsel',tr).checked)); $('#abar').hidden = n===0; $('#abarN').textContent='已选 '+n+' 行'; }
-  $('#bizRows').addEventListener('change', updSel);
-  $('#selAll').addEventListener('change', e=>{ $$('.rsel').forEach(c=>c.checked=e.target.checked); updSel(); });
-  $('#clearSel').addEventListener('click', ()=>{ $$('.rsel').forEach(c=>c.checked=false); $('#selAll').checked=false; updSel(); });
-  $('#closeDrawer').addEventListener('click', ()=>$('#drawer').classList.remove('open'));
-  $('#toAgent2').addEventListener('click', ()=>toast('原型：同样打开抽屉，任务换成「给供应商拟催货消息，你确认后再发」（对外，R3）'));
-  $('#toAgent').addEventListener('click', async ()=>{
-    const sel=$$('.rsel').map((c,i)=>c.checked?i:-1).filter(i=>i>=0);
-    const body=$('#drawerBody'); $('#drawer').classList.add('open');
-    body.innerHTML = `<div class="ctx"><span class="chip c-gold">已带上 ${sel.length} 行采购明细</span><span class="chip c-mute">供应商：某某五金</span></div>
-      <div class="small">要对账的发票还没上传。可以拖进来，数电票会直接读结构化数据，照片才需要识别。</div>
-      <div class="card" style="padding:10px;border:1.5px dashed var(--line);text-align:center" id="drop"><div class="small muted">原型：点这里模拟上传 3 张数电票</div><button class="btn sm" id="fakeUp" style="margin-top:6px">上传 3 张发票</button></div>
-      <div id="drawRes"></div>`;
-    $('#fakeUp').addEventListener('click', async ()=>{
-      $('#drop').innerHTML='<div class="small"><span class="spin"></span> 读取 3 张数电票、匹配采购明细…</div>';
-      await sleep(1300);
-      $('#drop').innerHTML='<div class="small"><span class="chip c-ok">已读取</span> 3 张数电票（结构化数据，没有外发图片）</div>';
-      $('#drawRes').innerHTML = `<div class="card pv"><h4><span class="rk r2">R2</span>对账结果预览</h4>
-        <ul class="checks">
-          <li><span class="ico ok">✓</span>发票 …0812 ¥8,640.00 ↔ 不锈钢方管，金额一致 → 填开票号、标为已对账</li>
-          <li><span class="ico ok">✓</span>发票 …0813 ¥6,240.00 ↔ 不锈钢板，金额一致 → 填开票号、标为已对账</li>
-          <li><span class="ico wa">!</span>发票 …0814 ¥2,040.00 ↔ 法兰 ¥1,920.00，<b>差 ¥120</b>，不自动处理，留给你判断</li>
-        </ul>
-        <div class="acts"><button class="btn pri" id="recOk">确认 2 条</button><button class="btn">修改</button><button class="btn">驳回</button></div><div class="state" id="recSt" hidden></div></div>`;
-      $('#recOk').addEventListener('click', async ()=>{ const st=$('#recSt'); st.hidden=false; st.innerHTML='<span class="spin"></span>重演、执行、回读…'; await sleep(1100); st.innerHTML='<span class="chip c-ok">已完成</span> 2 行已对账，表格已刷新；差额那张发票已加到你的待确认'; ROWS[0][5]='…0812'; ROWS[0][6]='已对账'; ROWS[1][5]='…0813'; ROWS[1][6]='已对账'; $$('#bizRows tr').forEach((tr,i)=>{ if(i<2){ tr.children[6].textContent=ROWS[i][5]; tr.children[7].innerHTML='<span class="chip c-ok">已对账</span>'; } }); });
-    });
+  $('#plan').addEventListener('click',e=>{
+    if(mode!=='edit') return;
+    const mv=e.target.closest('[data-mv]'), rm=e.target.closest('[data-rm]');
+    if(mv){ const [i,dlt]=mv.dataset.mv.split(',').map(Number); const j=i+dlt; [draft[i],draft[j]]=[draft[j],draft[i]]; renderPlan(); const b=$(`[data-mv="${j},${dlt}"]`)||$(`[data-ed="${j}"]`); b&&b.focus(); }
+    if(rm){ draft.splice(+rm.dataset.rm,1); renderPlan(); }
+    if(e.target.id==='addStep'){ draft.push({t:'',k:'new',st:'todo'}); renderPlan(); $(`[data-ed="${draft.length-1}"]`).focus(); }
+    if(e.target.id==='cancelEdit'){ draft=null; mode='review'; renderPlan(); }
+    if(e.target.id==='saveStart'){ const v=draft.filter(s=>s.t.trim()); if(!v.length){ toast('计划至少要有一步'); return; } steps=v.map(s=>({...s,k:s.k==='new'?'read':s.k,st:'todo'})); draft=null; run(0); }
   });
+  $('#plan').addEventListener('input',e=>{ const i=e.target.dataset.ed; if(i!=null) draft[+i].t=e.target.value; });
+  const tr=txt=>{ $('#trace').hidden=false; const d=document.createElement('div'); d.textContent=txt; $('#trBody').appendChild(d); $('#trN').textContent=$('#trBody').children.length; };
+  function setInbox(dl){ inboxN+=dl; ['#inboxN','#rbtnN'].forEach(s=>$(s).textContent=inboxN); const nb=$('#navBadge'); if(nb){ nb.textContent=inboxN; nb.hidden=inboxN<=0; } renderMini(); }
+  function renderMini(){
+    $('#miniInbox').innerHTML=`<div class="grp">别人在等你</div>
+      <button class="qi r3bar" data-go="inbox"><span><span class="lv l3">必须本人确认</span></span><b>订单审批 · 某某机械 ¥186,000</b><span class="small muted">李四 · 已等 2 小时 · 今天 18:00 前</span></button>
+      ${waitingPv?`<div class="grp">你的任务停在这一步</div><button class="qi" id="qiPv"><span><span class="lv l2">需要你确认</span></span><b>发货单 2026-0XX · 补收货信息</b><span class="small muted">当前任务第 3 步 · 今天 18:00 前</span></button>`:''}
+      <div class="grp">智能体建议</div>
+      <button class="qi" data-go="inbox"><span><span class="lv l1">可撤草稿</span></span><b>3 条线索 7 天没跟进，建跟进待办</b><span class="small muted">明天 9:00 前</span></button>`;
+    $('#qiPv') && $('#qiPv').addEventListener('click',()=>{ $('#rcol').classList.remove('open'); const t=$('#pvTitle'); t && (t.scrollIntoView({block:'center'}), t.focus()); });
+  }
+  async function run(from){
+    running=true; stopReq=false; mode='run'; open=false; setTask('执行中','info');
+    const sb=$('#stopBtn'); sb.disabled=false; sb.textContent='停止';
+    for(let i=from;i<steps.length;i++){
+      const s=steps[i]; if(s.st==='done') continue;
+      if(stopReq) return halt();
+      s.st='run'; renderPlan();
+      if(s.k==='confirm'){
+        await sleep(600); if(stopReq){ s.st='todo'; return halt(); }
+        s.st='wait'; renderPlan(); tr('演练 '+s.t+' · 0.9 秒 · 零落库、零外发 → 待审批单 AP-1003-0012');
+        const r=await askPreview(); if(r!=='ok') return;
+        s.st='done'; tr('ERP 执行 '+s.t+' · 1.1 秒 · 回读一致');
+        if(stopReq){ renderPlan(); return halt(); }
+      } else if(s.k==='auto'){
+        await sleep(800); if(stopReq){ s.st='todo'; return halt(); }
+        s.st='done'; notified=true; autoN++; undoN++; $('#autoN').textContent=autoN; $('#undoN').textContent=undoN;
+        tr('自动执行 '+s.t+' · 0.8 秒 · 站内 + 企微各 1 条');
+      } else {
+        await sleep(700); if(stopReq){ s.st='todo'; return halt(); }
+        s.st='done'; tr(s.t+' · 0.4 秒');
+      }
+      renderPlan();
+    }
+    finish();
+  }
+  function halt(){
+    running=false; mode='stopped'; open=true; steps.forEach(s=>{ if(s.st==='run') s.st='todo'; });
+    setTask('已停止','mute'); const sb=$('#stopBtn'); sb.disabled=true; sb.textContent='停止'; renderPlan(); toast('已停下');
+  }
+  function finish(){
+    running=false; mode='done'; open=false; renderPlan(); setTask('已完成','ok'); $('#stopBtn').disabled=true;
+    $('#doneSlot').innerHTML=`<div class="card plan"><div class="ph4"><span class="tg ok">任务完成</span></div><div class="small">收货信息已补全；发货条件都满足；物流已收到通知（站内 + 企微）。第 3 步、第 5 步 09:53 前可撤销。<button class="btn ghost sm" data-go="trace">看完整轨迹 →</button></div><div class="src">数据来源：发货单、项目进度（设计、电工、生产）· 截至 09:43</div></div>`;
+  }
+  $('#stopBtn').addEventListener('click',()=>{
+    if(!running) return;
+    stopReq=true;
+    if(writing){ const sb=$('#stopBtn'); sb.textContent='这一步写完就停'; sb.disabled=true; return; }
+    if(pending){ pending('stop'); }
+  });
+  const PV_FIELDS=[['收货人','张三'],['收货单位','某某机械有限公司'],['电话','139 0000 1234',1],['地址','某市某区某路 8 号']];
+  function askPreview(){
+    waitingPv=true; setTask('待我确认','warn'); setInbox(+1);
+    $('#pvSlot').innerHTML=`<div class="card pv" id="pv">
+      <div class="in">
+        <div class="ph4"><span class="lv l2">需要你确认</span><h4 id="pvTitle" tabindex="-1">发货单 2026-0XX · 补收货信息</h4><span class="tg mute">第 3 步</span></div>
+        <div class="basis">依据：同一客户最近两次发货（2026-0YY、2026-0ZZ）的收货人一致，取自这两单。</div>
+        <dl class="diff" id="pvDiff"></dl>
+        <div class="risk">影响：只改这 1 张发货单的 4 项，不会通知任何人。今天 18:00 前不处理就作废，不改任何数据。</div>
+        <div class="state" id="pvState" aria-live="polite" hidden></div>
+      </div>
+      <div class="pvbar" id="pvActs"></div>
+    </div>`;
+    return new Promise(res=>{ pending=res; pvNormal(); $('#pvTitle').focus(); })
+      .then(r=>{ pending=null; if(r==='stop'){ voidPv(); halt(); } return r; });
+  }
+  function pvNormal(){
+    $('#pv').classList.remove('chg');
+    $('#pvDiff').innerHTML=PV_FIELDS.map(f=>`<dt>${f[0]}</dt><dd><span class="was">（原来为空）</span><span class="now">${esc(f[1])}</span>${f[2]?'<span class="mm">模型看不到原文</span>':''}</dd>`).join('');
+    $('#pvActs').innerHTML='<button class="btn pri" id="pvOk">确认</button><button class="btn" id="pvEdit">修改</button><button class="btn" id="pvNo">驳回</button><span class="muted small">确认后 10 分钟内可撤销 · 等你的时候不占用智能体</span>';
+    $('#pvOk').onclick=()=>confirmPv(pending);
+    $('#pvNo').onclick=()=>rejectPv(pending);
+    $('#pvEdit').onclick=editPv;
+  }
+  function editPv(){
+    $('#pv').classList.add('chg');
+    $('#pvDiff').innerHTML=PV_FIELDS.map((f,i)=>`<dt><label for="pf${i}">${f[0]}</label></dt><dd><input id="pf${i}" value="${esc(f[1])}"><div class="small muted">原来为空</div></dd>`).join('');
+    $('#pvActs').innerHTML='<button class="btn pri" id="pvSave">保存并确认</button><button class="btn" id="pvBack">取消修改</button><span class="small muted">改过以后，这类动作的自动计数从 0 重新算</span>';
+    const chk=()=>{ const ph=$('#pf2').value.replace(/\s/g,''); const ok=/^1\d{10}$/.test(ph); $('#pf2').classList.toggle('err',!ok); $('#pvSave').disabled=!ok; };
+    $('#pvDiff').oninput=chk; $('#pf0').focus();
+    $('#pvSave').onclick=()=>{ PV_FIELDS.forEach((f,i)=>f[1]=$('#pf'+i).value); confirmPv(pending,true); };
+    $('#pvBack').onclick=()=>{ pvNormal(); $('#pvTitle').focus(); };
+  }
+  async function confirmPv(res, edited){
+    const st=$('#pvState'); $('#pvActs').hidden=true; st.hidden=false; writing=true;
+    st.innerHTML='<span class="spin"></span>正在核对数据有没有被别人改过…'; await sleep(800);
+    st.innerHTML='<span class="spin"></span>以你的身份保存…'; await sleep(700);
+    st.innerHTML='<span class="spin"></span>回读核对…'; await sleep(500);
+    writing=false; waitingPv=false; setInbox(-1); setTask('执行中','info');
+    $('#pv').classList.remove('chg'); $('#pv').classList.add('done');
+    $('#pvDiff').innerHTML=PV_FIELDS.map(f=>`<dt>${f[0]}</dt><dd><span class="now">${esc(f[1])}</span>${f[2]?'<span class="mm">模型看不到原文</span>':''}</dd>`).join('');
+    st.innerHTML=`<span class="tg ok">已完成</span>4 项已生效，没有改动别的${edited?'（按你改过的保存，这类动作的计数从 0 重新算）':''}。<button class="btn sm" id="undo1">撤销（09:53 前）</button>`;
+    $('#undo1').addEventListener('click',undo3);
+    res('ok');
+  }
+  function undo3(){
+    const doUndo=async(more)=>{ closeModal(); const st=$('#pvState'); st.innerHTML='<span class="spin"></span>撤销中…'; await sleep(800); st.innerHTML=`<span class="tg mute">已撤销</span>发货单恢复原样，审计里留了记录${more?'；已给物流发更正：「2026-0XX 收货信息有变，先别安排」':''}。`; $('#pv').classList.remove('done'); undoN=Math.max(0,undoN-1); $('#undoN').textContent=undoN; };
+    if(!notified) return doUndo(false);
+    modal(`<h3 id="mh">撤销第 3 步？</h3><p>发货单会恢复原样。已经发给物流的通知<b>收不回</b>，可以同时发一条更正。</p><div class="acts"><button class="btn pri" id="u1">撤销，并给物流发更正</button><button class="btn" id="u2">只撤销这一步</button><button class="btn ghost" id="u3">取消</button></div>`,m=>{ $('#u3',m).focus(); $('#u1',m).onclick=()=>doUndo(true); $('#u2',m).onclick=()=>doUndo(false); $('#u3',m).onclick=closeModal; });
+  }
+  function rejectPv(res){
+    modal(`<h3 id="mh">驳回这张改动？</h3><p>任务会停在第 3 步。告诉它哪里不对，它会换个办法再来（可不填）。</p><div class="chips"><button class="sug" data-r>收货人不对</button><button class="sug" data-r>地址要用新厂区</button></div><textarea id="rj" aria-label="哪里不对"></textarea><div class="acts"><button class="btn pri" id="rjOk">驳回</button><button class="btn" id="rjNo">取消</button></div>`,m=>{
+      $$('[data-r]',m).forEach(b=>b.onclick=()=>{ $('#rj',m).value=b.textContent; });
+      $('#rj',m).focus(); $('#rjNo',m).onclick=closeModal;
+      $('#rjOk',m).onclick=()=>{ const why=$('#rj',m).value.trim(); closeModal(); $('#pvActs').hidden=true; const st=$('#pvState'); st.hidden=false; st.innerHTML=`<span class="tg mute">已驳回</span>${why?'原因：'+esc(why)+'。':''}没改任何数据；任务停在第 3 步。`; $('#pv').classList.add('rej'); waitingPv=false; setInbox(-1); running=false; mode='stopped'; open=true; renderPlan(); setTask('已暂停','mute'); $('#stopBtn').disabled=true; res('rej'); };
+    });
+  }
+  function voidPv(){ const st=$('#pvState'); if(!st) return; $('#pvActs').hidden=true; st.hidden=false; st.innerHTML='<span class="tg mute">已作废</span>任务停了，没改任何数据。'; $('#pv').classList.add('void'); waitingPv=false; setInbox(-1); }
+  $('#takeover').addEventListener('click',()=>modal(`<h3 id="mh">停下来，你自己来？</h3><p>智能体会停下。已经查到的收货人、电话、地址会带到「物流发货 › 发货单」页面，填在表单里，你核对后自己保存。已完成的步骤保留。</p><div class="acts"><button class="btn pri" id="toOk">停下，带上内容去发货单</button><button class="btn" id="toNo">取消</button></div>`,m=>{ $('#toNo',m).focus(); $('#toNo',m).onclick=closeModal; $('#toOk',m).onclick=()=>{ closeModal(); if(running){ stopReq=true; pending && pending('stop'); } toast('原型：这里会跳到发货单页面，表单已填好'); }; }));
+  // 输入框：多行、自动增高、输入法选词时回车不发送
+  const ask=$('#askIn');
+  ask.addEventListener('input',()=>{ ask.style.height='auto'; ask.style.height=Math.min(ask.scrollHeight,140)+'px'; });
+  ask.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey && !e.isComposing && e.keyCode!==229){ e.preventDefault(); send(); } });
+  $('#askSend').addEventListener('click',send);
+  $$('#scr-ws .sug').forEach(b=>b.addEventListener('click',()=>{ if(b.textContent.startsWith('☆')) return toast('收藏的问题会列在这里'); ask.value=b.textContent; ask.focus(); }));
+  function send(){
+    const v=ask.value.trim(); if(!v) return;
+    const th=$('#thread'); const u=document.createElement('div'); u.className='msg-u'; u.textContent=v; th.appendChild(u); ask.value=''; ask.style.height='auto';
+    const a=document.createElement('div'); a.className='ai';
+    if(/欠|多少|几|哪些|卡在/.test(v)) a.innerHTML='<span class="av ai" aria-hidden="true">智</span><div class="blk"><div>某某机械还有 <b>¥52,000</b> 没收，2 笔：¥30,000（9/12 到期，已过 21 天）、¥22,000（10/20 到期）。<div class="src">数据来源：应收台账 · 截至 10/03 09:44 · 1.6 秒</div></div></div>';
+    else if(/改|建|填|安排|发|提醒|删/.test(v)) a.innerHTML='<span class="av ai" aria-hidden="true">智</span><div class="blk"><div>这件事要改数据，转成一个任务来做？我会先出计划给你看。<div class="acts"><button class="btn pri sm" onclick="this.parentNode.innerHTML=\'<span class=&quot;tg info&quot;>已转成任务</span>\'">转成任务</button><button class="btn sm" onclick="this.parentNode.remove()">不用了</button></div></div></div>';
+    else a.innerHTML='<span class="av ai" aria-hidden="true">智</span><div class="blk"><div class="small muted">原型：查数类问题走快速通道，几秒内回答，并写明数据来源。</div></div>';
+    th.appendChild(a); th.scrollTop=1e6;
+  }
+
+  // ── ② 新任务 ──
+  $$('#scr-newtask .eg').forEach(b=>b.addEventListener('click',()=>{ $('#ntIn').value=b.textContent; $('#ntIn').focus(); }));
+  $('#ntGo').addEventListener('click',()=>{ if(!$('#ntIn').value.trim()) return $('#ntIn').focus(); toast('原型：回到工作台，出计划卡'); go('ws'); });
+  const COACH=[['左边：你的任务和盯守','交出去的事都在这里，能看到每件事走到哪一步。'],['中间：你说，它做','它先出计划，你可以改；查数直接回答，写明数据从哪来。'],['右边：待我确认','它要改数据时，会把改动列成一张卡放在这里。<b>改数据前都先给你看。</b>']];
+  $('#coachBtn').addEventListener('click',()=>{ let i=0; const draw=()=>{ $('#modalHost').innerHTML=`<div class="coach"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="ch"><div class="small muted">第 ${i+1} / 3 步</div><h3 id="ch">${COACH[i][0]}</h3><p>${COACH[i][1]}</p><div class="dots">${COACH.map((_,k)=>`<i class="${k===i?'on':''}"></i>`).join('')}</div><div class="acts"><button class="btn pri" id="cn">${i<2?'下一步':'知道了'}</button>${i<2?'<button class="btn ghost" id="cs">跳过</button>':''}</div></div></div>`; $('#cn').focus(); $('#cn').onclick=()=>{ if(i<2){ i++; draw(); } else $('#modalHost').innerHTML=''; }; $('#cs') && ($('#cs').onclick=()=>$('#modalHost').innerHTML=''); }; draw(); });
 
   // ── ③ 待我确认 ──
-  $$('[data-r3]').forEach(b=>b.addEventListener('click', async ()=>{
-    const st=$('#r3State'); st.hidden=false; b.parentNode.hidden=true;
-    if(b.dataset.r3==='ok'){ st.innerHTML='<span class="spin"></span>调用订单审批接口（你本人的权限）…'; await sleep(900); st.innerHTML='<span class="chip c-ok">已批准</span> 审计记的是你本人；智能体只做了预审'; }
-    else { st.innerHTML='<span class="chip c-mute">已退回</span> 已通知李四，说明里带上了「缺质保金条款」这条预审提醒'; }
-  }));
-  $('#mergeList').addEventListener('change', ()=>{ $('#mergeOk').textContent='确认所选（'+$$('#mergeList input').filter(c=>c.checked).length+'）'; });
-  $('#mergeOk').addEventListener('click', async ()=>{ const st=$('#mergeState'); st.hidden=false; st.innerHTML='<span class="spin"></span>逐条重演、执行…'; await sleep(1000); const n=$$('#mergeList input').filter(c=>c.checked).length; st.innerHTML=`<span class="chip c-ok">已完成 ${n} 条</span> 没勾的那条留在待确认里`; });
-  $('#mergeNo').addEventListener('click', ()=>{ const st=$('#mergeState'); st.hidden=false; st.innerHTML='<span class="chip c-mute">已全部驳回</span> 仓库员会收到提醒，按原流程手工建档'; });
-  $$('.ftab').forEach(b=>b.addEventListener('click',()=>{ $$('.ftab').forEach(x=>x.setAttribute('aria-pressed','false')); b.setAttribute('aria-pressed','true'); }));
+  let ibFilter='all', r3Done=null, leadsDone=null;
+  const LEADS=[['某某包装 · 上次跟进 9/24','建待办：10/4 电话回访报价'],['某某食品 · 上次跟进 9/22','建待办：10/4 发设备选型资料'],['某某药业 · 上次跟进 9/20','建待办：10/5 约现场勘察']];
+  let leadSel=[true,true,false], leadGone=[false,false,false];
+  function renderInbox(){
+    const mine=waitingPv?1:0;
+    const C={all:2+mine,wait:1,mine,sug:1};
+    $('#ibTabs').innerHTML=[['all','全部'],['wait','别人在等你'],['mine','我的任务'],['sug','智能体建议']].map(([k,l])=>`<button aria-pressed="${ibFilter===k}" data-f="${k}">${l} ${C[k]}</button>`).join('');
+    const r3=`<div class="card ib r3bar"><h4><span class="lv l3">必须本人确认</span>订单审批 · 2026-0XX · 某某机械有限公司</h4>
+        <div class="small muted" style="margin:4px 0 6px">李四提交 · 已等 2 小时 · 合同额 ¥186,000 · <span class="due">今天 18:00 前处理</span></div>
+        <ul class="checks"><li><span class="ico ok">✓</span>合同额和报价单一致（¥186,000）</li><li><span class="ico ok">✓</span>这个客户近 12 个月没有逾期尾款</li><li><span class="ico wa">!</span>付款条件「30/60/10」和公司模板「30/60/10 + 质保金」不一致，缺质保金条款</li><li><span class="ico ok">✓</span>交期 11/30：电工排期能满足</li></ul>
+        <div class="small muted">智能体只做了预审。通过、驳回是你本人的操作，和现在一样。</div>
+        ${r3Done?`<div class="state">${r3Done}</div>`:'<div class="acts"><button class="btn pri" id="r3Ok">通过 ¥186,000</button><button class="btn" id="r3No">驳回</button></div>'}</div>`;
+    const mineCard = waitingPv?`<div class="card ib"><h4><span class="lv l2">需要你确认</span>发货单 2026-0XX · 补收货信息</h4><div class="small muted" style="margin:4px 0 0">你的任务第 3 步 · <span class="due">今天 18:00 前，过期作废、不改数据</span> · <button class="btn ghost sm" data-go="ws">去处理 →</button></div></div>`:'<div class="small muted" style="margin:0 0 12px">现在没有停着的任务。（在①里跑到第 3 步，这里会出现一张。）</div>';
+    const n=leadSel.filter((s,i)=>s&&!leadGone[i]).length;
+    const sug=`<div class="card ib"><h4><span class="lv l1">可撤草稿</span>3 条线索 7 天没跟进，建跟进待办</h4><div class="small muted" style="margin:4px 0 0">只建你自己的待办，24 小时内可删 · <span class="due">明天 9:00 前</span></div>
+        <ul class="checks pick">${LEADS.map((l,i)=>leadGone[i]?'':`<li><label><input type="checkbox" data-ld="${i}" ${leadSel[i]?'checked':''}><span><b>${l[0]}</b><br><span class="small">${l[1]}</span></span></label></li>`).join('')}</ul>
+        ${leadsDone?`<div class="state">${leadsDone}</div>`:`<div class="acts"><button class="btn pri" id="ldOk" ${n?'':'disabled'}>确认所选（${n}）</button><button class="btn" id="ldNo" ${n?'':'disabled'}>驳回所选</button></div>`}</div>`;
+    const G=[['wait','别人在等你',r3],['mine','你的任务停在这一步',mineCard],['sug','智能体建议',sug]];
+    $('#ibList').innerHTML=G.filter(g=>ibFilter==='all'||ibFilter===g[0]).map(g=>`<div class="gh">${g[1]}</div>${g[2]}`).join('');
+    $('#r3Ok') && ($('#r3Ok').onclick=async()=>{ r3Done='<span class="spin"></span>以你本人的权限通过…'; renderInbox(); await sleep(800); r3Done='<span class="tg ok">已通过</span>审计记的是你本人；李四会收到通知。'; renderInbox(); });
+    $('#r3No') && ($('#r3No').onclick=()=>modal(`<h3 id="mh">驳回订单 2026-0XX</h3><p>驳回原因（必填），会原样发给提交人李四。</p><div class="chips"><button class="sug" id="rsg">补上质保金条款后再提交</button></div><textarea id="rr" aria-label="驳回原因"></textarea><div class="acts"><button class="btn pri" id="rrOk" disabled>驳回</button><button class="btn" id="rrNo">取消</button></div>`,m=>{ const t=$('#rr',m), ok=$('#rrOk',m); t.focus(); t.oninput=()=>ok.disabled=!t.value.trim(); $('#rsg',m).onclick=()=>{ t.value=$('#rsg',m).textContent; ok.disabled=false; }; $('#rrNo',m).onclick=closeModal; ok.onclick=()=>{ r3Done='<span class="tg mute">已驳回</span>已通知李四，原因：'+esc(t.value.trim()); closeModal(); renderInbox(); }; }));
+    $('#ldOk') && ($('#ldOk').onclick=async()=>{ const k=leadSel.filter((s,i)=>s&&!leadGone[i]).length; leadsDone='<span class="spin"></span>建待办…'; renderInbox(); await sleep(700); leadsDone=`<span class="tg ok">已建 ${k} 条待办</span>没勾的留在这里。`; renderInbox(); });
+    $('#ldNo') && ($('#ldNo').onclick=()=>{ const idx=leadSel.map((s,i)=>s&&!leadGone[i]?i:-1).filter(i=>i>=0); idx.forEach(i=>leadGone[i]=true); renderInbox(); toast(`已驳回 ${idx.length} 条`,{label:'撤回',fn:()=>{ idx.forEach(i=>leadGone[i]=false); renderInbox(); }}); });
+  }
+  $('#ibTabs').addEventListener('click',e=>{ const b=e.target.closest('[data-f]'); if(!b) return; ibFilter=b.dataset.f; renderInbox(); });
+  $('#ibList').addEventListener('change',e=>{ const i=e.target.dataset.ld; if(i==null) return; leadSel[+i]=e.target.checked; renderInbox(); const el=$(`[data-ld="${i}"]`); el&&el.focus(); });
 
-  // ── ④ 排队 ──
-  $('#qBg').addEventListener('click', ()=>{ $('#qCard').innerHTML='<div class="qrow" style="border:0;padding-top:0"><span class="chip c-info">后台运行</span><b>已转到后台</b></div><div class="small muted">轮到它时会自动开始；需要你确认或做完了，企微会提醒你。你可以关掉这个页面。</div>'; toast('已转到后台'); });
-  $('#qCancel').addEventListener('click', ()=>{ $('#qCard').innerHTML='<div class="small"><span class="chip c-mute">已取消</span> 任务没有开始，没有任何改动</div>'; });
+  // ── ④ 设置与日报 ──
+  const DAILY=[['09:43','通知物流安排发货（2026-0XX）','自动 · 已连续确认 20 次','撤销（09:53 前）'],['09:43','填写发货单收货信息（2026-0XX）','你确认的','撤销（09:53 前）'],['08:30','晨报：2 件事要你看','只读',''],['昨天','给 2 条线索建跟进待办','你确认的','删除（今天 17:05 前）']];
+  $('#dailyList').innerHTML=DAILY.map((d,i)=>`<div class="ri"><span class="tm">${d[0]}</span><div class="bd"><b>${d[1]}</b><div class="small muted">${d[2]}</div></div>${d[3]?`<button class="btn sm" data-undo="${i}">${d[3]}</button>`:'<span class="small muted">不用撤</span>'}</div>`).join('');
+  $('#dailyList').addEventListener('click',async e=>{ const b=e.target.closest('[data-undo]'); if(!b) return; b.disabled=true; b.textContent='撤销中…'; await sleep(700); b.replaceWith(Object.assign(document.createElement('span'),{className:'tg mute',textContent:'已撤销'})); });
+  const MODES=[['填收货信息','ask',12],['通知物流','auto',20],['建跟进待办','ask',5],['订单审批','r3',0]];
+  function renderModes(){ $('#modeRows').innerHTML=MODES.map((m,i)=>`<tr><td>${m[0]}</td><td>${m[1]==='auto'?'<span class="tg ok">自动</span>':m[1]==='r3'?'<span class="tg bad">必须本人确认</span>':`<span class="tg gold">每次问我 · ${m[2]} / 20</span>`}</td><td>${m[1]==='auto'?`<button class="btn sm" data-back="${i}">改回每次问我</button>`:''}</td></tr>`).join(''); }
+  renderModes();
+  $('#modeRows').addEventListener('click',e=>{ const b=e.target.closest('[data-back]'); if(!b) return; MODES[+b.dataset.back]=[MODES[+b.dataset.back][0],'ask',0]; renderModes(); toast('已改回每次问我'); });
+  $('#simAuto').addEventListener('click',()=>modal(`<h3 id="mh">「填收货信息」以后自动做？</h3><p>你已经连续确认 20 次，一次没改过。以后自动做、做完告诉你，10 分钟内可撤销。随时可以在这里改回来。</p><div class="acts"><button class="btn pri" id="aa">改成自动</button><button class="btn" id="ab">还是每次问我</button></div>`,m=>{ $('#ab',m).focus(); $('#ab',m).onclick=()=>{ closeModal(); toast('好的，继续每次问你；30 天内不再提'); }; $('#aa',m).onclick=()=>{ MODES[0]=['填收货信息','auto',20]; renderModes(); closeModal(); toast('已改成自动'); }; }));
+  const WATCH=[['每天','2026-0XX 直到发货','今天 9:00：卡在电工（主板接线未完成），预计 10/08；物料已齐',true],['实时','某某机械尾款到账就告诉我','本月 0 次',true]];
+  function renderWatch(){ $('#watchList').innerHTML=WATCH.map((w,i)=>`<div class="ri"><span class="tm">${w[0]}</span><div class="bd"><b>${esc(w[1])}</b><div class="small muted">${esc(w[2])}</div></div><button class="btn sm" data-wt="${i}">${w[3]?'暂停':'恢复'}</button></div>`).join(''); }
+  renderWatch();
+  $('#watchList').addEventListener('click',e=>{ const b=e.target.closest('[data-wt]'); if(!b) return; WATCH[+b.dataset.wt][3]=!WATCH[+b.dataset.wt][3]; renderWatch(); });
+  $('#watchForm').addEventListener('submit',e=>{ e.preventDefault(); WATCH.push([$('#wFreq').value==='每天 9:00'?'每天':'实时',$('#wObj').value+' '+$('#wCond').value,'刚创建 · 下一个时间点推第一次',true]); renderWatch(); toast('开始盯了'); });
 
-  // ── ⑥ 日报与盯守 ──
-  const DAILY=[['09:43','通知物流安排发货（2026-0XX）','自动 · 已挣得授权',true],['09:43','填写发货单收货人（2026-0XX）','你确认的',true],['08:30','晨报：2 项要你看','只读',false],['昨天 17:05','给供应商 某某五金 的催货草稿','你确认后发出',false]];
-  $('#dailyList').innerHTML=DAILY.map((d,i)=>`<div class="ri"><span class="tm">${d[0]}</span><div class="bd"><b>${d[1]}</b><div class="small muted">${d[2]}</div></div>${d[3]?`<button class="btn sm" data-undo="${i}">撤销</button>`:'<span class="small muted">不可撤销</span>'}</div>`).join('');
-  $('#dailyList').addEventListener('click', async e=>{ const b=e.target.closest('[data-undo]'); if(!b) return; b.disabled=true; b.textContent='撤销中…'; await sleep(800); b.replaceWith(Object.assign(document.createElement('span'),{className:'chip c-mute',textContent:'已撤销'})); });
-  $('#watchForm').addEventListener('submit', e=>{ e.preventDefault(); const html=`<div class="ri"><span class="tm">新</span><div class="bd"><b>${$('#wObj').value} 直到${$('#wCond').value}</b><div class="small muted">${$('#wFreq').value} · 刚创建</div></div><button class="btn sm">暂停</button></div>`; $('#watchForm').closest('.col').querySelector('.pane').insertAdjacentHTML('beforeend', html); toast('已开始盯守，第一次报告会在下一个时间点推送'); });
+  // ── ⑥ 采购对账 ──
+  const ROWS=[['TH20260925-003','不锈钢方管','40×40×2',120,'8,640.00','ok'],['TH20260925-003','不锈钢板','δ3 304',8,'6,240.00','ok'],['TH20260926-011','法兰','DN50 PN16',24,'1,920.00','diff'],['TH20260926-011','密封圈','Φ120',50,'600.00','ok'],['TH20260927-002','轴承','6205',30,'1,050.00','ok'],['TH20260927-002','螺栓','M12×40',400,'480.00','miss']];
+  const rec=ROWS.map(()=>false);
+  function drawRows(){ $('#bizRows').innerHTML=ROWS.map((r,i)=>`<tr data-i="${i}"><td><input type="checkbox" class="rsel" aria-label="选择 ${r[1]} ${r[2]}"></td><td class="mono">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="num">${r[3]}</td><td class="num">${r[4]}</td><td>${rec[i]?'<span class="tg ok">已对账</span>':'<span class="tg warn">待对账</span>'}</td></tr>`).join(''); }
+  drawRows();
+  const selIdx=()=>$$('.rsel').map((c,i)=>c.checked?i:-1).filter(i=>i>=0);
+  function updSel(){ const n=selIdx().length; $$('#bizRows tr').forEach(tr=>tr.classList.toggle('sel',$('.rsel',tr).checked)); $('#abar').hidden=n===0; $('#abarN').textContent='已选 '+n+' 行'; }
+  $('#bizRows').addEventListener('change',updSel);
+  $('#selAll').addEventListener('change',e=>{ $$('.rsel').forEach(c=>c.checked=e.target.checked); updSel(); });
+  $('#clearSel').addEventListener('click',()=>{ $$('.rsel').forEach(c=>c.checked=false); $('#selAll').checked=false; updSel(); });
+  let drawerFrom=null;
+  function openDrawer(title, html, from){ drawerFrom=from; $('#drawerT').textContent=title; $('#drawerBody').innerHTML=html; $('#drawer').classList.add('open'); $$('#scr-recon .fab').forEach(f=>f.hidden=true); $('#closeDrawer').focus(); }
+  function closeDrawer(silent){ if(!$('#drawer').classList.contains('open')) return; $('#drawer').classList.remove('open'); $$('#scr-recon .fab').forEach(f=>f.hidden=false); if(!silent && drawerFrom) drawerFrom.focus(); }
+  $('#closeDrawer').addEventListener('click',()=>closeDrawer());
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('#drawer').classList.contains('open') && !$('#modalHost').innerHTML) closeDrawer(); });
+  $('#toRecon').addEventListener('click',e=>{
+    const sel=selIdx(); if(!sel.length) return toast('先勾选要对账的行');
+    openDrawer('智能体 · 对账',`<div class="chips"><span class="tg gold">已带上 ${sel.length} 行采购明细</span><span class="tg mute">某某五金 · 9 月</span></div>
+      <div class="small">先把供应商发来的对账单拖进来（Excel、PDF 都行）。发票可以之后再补：数电票直接读结构化数据，照片才需要识别。</div>
+      <div class="drop" id="drop"><div class="small muted">把对账单拖到这里</div><button class="btn sm" id="fakeUp" style="margin-top:6px">模拟拖入「某某五金 9 月对账单.xlsx」</button></div>
+      <div id="drawRes"></div>`, e.currentTarget);
+    $('#fakeUp').addEventListener('click',async()=>{
+      $('#drop').innerHTML='<div class="small"><span class="spin"></span> 读对账单 6 行，逐行比对采购明细…</div>'; await sleep(1200);
+      $('#drop').innerHTML='<div class="small"><span class="tg ok">已读取</span>对账单 6 行（文件只在我们服务器上读，没有外发）</div>';
+      const st={ok:'<span class="ico ok">✓</span>',diff:'<span class="ico wa">!</span>',miss:'<span class="ico wa">!</span>'};
+      const what={ok:'标为已对账',diff:'对账单 25 件 ¥2,000.00，我方 24 件 ¥1,920.00，差 1 件 ¥80 → 不处理，留给你',miss:'对账单里没有这一行 → 不处理，留给你'};
+      const okRows=sel.filter(i=>ROWS[i][5]==='ok'&&!rec[i]);
+      $('#drawRes').innerHTML=`<div class="card pv"><div class="in">
+        <div class="ph4"><span class="lv l2">需要你确认</span><h4 tabindex="-1" id="recT">对账结果 · ${sel.length} 行</h4></div>
+        <table class="tbl lite"><thead><tr><th></th><th>物料</th><th class="num">金额</th><th>处理</th></tr></thead><tbody>${sel.map(i=>`<tr><td>${st[ROWS[i][5]]}</td><td>${ROWS[i][1]}<div class="small muted">${ROWS[i][2]}</div></td><td class="num">${ROWS[i][4]}</td><td class="small">${what[ROWS[i][5]]}</td></tr>`).join('')}</tbody></table>
+        <div class="basis">依据：按采购单号 + 物料 + 规格逐行比对；金额、数量都一致才算对上。</div>
+        <div class="risk">影响：只改 ${okRows.length} 行的「对账状态」；开票号等发票到了再补。</div>
+        <div class="state" id="recSt" aria-live="polite" hidden></div></div>
+        <div class="pvbar" id="recActs"><button class="btn pri" id="recOk" ${okRows.length?'':'disabled'}>确认 ${okRows.length} 行</button><button class="btn">修改</button><button class="btn">驳回</button><span class="small muted">今天 18:00 前可撤销</span></div></div>
+        ${sel.some(i=>ROWS[i][5]!=='ok')?'<button class="btn sm" id="diffMsg">为差异拟一段核对话术（复制后你自己发）</button>':''}`;
+      $('#recT').focus();
+      $('#recOk') && $('#recOk').addEventListener('click',async()=>{ const s=$('#recSt'); $('#recActs').hidden=true; s.hidden=false; s.innerHTML='<span class="spin"></span>核对、保存、回读…'; await sleep(1000); okRows.forEach(i=>rec[i]=true); drawRows(); updSel(); s.innerHTML=`<span class="tg ok">已完成</span>${okRows.length} 行已对账，表格已刷新；差异的那几行还在「待对账」。<button class="btn sm">撤销（18:00 前）</button>`; });
+      $('#diffMsg') && $('#diffMsg').addEventListener('click',()=>{ $('#drawRes').insertAdjacentHTML('beforeend',`<div class="copybox">王经理您好，核对 9 月对账单时有两处和我们的记录对不上：\n1. 法兰 DN50 PN16：对账单 25 件，我们收货 24 件；\n2. 螺栓 M12×40 400 颗 ¥480 没有列在对账单里。\n麻烦帮忙核实一下，谢谢。</div><div class="acts" style="margin:0"><button class="btn sm" id="cp1">复制</button><span class="small muted">系统里没有给供应商发消息的通道；智能体不会替你对外发送</span></div>`); $('#cp1').onclick=()=>toast('已复制'); });
+    });
+  });
+  $('#toChase').addEventListener('click',e=>{
+    const sel=selIdx(); if(!sel.length) return toast('先勾选要催的行'); const r=ROWS[sel[0]];
+    openDrawer('智能体 · 催货话术',`<div class="chips"><span class="tg gold">已带上 ${sel.length} 行</span></div>
+      <div class="small">按你选的行拟了一段话，复制后用微信或电话发给供应商。系统里没有给供应商发消息的通道，智能体不会替你对外发送。</div>
+      <div class="copybox">王经理您好，我司采购单 ${r[0]} 的${sel.map(i=>ROWS[i][1]+' '+ROWS[i][2]+' '+ROWS[i][3]+(ROWS[i][1]==='螺栓'?' 颗':' 件')).join('、')}，约定交期已过，麻烦确认一下发货时间，谢谢。</div>
+      <div class="acts" style="margin:0"><button class="btn pri sm" id="cp2">复制</button><button class="btn sm" id="cpW">换个语气</button></div>
+      <div class="small muted">供应商联系人和电话取自供应商档案：王经理 138 0000 5678</div>`, e.currentTarget);
+    $('#cp2').onclick=()=>toast('已复制'); $('#cpW').onclick=()=>toast('原型：换成更正式 / 更客气的说法');
+  });
 
-  // ── ⑦ 手机 ──
-  let mN=2;
-  $('#mOk').addEventListener('click', async ()=>{ const c=$('#mCard'); c.innerHTML='<div class="small"><span class="spin"></span> 重演并执行…</div>'; await sleep(900); c.innerHTML='<b>发货单 2026-0XX</b><div class="small" style="margin-top:6px"><span class="chip c-ok">已完成</span> 4 项已生效</div><button class="btn sm" style="margin-top:8px">撤销（10 分钟内）</button>'; mN--; $('#mN').textContent=mN; });
-  $('#mNo').addEventListener('click', ()=>{ $('#mCard').innerHTML='<b>发货单 2026-0XX</b><div class="small" style="margin-top:6px"><span class="chip c-mute">已驳回</span> 回到电脑上可以告诉它哪里不对</div>'; mN--; $('#mN').textContent=mN; });
+  // ── ⑦ 仓库 ──
+  const CK=[['主板 PCB-A3','v3',1,4,'A-02-1'],['开关电源','24V 10A',1,6,'A-03-2'],['PLC 模块','FX5U-32MT',1,2,'B-01-1'],['继电器','MY2N 24V',6,40,'B-02-3'],['端子排','UK2.5',30,200,'B-02-4'],['接线槽','40×40',4,25,'C-01-1'],['航空插头','GX16-4',8,5,'B-03-1'],['线号管','1.5 平方',2,12,'C-02-2'],['导轨','35mm',3,18,'C-01-2'],['扎带','4×200',1,30,'C-03-1']];
+  $('#ckGo').addEventListener('click',async()=>{
+    $('#ckRes').innerHTML='<div class="state"><span class="spin"></span>查 10 行库存和库位…</div>'; await sleep(1100);
+    $('#ckRes').innerHTML=`<div class="card pv" style="margin-top:12px"><div class="in">
+      <div class="ph4"><span class="lv l2">需要你确认</span><h4 id="ckT" tabindex="-1">出库预览 · 10 行</h4></div>
+      <table class="tbl lite"><thead><tr><th>物料</th><th class="num">要出</th><th class="num">库存</th><th>库位</th><th></th></tr></thead><tbody>${CK.map(r=>`<tr><td>${r[0]}<div class="small muted">${r[1]}</div></td><td class="num">${r[2]}</td><td class="num">${r[3]}</td><td class="mono">${r[4]}</td><td>${r[3]<r[2]?'<span class="tg warn">库存不够，这行不出</span>':'<span class="ico ok">✓</span>'}</td></tr>`).join('')}</tbody></table>
+      <div class="basis">依据：出库单 CK-1003-004 的 10 行；库存取当前实时数。</div>
+      <div class="risk">影响：出库 9 行，库存相应减少；航空插头缺 3 个，这行留给你（可以报缺料）。</div>
+      <div class="state" id="ckSt" aria-live="polite" hidden></div></div>
+      <div class="pvbar" id="ckActs"><button class="btn pri" id="ckOk">确认出库 9 行</button><button class="btn">修改</button><button class="btn">驳回</button><span class="small muted">今天 18:00 前可以冲正</span></div></div>`;
+    $('#ckT').focus();
+    $('#ckOk').addEventListener('click',async()=>{ const s=$('#ckSt'); $('#ckActs').hidden=true; s.hidden=false; s.innerHTML='<span class="spin"></span>核对库存有没有变、保存、回读…'; await sleep(1000); s.innerHTML='<span class="tg ok">已出库 9 行</span>库存已扣减。<button class="btn sm">冲正（今天 18:00 前）</button><button class="btn sm">航空插头报缺料</button>'; });
+  });
+  $('#mdList').addEventListener('change',()=>{ $('#mdOk').textContent='确认所选（'+$$('#mdList input').filter(c=>c.checked).length+'）'; });
+  $('#mdOk').addEventListener('click',async()=>{ const st=$('#mdSt'); st.hidden=false; const n=$$('#mdList input').filter(c=>c.checked).length; if(!n) return st.innerHTML='没有勾选'; st.innerHTML='<span class="spin"></span>建档…'; await sleep(800); st.innerHTML=`<span class="tg ok">已建 ${n} 条档案</span>没勾的留在待确认里，可以晚点再看。`; });
+  $('#mdNo').addEventListener('click',()=>{ const boxes=$$('#mdList input').filter(c=>c.checked); if(!boxes.length) return toast('先勾选要驳回的'); const lis=boxes.map(c=>c.closest('li')); lis.forEach(l=>l.hidden=true); toast(`已驳回 ${lis.length} 条`,{label:'撤回',fn:()=>lis.forEach(l=>l.hidden=false)}); });
 
-  // ── ⑧ 管理员 ──
-  const ROLES=[['管理层',1,1,1],['部门主管',1,1,1],['销售员',1,0,0],['采购部',1,0,0],['仓库员',1,0,0],['财务部',1,0,0],['设计师',1,0,0],['装配组',1,0,0],['售后部',1,0,0]];
-  function sw(on, dis, lbl){ return `<button class="sw" role="switch" aria-checked="${on?'true':'false'}" aria-label="${lbl}" ${dis?'disabled':''}></button>`; }
-  $('#roleRows').innerHTML=ROLES.map(r=>`<tr><td>${r[0]}</td><td>${sw(r[1],0,r[0]+' 查')}</td><td>${sw(r[2],0,r[0]+' 写')}</td><td>${sw(r[3],!r[2],r[0]+' 可挣得自动')}</td></tr>`).join('');
-  const ACTS=[['填写收货人','物流','R2',1],['新建物料档案','仓库','R2',1],['仓库批量出库','仓库','R2',1],['整单维护（开票金额、对账状态）','采购管理','R2',1],['提交请款','采购管理','R3',1],['订单审批','销售','R3',1],['删除采购明细','采购管理','R3',0],['标记已读','消息','R1',1],['新建个人待办','个人待办','R1',1],['作废销售订单','销售','R3',0]];
-  function renderActs(){ const q=$('#actQ').value.trim(), rf=$('#actR').value; $('#actRows').innerHTML=ACTS.map((a,i)=>[a,i]).filter(([a])=>(!q||a[0].includes(q)||a[1].includes(q))&&(!rf||a[2]===rf)).map(([a,i])=>`<tr><td>${a[0]}</td><td class="muted">${a[1]}</td><td><span class="rk ${a[2].toLowerCase()}">${a[2]}</span></td><td>${sw(a[3],0,a[0]+' 开放')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">没有匹配的动作</td></tr>'; }
+  // ── ⑧ 财务 ──
+  const FIN=[
+    {id:'QK-0931',sup:'某某五金',amt:'12,000',lvl:3,po:'TH20260925-003',who:'赵六',wait:'26 小时',checks:[['ok','金额和采购单、到货一致'],['ok','没有重复请款'],['ok','发票已到（数电票 …0812）'],['ok','收款账号 6222 0210 0011 2233，半年内没改过']]},
+    {id:'QK-0932',sup:'某某电气',amt:'86,500',lvl:3,po:'TH20260928-006',who:'赵六',wait:'5 小时',checks:[['ok','金额和合同一致（首付 50%）'],['ok','没有重复请款'],['wa','发票还没到（首付款，合同约定先款后票）'],['ok','收款账号半年内没改过']]},
+    {id:'QK-0933',sup:'某某钣金',amt:'23,400',lvl:3,red:1,po:'TH20260926-002',who:'赵六',wait:'3 小时',checks:[['ok','金额和到货一致'],['ok','没有重复请款'],['ok','发票已到'],['ba','收款账号 3 天前改过：…6612 → …0418，改的人：赵六（采购员）。建议打供应商档案里的老电话核实']]}
+  ];
+  const finDone={};
+  function renderFin(){
+    $('#finList').innerHTML=FIN.map(f=>`<div class="card ib ${f.lvl===3?'r3bar':''}"><h4>${f.lvl===3?'<span class="lv l3">必须本人确认</span>':'<span class="lv l2">需要你确认</span>'}请款 ${f.id} · ${f.sup} ¥${f.amt}${f.red?' <span class="tg bad">预审标红</span>':''}</h4>
+      <div class="small muted" style="margin:4px 0 6px">${f.who}提交 · 已等 ${f.wait} · 采购单 ${f.po}</div>
+      <ul class="checks">${f.checks.map(c=>`<li><span class="ico ${c[0]}">${c[0]==='ok'?'✓':'!'}</span>${c[1]}</li>`).join('')}</ul>
+      ${finDone[f.id]?`<div class="state">${finDone[f.id]}</div>`:`${f.red?`<label class="small" style="display:flex;gap:6px;align-items:center;margin:6px 0"><input type="checkbox" data-vf="${f.id}">我已电话核实收款账号</label>`:''}<div class="acts"><button class="btn pri" data-fok="${f.id}" ${f.red?'disabled':''}>通过 ¥${f.amt}</button><button class="btn" data-fno="${f.id}">驳回</button></div>`}</div>`).join('');
+  }
+  renderFin();
+  $('#finList').addEventListener('change',e=>{ const id=e.target.dataset.vf; if(id) $(`[data-fok="${id}"]`).disabled=!e.target.checked; });
+  $('#finList').addEventListener('click',async e=>{
+    const ok=e.target.closest('[data-fok]'), no=e.target.closest('[data-fno]');
+    if(ok){ const id=ok.dataset.fok; finDone[id]='<span class="spin"></span>以你本人的权限通过…'; renderFin(); await sleep(700); finDone[id]='<span class="tg ok">已通过</span>审计记在你名下；提交人会收到通知。'; renderFin(); }
+    if(no){ const id=no.dataset.fno; modal(`<h3 id="mh">驳回请款 ${id}</h3><p>驳回原因（必填），会原样发给提交人。</p><textarea id="fr" aria-label="驳回原因"></textarea><div class="acts"><button class="btn pri" id="frOk" disabled>驳回</button><button class="btn" id="frNo">取消</button></div>`,m=>{ const t=$('#fr',m), b=$('#frOk',m); t.focus(); t.oninput=()=>b.disabled=!t.value.trim(); $('#frNo',m).onclick=closeModal; b.onclick=()=>{ finDone[id]='<span class="tg mute">已驳回</span>原因：'+esc(t.value.trim()); closeModal(); renderFin(); }; }); }
+  });
+
+  // ── ⑨ 手机 ──
+  let mN=3;
+  $('#mOk').addEventListener('click',async()=>{ const c=$('#mC1'); c.innerHTML='<div class="s"><span class="spin"></span> 通过中…</div>'; await sleep(800); c.innerHTML='<div class="t">请款 QK-0931 · 某某五金</div><div class="s" style="margin-top:6px"><span class="h5pill good">已通过</span> ¥12,000.00</div>'; mN--; $('#mN').textContent=mN+' 张'; });
+  $('#mNo').addEventListener('click',()=>{ const c=$('#mC1'); c.innerHTML='<div class="t">驳回 QK-0931</div><div class="s">原因必填，会原样发给提交人</div><textarea style="width:100%;margin-top:8px;border-radius:12px;border:1px solid #d9dee6;padding:8px;font:inherit;min-height:70px" aria-label="驳回原因"></textarea><div class="h5row"><button class="h5btn2" onclick="this.closest(\'.h5card\').innerHTML=\'<div class=&quot;t&quot;>已取消</div>\'">取消</button><button class="h5btn" onclick="this.closest(\'.h5card\').innerHTML=\'<div class=&quot;t&quot;>请款 QK-0931</div><div class=&quot;s&quot;>已驳回</div>\'">驳回</button></div>'; });
+  $$('[data-remind]').forEach(b=>b.addEventListener('click',()=>{ b.textContent='好的，你下次打开电脑时提醒'; b.disabled=true; }));
+  const orb=$('#orb'); let recT=null;
+  const startRec=()=>{ orb.classList.add('rec'); orb.textContent='正在听…'; $('#orbTip').textContent='松开发送'; };
+  const stopRec=async()=>{ if(!orb.classList.contains('rec')) return; orb.classList.remove('rec'); orb.textContent='按住说话'; $('#orbTip').textContent='识别中…';
+    await sleep(500); $('#orbTip').textContent='可以说：「主板接线做完了」「机架缺螺栓」';
+    $('#vOut').innerHTML=`<div class="bub">2026-0XX 主板接线做完了</div><div class="h5card" id="vCard"><div class="t">标记完成</div><div class="h5field"><span>项目</span><span>2026-0XX</span></div><div class="h5field"><span>工序</span><span>主板接线（装配）</span></div><div class="s" style="margin-top:6px">完成后装配主管会看到；10 分钟内可撤销。</div><div class="h5row"><button class="h5btn2" id="vNo">不对</button><button class="h5btn" id="vOk">确认完成</button></div></div>`;
+    $('#vOk').onclick=()=>{ $('#vCard').innerHTML='<div class="t">已标记完成</div><div class="s">2026-0XX · 主板接线 · 10 分钟内可撤销</div>'; };
+    $('#vNo').onclick=()=>{ $('#vCard').innerHTML='<div class="s">好的，没改。可以再说一次，或者到「我的活」里点。</div>'; };
+    $('#vScr').scrollTop=1e6; };
+  orb.addEventListener('pointerdown',e=>{ e.preventDefault(); startRec(); });
+  ['pointerup','pointerleave','pointercancel'].forEach(t=>orb.addEventListener(t,stopRec));
+  orb.addEventListener('keydown',e=>{ if((e.key===' '||e.key==='Enter') && !e.repeat){ e.preventDefault(); startRec(); } });
+  orb.addEventListener('keyup',e=>{ if(e.key===' '||e.key==='Enter') stopRec(); });
+
+  // ── ⑩ 状态全集 ──
+  const S=[
+    ['待我确认','<span class="lv l2">需要你确认</span> 4 项改动','<div class="acts" style="margin:0"><button class="btn pri sm">确认</button><button class="btn sm">修改</button><button class="btn sm">驳回</button></div>'],
+    ['正在核对结果','<span class="spin"></span> 正在核对结果…','<div class="small muted">按钮这时都不能点，避免重复提交</div>'],
+    ['已完成（可撤销）','<span class="tg ok">已完成</span> 4 项已生效','<button class="btn sm">撤销（09:53 前）</button><div class="small muted">最后 60 秒才逐秒倒数</div>'],
+    ['已撤销','<span class="tg mute">已撤销</span> 发货单恢复原样，审计里留了记录',''],
+    ['已驳回','<span class="tg mute">已驳回</span> 原因：收货人不对。没改任何数据',''],
+    ['数据已变','<span class="tg warn">数据变了</span> 有人刚改过这张发货单，已按最新数据重新生成，请再看一眼','<button class="btn pri sm">看新的</button>'],
+    ['已过期','<span class="tg mute">已过期</span> 没改任何数据','<button class="btn sm">重新生成</button>'],
+    ['失败','<span class="tg bad">没改成</span> 已恢复原样。系统说：「发货单已锁定，不能修改」','<button class="btn sm">我自己来</button>'],
+    ['权限变了','<span class="tg mute">已失效</span> 你的权限变了，这张卡不能再确认',''],
+    ['管理员暂停','<span class="tg bad">暂停中</span> 管理员暂停了智能体改数据，恢复后可以继续确认',''],
+    ['已在别处处理','<span class="tg ok">已确认</span> 你在手机上确认过了 · 09:43',''],
+    ['断网','<span class="tg warn">没发出</span> 网络断了，这次确认没有发出','<button class="btn sm">重试</button>']
+  ];
+  $('#stateGrid').innerHTML=S.map(s=>`<div class="card sc"><span class="sn">${s[0]}</span><div>${s[1]}</div>${s[2]}</div>`).join('');
+
+  // ── ⑪ 管理员 ──
+  const ROLES=[['管理层',1,1,0],['各部门主管',1,1,0],['销售员',1,0,0],['采购员',1,0,0],['仓库员',1,0,0],['财务部',1,0,0],['设计师',1,0,0],['装配组',1,0,0],['售后部',1,0,0]];
+  function sw(on,dis,lbl,extra){ return `<button class="sw" role="switch" aria-checked="${on?'true':'false'}" aria-label="${lbl}" ${dis?'disabled':''} ${extra||''}></button>`; }
+  $('#roleRows').innerHTML=ROLES.map(r=>`<tr><td>${r[0]}</td><td>${sw(r[1],0,r[0]+' 查')}</td><td>${sw(r[2],0,r[0]+' 智能体代办')}</td><td>${sw(r[3],!r[2],r[0]+' 自动执行')}</td></tr>`).join('');
+  const ACTS=[['填写发货单收货信息','物流发货','R2',1],['新建物料档案','仓库','R2',1],['仓库出库','仓库','R2',1],['标记采购明细已对账','采购管理','R2',1],['新建个人待办','个人待办','R1',1],['标记消息已读','消息','R1',1],['请款审批','采购管理','R3',0],['订单审批','销售部','R3',0],['作废销售订单','销售部','R3',0],['仓库一键清空','仓库','R3','x'],['导出 Excel','各模块','—','x'],['修改用户权限','用户管理','—','x']];
+  function renderActs(){ const q=$('#actQ').value.trim(), rf=$('#actR').value; $('#actRows').innerHTML=ACTS.filter(a=>(!q||a[0].includes(q)||a[1].includes(q))&&(!rf||a[2]===rf)).map(a=>`<tr><td>${a[0]}</td><td class="muted">${a[1]}</td><td>${a[2]==='—'?'—':`<span class="rk ${a[2].toLowerCase()}">${a[2]}</span>`}</td><td>${a[3]==='x'?'<span class="tg mute">不开放</span>':sw(a[3],0,a[0]+' 开放')}</td></tr>`).join('')||'<tr><td colspan="4" class="muted">没有匹配的动作</td></tr>'; }
   renderActs(); $('#actQ').addEventListener('input',renderActs); $('#actR').addEventListener('change',renderActs);
-  document.addEventListener('click', e=>{
+  document.addEventListener('click',e=>{
     const s=e.target.closest('.sw'); if(!s||s.disabled) return;
     const on=s.getAttribute('aria-checked')!=='true'; s.setAttribute('aria-checked',String(on));
-    const tr=s.closest('tr'); if(tr && tr.parentNode.id==='roleRows'){ const cells=$$('.sw',tr); if(s===cells[1]){ cells[2].disabled=!on; if(!on) cells[2].setAttribute('aria-checked','false'); } }
+    const tr=s.closest('tr'); if(tr && tr.parentNode.id==='roleRows'){ const c=$$('.sw',tr); if(s===c[1]){ c[2].disabled=!on; if(!on) c[2].setAttribute('aria-checked','false'); } }
   });
-  $('#killBtn').addEventListener('click', ()=>{
-    const on=$('#killBtn').classList.contains('on');
-    if(on){ $('#killBtn').classList.remove('on'); $('#killBtn').textContent='全员暂停智能体写操作'; $('#killBanner').hidden=true; toast('已恢复'); return; }
-    $('#modalHost').innerHTML=`<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mh"><h3 id="mh">暂停全员的智能体写操作？</h3><div class="small" style="color:var(--t2)">立即生效：所有写操作和自动执行都会被拒绝，进行中的任务停在当前步骤；查数照常。之后可以随时恢复。</div><div class="acts"><button class="btn danger" id="kOk">暂停</button><button class="btn" id="kNo">取消</button></div></div></div>`;
-    $('#kNo').focus();
-    $('#kNo').addEventListener('click',()=>$('#modalHost').innerHTML='');
-    $('#kOk').addEventListener('click',()=>{ $('#modalHost').innerHTML=''; $('#killBtn').classList.add('on'); $('#killBtn').textContent='恢复智能体写操作'; $('#killBanner').hidden=false; toast('已暂停全员写操作'); });
+  $('#addGrant').addEventListener('click',()=>modal(`<h3 id="mh">给某人临时开</h3><p>只能开到这个人在网页上本来就有的范围。</p><div style="display:grid;gap:8px;margin-top:8px"><select class="srch" style="width:100%" aria-label="人"><option>孙七 · 装配组</option><option>李四 · 销售员</option></select><select class="srch" style="width:100%" aria-label="开什么"><option>智能体代办</option></select><label class="small">到期日（必填）<input type="date" class="srch" id="gd" style="width:100%"></label></div><div class="acts"><button class="btn pri" id="gOk" disabled>开通</button><button class="btn" id="gNo">取消</button></div>`,m=>{ const d=$('#gd',m); d.focus(); d.oninput=()=>$('#gOk',m).disabled=!d.value; $('#gNo',m).onclick=closeModal; $('#gOk',m).onclick=()=>{ $('#grantRows').insertAdjacentHTML('beforeend',`<tr><td>孙七 · 装配组</td><td>智能体代办</td><td>${d.value}</td><td><button class="btn sm">收回</button></td></tr>`); closeModal(); }; }));
+  $('#killBtn').addEventListener('click',()=>{
+    if($('#killBtn').classList.contains('on')){ $('#killBtn').classList.remove('on'); $('#killBtn').textContent='全员暂停智能体改数据'; $('#killBanner').hidden=true; toast('已恢复'); return; }
+    modal(`<h3 id="mh">暂停全员的智能体改数据？</h3><p>立即生效：所有写操作和自动执行都会被拒绝，进行中的任务停在当前步骤；查数照常。之后随时可以恢复。</p><div class="acts"><button class="btn danger" id="kOk">暂停</button><button class="btn" id="kNo">取消</button></div>`,m=>{ $('#kNo',m).focus(); $('#kNo',m).onclick=closeModal; $('#kOk',m).onclick=()=>{ closeModal(); $('#killBtn').classList.add('on'); $('#killBtn').textContent='恢复智能体改数据'; $('#killBanner').hidden=false; toast('已暂停全员改数据'); }; });
   });
 
   // 启动
-  const start = (location.hash||'').replace('#','');
-  go(NOTES[start] ? start : 'ws');
+  renderPlan(); renderMini(); setW(1280);
+  const start=(location.hash||'').replace('#','');
+  go(NOTES[start]?start:'ws');
 })();
 </script>
-</body>
-</html>
