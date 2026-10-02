@@ -219,7 +219,7 @@ footer a,main a{color:var(--accent)}
   <div class="eyebrow">方案 v6 · <b>已拍板，评审后细化</b> · 2026-10-03</div>
   <h1>同辉智能体 L3 重构方案</h1>
   <p class="lede">做一个通用的 L3 智能体：用户在系统里能查的、能做的，它都能查、能做；给它一个目标，它自己规划步骤、调用系统能力、核对结果，在权限和沙箱里干活，只在关键节点找人确认。</p>
-  <p class="lede-note">本稿取代 2026-08-01 版的第四、五节，以及本方案的 v1–v3。8 月版的三条核心原则继续有效：只走业务接口同一条路径；事实以服务端为准；能力可枚举。v6 吸收了 5 份评审（架构、安全、执行与可靠性、UI、用户旅程）；写入了 10 条拍板结果（第 17 节），并按 <a href="https://claude.ai/artifact/FXZe576VrTWbuKTugwKko9">Harness 安全审计</a> 改了运行时的设计（第 08 节）。</p>
+  <p class="lede-note">本稿取代 2026-08-01 版的第四、五节，以及本方案的 v1–v3。8 月版的三条核心原则继续有效：只走业务接口同一条路径；事实以服务端为准；能力可枚举。v6 吸收了 5 份评审（架构、安全、执行与可靠性、UI、用户旅程）；写入了 13 条拍板结果（第 17 节，含 10-03 补的 3 条），并按 <a href="https://claude.ai/artifact/FXZe576VrTWbuKTugwKko9">Harness 安全审计</a> 改了运行时的设计（第 08 节）。</p>
 </header>
 
 <section id="s0">
@@ -293,7 +293,7 @@ footer a,main a{color:var(--accent)}
       <tr><td class="k">协作</td><td>无</td><td>无</td><td>转交给人、等确认、会签；子 Agent 阶段三评估</td></tr>
       <tr><td class="k">记忆</td><td>无</td><td>口径库</td><td>会话 + 偏好 + 组织知识 + 任务记忆</td></tr>
       <tr><td class="k">学习</td><td>无</td><td>靠人改代码</td><td>评测驱动 + 纠错样本 + 技能自动沉淀</td></tr>
-      <tr><td class="k">开放</td><td>无</td><td>无</td><td>MCP 对外提供（本期之后）</td></tr>
+      <tr><td class="k">开放</td><td>无</td><td>无</td><td>MCP 对外提供（阶段四）</td></tr>
     </tbody>
   </table></div>
   <figure class="fig"><svg viewBox="0 0 720 320" role="img" aria-label="十项能力的成熟度"><text x="160.0" y="16.0" class="c-s" text-anchor="middle" >L1 问答</text><text x="348.0" y="16.0" class="c-s" text-anchor="middle" >L2 分析与推送</text><text x="536.0" y="16.0" class="c-s" text-anchor="middle" >L3 条件自治（目标）</text><text x="60.0" y="42.0" class="c-tb" text-anchor="end" >感知</text><rect x="70.0" y="26.0" width="180.0" height="22.0" class="c-ok"/><rect x="258.0" y="26.0" width="180.0" height="22.0" class="c-ok"/><rect x="446.0" y="26.0" width="180.0" height="22.0" class="c-tgt"/><text x="60.0" y="71.0" class="c-tb" text-anchor="end" >行动</text><rect x="70.0" y="55.0" width="180.0" height="22.0" class="c-ok"/><rect x="258.0" y="55.0" width="180.0" height="22.0" class="c-ok"/><rect x="446.0" y="55.0" width="180.0" height="22.0" class="c-tgt"/><text x="60.0" y="100.0" class="c-tb" text-anchor="end" >规划</text><rect x="70.0" y="84.0" width="180.0" height="22.0" class="c-ok"/><rect x="258.0" y="84.0" width="180.0" height="22.0" class="c-ok"/><rect x="446.0" y="84.0" width="180.0" height="22.0" class="c-tgt"/><text x="60.0" y="129.0" class="c-tb" text-anchor="end" >核对</text><rect x="70.0" y="113.0" width="180.0" height="22.0" class="c-soft"/><rect x="258.0" y="113.0" width="180.0" height="22.0" class="c-soft"/><rect x="446.0" y="113.0" width="180.0" height="22.0" class="c-tgt"/><text x="254.0" y="128.0" class="c-s" text-anchor="middle" >现在完全没有</text><text x="60.0" y="158.0" class="c-tb" text-anchor="end" >主动</text><rect x="70.0" y="142.0" width="180.0" height="22.0" class="c-ok"/><rect x="258.0" y="142.0" width="180.0" height="22.0" class="c-ok"/><rect x="446.0" y="142.0" width="180.0" height="22.0" class="c-tgt"/><text x="60.0" y="187.0" class="c-tb" text-anchor="end" >安全</text><rect x="70.0" y="171.0" width="180.0" height="22.0" class="c-ok"/><rect x="258.0" y="171.0" width="180.0" height="22.0" class="c-ok"/><rect x="446.0" y="171.0" width="180.0" height="22.0" class="c-tgt"/><text x="60.0" y="216.0" class="c-tb" text-anchor="end" >协作</text><rect x="70.0" y="200.0" width="180.0" height="22.0" class="c-soft"/><rect x="258.0" y="200.0" width="180.0" height="22.0" class="c-soft"/><rect x="446.0" y="200.0" width="180.0" height="22.0" class="c-tgt"/><text x="254.0" y="215.0" class="c-s" text-anchor="middle" >现在完全没有</text><text x="60.0" y="245.0" class="c-tb" text-anchor="end" >记忆</text><rect x="70.0" y="229.0" width="180.0" height="22.0" class="c-ok"/><rect x="258.0" y="229.0" width="180.0" height="22.0" class="c-ok"/><rect x="446.0" y="229.0" width="180.0" height="22.0" class="c-tgt"/><text x="60.0" y="274.0" class="c-tb" text-anchor="end" >学习</text><rect x="70.0" y="258.0" width="180.0" height="22.0" class="c-ok"/><rect x="258.0" y="258.0" width="180.0" height="22.0" class="c-ok"/><rect x="446.0" y="258.0" width="180.0" height="22.0" class="c-tgt"/><text x="60.0" y="303.0" class="c-tb" text-anchor="end" >开放</text><rect x="70.0" y="287.0" width="180.0" height="22.0" class="c-soft"/><rect x="258.0" y="287.0" width="180.0" height="22.0" class="c-soft"/><rect x="446.0" y="287.0" width="180.0" height="22.0" class="c-tgt"/><text x="254.0" y="302.0" class="c-s" text-anchor="middle" >现在完全没有</text></svg><div class="legend"><span><i class="lg-ok"></i>已具备</span><span><i class="lg-soft"></i>尚未具备</span><span><i class="lg-tgt"></i>L3 目标</span></div><figcaption><b>图 3 · 十项能力的成熟度。</b>绿色是现在已具备的级别，虚线框是 L3 目标。核对、协作、开放三项现在完全没有，是差距最大的地方。</figcaption></figure>
@@ -348,7 +348,7 @@ footer a,main a{color:var(--accent)}
       <tr><td>云端后台任务</td><td>持久任务队列，可挂起、可恢复</td><td>06、07</td></tr>
       <tr><td>AGENTS.md 项目约定</td><td>组织知识：口径库 + 各部门 SOP + 数据字典</td><td>09 · M13</td></tr>
       <tr><td>Skills</td><td>经验包：常做的事沉淀成技能，大多由智能体从成功轨迹里自己总结，人审核</td><td>09 · M3</td></tr>
-      <tr><td>MCP</td><td>ERP MCP Server（对外开放在本期之后）；本期不接外部 MCP 工具</td><td>09 · M2</td></tr>
+      <tr><td>MCP</td><td>ERP MCP Server（对外开放在阶段四）；本期不接外部 MCP 工具</td><td>09 · M2</td></tr>
       <tr><td>子代理</td><td>子 Agent：阶段三评估，只读、进程内</td><td>09 · M4</td></tr>
       <tr><td>在真实代码任务上评测</td><td>在真实业务任务上评测（ERP-Bench）</td><td>13</td></tr>
     </tbody>
@@ -598,7 +598,7 @@ footer a,main a{color:var(--accent)}
   OP -.-> HA</pre><figcaption><b>图 15 · 13 个模块各在哪一层。</b>思考交给 Harness；动手和刹车都在 ERP；运营层贯穿全程。</figcaption></figure>
   <div class="mods">
     <div class="mod"><span class="idx">M1</span><div><h3>工具</h3><dl><dt>做什么</dt><dd>接口工具从接口文档自动生成（读 120、写 212），先补中文说明；复合分析工具保留；按模块目录按需加载；大结果留服务端只给摘要；四类敏感字段打码。全部经 ERP MCP 服务提供给 Harness。</dd><dt>验收</dt><dd>新接口上线后自动可用；工具选错率在评测里可量。</dd></dl></div></div>
-    <div class="mod"><span class="idx">M2</span><div><h3>ERP MCP 连接器<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>从第四阶段提前到第一阶段：它是 Harness 和 ERP 之间唯一的通道，提供第 04 节的 9 个元工具。对外开放给其他智能体移到本期之后；本期不接外部 MCP 工具。按每用户令牌鉴权；不返回说明文字、固定工具清单、不发跳转、限制返回大小、校验资源 URI（防审计里的提示注入面）；写操作核对审批记录。之后再对外开放给其他智能体。</dd><dt>验收</dt><dd>以采购员身份接入，查到的和网页一字不差；没有审批记录的写调用一律被拒；越权回放 0。</dd></dl></div></div>
+    <div class="mod"><span class="idx">M2</span><div><h3>ERP MCP 连接器<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>从第四阶段提前到第一阶段：它是 Harness 和 ERP 之间唯一的通道，提供第 04 节的 9 个元工具。阶段四对外开放给其他智能体；本期不接外部 MCP 工具。按每用户令牌鉴权；不返回说明文字、固定工具清单、不发跳转、限制返回大小、校验资源 URI（防审计里的提示注入面）；写操作核对审批记录。</dd><dt>验收</dt><dd>以采购员身份接入，查到的和网页一字不差；没有审批记录的写调用一律被拒；越权回放 0。</dd></dl></div></div>
     <div class="mod"><span class="idx">M3</span><div><h3>SKILL</h3><dl><dt>做什么</dt><dd>经验包，不是流程边界：常做的事写成技能，命中时给模型参考。Harness 自带的技能插件会读文件系统，审计建议禁用；技能改由 ERP MCP 以只读资源的形式提供，由我们管理、审核、版本化。</dd><dt>验收</dt><dd>有技能和没技能时，同一题的步数和成功率对比可量。</dd></dl></div></div>
     <div class="mod"><span class="idx">M4</span><div><h3>多 Agent 架构<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>Harness 自带的子 Agent 首期禁用：审计发现它继承父级全部工具，还会在后台无人值守地续跑。阶段三只评估一条路：只读工具、进程内、前台模式、不另占名额。「会话管家另起独立进程」的路线删掉：它会占掉另一个用户的名额。</dd><dt>验收</dt><dd>重新开启前，越权回放证明子 Agent 调不到写工具。</dd></dl></div></div>
     <div class="mod"><span class="idx">M5</span><div><h3>沙箱<span class="tag">v4</span></h3><dl><dt>做什么</dt><dd>真正的沙箱在 ERP 侧：演练事务（已验证，零改造，含上传文件）、确认时重演、评测库。Harness 自带的沙箱只管写文件、不隔离网络，不依赖它；Harness 跑在隔离容器里：不发布端口、只能访问我们自己的后端、根文件系统只读、非 root。</dd><dt>验收</dt><dd>每个开放的写接口：演练改动 = 真实执行改动；演练零外发；容器内无法访问公网。</dd></dl></div></div>
@@ -920,22 +920,22 @@ gantt
   section 阶段三
   规划执行 · 事件与盯守 · 子 Agent 评估 :b3, after b2, 28d
   section 阶段四
-  学习 · 渐进授权 · 管理后台 :b4, after b3, 28d
+  学习 · 渐进授权 · 管理后台 · 对外开放 :b4, after b3, 28d
   </pre></div>
   <div class="tbl"><table>
     <thead><tr><th>阶段</th><th>时间</th><th>交付</th><th>开放给谁</th><th>验收</th></tr></thead>
     <tbody>
-      <tr><td class="k">一 · 运行时与通用读</td><td class="num">10/08–10/31</td><td>第一周实测（插件禁用后能否启动、单进程内存、erp-gate 失效时的行为、事件流能否满足工作台）；Harness fork 与加固配置、erp-gate、启动自检；会话管家（2 并发、回收、续接）；模型网关；ERP MCP 服务（9 个元工具、读工具首批 40 个、打码、工具说明补充）；评测 v1；在智能体页面加任务面板、分流与排队、预热与保活、写请求事件中间件</td><td>全员只读（多步任务受 2 并发限制，简单查询走快速通道）</td><td>审计加固清单全部通过；L1/L2 通过率 ≥ 85%；越权回放 0；容器无法访问公网</td></tr>
-      <tr><td class="k">二 · 通用写</td><td class="num">11/01–11/28</td><td>写接口 212 个登记与风险分级；演练沙箱（含上传文件，在生产 Postgres 上验证）；审批记录绑定；工作台的变更预览与审批；撤销与熔断；评测库；L3 单步题 50 道；「智能体代办」功能权限与管理员配置页；等人时释放名额；手机「待我确认」；完整三栏工作台；请款预审上线；仓库、采购影子运行；试点页面「让智能体看看」</td><td>管理层和各部门主管（建议模式，已拍板）</td><td>L3 单步题通过率 ≥ 80%；拔掉 erp-gate 后写操作仍全部被拒；零误写</td></tr>
+      <tr><td class="k">一 · 运行时与通用读</td><td class="num">10/08–10/31</td><td>第一周实测（插件禁用后能否启动、单进程内存、erp-gate 失效时的行为、事件流能否满足工作台）；Harness fork 与加固配置、erp-gate、启动自检；会话管家（2 并发、回收、续接）；模型网关；ERP MCP 服务（9 个元工具、读工具首批 40 个、打码、工具说明补充）；评测 v1；工作台第一版（桌面三栏）、分流与排队、预热与保活、写请求事件中间件</td><td>全员只读（多步任务受 2 并发限制，简单查询走快速通道）</td><td>审计加固清单全部通过；L1/L2 通过率 ≥ 85%；越权回放 0；容器无法访问公网</td></tr>
+      <tr><td class="k">二 · 通用写</td><td class="num">11/01–11/28</td><td>写接口 212 个登记与风险分级；演练沙箱（含上传文件，在生产 Postgres 上验证）；审批记录绑定；工作台的变更预览与审批；撤销与熔断；评测库；L3 单步题 50 道；「智能体代办」功能权限与管理员配置页；等人时释放名额；手机「待我确认」；工作台补全编辑态、修改态和全部状态；请款预审上线；仓库、采购影子运行；试点页面「让智能体看看」</td><td>管理层和各部门主管（建议模式，已拍板）</td><td>L3 单步题通过率 ≥ 80%；拔掉 erp-gate 后写操作仍全部被拒；零误写</td></tr>
       <tr><td class="k">三 · 规划与主动</td><td class="num">11/29–12/26</td><td>多步执行与核对、挂起恢复；ERP 侧事件、订阅与盯守；任务队列；子 Agent 评估；三个试点场景走影子 → 建议；业务页面「让智能体做」入口扩到主要模块；盯守；数电票读取；手机按住说话的白名单小任务</td><td>扩到各部门骨干</td><td>L3 多步题 ≥ 70%；试点场景影子期达标</td></tr>
-      <tr><td class="k">四 · 学习与开放</td><td class="num">12/27–01/23</td><td>渐进授权；纠错样本、失败聚类、技能沉淀；管理后台；「智能体自动执行」与 agent_grants；权限月度复核与异常告警</td><td>按渐进授权逐步放开自动</td><td>走通一次改进闭环；周活 ≥ 20 人</td></tr>
+      <tr><td class="k">四 · 学习与开放</td><td class="num">12/27–01/23</td><td>渐进授权；纠错样本、失败聚类、技能沉淀；管理后台；「智能体自动执行」与 agent_grants；权限月度复核与异常告警；照片识别；MCP 对外开放</td><td>按渐进授权逐步放开自动</td><td>走通一次改进闭环；周活 ≥ 20 人</td></tr>
     </tbody>
   </table></div>
 <figure class="fig"><svg viewBox="0 0 760 170" role="img" aria-label="各阶段开放给谁"><text x="312.0" y="16.0" class="c-s" text-anchor="middle" >一 · 10/08–10/31</text><text x="436.0" y="16.0" class="c-s" text-anchor="middle" >二 · 11/01–11/28</text><text x="560.0" y="16.0" class="c-s" text-anchor="middle" >三 · 11/29–12/26</text><text x="684.0" y="16.0" class="c-s" text-anchor="middle" >四 · 12/27–01/23</text><line x1="250" y1="24" x2="250" y2="166" class="c-grid"/><line x1="374" y1="24" x2="374" y2="166" class="c-grid"/><line x1="498" y1="24" x2="498" y2="166" class="c-grid"/><line x1="622" y1="24" x2="622" y2="166" class="c-grid"/><line x1="746" y1="24" x2="746" y2="166" class="c-grid"/><text x="240.0" y="47.0" class="c-t" text-anchor="end" >全员 · 只读</text><rect x="253.0" y="34.0" width="490.0" height="18.0" class="c-a"/><text x="240.0" y="81.0" class="c-t" text-anchor="end" >管理层 + 各部门主管 · 写（建议模式）</text><rect x="377.0" y="68.0" width="366.0" height="18.0" class="c-g"/><text x="240.0" y="115.0" class="c-t" text-anchor="end" >各部门骨干 · 写（建议模式）</text><rect x="501.0" y="102.0" width="242.0" height="18.0" class="c-g"/><text x="240.0" y="149.0" class="c-t" text-anchor="end" >自动执行 · 渐进授权挣得</text><rect x="625.0" y="136.0" width="118.0" height="18.0" class="c-ok"/></svg><figcaption><b>图 30 · 开放范围随阶段扩大。</b>写能力从第二阶段起只给管理层和主管，且每一步都要确认；自动执行要到第四阶段，靠「连续确认 20 次零修改」挣得。</figcaption></figure>
   
   <h3>评审后的调整<span class="tag">v6</span></h3>
-  <p><span class="k">工期假设：</span>开发由 Claude 完成；老板负责拍板和验收；试点人和各部门负责业务复核（212 项风险等级、工具说明补充）。评审按组件粗估全案 35–50 人周、新增代码约为现有 agent 代码的 1.5–2.5 倍，所以做以下范围调整，都不改拍板：</p>
-  <div class="tbl"><table class=""><thead><tr><th>调整</th><th>内容</th></tr></thead><tbody><tr><td class="k">阶段一的工作台</td><td>先在现有智能体页面上加「任务面板」；完整三栏工作台放阶段二</td></tr><tr><td class="k">读工具</td><td>按说明覆盖情况分批开放，首批取调用频率前 40 个</td></tr><tr><td class="k">写请求事件中间件</td><td>从阶段三提到阶段一：评测、影子、授权计数都靠它</td></tr><tr><td class="k">文档理解</td><td>数电票（XML / PDF 文字层）结构化读取放阶段三，对账试点要用；照片识别移出本期</td></tr><tr><td class="k">MCP 对外开放</td><td>移出本期（15 周之后）；本期不接外部 MCP 工具（加固后容器只通我们的后端）</td></tr><tr><td class="k">仓库、采购试点</td><td>阶段二对仓库员、采购员跑影子（只演练、不展示），每人每类动作攒够 ≥ 30 条比对、一致率 ≥ 90% 才在阶段三开放</td></tr><tr><td class="k">请款预审</td><td>阶段二上线</td></tr><tr><td class="k">业务页面入口</td><td>阶段二就在三个试点页面放「让智能体看看」（只读：预审、分析）</td></tr><tr><td class="k">负责人</td><td>212 项风险复核和说明补充，第一周指定业务负责人</td></tr></tbody></table></div>
+  <p><span class="k">工期假设：</span>开发由 Claude 完成；老板负责拍板和验收；试点人和各部门负责业务复核（212 项风险等级、工具说明补充）。评审按组件粗估全案 35–50 人周、新增代码约为现有 agent 代码的 1.5–2.5 倍，老板 10-03 决定保持原范围（第 17 节第 11 条），下面只调顺序、不砍内容：</p>
+  <div class="tbl"><table class=""><thead><tr><th>调整</th><th>内容</th></tr></thead><tbody><tr><td class="k">阶段一的工作台</td><td>按原计划做桌面三栏第一版；阶段二补全编辑态、修改态和全部状态</td></tr><tr><td class="k">读工具</td><td>按说明覆盖情况分批开放，首批取调用频率前 40 个</td></tr><tr><td class="k">写请求事件中间件</td><td>从阶段三提到阶段一：评测、影子、授权计数都靠它</td></tr><tr><td class="k">文档理解</td><td>数电票（XML / PDF 文字层）结构化读取提前到阶段三，对账试点要用；照片识别仍在阶段四</td></tr><tr><td class="k">MCP 对外开放</td><td>仍在阶段四；本期不接外部 MCP 工具（加固后容器只通我们的后端）</td></tr><tr><td class="k">仓库、采购试点</td><td>阶段二对仓库员、采购员跑影子（只演练、不展示），每人每类动作攒够 ≥ 30 条比对、一致率 ≥ 90% 才在阶段三开放</td></tr><tr><td class="k">请款预审</td><td>阶段二上线</td></tr><tr><td class="k">业务页面入口</td><td>阶段二就在三个试点页面放「让智能体看看」（只读：预审、分析）</td></tr><tr><td class="k">负责人</td><td>212 项风险复核和说明补充，第一周指定业务负责人</td></tr></tbody></table></div>
   <h3>第一周实测与退路</h3>
   <div class="tbl"><table class=""><thead><tr><th>实测项</th><th>不通过时的退路（都不改拍板）</th></tr></thead><tbody><tr><td class="k">禁用插件后能否启动</td><td>在 fork 里补依赖；3 天还不行，保留加载、守卫全部拒绝，记为残余风险</td></tr><tr><td class="k">单进程内存</td><td>连同现有服务超过 3.0G：名额降为 1，或 uvicorn worker 从 4 减到 3</td></tr><tr><td class="k">冷启动耗时</td><td>超过 10 秒：保留 1 个预热进程</td></tr><tr><td class="k">erp-gate 加载失败时的行为</td><td>启动自检拒接流量；靠 ERP 侧第二道闸兜底</td></tr><tr><td class="k">事件流能否满足工作台</td><td>工作台只用 ERP 侧事件，Harness 只提供文字流</td></tr><tr><td class="k">MCP 遇到跳转是否带身份头</td><td>MCP 不发跳转；容器出网只通后端</td></tr><tr><td class="k">Harness 调 DeepSeek 哪些接口</td><td>模型网关只放行实测到的那几个</td></tr><tr><td class="k">禁用计划模式和 agent-instructions 后系统提示从哪来</td><td>系统提示由 ERP 经 MCP 资源提供</td></tr><tr><td class="k">read-only 权限模式对 MCP 写工具的影响；一个 5 步任务实际的 token 和费用</td><td>据实调整单任务费用上限和名额策略</td></tr></tbody></table></div>
 
@@ -982,7 +982,7 @@ gantt
       <tr><td class="k">演练占锁、预览后数据变了</td><td>演练设几秒超时、只演练单个对象；确认时重演</td></tr>
       <tr><td class="k">模型费用</td><td>模型网关逐次记账，月度上限 1000 元（临时），到上限自动降级；一个月后按实际调</td></tr>
       <tr><td class="k">一线不用</td><td>工作台 + 企微推送，不靠聊天框；开放范围随能力扩大，每阶段有试点人</td></tr>
-    <tr><td class="k">开发人力与范围（评审估 35–50 人周）</td><td>第 14 节的范围调整；每阶段都能单独交付；关键路径上的业务复核第一周指定负责人</td></tr><tr><td class="k">内存不足（历史 OOM 9 次、容器未设上限）</td><td>agent-runtime mem_limit 1g、准入阈值、发版前排空；第一周按实测定名额</td></tr><tr><td class="k">审批被绕过或「批 A 执行 B」</td><td>智能体只能提交待审批单；ERP 原子消费、同事务重演一致才执行</td></tr><tr><td class="k">员工个人信息发给模型服务商</td><td>核实 DeepSeek API 条款（是否用于训练、留存多久），向员工告知（见第 17 节待确认）</td></tr></tbody>
+    <tr><td class="k">开发人力与范围（评审估 35–50 人周）</td><td>保持原范围（10-03 决定）；每阶段都能单独交付，阶段末按实测重排；关键路径上的业务复核第一周指定负责人</td></tr><tr><td class="k">内存不足（历史 OOM 9 次、容器未设上限）</td><td>agent-runtime mem_limit 1g、准入阈值、发版前排空；第一周按实测定名额</td></tr><tr><td class="k">审批被绕过或「批 A 执行 B」</td><td>智能体只能提交待审批单；ERP 原子消费、同事务重演一致才执行</td></tr><tr><td class="k">员工个人信息发给模型服务商</td><td>10-03 决定不另做条款核实和员工告知；银行账号、身份证号、工资薪酬、手机号仍对模型打码（拍板第 5 条）</td></tr></tbody>
   </table></div>
 </section>
 
@@ -1001,17 +1001,16 @@ gantt
       <tr><td class="num">8</td><td>阶段二写能力开放范围</td><td>管理层 + 各部门主管（建议模式）</td></tr>
       <tr><td class="num">9</td><td>服务器</td><td>先不动，智能体多步任务同时最多 2 人</td></tr>
       <tr><td class="num">10</td><td>前端复用路线</td><td>在 Vue 里重构「智能体工作台」：复用 Harness 的交互设计和事件模型 + 我们现有智能体页面的组件；网页、桌面、APP 一套打通；浏览器不直连 Harness。Harness 自带网页只给我们内网排障用</td></tr>
+      <tr><td class="num">11</td><td>评审后的范围（10-03）</td><td>保持原范围：阶段一做桌面三栏工作台第一版；照片识别、MCP 对外开放仍在阶段四</td></tr>
+      <tr><td class="num">12</td><td>员工个人信息发给模型服务商（10-03）</td><td>不另做 DeepSeek 条款核实和员工告知；对模型打码仍按第 5 条</td></tr>
+      <tr><td class="num">13</td><td>现有系统文字对比度（10-03）</td><td>暂时不改</td></tr>
     </tbody>
   </table></div>
   <h3>前端复用的考虑</h3>
   <p>你要求前端页面重构和复用。Harness 自带的前端是 React 写的单人控制台，带终端和插件安装，要运行它的网页服务才能用。审计建议：复用它的交互设计和事件模型（会话、计划、执行轨迹、审批），也复用我们现有智能体页面的组件，在我们的 Vue 前端里重构成「智能体工作台」；Harness 自带网页只给我们自己内网排障用。详见审计报告第 07 节。</p>
 
-  <h3>评审后需要你确认的三件事<span class="tag">v6</span></h3>
-  <ol class="decide">
-    <li>范围调整：MCP 对外开放和照片识别移出本期；阶段一工作台先做「任务面板」，完整三栏放阶段二（见第 14 节）。<span class="rec">建议：同意。不影响拍板，换来阶段一能按时交付。</span></li>
-    <li>隐私：员工姓名、地址等会随业务数据发给 DeepSeek。要不要先核实 DeepSeek API 的数据条款（是否用于训练、留存多久），并向员工告知？<span class="rec">建议：上线写能力之前做完。条款核实需要你或法务看。</span></li>
-    <li>现有系统的文字对比度：UI 评审发现系统的灰色说明字（#9ca3af，对比度 2.5:1）和链接色（4.4:1）偏浅，警告色当文字只有 2.2:1。<span class="rec">建议：另开一项改 style.css，全站受益；不放进智能体方案。</span></li>
-  </ol>
+  <h3>评审后补拍板（2026-10-03）<span class="tag">v6</span></h3>
+  <p>见上表第 11–13 条。保持原范围意味着工期按评审粗估的 35–50 人周走；每个阶段都能单独交付，阶段末按第一周实测和进度重排，要不要砍由你在阶段评审时定。</p>
 
 </section>
 
