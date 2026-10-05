@@ -18,6 +18,13 @@ log = logging.getLogger("auth")
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
 
+def _buyer_sheets(u: models.User) -> list[str] | None:
+    """采购员按清单分工（前端据此决定采购部各清单列的可见性）；不在分工表里 = None = 看全部。"""
+    from ..dept_config import BUYER_SHEET_MAP
+    s = BUYER_SHEET_MAP.get((u.username or "").lower())
+    return sorted(s) if s else None
+
+
 def _user_to_out(u: models.User) -> schemas.UserOut:
     from ..menus import ADMIN_MENU_DEFS
     roles = list(u.roles or [])
@@ -44,6 +51,7 @@ def _user_to_out(u: models.User) -> schemas.UserOut:
         menus=menus,                            # 🆕 该账号配置的一级菜单 key
         # 派生值（兼容旧客户端/旧桌面端）：menus ∩ 管理组有效 key；不再读 grant_menus 列
         grant_menus=[k for k in admin_keys if k in set(menus)],
+        buyer_sheets=_buyer_sheets(u),
         created_at=u.created_at,
         last_login=u.last_login,
     )

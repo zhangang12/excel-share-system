@@ -29,7 +29,7 @@ _WRITE_ROLES = ("buyer", "buyer_lead", "buyer_standard", "buyer_outsource")
 _RECEIVE_ROLES = ("warehouse", "warehouse_lead")
 
 # 🆕 R4/A6：采购员按清单分工（沿用采购部项目目录「按人分表」的可见性）。
-# 仅限这三名采购员各管自己的清单；其他采购员 + 采购主管 + admin/manager 不受限（看全部）。
+# 仅限分工表里的采购员各管自己的清单；其他采购员 + 采购主管 + admin/manager 不受限（看全部）。
 # 🆕 #324：映射本体挪到 dept_config.BUYER_SHEET_MAP（设计部推送按域路由共用），上方 import 别名引用。
 
 

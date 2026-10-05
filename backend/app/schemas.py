@@ -106,6 +106,8 @@ class UserOut(BaseModel):
     deputy_name: Optional[str] = None
     menus: list[str] = []        # 🆕 该账号配置的一级菜单 key（业务+管理组混合，规范顺序）
     grant_menus: list[str] = []  # 派生值 = menus ∩ 管理组有效 key（兼容旧客户端，不再独立存储）
+    # 🆕 采购员按清单分工（dept_config.BUYER_SHEET_MAP）；None = 不分工，看全部清单
+    buyer_sheets: Optional[list[str]] = None
     created_at: datetime
     last_login: Optional[datetime] = None
 
