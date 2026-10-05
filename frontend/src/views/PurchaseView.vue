@@ -1,14 +1,15 @@
 <script setup lang="ts">
 // 采购部项目列表：列只做「表格预览 + 附件上传状态」，右侧「打包下载」面板勾选表格/附件打 zip。
-//   方步森(fangbusen)：外协加工表 / 钣金装配表
+//   外协采购员（方步森、李昌奇）：外协加工表 / 钣金装配表
 //   王芹(wangqin)：设计师 / 不锈钢原料下料单 / CAD激光图纸
 //   李欣欣(lixinxin)：电工采购单 / 标准件清单 / 外购附图
+//   分工表在后端 dept_config.BUYER_SHEET_MAP，前端经 useBuyerSheets 读 auth.user.buyer_sheets
 //   未细分 buyer / 管理层：全列显示
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download, Refresh, View } from '@element-plus/icons-vue'
 import { http } from '@/api'
-import { useAuthStore } from '@/stores/auth'
+import { useBuyerSheets } from '@/composables/useBuyerSheets'
 import { datasheetsApi } from '@/api/datasheets'
 import EmptyHint from '@/components/EmptyHint.vue'
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
@@ -23,24 +24,12 @@ interface Row {
   sheet_times?: Record<string, string>   // 🆕 #338 各清单的导入时间
 }
 
-const auth = useAuthStore()
 const loading = ref(false)
 const rows = ref<Row[]>([])
 
-// 列可见性：统一采购部角色，按账号名区分分工（逐列控制）
-const isFangbusen = computed(() => auth.user?.username === 'fangbusen')   // 外协加工表 + 钣金装配表
-const isWangqin   = computed(() => auth.user?.username === 'wangqin')     // 🆕 不锈钢原料下料单 + CAD激光图纸 + 设计师
-const isLixinxin  = computed(() => auth.user?.username === 'lixinxin')    // 电工采购单 + 标准件清单 + 外购附图
-const seeAll = computed(() => !isFangbusen.value && !isWangqin.value && !isLixinxin.value)
-const showDesigner      = computed(() => seeAll.value || isWangqin.value || isFangbusen.value)  // 方步森也看设计师
-const showOutsource     = computed(() => seeAll.value || isFangbusen.value)  // 外协加工表
-const showSheetmetal    = computed(() => seeAll.value || isFangbusen.value)  // 🆕 钣金装配表
-const showMaterial      = computed(() => seeAll.value || isWangqin.value)    // 不锈钢原料下料单
-const showLaser         = computed(() => seeAll.value || isWangqin.value)    // 🆕 激光件清单（王芹可见）
-const showCadLaser      = computed(() => seeAll.value || isWangqin.value)    // CAD激光图纸
-const showElecPo        = computed(() => seeAll.value || isLixinxin.value)   // 电工采购单
-const showStandardSheet = computed(() => seeAll.value || isLixinxin.value)   // 标准件清单
-const showOutImg        = computed(() => seeAll.value || isLixinxin.value)   // 外购附图
+// 列可见性：采购员按清单分工（逐列控制）。分工表在后端 dept_config.BUYER_SHEET_MAP，换人不用改前端
+const { showDesigner, showOutsource, showSheetmetal, showMaterial, showLaser, showCadLaser,
+        showElecPo, showStandardSheet, showOutImg } = useBuyerSheets()
 
 // ===== 🆕 #338 最近推送时间：三四个设计师同时推送时靠它排序，不再漏单 =====
 // 只统计「这个账号实际能看到的列」——李新新的排序不该被王芹的激光件清单带偏。

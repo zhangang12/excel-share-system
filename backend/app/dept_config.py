@@ -89,14 +89,18 @@ OUTSOURCE_WORKERS: dict[str, list[str]] = {
 }
 
 # 🆕 R4/A6：采购员按清单分工（username -> 负责的清单域集合）。
-# 用途一（purchase_mgmt）：采购下单「按人分表」的可见性——仅限这三名采购员各管自己的清单，
+# 用途一（purchase_mgmt）：采购下单「按人分表」的可见性——仅限表里的采购员各管自己的清单，
 #   其他采购员 + 采购主管 + admin/manager 不受限（看全部）。
 # 用途二（🆕 #324，orders_router.start_push）：设计部图纸推送按 start_outputs[].to_domain
 #   路由到负责该域的采购员（sheetpkg→laser=王芹域；outsource_img→standard=李新新域）。
+# 用途三（🆕 2026-10-05）：经 /auth/me 的 buyer_sheets 下发给前端，决定采购部项目一览/下单的列可见性
+#   （原来前端按用户名写死，换人要发客户端；现在只改这里，后端发版即可）。
 BUYER_SHEET_MAP: dict[str, set[str]] = {
     "lixinxin": {"standard", "elec_po"},   # 李新新：标准件清单 + 电工采购单
     "wangqin": {"material", "laser"},       # 王芹：不锈钢原料下料单 + 激光件清单
     "fangbusen": {"outsource"},             # 方步森：外协加工
+    # 🆕 2026-10-05 方步森的外协资料交接给李昌奇（老板：方步森账号不动，只把数据交出去）
+    "lichangqi": {"outsource"},             # 李昌奇：外协加工
 }
 
 

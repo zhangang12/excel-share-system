@@ -6,6 +6,7 @@ import { Download, Refresh, RefreshLeft, View, Plus, Delete, Printer, Upload, Ar
 import { http } from '@/api'
 import { downloadAttachment } from '@/api/orders'   // 🆕 #245/#246 请购单直传文件下载
 import { useAuthStore } from '@/stores/auth'
+import { useBuyerSheets } from '@/composables/useBuyerSheets'
 import { datasheetsApi } from '@/api/datasheets'
 import { moneyParser } from '@/utils/money'   // 🆕 金额审计：粘贴 "12,500.00" 不再被截成 12
 import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
@@ -221,19 +222,9 @@ const purchaseRows = ref<PurchaseRow[]>([])
 const sheetStatus = ref<Record<number, { imported: boolean }>>({})
 function sheetImported(id?: number | null): boolean { return !!(id && sheetStatus.value[id]?.imported) }
 
-const isFangbusen = computed(() => auth.user?.username === 'fangbusen')
-const isWangqin   = computed(() => auth.user?.username === 'wangqin')
-const isLixinxin  = computed(() => auth.user?.username === 'lixinxin')
-const seeAll = computed(() => !isFangbusen.value && !isWangqin.value && !isLixinxin.value)
-const showDesigner      = computed(() => seeAll.value || isWangqin.value || isFangbusen.value)
-const showOutsource     = computed(() => seeAll.value || isFangbusen.value)
-const showSheetmetal    = computed(() => seeAll.value || isFangbusen.value)
-const showMaterial      = computed(() => seeAll.value || isWangqin.value)
-const showLaser         = computed(() => seeAll.value || isWangqin.value)
-const showCadLaser      = computed(() => seeAll.value || isWangqin.value)
-const showElecPo        = computed(() => seeAll.value || isLixinxin.value)
-const showStandardSheet = computed(() => seeAll.value || isLixinxin.value)
-const showOutImg        = computed(() => seeAll.value || isLixinxin.value)
+// 列可见性：采购员按清单分工（逐列控制）。分工表在后端 dept_config.BUYER_SHEET_MAP，换人不用改前端
+const { showDesigner, showOutsource, showSheetmetal, showMaterial, showLaser, showCadLaser,
+        showElecPo, showStandardSheet, showOutImg } = useBuyerSheets()
 
 const curYear = String(new Date().getFullYear())
 const pYearFilter = ref(curYear)

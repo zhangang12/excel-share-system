@@ -14,6 +14,8 @@ export interface User {
   hidden_tabs?: string[]   // 🆕 #7 该账号隐藏的二级菜单tab key
   menus?: string[]         // 🆕 该账号配置的一级菜单 key（业务+管理组混合）
   grant_menus?: string[]   // 派生值 = menus ∩ 管理组有效 key（兼容旧桌面端）
+  // 🆕 采购员按清单分工（后端 BUYER_SHEET_MAP）；null/缺省 = 不分工，看全部清单
+  buyer_sheets?: string[] | null
   // 🆕 OA 审批代理人：本人超 3 天没处理"指定到人"的审批时，代理人也能批（本人仍能批）
   deputy_uid?: number | null; deputy_name?: string | null
   created_at: string; last_login?: string | null
