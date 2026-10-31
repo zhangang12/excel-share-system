@@ -76,7 +76,11 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
                    # ⚠️ 必须并进这一条，不能另起一个 "aftersales" 键——
                    #    dict 字面量里重复的键后者覆盖前者，另起的那条会被静默丢掉、列压根不会补。
                    ("pay_status", "VARCHAR(16)"), ("pay_note", "TEXT"),
-                   ("pay_by", "INTEGER"), ("pay_at", "TIMESTAMPTZ")],
+                   ("pay_by", "INTEGER"), ("pay_at", "TIMESTAMPTZ"),
+                   # 🆕 反馈#444 出差出发/结束时间（北京时间「YYYY-MM-DD HH:MM」）
+                   ("trip_start", "VARCHAR(16)"), ("trip_end", "VARCHAR(16)")],
+    # 🆕 反馈#445 费用行多张发票 / 几行共用发票 / 没发票附付款记录
+    "aftersales_items": [("invoice_file_ids", "JSON"), ("pay_proof_file_ids", "JSON")],
     "suppliers": [("created_by", "INTEGER")],      # 🆕 需求五 建档采购员（谁建谁看）
     "user_feedback": [                             # 🆕 系统回信（处理意见回复）
         ("reply", "TEXT"),

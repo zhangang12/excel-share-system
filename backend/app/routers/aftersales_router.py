@@ -59,11 +59,78 @@ def _parse_items(raw: str) -> list[schemas.AfterSalesItemIn]:
             continue                      # 整行空白，跳过（前端加了行没填）
         if not name:
             raise HTTPException(400, "费用清单里有金额没填费用项名称")
+        inv = _ids(d.get("invoice_file_ids"))
+        legacy = _ids([d.get("invoice_file_id")])          # 老客户端只传单张
+        inv = inv + [x for x in legacy if x not in inv]
         out.append(schemas.AfterSalesItemIn(
             name=name, amount=amt,
-            invoice_file_id=d.get("invoice_file_id") or None,
+            invoice_file_id=inv[0] if inv else None, invoice_file_ids=inv,
+            pay_proof_file_ids=_ids(d.get("pay_proof_file_ids")),
             note=d.get("note") or None))
     return out
+
+
+def _ids(v) -> list[int]:
+    """附件 id 列表：容忍 None / 字符串数字，去重保序，丢掉 0 和负数。"""
+    out: list[int] = []
+    for x in (v if isinstance(v, list) else []):
+        try:
+            i = int(x)
+        except (TypeError, ValueError):
+            continue
+        if i > 0 and i not in out:
+            out.append(i)
+    return out
+
+
+def _inv_ids(it: models.AfterSalesItem) -> list[int]:
+    """一行的发票 id。存量行只有 invoice_file_id（没回填 invoice_file_ids），退回它。"""
+    return list(it.invoice_file_ids or ([it.invoice_file_id] if it.invoice_file_id else []))
+
+
+async def _check_items(db: AsyncSession, parsed: list[schemas.AfterSalesItemIn]) -> None:
+    """🆕 反馈#445：没有发票的行必须附付款记录；引用的附件必须真实存在。
+
+    老客户端没有「付款记录」按钮，碰到没票的行只能提示更新——别让它带着空行进来，
+    不然财务那头又是一张对不上账的单子。"""
+    for i, it in enumerate(parsed, 1):
+        if not it.invoice_file_ids and not it.pay_proof_file_ids:
+            raise HTTPException(400, f"第 {i} 行「{it.name}」没有发票，需要上传付款记录（转账或支付截图）。"
+                                     f"看不到「付款记录」按钮的，请先更新客户端")
+    want = {x for it in parsed for x in (it.invoice_file_ids + it.pay_proof_file_ids)}
+    if want:
+        got = set((await db.execute(select(models.Attachment.id).where(
+            models.Attachment.id.in_(want)))).scalars().all())
+        if want - got:
+            raise HTTPException(400, "有发票或付款记录的文件找不到了，请重新上传")
+
+
+def _add_items(db: AsyncSession, aid: int, parsed: list[schemas.AfterSalesItemIn]) -> None:
+    for i, it in enumerate(parsed):
+        db.add(models.AfterSalesItem(
+            aftersales_id=aid, name=it.name.strip()[:64], amount=float(it.amount or 0),
+            invoice_file_id=it.invoice_file_ids[0] if it.invoice_file_ids else None,
+            invoice_file_ids=list(it.invoice_file_ids), pay_proof_file_ids=list(it.pay_proof_file_ids),
+            note=(it.note or "").strip()[:200] or None, sort_order=i))
+
+
+_TRIP_FMT = "%Y-%m-%d %H:%M"
+
+
+def _parse_trip(start: Optional[str], end: Optional[str]) -> tuple[str, str]:
+    """🆕 反馈#444：出差出发 / 结束时间，必填，结束要晚于出发。返回规范化的「YYYY-MM-DD HH:MM」。"""
+    if not (start or "").strip() or not (end or "").strip():
+        raise HTTPException(400, "请填写出差的出发时间和结束时间（看不到这两项的，请先更新客户端）")
+    try:
+        ds = datetime.strptime(start.strip()[:16], _TRIP_FMT)
+        de = datetime.strptime(end.strip()[:16], _TRIP_FMT)
+    except ValueError:
+        raise HTTPException(400, "出差时间格式不对，请重新选择")
+    if de <= ds:
+        raise HTTPException(400, "出差结束时间要晚于出发时间")
+    if (de - ds).days > 366:
+        raise HTTPException(400, "出差时长超过一年，请检查日期")
+    return ds.strftime(_TRIP_FMT), de.strftime(_TRIP_FMT)
 
 
 async def _rows(db: AsyncSession, items: list[models.AfterSales]) -> list[schemas.AfterSalesRow]:
@@ -79,8 +146,8 @@ async def _rows(db: AsyncSession, items: list[models.AfterSales]) -> list[schema
             by_parent.setdefault(it.aftersales_id, []).append(it)
 
     att_ids = [a.mat_file_id for a in items if a.mat_file_id]
-    att_ids += [it.invoice_file_id for lst in by_parent.values()
-                for it in lst if it.invoice_file_id]
+    att_ids += [x for lst in by_parent.values() for it in lst
+                for x in (_inv_ids(it) + list(it.pay_proof_file_ids or []))]
     names: dict[int, str] = {}
     if att_ids:
         r = await db.execute(select(models.Attachment).where(models.Attachment.id.in_(att_ids)))
@@ -103,17 +170,26 @@ async def _rows(db: AsyncSession, items: list[models.AfterSales]) -> list[schema
             problem=a.problem, cost=a.cost or 0, status=a.status,
             pay_status=a.pay_status, pay_note=a.pay_note,
             pay_by_name=unames.get(a.pay_by), pay_at=a.pay_at,
-            items=[schemas.AfterSalesItemOut(
-                id=it.id, name=it.name, amount=it.amount or 0,
-                invoice_file_id=it.invoice_file_id,
-                invoice_file_name=names.get(it.invoice_file_id),
-                note=it.note,
-            ) for it in its],
-            missing_invoice=len([it for it in its if not it.invoice_file_id]),
+            items=[_item_out(it, names) for it in its],
+            missing_invoice=len([it for it in its if not _inv_ids(it)]),
+            missing_proof=len([it for it in its if not _inv_ids(it) and not it.pay_proof_file_ids]),
+            trip_start=a.trip_start, trip_end=a.trip_end,
             mat_file_id=a.mat_file_id, mat_file_name=names.get(a.mat_file_id),
             created_by_name=unames.get(a.created_by), created_at=a.created_at,
         ))
     return out
+
+
+def _item_out(it: models.AfterSalesItem, names: dict[int, str]) -> schemas.AfterSalesItemOut:
+    inv = _inv_ids(it)
+    return schemas.AfterSalesItemOut(
+        id=it.id, name=it.name, amount=it.amount or 0,
+        invoice_file_id=inv[0] if inv else None,
+        invoice_file_name=names.get(inv[0]) if inv else None,
+        invoice_files=[schemas.AfterSalesFile(id=x, name=names.get(x)) for x in inv],
+        pay_proof_files=[schemas.AfterSalesFile(id=x, name=names.get(x)) for x in (it.pay_proof_file_ids or [])],
+        note=it.note,
+    )
 
 
 @router.get("", response_model=schemas.AfterSalesListOut)
@@ -159,6 +235,8 @@ async def create_aftersales(
     cost: float = Form(0),
     items: str = Form(""),            # 🆕 费用清单 JSON: [{name,amount,invoice_file_id,note}, ...]
     kind: str = Form("aftersales"),   # 🆕 需求一：aftersales 售后 / install 安装
+    trip_start: Optional[str] = Form(None),   # 🆕 #444 出差出发（北京时间 YYYY-MM-DD HH:MM），必填
+    trip_end: Optional[str] = Form(None),     # 🆕 #444 出差结束，必填
     file: UploadFile = File(...),
     current: models.User = Depends(require_roles("as_worker")),
     db: AsyncSession = Depends(get_db),
@@ -172,11 +250,13 @@ async def create_aftersales(
     label = "安装" if kind == "install" else "售后"
     if kind != "install" and not problem.strip():
         raise HTTPException(400, "请填写售后问题")
+    trip_s, trip_e = _parse_trip(trip_start, trip_end)
     parsed = _parse_items(items)
     if parsed:
         cost = round(sum(float(x.amount or 0) for x in parsed), 2)
     if cost <= 0:
         raise HTTPException(400, f"请填写{label}费用" if not parsed else "费用清单合计必须大于 0")
+    await _check_items(db, parsed)
     p = None
     hist_name = (project_name or "").strip()
     if project_id:
@@ -190,18 +270,15 @@ async def create_aftersales(
         raise HTTPException(400, "请选择项目或填写以往项目名称")
     a = models.AfterSales(project_id=(p.id if p else None), project_name=hist_name, kind=kind,
                           problem=problem.strip() or ("安装登记" if kind == "install" else ""),
-                          cost=cost, status="pending", created_by=current.id)
+                          cost=cost, status="pending", created_by=current.id,
+                          trip_start=trip_s, trip_end=trip_e)
     db.add(a)
     await db.flush()
     biz = "install_mat" if kind == "install" else "aftersales_mat"
     att = await save_upload(db, file, biz_type=biz, biz_id=a.id,
                             project_id=(p.id if p else None), user=current)
     a.mat_file_id = att.id
-    for i, it in enumerate(parsed):
-        db.add(models.AfterSalesItem(
-            aftersales_id=a.id, name=it.name.strip()[:64], amount=float(it.amount or 0),
-            invoice_file_id=it.invoice_file_id, note=(it.note or "").strip()[:200] or None,
-            sort_order=i))
+    _add_items(db, a.id, parsed)
     await db.commit()
     summary = (problem.strip()[:20] + "…") if problem.strip() else "安装登记"
     disp = f"{p.code} {p.name}" if p else f"[以往]{hist_name}"
@@ -248,7 +325,7 @@ async def approve(
         miss = (await db.execute(select(func.count(models.AfterSalesItem.id)).where(
             models.AfterSalesItem.aftersales_id == a.id,
             models.AfterSalesItem.invoice_file_id.is_(None)))).scalar() or 0
-        warn = f"，其中 {miss} 行没传发票" if miss else ""
+        warn = f"，其中 {miss} 行没有发票、附的是付款记录" if miss else ""   # 🆕 #445 没票的行必附付款记录
         # 🆕 反馈#362：消息里必须写清**去哪办**。
         #   现场教训：王芹一直收得到这条通知，但她的「财务部→安装/售后费用」tab 被隐藏了，
         #   打开系统找不到在哪核对，3 单 ¥9,636 就这么卡了三天，系统一声不吭。
@@ -390,14 +467,11 @@ async def resubmit_invoice(
     new_cost = round(sum(float(x.amount or 0) for x in parsed), 2)
     if new_cost <= 0:
         raise HTTPException(400, "费用合计必须大于 0")
+    await _check_items(db, parsed)
     old_cost = float(a.cost or 0)
     await db.execute(models.AfterSalesItem.__table__.delete().where(
         models.AfterSalesItem.aftersales_id == a.id))
-    for i, it in enumerate(parsed):
-        db.add(models.AfterSalesItem(
-            aftersales_id=a.id, name=it.name.strip()[:64], amount=float(it.amount or 0),
-            invoice_file_id=it.invoice_file_id, note=(it.note or "").strip()[:200] or None,
-            sort_order=i))
+    _add_items(db, a.id, parsed)
     a.cost = new_cost
     a.pay_status = "checking"
     a.pay_note = None

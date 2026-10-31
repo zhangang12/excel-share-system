@@ -42,6 +42,9 @@ async def _audit(action):
         return list((await db.execute(select(models.AuditLog).where(models.AuditLog.action == action))).scalars().all())
 
 
+# 🆕 #444 出差时间必填
+TRIP = {"trip_start": "2026-10-20 08:00", "trip_end": "2026-10-22 18:30"}
+
 async def main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -194,22 +197,27 @@ async def main():
             await db.commit()
             pid = p.id
 
+        # 🆕 #445 没票的行必附付款记录；#444 出差时间必填
+        pp = (await c.post("/api/attachments", headers=Hw, data={"biz_type": "aftersales_payproof"},
+                           files=_pdf("付款截图.pdf"))).json()["id"]
+
         async def reg(items, problem):
+            items = [dict(it, pay_proof_file_ids=[pp]) for it in items]
             r = await c.post("/api/aftersales", headers=Hw,
                              data={"project_id": pid, "problem": problem, "cost": 1,
-                                   "items": json.dumps(items, ensure_ascii=False)}, files=_pdf("物料清单.pdf"))
+                                   "items": json.dumps(items, ensure_ascii=False), **TRIP}, files=_pdf("物料清单.pdf"))
             assert r.status_code == 200, r.text
             rows = (await c.get("/api/aftersales", headers=Hw)).json()["rows"]
             return [x for x in rows if x["problem"] == problem][0]["id"]
 
         r = await c.post("/api/aftersales", headers=Hw,
                          data={"project_id": pid, "problem": "负数行", "cost": 1,
-                               "items": json.dumps([{"name": "配件", "amount": 500}, {"name": "折让", "amount": -100}])},
+                               "items": json.dumps([{"name": "配件", "amount": 500}, {"name": "折让", "amount": -100}]), **TRIP},
                          files=_pdf())
         chk(r.status_code == 400 and "负数" in r.text, f"费用行负数被拒（原来悄悄抵扣合计）-> {r.status_code}")
         r = await c.post("/api/aftersales", headers=Hw,
                          data={"project_id": pid, "problem": "NaN 行", "cost": 1,
-                               "items": json.dumps([{"name": "配件", "amount": "nan"}])}, files=_pdf())
+                               "items": json.dumps([{"name": "配件", "amount": "nan"}]), **TRIP}, files=_pdf())
         chk(r.status_code == 400, f"NaN 金额被拒 -> {r.status_code}")
 
         a1 = await reg([{"name": "配件费", "amount": 500}], "轴承更换")
@@ -220,7 +228,7 @@ async def main():
                          data={"items": json.dumps([{"name": "配件费", "amount": 0}])})
         chk(r.status_code == 400 and "大于 0" in r.text, f"重传合计 0 被拒 -> {r.status_code}")
         r = await c.post(f"/api/aftersales/{a1}/resubmit-invoice", headers=Hw,
-                         data={"items": json.dumps([{"name": "配件费", "amount": 5000}])})
+                         data={"items": json.dumps([{"name": "配件费", "amount": 5000, "pay_proof_file_ids": [pp]}])})
         chk(r.status_code == 200, f"重传改成 5000（允许，但必须留痕）-> {r.status_code}")
         aud = await _audit("resubmit_invoice")
         chk(aud and "500.00" in (aud[-1].detail or "") and "5,000.00" in (aud[-1].detail or ""),

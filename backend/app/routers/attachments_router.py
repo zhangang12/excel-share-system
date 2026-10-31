@@ -41,6 +41,7 @@ ALLOWED_BIZ_TYPES = {
     "purchase_request",  # 🆕 #245/#246 请购单直接上传文件（电气清单等，替代逐行手填）
     "management_todo",  # 🆕 #311 管理层待办附图（图片）
     "aftersales_invoice",  # 🆕 售后/安装费用清单逐行的发票（财务核对报销时看这个）
+    "aftersales_payproof",  # 🆕 反馈#445 没有发票的费用行附的付款记录（转账 / 支付截图）
 }
 
 # 统一允许的扩展名（按业务需要可在端点层再细化）

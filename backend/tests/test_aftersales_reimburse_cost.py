@@ -47,6 +47,9 @@ def _f(name="发票.pdf"):
     return {"file": (name, io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")}
 
 
+# 🆕 #444 出差时间必填
+TRIP = {"trip_start": "2026-10-20 08:00", "trip_end": "2026-10-22 18:30"}
+
 async def main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -81,15 +84,19 @@ async def main():
         # 建个项目，售后挂到它上面
         r = await c.post("/api/projects", headers=H, json={"code": "2026-T99", "name": "成本测试机"})
         pid = r.json()["id"]
+        # 🆕 #445 没发票的行必须附付款记录：先传一张付款截图给下面没票的行用
+        r = await c.post("/api/attachments", headers=Hw, data={"biz_type": "aftersales_payproof"},
+                         files=_f("付款截图.png"))
+        pp = r.json()["id"]
 
         # ===== 1) 费用清单：合计自动算 =====
-        items = [{"name": "配件费", "amount": 800},
-                 {"name": "差旅", "amount": 350.5},
-                 {"name": "住宿", "amount": 249.5}]
+        items = [{"name": "配件费", "amount": 800, "pay_proof_file_ids": [pp]},
+                 {"name": "差旅", "amount": 350.5, "pay_proof_file_ids": [pp]},
+                 {"name": "住宿", "amount": 249.5, "pay_proof_file_ids": [pp]}]
         r = await c.post("/api/aftersales", headers=Hw,
                          data={"project_id": pid, "problem": "行星箱体异响，更换轴承",
                                "cost": 999999,          # 故意填个错的，必须被明细合计覆盖
-                               "items": json.dumps(items, ensure_ascii=False)},
+                               "items": json.dumps(items, ensure_ascii=False), **TRIP},
                          files=_f("物料清单.pdf"))
         chk(r.status_code == 200, f"带费用清单登记: {r.status_code} {r.text[:150]}")
         lst = (await c.get("/api/aftersales", headers=Hw)).json()
@@ -103,7 +110,7 @@ async def main():
         # 空名字带金额要拒
         r = await c.post("/api/aftersales", headers=Hw,
                          data={"project_id": pid, "problem": "x", "cost": 0,
-                               "items": json.dumps([{"name": "", "amount": 100}])},
+                               "items": json.dumps([{"name": "", "amount": 100}]), **TRIP},
                          files=_f())
         chk(r.status_code == 400 and "费用项" in r.text, f"有金额没填费用项被拒: {r.text[:90]}")
 
@@ -121,8 +128,8 @@ async def main():
         #   所以先在另一条记录上验，本条继续走退回流程。
         r2 = await c.post("/api/aftersales", headers=Hw,
                           data={"project_id": pid, "problem": "没票的零星差旅",
-                                "items": json.dumps([{"name": "打车", "amount": 88}],
-                                                    ensure_ascii=False)},
+                                "items": json.dumps([{"name": "打车", "amount": 88, "pay_proof_file_ids": [pp]}],
+                                                    ensure_ascii=False), **TRIP},
                           files=_f("物料清单2.pdf"))   # 登记必传物料清单
         chk(r2.status_code == 200, f"另建一条无票记录: {r2.status_code} {r2.text[:90]}")
         lst2 = (await c.get("/api/aftersales", headers=Hw)).json()["rows"]
