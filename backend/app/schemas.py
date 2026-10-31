@@ -376,19 +376,28 @@ class NextCodeOut(BaseModel):
 
 # ---------- 🆕 售后部 ----------
 class AfterSalesItemIn(BaseModel):
-    """🆕 费用清单一行。invoice_file_id 由前端先上传附件拿到 id 再带过来。"""
+    """🆕 费用清单一行。发票 / 付款记录由前端先上传附件拿到 id 再带过来。"""
     name: str
     amount: Money
-    invoice_file_id: Optional[int] = None
+    invoice_file_id: Optional[int] = None          # 老客户端只传这一个
+    invoice_file_ids: list[int] = []               # 🆕 #445 多张发票；几行共用 = 同一个 id 出现在几行
+    pay_proof_file_ids: list[int] = []             # 🆕 #445 没发票时必附的付款记录
     note: Optional[str] = None
+
+
+class AfterSalesFile(BaseModel):
+    id: int
+    name: Optional[str] = None
 
 
 class AfterSalesItemOut(BaseModel):
     id: int
     name: str
     amount: float
-    invoice_file_id: Optional[int] = None
+    invoice_file_id: Optional[int] = None          # = invoice_files 的第一张（兼容老客户端）
     invoice_file_name: Optional[str] = None
+    invoice_files: list[AfterSalesFile] = []       # 🆕 #445
+    pay_proof_files: list[AfterSalesFile] = []     # 🆕 #445
     note: Optional[str] = None
 
 
@@ -409,6 +418,11 @@ class AfterSalesRow(BaseModel):
     items: list[AfterSalesItemOut] = []
     # 明细里还有几行没传发票——财务核对时最先要看这个
     missing_invoice: int = 0
+    # 🆕 #445 发票、付款记录都没有的行（新登记不允许出现，存量老记录才会有）
+    missing_proof: int = 0
+    # 🆕 #444 出差出发/结束（北京时间「YYYY-MM-DD HH:MM」），存量为空
+    trip_start: Optional[str] = None
+    trip_end: Optional[str] = None
     mat_file_id: Optional[int] = None
     mat_file_name: Optional[str] = None
     created_by_name: Optional[str] = None

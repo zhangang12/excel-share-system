@@ -462,6 +462,11 @@ class AfterSales(Base):
     appr_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     appr_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     reject_reason: Mapped[Optional[str]] = mapped_column(Text)  # 🆕 #98 售后驳回原因
+    # 🆕 反馈#444（杨坛）：出差的出发 / 结束时间，审批和财务核对时据此看差旅、住宿报得合不合理。
+    #   存北京时间字符串「YYYY-MM-DD HH:MM」，不存带时区的 DateTime——
+    #   这是人在现场填的墙上时间，转一道 UTC 再转回来只会多出错的机会。新登记必填，存量为空。
+    trip_start: Mapped[Optional[str]] = mapped_column(String(16))
+    trip_end: Mapped[Optional[str]] = mapped_column(String(16))
 
     project: Mapped[Optional["Project"]] = relationship(lazy="joined")
     items: Mapped[list["AfterSalesItem"]] = relationship(
@@ -485,7 +490,14 @@ class AfterSalesItem(Base):
     amount: Mapped[float] = mapped_column(default=0)
     # 发票附件。选填——有些费用当场拿不到发票，不能因此卡住登记；财务核对时再催。
     invoice_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("attachments.id"))
-    note: Mapped[Optional[str]] = mapped_column(String(200))
+    # 🆕 反馈#445（杨坛）：一行可以传好几张发票（差旅一行好几张车票），几行也可以共用同一张发票
+    #   （一张增值税票里含几样配件）——共用就是同一个附件 id 出现在几行的列表里。
+    #   invoice_file_id 仍写**第一张**，老客户端、财务老界面、按 invoice_file_id IS NULL 数缺票的 SQL 都照旧能用；
+    #   存量行这一列为空，读的时候退回 [invoice_file_id]（见 aftersales_router._inv_ids），不做回填。
+    invoice_file_ids: Mapped[Optional[list]] = mapped_column(PortableJSON())
+    # 🆕 反馈#445：没有发票的行必须附付款记录（转账 / 支付截图），可以多张
+    pay_proof_file_ids: Mapped[Optional[list]] = mapped_column(PortableJSON())
+    note: Mapped[Optional[str]] = mapped_column(String(200))     # 🆕 #445 起登记弹窗里可填（原来有列没界面）
     sort_order: Mapped[int] = mapped_column(default=0)
 
     parent: Mapped["AfterSales"] = relationship(back_populates="items")

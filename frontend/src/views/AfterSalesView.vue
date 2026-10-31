@@ -7,17 +7,14 @@ import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/utils/format'
-import { moneyParser } from '@/utils/money'
+import { fmtTripDuration, fmtTripRange, tripMinutes } from '@/utils/trip'
+import AfterSalesCostRows from '@/components/AfterSalesCostRows.vue'
+import { newCostItem, toCostItem, costItemPayload, filledCostRows, costRowsProblem, type CostItem } from '@/types/aftersales'
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import FilePicker from '@/components/FilePicker.vue'
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
-interface Att { id: number; name: string }
-interface CostItem {
-  id?: number; name: string; amount: number
-  invoice_file_id?: number | null; invoice_file_name?: string | null; note?: string | null
-}
 interface Row {
   id: number; project_id: number; kind: string; code: string; name: string
   problem: string; cost: number; status: string
@@ -25,6 +22,8 @@ interface Row {
   pay_status?: string | null; pay_note?: string | null
   pay_by_name?: string | null; pay_at?: string | null
   items?: CostItem[]; missing_invoice?: number
+  missing_proof?: number   // 🆕 #445 发票、付款记录都没有的行（只有存量老记录会有）
+  trip_start?: string | null; trip_end?: string | null   // 🆕 #444 出差出发/结束（北京时间）
   mat_file_id?: number | null; mat_file_name?: string | null
   created_by_name?: string | null; created_at: string
 }
@@ -82,46 +81,40 @@ const regForm = reactive({
   problem: '',
   // 🆕 费用改成清单：每行 费用项+金额+发票。总额由明细自动合计，不再手填——
   //    手填的总额跟发票必然对不上，财务核对时全是扯皮。
+  //    🆕 #445 每行可多张发票 / 几行共用一张 / 没发票附付款记录 / 备注，编辑交给 AfterSalesCostRows
   items: [] as CostItem[],
   file: null as File | null,
   kind: 'aftersales',
+  // 🆕 反馈#444（杨坛）：出差出发 / 结束时间，必填；选好后自动显示总时长
+  trip_start: '',
+  trip_end: '',
 })
 const regTotal = computed(() =>
   regForm.items.reduce((s, it) => s + (Number(it.amount) || 0), 0))
-function addCostRow() { regForm.items.push({ name: '', amount: 0, invoice_file_id: null }) }
-function delCostRow(i: number) { regForm.items.splice(i, 1) }
-
-// 发票单独先上传，拿到附件 id 再随清单提交（一行一张，跟金额对得上）
-const invUploading = ref<number | null>(null)
-async function pickInvoice(i: number, f: File | null) {
-  if (!f) { regForm.items[i].invoice_file_id = null; regForm.items[i].invoice_file_name = null; return }
-  invUploading.value = i
-  try {
-    const fd = new FormData()
-    fd.append('file', f)
-    fd.append('biz_type', 'aftersales_invoice')
-    const { data } = await http.post<Att>('/attachments', fd)
-    regForm.items[i].invoice_file_id = data.id
-    regForm.items[i].invoice_file_name = data.name
-  } catch { /* 全局拦截器已提示 */ } finally { invUploading.value = null }
-}
+const regTripText = computed(() => {
+  if (!regForm.trip_start || !regForm.trip_end) return ''
+  return fmtTripDuration(regForm.trip_start, regForm.trip_end) || '结束时间要晚于出发时间'
+})
 const isInstall = computed(() => regForm.kind === 'install')
 const projOptions = ref<{ id: number; code: string; name: string }[]>([])
 const submitting = ref(false)
 async function openReg(kind: 'aftersales' | 'install' = 'aftersales') {
   projOptions.value = (await http.get<{ id: number; code: string; name: string }[]>('/aftersales/projects')).data
   regForm.projectVal = undefined; regForm.problem = ''; regForm.file = null; regForm.kind = kind
-  regForm.items = [{ name: '', amount: 0, invoice_file_id: null }]
+  regForm.trip_start = ''; regForm.trip_end = ''
+  regForm.items = [newCostItem()]
   regVisible.value = true
 }
 async function submitReg() {
   const label = isInstall.value ? '安装' : '售后'
   if (regForm.projectVal === undefined || regForm.projectVal === '') { ElMessage.warning('请选择项目或填写以往项目名称'); return }
   if (!isInstall.value && !regForm.problem.trim()) { ElMessage.warning('请填写售后问题'); return }
-  const rows_ = regForm.items.filter(it => it.name.trim() || Number(it.amount))
+  if (!regForm.trip_start || !regForm.trip_end) { ElMessage.warning('请填写出差的出发时间和结束时间'); return }
+  if ((tripMinutes(regForm.trip_start, regForm.trip_end) ?? 0) <= 0) { ElMessage.warning('出差结束时间要晚于出发时间'); return }
+  const rows_ = filledCostRows(regForm.items)
   if (!rows_.length) { ElMessage.warning(`请至少填一行${label}费用`); return }
-  const bad = rows_.find(it => !it.name.trim())
-  if (bad) { ElMessage.warning('有金额没填费用项名称'); return }
+  const prob = costRowsProblem(regForm.items)
+  if (prob) { ElMessage.warning(prob); return }
   if (regTotal.value <= 0) { ElMessage.warning('费用合计必须大于 0'); return }
   if (!regForm.file) { ElMessage.warning(isInstall.value ? '请上传安装清单' : '请上传售后物料清单'); return }
   submitting.value = true
@@ -131,11 +124,10 @@ async function submitReg() {
     if (typeof regForm.projectVal === 'number') fd.append('project_id', String(regForm.projectVal))
     else fd.append('project_name', String(regForm.projectVal).trim())
     fd.append('problem', regForm.problem)
-    fd.append('items', JSON.stringify(rows_.map(it => ({
-      name: it.name.trim(), amount: Number(it.amount) || 0,
-      invoice_file_id: it.invoice_file_id || null, note: it.note || null,
-    }))))
+    fd.append('items', JSON.stringify(rows_.map(costItemPayload)))
     fd.append('kind', regForm.kind)
+    fd.append('trip_start', regForm.trip_start)
+    fd.append('trip_end', regForm.trip_end)
     fd.append('file', regForm.file)
     await http.post('/aftersales', fd)
     ElMessage.success('已登记，等待售后主管审批')
@@ -148,14 +140,14 @@ const actingId = ref<number | null>(null)
 const canFinance = computed(() => auth.hasRole('finance', 'admin', 'manager'))
 
 async function doReimburse(r: Row) {
-  if (r.missing_invoice) {
-    ElMessage.warning(`还有 ${r.missing_invoice} 行没传发票，请先退回让登记人补齐`)
-    return
-  }
+  // 🆕 #445 没票的行现在必附付款记录，不再拦（后端 2026-08-13 起也不拦），只提醒——和财务部那张表同口径
+  const warn = r.missing_invoice
+    ? `\n\n⚠️ 其中 ${r.missing_invoice} 行没有发票${r.missing_proof ? `（${r.missing_proof} 行连付款记录也没有）` : '，附的是付款记录'}，确认后仍会安排报销（记入审计）。`
+    : ''
   try {
     await ElMessageBox.confirm(
-      `确认「${r.code}」的报销明细与发票核对无误，安排报销 ${fmtMoney(r.cost)}？`,
-      '安排报销', { confirmButtonText: '核对无误，安排报销' })
+      `确认「${r.code}」的报销明细与发票核对无误，安排报销 ${fmtMoney(r.cost)}？${warn}`,
+      '安排报销', { confirmButtonText: '核对无误，安排报销', type: r.missing_invoice ? 'warning' : undefined })
   } catch { return }
   actingId.value = r.id
   try {
@@ -187,35 +179,23 @@ async function doPayReject(r: Row) {
 const fixVisible = ref(false)
 const fixRow = ref<Row | null>(null)
 const fixItems = ref<CostItem[]>([])
-const fixTotal = computed(() => fixItems.value.reduce((s, it) => s + (Number(it.amount) || 0), 0))
 function openFixInvoice(r: Row) {
   fixRow.value = r
-  fixItems.value = (r.items || []).map(it => ({ ...it }))
-  if (!fixItems.value.length) fixItems.value = [{ name: '', amount: 0, invoice_file_id: null }]
+  fixItems.value = (r.items || []).map(toCostItem)
+  if (!fixItems.value.length) fixItems.value = [newCostItem()]
   fixVisible.value = true
-}
-async function pickFixInvoice(i: number, f: File | null) {
-  if (!f) { fixItems.value[i].invoice_file_id = null; fixItems.value[i].invoice_file_name = null; return }
-  const fd = new FormData()
-  fd.append('file', f); fd.append('biz_type', 'aftersales_invoice')
-  const { data } = await http.post<Att>('/attachments', fd)
-  fixItems.value[i].invoice_file_id = data.id
-  fixItems.value[i].invoice_file_name = data.name
 }
 async function submitFix() {
   if (!fixRow.value) return
-  const rows_ = fixItems.value.filter(it => it.name.trim() || Number(it.amount))
+  const rows_ = filledCostRows(fixItems.value)
   if (!rows_.length) { ElMessage.warning('费用清单不能为空'); return }
-  if (rows_.some(it => !it.name.trim())) { ElMessage.warning('有金额没填费用项名称'); return }
-  const miss = rows_.filter(it => !it.invoice_file_id).length
-  if (miss) { ElMessage.warning(`还有 ${miss} 行没传发票，财务核对时还会被退回来`); return }
+  // 🆕 #445 和登记同一条规矩：没发票的行必须附付款记录
+  const prob = costRowsProblem(fixItems.value)
+  if (prob) { ElMessage.warning(prob); return }
   submitting.value = true
   try {
     const fd = new FormData()
-    fd.append('items', JSON.stringify(rows_.map(it => ({
-      name: it.name.trim(), amount: Number(it.amount) || 0,
-      invoice_file_id: it.invoice_file_id || null, note: it.note || null,
-    }))))
+    fd.append('items', JSON.stringify(rows_.map(costItemPayload)))
     await http.post(`/aftersales/${fixRow.value.id}/resubmit-invoice`, fd)
     ElMessage.success('已重新提交财务核对')
     fixVisible.value = false
@@ -246,25 +226,41 @@ async function deleteRow(r: Row) {
 const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string))
 
+// 🆕 #445 一行的凭证情况：几张发票 / 没票附了付款记录 / 什么都没有（只有存量老记录）
+function proofText(it: CostItem): { t: string; c: string } {
+  const inv = it.invoice_files?.length || (it.invoice_file_id ? 1 : 0)
+  const pay = it.pay_proof_files?.length || 0
+  if (inv) return { t: `发票 ${inv} 张${pay ? ` + 付款记录 ${pay}` : ''}`, c: '#67c23a' }
+  if (pay) return { t: `无发票，付款记录 ${pay} 张`, c: '#e6a23c' }
+  return { t: '缺发票', c: '#f56c6c' }
+}
+// 🆕 #444 出差时间一行字
+function tripLine(r: Row): string {
+  return r.trip_start && r.trip_end
+    ? `出差 ${fmtTripRange(r.trip_start, r.trip_end)}，共 ${fmtTripDuration(r.trip_start, r.trip_end)}`
+    : ''
+}
+
 function costListHtml(r: Row): string {
   const its = r.items || []
   if (!its.length) return '<div style="color:#999">（旧流程登记的记录没有费用清单）</div>'
-  const rows_ = its.map(it => `<tr>
-      <td style="padding:3px 10px 3px 0">${esc(it.name)}</td>
+  const rows_ = its.map(it => { const p = proofText(it); return `<tr>
+      <td style="padding:3px 10px 3px 0">${esc(it.name)}${it.note ? `<div style="color:#909399;font-size:12px">${esc(it.note)}</div>` : ''}</td>
       <td style="padding:3px 10px 3px 0;text-align:right;white-space:nowrap">${fmtMoney(it.amount)}</td>
-      <td style="padding:3px 0;white-space:nowrap;color:${it.invoice_file_id ? '#67c23a' : '#f56c6c'}">${it.invoice_file_id ? '有发票' : '缺发票'}</td>
-    </tr>`).join('')
+      <td style="padding:3px 0;white-space:nowrap;color:${p.c}">${p.t}</td>
+    </tr>` }).join('')
   return `<div style="max-height:38vh;overflow:auto"><table style="width:100%;border-collapse:collapse">${rows_}</table></div>`
 }
 
 async function approve(r: Row, ok: boolean) {
   if (ok) {
     try {
-      const miss = (r.items || []).filter(it => !it.invoice_file_id).length
+      const miss = r.missing_invoice || 0
       await ElMessageBox.confirm(
-        `<div style="margin-bottom:6px">费用清单（共 <b>${fmtMoney(r.cost)}</b>）：</div>`
+        (tripLine(r) ? `<div style="margin-bottom:6px">${esc(tripLine(r))}</div>` : '')
+        + `<div style="margin-bottom:6px">费用清单（共 <b>${fmtMoney(r.cost)}</b>）：</div>`
         + costListHtml(r)
-        + (miss ? `<div style="margin-top:8px;color:#e6a23c">⚠ 有 ${miss} 项没传发票，财务核对时会被退回</div>` : '')
+        + (miss ? `<div style="margin-top:8px;color:#e6a23c">⚠ 有 ${miss} 项没有发票${r.missing_proof ? '，其中有的连付款记录也没有' : '，附的是付款记录'}</div>` : '')
         + '<div style="margin-top:8px">通过后将自动把售后费用同步到财务部，确认通过？</div>',
         '审批通过', { type: 'warning', dangerouslyUseHTMLString: true })
     } catch { return }
@@ -338,12 +334,18 @@ async function approve(r: Row, ok: boolean) {
         <el-table-column type="expand">
           <template #default="{ row }">
             <div class="as-detail">
+              <!-- 🆕 #444 出差时间 -->
+              <div v-if="row.trip_start" class="as-trip">出差 {{ fmtTripRange(row.trip_start, row.trip_end) }}，共 <b>{{ fmtTripDuration(row.trip_start, row.trip_end) }}</b></div>
+              <!-- 🆕 #445 一行可能有好几张发票、付款记录、备注 -->
               <div v-for="(it, i) in (row.items || [])" :key="it.id || i" class="as-item">
                 <span class="as-nm">{{ it.name }}</span>
                 <span class="as-amt">{{ fmtMoney(it.amount) }}</span>
-                <el-button v-if="it.invoice_file_id" size="small" link type="primary"
-                           @click="downloadAttachment({ id: it.invoice_file_id, name: it.invoice_file_name || '发票' })">查看发票</el-button>
-                <span v-else class="miss">缺发票</span>
+                <el-button v-for="(f, k) in toCostItem(it).invoice_files" :key="'i' + f.id" size="small" link type="primary"
+                           @click="downloadAttachment({ id: f.id, name: f.name || '发票' })">发票{{ toCostItem(it).invoice_files.length > 1 ? k + 1 : '' }}</el-button>
+                <el-button v-for="(f, k) in it.pay_proof_files || []" :key="'p' + f.id" size="small" link type="warning"
+                           @click="downloadAttachment({ id: f.id, name: f.name || '付款记录' })">付款记录{{ (it.pay_proof_files || []).length > 1 ? k + 1 : '' }}</el-button>
+                <span v-if="!toCostItem(it).invoice_files.length && !(it.pay_proof_files || []).length" class="miss">缺发票</span>
+                <span v-if="it.note" class="muted small">{{ it.note }}</span>
               </div>
               <div v-if="!(row.items || []).length" class="muted small">旧流程登记的记录没有费用清单</div>
               <div v-if="row.pay_note" class="muted small">备注：{{ row.pay_note }}</div>
@@ -370,12 +372,23 @@ async function approve(r: Row, ok: boolean) {
             <div class="muted small">{{ (row.created_at || '').slice(5, 16).replace('T', ' ') }}</div>
           </template>
         </el-table-column>
+        <!-- 🆕 #444（杨坛）出差时长：审批时对着差旅、住宿看 -->
+        <el-table-column label="出差" width="130">
+          <template #default="{ row }">
+            <template v-if="row.trip_start">
+              <div>{{ fmtTripDuration(row.trip_start, row.trip_end) }}</div>
+              <div class="muted small">{{ fmtTripRange(row.trip_start, row.trip_end) }}</div>
+            </template>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="费用" width="120" align="right">
           <template #default="{ row }">
             <div>{{ fmtMoney(row.cost) }}</div>
             <!-- 反馈#357：几项费用一眼可见，不用展开也知道这钱是几笔凑的 -->
             <div v-if="(row.items || []).length" class="muted small">{{ row.items.length }} 项</div>
-            <div v-if="row.missing_invoice" class="miss small">缺 {{ row.missing_invoice }} 张发票</div>
+            <div v-if="row.missing_proof" class="miss small">{{ row.missing_proof }} 行缺发票</div>
+            <div v-else-if="row.missing_invoice" class="muted small">{{ row.missing_invoice }} 行附付款记录</div>
           </template>
         </el-table-column>
         <el-table-column label="清单" min-width="150">
@@ -429,7 +442,7 @@ async function approve(r: Row, ok: boolean) {
       <EmptyHint v-if="!loading && !rows.length" text="暂无售后记录" />
     </el-card>
 
-    <el-dialog v-model="regVisible" :title="isInstall ? '登记安装' : '登记售后'" width="520px">
+    <el-dialog v-model="regVisible" :title="isInstall ? '登记安装' : '登记售后'" width="720px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
                 :title="isInstall
                   ? '选项目 + 逐行填安装费用并附发票 + 上传安装清单 → 售后主管审批 → 财务核对发票后安排报销'
@@ -441,6 +454,19 @@ async function approve(r: Row, ok: boolean) {
             <el-option v-for="p in projOptions" :key="p.id" :label="`${p.code} · ${p.name}`" :value="p.id" />
           </el-select>
         </el-form-item>
+        <!-- 🆕 反馈#444（杨坛）：出差出发 / 结束时间，选好自动算总时长 -->
+        <el-form-item label="出差时间" required>
+          <div class="trip-row">
+            <el-date-picker v-model="regForm.trip_start" type="datetime" placeholder="出发时间"
+                            format="YYYY-MM-DD HH:mm" value-format="YYYY-MM-DD HH:mm" :clearable="false" style="width: 200px" />
+            <span class="muted">至</span>
+            <el-date-picker v-model="regForm.trip_end" type="datetime" placeholder="结束时间"
+                            format="YYYY-MM-DD HH:mm" value-format="YYYY-MM-DD HH:mm" :clearable="false" style="width: 200px" />
+            <span v-if="regTripText" class="trip-len" :class="{ bad: !fmtTripDuration(regForm.trip_start, regForm.trip_end) }">
+              {{ fmtTripDuration(regForm.trip_start, regForm.trip_end) ? `共 ${regTripText}` : regTripText }}
+            </span>
+          </div>
+        </el-form-item>
         <el-form-item v-if="!isInstall" label="售后问题" required>
           <el-input v-model="regForm.problem" type="textarea" :rows="3" placeholder="描述客户反馈的售后问题与处理情况" />
         </el-form-item>
@@ -449,25 +475,10 @@ async function approve(r: Row, ok: boolean) {
         </el-form-item>
         <el-form-item :label="isInstall ? '安装费用清单' : '售后费用清单'" required>
           <div class="cost-list">
-            <div v-for="(it, i) in regForm.items" :key="i" class="cost-row">
-              <el-input v-model="it.name" placeholder="费用项，如 配件费/差旅/住宿" class="c-name" />
-              <!-- 🆕 金额审计：费用行不能为负（原来 -500 会悄悄抵扣合计）；parser 防千分位粘贴截断 -->
-              <el-input-number v-model="it.amount" :controls="false" :precision="2" :min="0" :parser="moneyParser"
-                               placeholder="金额" class="c-amt" />
-              <FilePicker :model-value="null" accept=".pdf,.jpg,.jpeg,.png,.ofd"
-                          :placeholder="it.invoice_file_name || '发票'"
-                          class="c-inv"
-                          @update:model-value="(f: File | null) => pickInvoice(i, f)" />
-              <el-button link type="danger" :icon="Delete" class="c-del"
-                         :disabled="regForm.items.length <= 1" @click="delCostRow(i)" />
-            </div>
-            <div class="cost-foot">
-              <el-button link type="primary" :icon="Plus" @click="addCostRow">添加一行</el-button>
-              <span class="cost-total">合计 <b>{{ fmtMoney(regTotal) }}</b></span>
-            </div>
+            <AfterSalesCostRows v-model="regForm.items" />
             <div class="muted small">
-              发票选填，但财务核对时必须齐——缺发票的行会被退回来重传。
-              差旅、住宿这类也在这里加一行，不用再去 OA 报销。
+              一行可以传好几张发票；一张发票包含几项费用的，在后面几行点「用已传的发票」共用。
+              没有发票的行必须传付款记录（转账或支付截图）。差旅、住宿这类也在这里加一行，不用再去 OA 报销。
             </div>
           </div>
         </el-form-item>
@@ -482,25 +493,12 @@ async function approve(r: Row, ok: boolean) {
     </el-dialog>
 
     <!-- 🆕 发票被财务退回后，登记人在这里改完再交回去（整份清单覆盖式替换） -->
-    <el-dialog v-model="fixVisible" title="重传发票" width="560px">
+    <el-dialog v-model="fixVisible" title="重传发票" width="720px">
       <el-alert v-if="fixRow?.pay_note" type="warning" :closable="false" style="margin-bottom:12px"
                 :title="`财务退回原因：${fixRow.pay_note}`" />
       <div class="cost-list">
-        <div v-for="(it, i) in fixItems" :key="i" class="cost-row">
-          <el-input v-model="it.name" placeholder="费用项" class="c-name" />
-          <el-input-number v-model="it.amount" :controls="false" :precision="2" :min="0" :parser="moneyParser" class="c-amt" />
-          <FilePicker :model-value="null" accept=".pdf,.jpg,.jpeg,.png,.ofd"
-                      :placeholder="it.invoice_file_name || '发票'" class="c-inv"
-                      @update:model-value="(f: File | null) => pickFixInvoice(i, f)" />
-          <el-button link type="danger" :icon="Delete" class="c-del"
-                     :disabled="fixItems.length <= 1" @click="fixItems.splice(i, 1)" />
-        </div>
-        <div class="cost-foot">
-          <el-button link type="primary" :icon="Plus"
-                     @click="fixItems.push({ name: '', amount: 0, invoice_file_id: null })">添加一行</el-button>
-          <span class="cost-total">合计 <b>{{ fmtMoney(fixTotal) }}</b></span>
-        </div>
-        <div class="muted small">改完直接回到财务核对，不用售后主管再批一遍。</div>
+        <AfterSalesCostRows v-model="fixItems" />
+        <div class="muted small">改完直接回到财务核对，不用售后主管再批一遍。没有发票的行要传付款记录。</div>
       </div>
       <template #footer>
         <el-button @click="fixVisible = false">取消</el-button>
@@ -512,17 +510,11 @@ async function approve(r: Row, ok: boolean) {
 
 <style scoped>
 .cost-list { width: 100%; }
-.cost-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-.cost-row .c-name { flex: 2 1 0; min-width: 110px; }
-.cost-row .c-amt { flex: 1 1 0; min-width: 90px; }
-.cost-row .c-inv { flex: 1.4 1 0; min-width: 100px; }
-.cost-row .c-del { flex: none; }
-.cost-foot { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-.cost-total b { font-size: 15px; }
-@media (max-width: 640px) {
-  .cost-row { flex-wrap: wrap; }
-  .cost-row .c-name { flex-basis: 100%; }
-}
+/* 🆕 #444 出差时间 */
+.trip-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.trip-len { font-weight: 600; color: var(--el-color-success-dark-2, #529b2e); }
+.trip-len.bad { color: var(--el-color-danger); font-weight: 400; }
+.as-trip { font-size: 13px; line-height: 2; color: var(--el-text-color-regular); }
 .code { color: var(--primary, #2563eb); }
 /* 🆕 #392 台账筛选条 */
 .as-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }

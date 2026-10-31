@@ -17,6 +17,9 @@ FAIL = []
 def chk(c, m):
     if not c: FAIL.append(m); print("FAIL:", m)
 
+# 🆕 #444 出差时间必填
+TRIP = {"trip_start": "2026-10-20 08:00", "trip_end": "2026-10-22 18:30"}
+
 async def main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -76,11 +79,11 @@ async def main():
 
         # 登记缺物料清单（必传）
         r = await c.post("/api/aftersales", headers=Haw,
-                         data={"project_id":str(pid),"problem":"机封渗漏","cost":"1200"})
+                         data={"project_id":str(pid),"problem":"机封渗漏","cost":"1200",**TRIP})
         chk(r.status_code==422 or r.status_code==400, f"缺物料清单被拒: {r.status_code}")
         # 完整登记
         r = await c.post("/api/aftersales", headers=Haw,
-                         data={"project_id":str(pid),"problem":"出厂后机封渗漏，上门更换","cost":"1200"},
+                         data={"project_id":str(pid),"problem":"出厂后机封渗漏，上门更换","cost":"1200",**TRIP},
                          files={"file":("售后物料清单.xlsx", io.BytesIO(b"X"), "application/vnd.ms-excel")})
         chk(r.status_code==200, f"售后登记: {r.text[:150]}")
         msgs = (await c.get("/api/messages", headers=Hal)).json()
@@ -108,7 +111,7 @@ async def main():
 
         # 第二条登记后驳回 → 不同步财务
         r = await c.post("/api/aftersales", headers=Haw,
-                         data={"project_id":str(pid),"problem":"测试驳回","cost":"500"},
+                         data={"project_id":str(pid),"problem":"测试驳回","cost":"500",**TRIP},
                          files={"file":("x.pdf", io.BytesIO(b"P"), "application/pdf")})
         aid2 = (await c.get("/api/aftersales", headers=Haw)).json()["rows"][0]["id"]
         await c.post(f"/api/aftersales/{aid2}/reject", headers=Hal, data={"reason":"费用与实际不符"})

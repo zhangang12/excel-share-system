@@ -9,6 +9,8 @@ import { downloadAttachment } from '@/api/orders'
 import { fmtMoney } from '@/api/sales'
 import { moneyParser } from '@/utils/money'
 import { specOf } from '@/utils/format'   // 反馈#387：名称里已含规格时别再拼一遍
+import { fmtTripDuration, fmtTripRange } from '@/utils/trip'   // 🆕 #444 出差时长
+import { toCostItem, type AsFile } from '@/types/aftersales'   // 🆕 #445 多张发票 / 付款记录
 import EmptyHint from '@/components/EmptyHint.vue'
 import { useAuthStore } from '@/stores/auth'
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
@@ -50,12 +52,15 @@ type ViewRow = InvoiceRow & { _isBatch: boolean; _count: number; _codes: string 
 interface AsItem {
   id: number; name: string; amount: number
   invoice_file_id?: number | null; invoice_file_name?: string | null
+  invoice_files?: AsFile[]; pay_proof_files?: AsFile[]; note?: string | null   // 🆕 #445
 }
 interface AsRow {
   id: number; kind: string; code: string; name: string; problem: string; cost: number
   // 🆕 报销支腿 + 逐行发票
   pay_status?: string | null; pay_note?: string | null
   items?: AsItem[]; missing_invoice?: number
+  missing_proof?: number                                  // 🆕 #445 发票、付款记录都没有的行
+  trip_start?: string | null; trip_end?: string | null   // 🆕 #444 出差出发/结束（北京时间）
   mat_file_id?: number | null; mat_file_name?: string | null
   created_by_name?: string | null; created_at?: string   // 🆕 #361 谁报的
 }
@@ -626,7 +631,7 @@ async function asReimburse(row: AsRow) {
   //   原来这里 return 掉，财务只能一直退回、单子永远走不完——拦不住乱报，只拦住了正常报销。
   //   改成二次确认时把缺几张写在弹窗里，确认后照走；后端也会把"缺 N 张仍安排报销"记进审计。
   const warn = row.missing_invoice
-    ? `\n\n⚠️ 其中 ${row.missing_invoice} 行没有发票，确认后仍会安排报销（此操作会记入审计）。`
+    ? `\n\n⚠️ 其中 ${row.missing_invoice} 行没有发票${row.missing_proof ? `（${row.missing_proof} 行连付款记录也没有）` : '，附的是付款记录'}，确认后仍会安排报销（此操作会记入审计）。`
     : ''
   try {
     await ElMessageBox.confirm(
@@ -806,19 +811,25 @@ async function revokeInvoice(row: ViewRow) {
               <template v-else>共 {{ aftersales.length }} 条</template>
             </span>
           </div>
-          <!-- ⚠️ summary-method 是**按数组下标**对列的：这张表 12 列，合计落在下标 7（费用）。
-               加/删列必须同步改这个数组，否则「合计」会落到隔壁列上（#361 踩过）。 -->
-          <el-table show-overflow-tooltip :data="filteredAftersales" stripe show-summary :summary-method="() => ['', '合计', '', '', '', '', '', fmtMoney(asShownTotal), '', '', '', '']" max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
+          <!-- ⚠️ summary-method 是**按数组下标**对列的：这张表 13 列，合计落在下标 8（费用）。
+               加/删列必须同步改这个数组，否则「合计」会落到隔壁列上（#361 踩过；#444 加「出差」列时同步改过）。 -->
+          <el-table show-overflow-tooltip :data="filteredAftersales" stripe show-summary :summary-method="() => ['', '合计', '', '', '', '', '', '', fmtMoney(asShownTotal), '', '', '', '']" max-height="calc(100vh - 290px)" :scrollbar-always-on="true">
             <!-- 明细放展开行：一条售后动辄三五行费用，摊成列会把表挤到要横向滚动 -->
             <el-table-column type="expand">
               <template #default="{ row }">
                 <div class="as-detail">
+                  <!-- 🆕 #444 出差时间：核对差旅、住宿报得合不合理 -->
+                  <div v-if="row.trip_start" class="as-item">出差 {{ fmtTripRange(row.trip_start, row.trip_end) }}，共 <b>{{ fmtTripDuration(row.trip_start, row.trip_end) }}</b></div>
+                  <!-- 🆕 #445 一行可能有好几张发票、付款记录、备注 -->
                   <div v-for="it in (row.items || [])" :key="it.id" class="as-item">
                     <span class="as-nm">{{ it.name }}</span>
                     <span class="as-amt">{{ fmtMoney(it.amount) }}</span>
-                    <el-button v-if="it.invoice_file_id" size="small" link type="primary"
-                               @click="downloadAttachment({ id: it.invoice_file_id, name: it.invoice_file_name || '发票' })">查看发票</el-button>
-                    <span v-else class="miss">缺发票</span>
+                    <el-button v-for="(f, k) in toCostItem(it).invoice_files" :key="'i' + f.id" size="small" link type="primary"
+                               @click="downloadAttachment({ id: f.id, name: f.name || '发票' })">发票{{ toCostItem(it).invoice_files.length > 1 ? k + 1 : '' }}</el-button>
+                    <el-button v-for="(f, k) in it.pay_proof_files || []" :key="'p' + f.id" size="small" link type="warning"
+                               @click="downloadAttachment({ id: f.id, name: f.name || '付款记录' })">付款记录{{ (it.pay_proof_files || []).length > 1 ? k + 1 : '' }}</el-button>
+                    <span v-if="!toCostItem(it).invoice_files.length && !(it.pay_proof_files || []).length" class="miss">缺发票</span>
+                    <span v-if="it.note" class="muted small">{{ it.note }}</span>
                   </div>
                   <div v-if="!(row.items || []).length" class="muted small">旧流程登记的记录没有费用清单</div>
                   <div v-if="row.pay_note" class="muted small">备注：{{ row.pay_note }}</div>
@@ -839,11 +850,23 @@ async function revokeInvoice(row: ViewRow) {
                 <div class="muted small">{{ (row.created_at || '').slice(5, 16).replace('T', ' ') }}</div>
               </template>
             </el-table-column>
+            <!-- 🆕 #444 出差时长（加了这一列，上面 summary-method 数组要同步，见注释） -->
+            <el-table-column label="出差" width="130">
+              <template #default="{ row }">
+                <template v-if="row.trip_start">
+                  <div>{{ fmtTripDuration(row.trip_start, row.trip_end) }}</div>
+                  <div class="muted small">{{ fmtTripRange(row.trip_start, row.trip_end) }}</div>
+                </template>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="费用" width="130" align="right">
               <template #default="{ row }">
                 <div>{{ fmtMoney(row.cost) }}</div>
-                <!-- 缺发票是财务最先要看的，直接标在金额下面，不用横向滚动去找 -->
-                <div v-if="row.missing_invoice" class="miss small">缺 {{ row.missing_invoice }} 张发票</div>
+                <!-- 缺发票是财务最先要看的，直接标在金额下面，不用横向滚动去找。
+                     🆕 #445 没票的行附了付款记录的，和真缺凭证的分开写 -->
+                <div v-if="row.missing_proof" class="miss small">{{ row.missing_proof }} 行缺发票</div>
+                <div v-else-if="row.missing_invoice" class="muted small">{{ row.missing_invoice }} 行附付款记录</div>
               </template>
             </el-table-column>
             <el-table-column label="清单" min-width="140">
