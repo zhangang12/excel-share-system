@@ -79,8 +79,11 @@ if [[ "$NEW" != "$CUR" ]]; then
     console.log('  版本号已改并通过 JSON 校验');
   \""
   # 本地先验一次 npm ci，别把问题留给 CI 去发现
+  # ⚠️ 2026-11-01 加 --ignore-scripts：这一步只为验 lock 和 package.json 对得上（CI 的 npm ci 会因此 EUSAGE），
+  #    不需要 electron 的 postinstall 去 GitHub 下 ~100MB 的 Electron 本体——网慢时它会一直挂着，
+  #    而输出又被重定向掉了，看起来像脚本卡死（当天卡了 10 分钟）。
   say "本地预检 npm ci（CI 挂在这一步的话本地也会挂）"
-  run "rm -rf /tmp/ship-ci && mkdir -p /tmp/ship-ci && cp desktop/package.json desktop/package-lock.json /tmp/ship-ci/ && (cd /tmp/ship-ci && npm ci >/dev/null 2>&1) && echo '  ✅ npm ci 通过' && rm -rf /tmp/ship-ci"
+  run "rm -rf /tmp/ship-ci && mkdir -p /tmp/ship-ci && cp desktop/package.json desktop/package-lock.json /tmp/ship-ci/ && (cd /tmp/ship-ci && npm ci --ignore-scripts >/dev/null 2>&1) && echo '  ✅ npm ci 通过' && rm -rf /tmp/ship-ci"
   run "git add desktop/package.json desktop/package-lock.json"
   run "git commit -q -m '客户端 $NEW' || true"
   run "git push -q \"https://\${GITHUB_PAT}@github.com/$REPO.git\" main"
@@ -143,7 +146,16 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 AID=$(curl -s "${GH[@]}" "https://api.github.com/repos/$REPO/actions/runs/$RID/artifacts" \
       | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).artifacts[0]?.id || 0")
 [[ "$AID" == "0" ]] && { echo "❌ 构建产物为空"; exit 1; }
-curl -sL "${GH[@]}" "https://api.github.com/repos/$REPO/actions/artifacts/$AID/zip" -o "$OUT/a.zip"
+# ⚠️ 2026-11-01 加重试 + 解压前校验：80MB 的包下到一半断（curl 18）过一次，
+#    原来直接退出，构建明明成功了却没上通道，只能手工下载再 release.sh --upload-only。
+ok=0
+for i in 1 2 3 4 5; do
+  curl -sL --retry 3 --retry-all-errors --connect-timeout 20 "${GH[@]}" \
+       "https://api.github.com/repos/$REPO/actions/artifacts/$AID/zip" -o "$OUT/a.zip" \
+    && unzip -tq "$OUT/a.zip" >/dev/null 2>&1 && { ok=1; break; }
+  echo "  下载第 $i 次没成功，5 秒后重试"; sleep 5
+done
+[[ $ok == 1 ]] || { echo "❌ 安装包下载失败。构建已成功，可手工下载 artifact $AID 后跑 desktop/release.sh --upload-only"; exit 1; }
 (cd "$OUT" && unzip -q a.zip && rm -f a.zip)
 ls -la "$OUT" | sed 's/^/  /'
 
