@@ -2601,10 +2601,25 @@ async def set_invoice_no(
         tail = i.project_code or i.po_no or "无编号"
         return f"{i.item_name}{('·' + i.spec) if i.spec else ''}（{tail}）"
 
-    no_amount = [i for i in items
-                 if (i.arrival_date or "").strip() and not (i.received_amount and i.received_amount > 0)]
     not_arrived = [i for i in items
-                   if not (i.arrival_date or "").strip() and not (i.received_amount and i.received_amount > 0)]
+                   if not (i.arrival_date or "").strip() and not (i.received_amount or 0)]
+    # 🆕 反馈#448（王芹）：整单只填了总价时，合并单里其余零件行金额是 0，老规则逐行拦
+    #   「已到货但没填收货金额」，导致整单维护不了发票。现在：**同一采购单号(po_no)内
+    #   只要有一行填了金额**，其余到货的 0 金额行就按 ¥0 计入放行；单行/无采购单号的
+    #   散单仍按 #407 口径拦（0 元没法算进发票总额）。没到货也没金额的照旧拦。
+    _po_amt: dict[str, float] = {}
+    for i in items:
+        po = (i.po_no or "").strip()
+        if po and (i.received_amount or 0):
+            _po_amt[po] = _po_amt.get(po, 0.0) + float(i.received_amount or 0)
+
+    def _covered(i: models.PurchaseItem) -> bool:
+        po = (i.po_no or "").strip()
+        return bool(po and _po_amt.get(po))
+
+    no_amount = [i for i in items
+                 if (i.arrival_date or "").strip() and not (i.received_amount or 0)
+                 and not _covered(i)]
     if no_amount or not_arrived:
         segs = []
         if no_amount:

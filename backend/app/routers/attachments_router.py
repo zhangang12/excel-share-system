@@ -42,6 +42,7 @@ ALLOWED_BIZ_TYPES = {
     "management_todo",  # 🆕 #311 管理层待办附图（图片）
     "aftersales_invoice",  # 🆕 售后/安装费用清单逐行的发票（财务核对报销时看这个）
     "aftersales_payproof",  # 🆕 反馈#445 没有发票的费用行附的付款记录（转账 / 支付截图）
+    "sales_note",  # 🆕 反馈#453 销售台账收款批注的截图/附件（kind=prepay/before_ship/balance）
 }
 
 # 统一允许的扩展名（按业务需要可在端点层再细化）

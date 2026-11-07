@@ -69,10 +69,19 @@ async def main():
         chk(r.status_code==400, "跨部门指派被拒")
 
         # ---- B2：非进行中项目不可下单 ----
-        r = await c.put(f"/api/projects/{pid}", headers=H, json={"status":"已完成"})
+        # 🆕 反馈#452：项目状态不再允许通过 API 手工改（只有物流确认发货自动置已完成）。
+        # 这里为了验证 B2，直接改库模拟「已发货完成」。
+        from app import models as _m
+        async with SessionLocal() as db:
+            _p = await db.get(_m.Project, pid)
+            _p.status = "已完成"
+            await db.commit()
         r = await c.post("/api/orders", headers=H, json={"project_id":pid,"dept":"produce"})
         chk(r.status_code==400, f"B2 已完成项目下单被拒: {r.status_code}")
-        await c.put(f"/api/projects/{pid}", headers=H, json={"status":"进行中"})
+        async with SessionLocal() as db:
+            _p = await db.get(_m.Project, pid)
+            _p.status = "进行中"
+            await db.commit()
 
         # ---- 分派：电工负责人分派 e1；非负责人被拒 ----
         r = await c.post(f"/api/orders/{o_elec}/assign", headers=Hd, json={"worker_id":ids["e1"]})

@@ -1690,6 +1690,8 @@ async function submitPaymentRequest() {
 const invoiceNoDialogVisible = ref(false)
 const invoiceNoForm = reactive({ invoice_no: '', invoice_date: '', invoice_amount: null as number | null })
 const invoiceNoSaving = ref(false)
+// 🆕 反馈#448：本次勾选里「已到货但没有金额」的零件数（按 ¥0 计入，仅提示不拦截）
+const invoiceZeroCnt = ref(0)
 // 勾选零件收货金额合计（合并开票的应开总额）
 const selRecvTotal = computed(() => selLeaves.value.reduce((s, i) => s + (i.received_amount || 0), 0))
 // 合并开票金额是否与Σ收货金额一致（±0.01 容差）
@@ -1702,18 +1704,22 @@ function openBatchInvoiceNo() {
   if (!leaves.length) { ElMessage.warning('请先勾选要维护开票号的明细（可勾选合并行=自动含其下全部零件）'); return }
   // #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（与请款一致）
   if (!selSameSupplier.value) { ElMessage.error('跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商），请只勾选同一供应商的明细'); return }
-  // #2：收货金额为 0 的零件不能参与合并开票（发票总额必须= Σ收货金额，0 的行没法算进去）。
-  // 🆕 反馈#407（李新新）：「这个怎么不能整单维护，都已经签收，已经填写价格，核对过」——
-  //   她没说错，那 2 项**到货日期确实填了**，缺的是收货金额（连单价都是空的）。
-  //   老提示两个毛病，缺一不可修：
-  //     ① 说「尚未收货」——她签收过，看到这四个字只会觉得系统在胡说，压根不会想到是金额没填；
-  //     ② 只报个数不报是哪几项。她一次勾 22 条、跨 6 张采购单、要翻屏，根本找不出是哪两条。
-  //   所以：分清「没到货」和「到货了但没金额」（一个该去收货、一个该去补金额，动作完全不同），
-  //   并且把名字、规格、项目编号点出来。生产上这两种分别有 156 条和 299 条，都不罕见。
-  // 🆕 金额审计：「没填金额」= 空或 0；负数是反馈#346 允许的「优惠」行，算已填（原来 !(x>0) 把优惠行当没填，整单永远开不了票）
+  // 🆕 反馈#448（王芹）：整单只填了总价时，合并单其余零件行金额是 0，老规则逐行拦
+  //   「已到货但没填收货金额」→ 整单维护不了发票。现在：同一采购单号(po_no)内只要有一行
+  //   填了金额，其余已到货的 0 金额行按 ¥0 计入放行；单行/无采购单号的散单仍按 #407 拦。
   const hasAmt = (i: PurchaseItemOut) => i.received_amount != null && Number(i.received_amount) !== 0
+  const poTotal = new Map<string, number>()
+  for (const i of leaves) {
+    const po = (i.po_no || '').trim()
+    if (po && hasAmt(i)) poTotal.set(po, (poTotal.get(po) || 0) + Number(i.received_amount))
+  }
+  const coveredByGroup = (i: PurchaseItemOut) => {
+    const po = (i.po_no || '').trim()
+    return !!po && !!poTotal.get(po)
+  }
   const notArrived = leaves.filter(i => !(i.arrival_date || '').trim() && !hasAmt(i))
-  const noAmount = leaves.filter(i => (i.arrival_date || '').trim() && !hasAmt(i))
+  const noAmount = leaves.filter(i => (i.arrival_date || '').trim() && !hasAmt(i) && !coveredByGroup(i))
+  invoiceZeroCnt.value = leaves.filter(i => (i.arrival_date || '').trim() && !hasAmt(i) && coveredByGroup(i)).length
   if (notArrived.length || noAmount.length) {
     const label = (i: PurchaseItemOut) =>
       `${i.item_name}${i.spec ? '·' + i.spec : ''}（${i.project_code || i.po_no || '无编号'}）`
@@ -3659,7 +3665,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
     <!-- 🆕 需求十三 + #2：合并开票（校验开票金额=Σ收货金额） -->
     <el-dialog v-model="invoiceNoDialogVisible" title="合并开票 / 维护开票号" width="480px">
       <el-alert type="info" :closable="false" style="margin-bottom:14px"
-        :title="`将对已勾选的 ${selLeaves.length} 条零件统一维护同一开票号；每条零件的开票金额取其各自收货金额，并标记为「已开票」。`" />
+        :title="`将对已勾选的 ${selLeaves.length} 条零件统一维护同一开票号；每条零件的开票金额取其各自收货金额，并标记为「已开票」。${invoiceZeroCnt ? `其中 ${invoiceZeroCnt} 条没有收货金额，按 ¥0 计入。` : ''}`" />
       <div class="inv-recv-bar">
         <span>勾选零件收货金额合计</span>
         <b class="amt">{{ fmtMoney(selRecvTotal) }}</b>

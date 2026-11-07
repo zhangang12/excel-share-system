@@ -1497,7 +1497,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                   <!-- 反馈#383/#384：原来是纯图标按钮（文字藏在悬停提示里），而隔壁「外协加工」列
                        是「编辑外协加工表」文字——同一张表两种风格，一个要猜一个不用猜。
                        统一成「编辑」+图标：一眼知道能点、点了干什么。完成态保留绿勾。 -->
-                  <el-button size="small" link type="primary" :icon="EditPen" @click="viewSheet(row)">编辑装配表</el-button>
+                  <el-button size="small" link type="primary" :icon="EditPen" @click="viewSheet(row)">做排产表</el-button>
                   <el-icon v-if="row.sheetmetal_done" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
                 </template>
                 <span v-else class="muted">—</span>
@@ -1525,7 +1525,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             </el-table-column>
             <el-table-column label="钣金完成" min-width="180" align="center">
               <template #default="{ row }">
-                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
+                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'danger'" />
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
                   {{ row.group_done ? '撤销' : '标记完成' }}
                 </el-button>
@@ -1568,20 +1568,21 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
               <template #default="{ row }">
                 <template v-if="row.sheetmetal_datasheet_id">
                   <!-- 反馈#383/#384：统一成「编辑」+图标，与隔壁「外协加工」列一致（原来是纯图标） -->
-                  <el-button size="small" link type="primary" :icon="EditPen" @click="viewSheet(row)">编辑装配表</el-button>
+                  <el-button size="small" link type="primary" :icon="EditPen" @click="viewSheet(row)">装配排产表</el-button>
                 </template>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
             <el-table-column label="标准件清单" min-width="120" align="center">
-              <template #default="{ row }"><StatusPill :text="row.standard_ready ? '已备齐' : '进行中'" :variant="row.standard_ready ? 'success' : 'warn'" /></template>
+              <template #default="{ row }"><StatusPill :text="row.standard_ready ? '已备齐' : '进行中'" :variant="row.standard_ready ? 'success' : 'danger'" /></template>
             </el-table-column>
             <!-- 🆕 反馈#258：外协加工列改「编辑外协加工表」（支持预览+编辑），参考钣金组的钣金装配表列 -->
             <el-table-column label="外协加工" min-width="150" align="center">
               <template #default="{ row }">
                 <template v-if="row.outsource_datasheet_id">
-                  <el-button size="small" link type="primary" @click="viewOutsourceSheet(row)">
-                    编辑外协加工表<el-icon v-if="row.outsource_ready" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
+                  <!-- 🆕 反馈#449：与「装配排产表」统一成「图标+文字」，不再一个有色有图标、一个纯文字 -->
+                  <el-button size="small" link type="primary" :icon="EditPen" @click="viewOutsourceSheet(row)">
+                    外协排产表<el-icon v-if="row.outsource_ready" color="var(--success,#10b981)" style="margin-left:2px"><CircleCheck /></el-icon>
                   </el-button>
                 </template>
                 <span v-else class="muted">—</span>
@@ -1606,7 +1607,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             </el-table-column>
             <el-table-column label="装配完成" min-width="180" align="center">
               <template #default="{ row }">
-                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
+                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'danger'" />
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
                   {{ row.group_done ? '撤销' : '标记完成' }}
                 </el-button>
@@ -1687,7 +1688,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
             </el-table-column>
             <el-table-column label="封板完成" min-width="180" align="center">
               <template #default="{ row }">
-                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'warn'" />
+                <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'danger'" />
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
                   {{ row.group_done ? '撤销' : '标记完成' }}
                 </el-button>

@@ -3,6 +3,7 @@
 import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Stamp, Download, Check, ChatLineSquare, Clock, Paperclip, Document, Close, MoreFilled, Operation, UploadFilled, DocumentCopy, CircleClose, Select, EditPen } from '@element-plus/icons-vue'
+import { http } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { salesApi, fmtMoney, type SalesLedgerRow, type SalesLedgerTotals } from '@/api/sales'
 import { downloadAttachment, ordersApi } from '@/api/orders'
@@ -39,6 +40,8 @@ function isNoInvoice(tax?: string | null): boolean {
 const loading = ref(false)
 const rows = ref<SalesLedgerRow[]>([])
 const totals = ref<SalesLedgerTotals | null>(null)
+// 🆕 反馈#446（赵仁辉）：合计条默认收起，点按钮才显示（原来固定在视口底部，一直占一条）
+const totalsVisible = ref(false)
 const filters = reactive({ kw: '', cust_type: '', contract: '', sales_uid: undefined as number | undefined, balance_month: '' })
 
 const curYear = String(new Date().getFullYear())
@@ -414,11 +417,75 @@ const noteSaving = ref(false)
 const noteInputRef = ref<any>(null)
 const noteFieldLabel = computed(() => (noteField.value === 'prepay' ? '预付' : noteField.value === 'before_ship' ? '发货前付' : '尾款到账'))
 
+// 🆕 反馈#453（赵仁辉）：收款批注可插入截图/附件。
+//   存通用 attachments 表（biz_type=sales_note，biz_id=台账 id，kind=prepay/before_ship/balance），不加新列。
+type NoteAtt = { id: number; name: string; ext?: string | null; kind?: string | null }
+const noteAtts = ref<NoteAtt[]>([])
+const noteNewFiles = ref<File[]>([])
+const noteAttUrls = ref<Record<number, string>>({})
+const noteFileRef = ref<HTMLInputElement | null>(null)
+const NOTE_IMG_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'])
+function noteIsImg(a: NoteAtt): boolean {
+  return NOTE_IMG_EXTS.has((a.ext || a.name.split('.').pop() || '').toLowerCase())
+}
+function clearNoteAttUrls() {
+  Object.values(noteAttUrls.value).forEach(u => URL.revokeObjectURL(u))
+  noteAttUrls.value = {}
+}
+async function loadNoteAtts() {
+  clearNoteAttUrls()
+  noteAtts.value = []
+  const r = noteRow.value
+  if (!r) return
+  try {
+    const { data } = await http.get<NoteAtt[]>('/attachments', {
+      params: { biz_type: 'sales_note', biz_id: r.id },
+    })
+    noteAtts.value = (data || []).filter(a => a.kind === noteField.value)
+    for (const a of noteAtts.value) {
+      if (!noteIsImg(a)) continue
+      try {
+        const blob = await http.get(`/attachments/${a.id}/download`, { responseType: 'blob' })
+        noteAttUrls.value[a.id] = URL.createObjectURL(blob.data as Blob)
+      } catch { /* 缩略图加载失败不影响下载 */ }
+    }
+  } catch { /* 附件非关键，失败忽略 */ }
+}
+function openNoteFilePicker() { noteFileRef.value?.click() }
+function onNoteFilesPicked(e: Event) {
+  const fs = Array.from((e.target as HTMLInputElement).files || [])
+  if (fs.length) noteNewFiles.value.push(...fs)
+  ;(e.target as HTMLInputElement).value = ''
+}
+function removeNoteNewFile(i: number) { noteNewFiles.value.splice(i, 1) }
+async function removeNoteAtt(a: NoteAtt) {
+  try { await ElMessageBox.confirm(`删除附件「${a.name}」？`, '删除附件', { type: 'warning' }) } catch { return }
+  await http.delete(`/attachments/${a.id}`)
+  await loadNoteAtts()
+}
+function closeNote() { noteVisible.value = false; clearNoteAttUrls() }
+async function uploadNoteFiles() {
+  const r = noteRow.value
+  if (!r || !noteNewFiles.value.length) return
+  for (const f of noteNewFiles.value) {
+    const fd = new FormData()
+    fd.append('file', f)
+    fd.append('biz_type', 'sales_note')
+    fd.append('biz_id', String(r.id))
+    fd.append('kind', noteField.value)
+    if (r.project_id) fd.append('project_id', String(r.project_id))
+    await http.post('/attachments', fd)
+  }
+  noteNewFiles.value = []
+}
+
 function openNote(r: SalesLedgerRow, field: 'prepay' | 'before_ship' | 'balance') {
   noteRow.value = r
   noteField.value = field
   noteText.value = (field === 'prepay' ? r.prepay_note : field === 'before_ship' ? r.before_ship_note : r.balance_note) || ''
+  noteNewFiles.value = []
   noteVisible.value = true
+  void loadNoteAtts()
 }
 function nowStamp(): string {
   const d = new Date()
@@ -445,6 +512,7 @@ async function saveNote() {
   if (!noteRow.value) return
   noteSaving.value = true
   try {
+    await uploadNoteFiles()
     await salesApi.paymentNote(noteRow.value.id, noteField.value, noteText.value)
     // 本地同步，避免整表重载
     const v = noteText.value.trim() || null
@@ -466,7 +534,7 @@ async function saveNote() {
       noteRow.value.ship_receivable = v ? 0 : (noteRow.value.before_ship || 0)
     }
     ElMessage.success('批注已保存')
-    noteVisible.value = false
+    closeNote()
   } finally {
     noteSaving.value = false
   }
@@ -508,9 +576,9 @@ async function submitContract() {
   const r = contractRow.value
   if (!r) return
   if (!contractForm.sign_date || !contractForm.deliver_date) { ElMessage.warning('请填写合同签订日期与交货日期'); return }
-  if (!contractForm.file) { ElMessage.warning('请选择合同文件'); return }
+  // 🆕 反馈#454：合同文件改为可后补，不再强制选择
   await salesApi.uploadContract(r.id, contractForm.file, contractForm.sign_date, contractForm.deliver_date)
-  ElMessage.success('合同已上传，下单/交货日期已回写台账')
+  ElMessage.success(contractForm.file ? '合同已上传，下单/交货日期已回写台账' : '日期已保存，合同文件可稍后补传')
   contractVisible.value = false
   await load()
 }
@@ -812,6 +880,10 @@ async function openReport() {
                         placeholder="尾款月份" clearable style="width: 150px" @change="reload" />
         <span class="muted">共 {{ total }} 个项目</span>
         <span class="spacer" style="flex:1"></span>
+        <!-- 🆕 反馈#446：合计条默认收起，点这里才显示 -->
+        <el-button v-if="totals" :type="totalsVisible ? 'primary' : ''" @click="totalsVisible = !totalsVisible">
+          {{ totalsVisible ? '收起合计' : '显示合计' }}
+        </el-button>
         <el-tooltip :content="fitScreen ? '关闭适屏模式，恢复正常宽度' : '适屏模式：缩小列宽与字号，所有列在一屏内显示'" placement="top">
           <el-button :type="fitScreen ? 'primary' : ''" @click="toggleFitScreen">适屏</el-button>
         </el-tooltip>
@@ -1034,8 +1106,8 @@ async function openReport() {
       <EmptyHint v-if="!loading && !rows.length"
                  :text="filters.kw || filters.cust_type || filters.contract || filters.sales_uid ? '没有符合筛选条件的项目' : (allView ? '暂无销售项目' : '你还没有销售项目，点右上「销售下单」开始')" />
 
-      <!-- 合计行（仅主管/管理层） -->
-      <div v-if="totals" class="totals-bar">
+      <!-- 合计行（仅主管/管理层；🆕 反馈#446 默认收起，点「显示合计」才出现） -->
+      <div v-if="totals && totalsVisible" class="totals-bar">
         <span>合计（{{ totals.count }} 个项目）</span>
         <span>金额 <b>{{ fmtMoney(totals.amount) }}</b></span>
         <span>未开票 <b class="warn">{{ fmtMoney(totals.uninvoiced) }}</b></span>
@@ -1046,7 +1118,7 @@ async function openReport() {
       </div>
 
       <!-- 🆕 分页（后端分页）+ 每页条数选择（最大 200） -->
-      <div v-if="total > 20" class="pager">
+      <div v-if="total > 20" class="pager" :style="{ paddingBottom: totalsVisible ? '66px' : '12px' }">
         <el-pagination background layout="prev, pager, next, sizes, jumper, ->, total"
                        :total="total" :page-size="pageSize" :page-sizes="[20, 50, 100, 200]"
                        :current-page="page" @current-change="onPage" @size-change="onSize" />
@@ -1251,17 +1323,32 @@ async function openReport() {
     </el-dialog>
 
     <!-- ===== 🆕 收款批注（预付 / 发货前付） ===== -->
-    <el-dialog v-model="noteVisible" :title="`${noteFieldLabel}收款批注 · ${noteRow?.code || ''}`" width="480px" append-to-body>
+    <el-dialog v-model="noteVisible" :title="`${noteFieldLabel}收款批注 · ${noteRow?.code || ''}`" width="560px" append-to-body
+               @closed="clearNoteAttUrls">
       <el-alert type="info" :closable="false" style="margin-bottom: 12px"
-                title="记录该笔款项的收款时间、金额、方式等；点「插入当前时间」可在光标处快速插入时间戳" />
+                title="记录该笔款项的收款时间、金额、方式等；点「插入当前时间」可在光标处快速插入时间戳；截图/附件可一起保存" />
       <el-input ref="noteInputRef" v-model="noteText" type="textarea" :rows="6" resize="none"
                 placeholder="如：【2026-06-16 14:30】收到预付款 3 万元（微信转账，已对账）" />
-      <div style="margin-top: 10px">
+      <div style="margin-top: 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap">
         <el-button size="small" :icon="Clock" @click="insertNow">插入当前时间</el-button>
-        <span class="muted" style="margin-left: 8px; font-size: 12px">时间格式：YYYY-MM-DD HH:mm</span>
+        <el-button size="small" :icon="Paperclip" @click="openNoteFilePicker">插入截图/附件</el-button>
+        <span class="muted" style="font-size: 12px">时间格式：YYYY-MM-DD HH:mm</span>
+        <input ref="noteFileRef" type="file" accept="image/*,.pdf" multiple hidden @change="onNoteFilesPicked" />
+      </div>
+      <!-- 已保存附件：图片显示缩略图，其它显示文件名 -->
+      <div v-if="noteAtts.length || noteNewFiles.length" class="note-att-wrap">
+        <div v-for="a in noteAtts" :key="a.id" class="note-att">
+          <img v-if="noteAttUrls[a.id]" :src="noteAttUrls[a.id]" :alt="a.name" @click="downloadAttachment(a)" />
+          <span v-else class="note-att-name" @click="downloadAttachment(a)">{{ a.name }}</span>
+          <el-icon class="note-att-del" title="删除附件" @click="removeNoteAtt(a)"><Close /></el-icon>
+        </div>
+        <div v-for="(f, i) in noteNewFiles" :key="`new-${i}-${f.name}`" class="note-att note-att--new">
+          <span class="note-att-name">{{ f.name }}</span>
+          <el-icon class="note-att-del" title="移除" @click="removeNoteNewFile(i)"><Close /></el-icon>
+        </div>
       </div>
       <template #footer>
-        <el-button @click="noteVisible = false">取消</el-button>
+        <el-button @click="closeNote">取消</el-button>
         <el-button type="primary" :loading="noteSaving" @click="saveNote">保存</el-button>
       </template>
     </el-dialog>
@@ -1276,7 +1363,7 @@ async function openReport() {
     <!-- ===== 上传合同 ===== -->
     <el-dialog v-model="contractVisible" :title="`上传合同 · ${contractRow?.code || ''}`" width="500px">
       <el-alert type="info" :closable="false" style="margin-bottom: 14px"
-                title="合同签订日期 = 下单日期；提交后两日期自动回写台账与项目目录" />
+                title="合同签订日期 = 下单日期；提交后两日期自动回写台账与项目目录。合同文件可先不传，收到后再补。" />
       <el-form label-position="top">
         <div class="frow">
           <el-form-item label="合同签订日期（=下单日期）" required style="flex: 1">
@@ -1286,8 +1373,8 @@ async function openReport() {
             <el-date-picker v-model="contractForm.deliver_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
           </el-form-item>
         </div>
-        <el-form-item label="合同文件" required>
-          <FilePicker v-model="contractForm.file" accept=".pdf,.doc,.docx,.jpg,.png" placeholder="选择合同文件（PDF/Word/图片）" />
+        <el-form-item label="合同文件（可后补）">
+          <FilePicker v-model="contractForm.file" accept=".pdf,.doc,.docx,.jpg,.png" placeholder="合同文件可稍后补传（PDF/Word/图片）" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1585,6 +1672,13 @@ async function openReport() {
 /* 🆕 #150：合计条是固定在视口底部的，给分页/末行留出净空，避免被盖住看不全 */
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; padding-bottom: 66px; }
 .totals-bar .warn { color: var(--warning); }
+/* 🆕 反馈#453：收款批注附件缩略图 */
+.note-att-wrap { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.note-att { position: relative; display: inline-flex; align-items: center; padding: 4px; border: 1px solid var(--el-border-color-light); border-radius: 6px; background: var(--el-fill-color-lighter); font-size: 12px; }
+.note-att img { width: 64px; height: 64px; object-fit: cover; border-radius: 4px; cursor: pointer; display: block; }
+.note-att-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; color: var(--el-color-primary); padding: 0 4px; }
+.note-att-del { position: absolute; top: -6px; right: -6px; background: #fff; border-radius: 50%; cursor: pointer; color: var(--el-color-danger); font-size: 12px; padding: 1px; box-shadow: 0 0 2px rgba(0,0,0,.2); }
+.note-att--new { border-style: dashed; }
 .fsec {
   font-size: 13px; font-weight: 600; color: var(--el-text-color-primary);
   border-left: 3px solid var(--primary, #2563eb);

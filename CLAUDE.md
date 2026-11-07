@@ -15,6 +15,13 @@ FastAPI(async SQLAlchemy 2.0 + Pydantic v2)+ Vue3 + TypeScript + Element Plus;�
 - 涉及 SQL/schema/GROUP BY 的改动,必须在真 Postgres 上验证(沙箱:`service postgresql start`,
   测试用户 pms/pms),SQLite 通过不算数。
 - 新写/改动的后端接口必须实际调用验证,前端必须过 `npx vue-tsc --noEmit`。
+- **改完必须经过充分测试,没测不算完成**(用户 2026-11-07 定的项目要求):
+  ① 后端改动——接口必须真实调用(起服务或进程内 httpx 都算),涉及 SQL/schema/GROUP BY 的在真 Postgres 上跑;
+  ② 前端/交互改动——必须真正起前后端,在真实浏览器里把改动路径走一遍(本机可用
+     `frontend/node_modules/playwright` + 系统 Chrome,`chromium.launch({ channel: 'chrome' })`,不用另装浏览器),
+     **不能只过 `vue-tsc`/`npm run build` 就说完成**;
+  ③ 修复类——先复现、再验证修复,并跑相关回归测试;与基线对比失败数,历史欠账不算新问题;
+  ④ 汇报写清「测了什么、怎么测、哪些没覆盖」;测试没过不提交、不推送。
 - **同时开多个会话时，各自开 worktree，不要挤在同一个工作区**:
   `bash ops/worktree.sh new <名字>` → 去那个目录干活 → 回主检出
   `bash ops/worktree.sh merge <名字>` 合回 main 并推送 → 再发版。

@@ -84,7 +84,6 @@ async function loadDatasheets() {
 // ========== 🆕 v3 M12 部门协作 tab ==========
 const workflow = ref<Workflow | null>(null)
 const wfLoading = ref(false)
-const STATUS_OPTIONS = ['进行中', '已完成', '已归档']
 // 四表校验 slots（钣金装配/标准件清单/外协加工/不锈钢原料下料单 — 仅模板四表，不含电工采购单第5表）
 const FOUR_SHEETS = ['钣金装配', '标准件清单', '外协加工', '不锈钢原料下料单']
 const fourSheetStatus = computed(() =>
@@ -117,12 +116,7 @@ async function onCollabTab(name: string) {
   if (name === 'collab' && !workflow.value) await loadWorkflow()
 }
 
-async function setProjStatus(status: string) {
-  if (!project.value || project.value.status === status) return
-  await projectsApi.update(pid.value, { status })
-  project.value = { ...project.value, status }
-  ElMessage.success('项目状态已更新')
-}
+// 🆕 反馈#452：项目状态由物流确认发货自动更新，项目详情不再提供手工改状态入口
 
 async function toggleSheetDone(did?: number, cur?: boolean) {
   if (!did) return
@@ -405,17 +399,11 @@ onMounted(reloadAll)
           <template #header>项目状态 / 发货</template>
           <div class="collab-status">
             <span>项目状态：<el-tag size="small" effect="light">{{ project.status }}</el-tag></span>
+            <span class="muted small">状态由物流确认发货自动更新</span>
             <span v-if="workflow">发货：
               <el-tag size="small" :type="workflow.ship_status === 'shipped' ? 'success' : 'warning'">
                 {{ workflow.ship_status === 'shipped' ? '已发货' : '待发货' }}
               </el-tag>
-            </span>
-            <span v-if="canManage" style="margin-left:auto">
-              管理层改状态：
-              <el-select :model-value="project.status" size="small" style="width:130px"
-                         @update:model-value="setProjStatus">
-                <el-option v-for="s in STATUS_OPTIONS" :key="s" :label="s" :value="s" />
-              </el-select>
             </span>
           </div>
         </el-card>

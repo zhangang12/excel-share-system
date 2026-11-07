@@ -143,8 +143,16 @@ async def list_customers(
     db: AsyncSession = Depends(get_db),
 ):
     """🆕 下单/编辑台账「客户单位」联想：返回历史录入过的去重客户名，
-    输入简称即可从下拉补全公司全称（数据源=销售台账已录客户）。"""
-    res = await db.execute(select(models.SalesLedger.customer).distinct())
+    输入简称即可从下拉补全公司全称（数据源=销售台账已录客户）。
+
+    🆕 反馈#447（赵仁辉）：作废项目（Project.is_deleted）的客户名不再进联想下拉——
+    生产上有「1」「11」「XXXX」这类测试单，项目作废后台账行还在，原来一直挂在候选里。"""
+    res = await db.execute(
+        select(models.SalesLedger.customer)
+        .join(models.Project, models.Project.id == models.SalesLedger.project_id)
+        .where(models.Project.is_deleted == False)
+        .distinct()
+    )
     return sorted({(c or "").strip() for (c,) in res.all() if (c or "").strip()})
 
 
@@ -158,6 +166,7 @@ async def list_equipment_names(
     res = await db.execute(
         select(models.Project.name)
         .join(models.SalesLedger, models.SalesLedger.project_id == models.Project.id)
+        .where(models.Project.is_deleted == False)
         .distinct()
     )
     return sorted({(n or "").strip() for (n,) in res.all() if (n or "").strip()})
@@ -857,11 +866,14 @@ async def upload_contract(
     lid: int,
     sign_date: str = Form(...),
     deliver_date: str = Form(...),
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     current: models.User = Depends(require_roles("sales", "sales_lead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """上传合同：附件 + 合同签订日期(=下单日期)/交货日期回写台账与项目一览。"""
+    """上传合同：附件 + 合同签订日期(=下单日期)/交货日期回写台账与项目一览。
+
+    🆕 反馈#454（赵仁辉）：合同文件改为**可后补**——先把签订/交货日期填了，
+    文件等收到再在「换合同」里补。不传 file 时只回写日期，不动已有合同附件。"""
     led = await _ledger_or_404(db, lid)
     # 🆕 #333 主管/管理层不受行级隔离（与本文件其余 9 处同口径）。原来漏了 _all_view：
     #   兼着 sales 角色的销售主管 _is_sales 恒为 True，代不了销售员操作。
@@ -871,17 +883,20 @@ async def upload_contract(
     if not sd or not dd:
         raise HTTPException(400, "请填写合同签订日期与交货日期")
 
-    a = await save_upload(db, file, biz_type="contract", biz_id=led.id,
-                          project_id=led.project_id, user=current)
-    led.contract = "有"
-    led.contract_file_id = a.id
+    a = None
+    if file is not None and (file.filename or "").strip():
+        a = await save_upload(db, file, biz_type="contract", biz_id=led.id,
+                              project_id=led.project_id, user=current)
+        led.contract = "有"
+        led.contract_file_id = a.id
     p = led.project
     _writeback_overview(p, "签订日期", sd)   # alias 自动双写 __h__下单日期
     _writeback_overview(p, "交货日期", dd)
     await db.commit()
+    detail = f"合同:{a.name} 签订{sd} 交货{dd}" if a else f"合同日期 签订{sd} 交货{dd}（文件未上传）"
     await write_audit(db, user=current, action="upload", target_type="sales_ledger",
-                      target_id=lid, detail=f"合同:{a.name} 签订{sd} 交货{dd}")
-    return schemas.Msg(message="合同已上传，下单/交货日期已回写台账")
+                      target_id=lid, detail=detail)
+    return schemas.Msg(message="合同已上传，下单/交货日期已回写台账" if a else "已回写下单/交货日期，合同文件可稍后补传")
 
 
 # ==================== 开票审批流（M03） ====================

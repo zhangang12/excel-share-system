@@ -32,8 +32,7 @@ const pageSize = ref(20)
 const currentPage = ref(1)
 
 const isAdmin = computed(() => auth.hasRole('admin', 'manager'))
-// 🆕 #5 生产主管(pm_lead)也可调整项目状态（仅状态，其它字段仍只读）
-const canEditStatus = computed(() => auth.hasRole('admin', 'manager', 'pm_lead'))
+// 🆕 反馈#452：项目状态只由物流「确认发货」自动置为已完成，项目目录不再提供手工改状态的入口
 const visibleFields = computed(() =>
   fields.value.filter(f => myPerms.value[String(f.id)]?.can_view !== false)
 )
@@ -86,8 +85,6 @@ const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '已过时间',     source: 'derived', derived: 'elapsed',   editable: false, widthPct: 6 },
   { label: '剩余制作时间', source: 'meta', fallbackDerived: 'remaining', editable: true, widthPct: 6 },
 ].filter(f => !HIDDEN_LABELS.has(f.label)) as OverviewTplCol[]
-
-const STATUS_OPTIONS_NEW = ['进行中', '已完成']
 
 // 按列名给紧凑/默认两套最小宽度（14 寸 1366px 全屏下 14 列全部可见）
 function overviewColMinWidth(col: OverviewTplCol): number {
@@ -372,16 +369,7 @@ const STATUS_COLOR: Record<string, string> = {
 }
 const STATUS_OPTIONS = ['进行中', '已完成', '已归档']
 
-// 改项目状态（admin / manager）
-async function changeStatus(row: OverviewRow, status: string) {
-  if (row.status === status) return
-  try {
-    await projectsApi.update(row.id, { status })
-    const idx = rows.value.findIndex(r => r.id === row.id)
-    if (idx >= 0) rows.value[idx] = { ...rows.value[idx], status }
-    ElMessage.success('状态已更新')
-  } catch { /* */ }
-}
+// 🆕 反馈#452：项目状态改由物流确认发货自动更新，这里不再手工改（见后端 projects_router 同名校验）
 
 // 导出项目一览为 Excel（🆕 M16：经导出审批闸，403 引导申请）
 async function onExport() {
@@ -734,25 +722,15 @@ onMounted(load)
                          header-align="center"
                          show-overflow-tooltip>
           <template #default="{ row, $index }">
-            <!-- 状态列：el-select 下拉（只显示 进行中/已完成；旧值显示禁用项）-->
+            <!-- 状态列：只读展示。🆕 反馈#452：只能由物流确认发货自动改为已完成 -->
             <template v-if="col.source === 'status'">
-              <el-select v-if="canEditStatus"
-                         :model-value="row.status" size="small" style="width: 100%"
-                         @update:model-value="(v: any) => changeStatus(row, v as string)">
-                <el-option v-for="s in STATUS_OPTIONS_NEW" :key="s" :value="s" :label="s">
-                  <span class="status-dot" :class="{
-                    'status-dot-doing': s === '进行中',
-                    'status-dot-done': s === '已完成',
-                  }"></span> {{ s }}
-                </el-option>
-                <el-option v-if="row.status && !STATUS_OPTIONS_NEW.includes(row.status)"
-                           :label="row.status + '（旧值）'" :value="row.status" disabled />
-              </el-select>
-              <el-tag v-else
-                      :type="row.status === '已完成' ? 'success' : (row.status === '进行中' ? 'danger' : 'info')"
-                      effect="dark" size="small">
-                {{ row.status }}
-              </el-tag>
+              <el-tooltip content="项目状态由物流确认发货自动更新，不能手工修改" placement="top">
+                <el-tag
+                        :type="row.status === '已完成' ? 'success' : (row.status === '进行中' ? 'danger' : 'info')"
+                        effect="dark" size="small">
+                  {{ row.status }}
+                </el-tag>
+              </el-tooltip>
             </template>
             <!-- meta 编辑态 -->
             <el-input v-else-if="isEditingTpl(row, col)"

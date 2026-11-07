@@ -58,7 +58,7 @@ async function submit() {
   try {
     if (isEdit.value) {
       await projectsApi.update(form.id, {
-        name: form.name, description: form.description, status: form.status,
+        name: form.name, description: form.description,
       })
     } else {
       await projectsApi.create({
@@ -157,7 +157,8 @@ onMounted(load)
         <el-form-item label="项目名称 *">
           <el-input v-model="form.name" size="large" />
         </el-form-item>
-        <el-form-item label="状态">
+        <!-- 🆕 反馈#452：状态只在新建时给默认值，编辑时由物流确认发货自动更新 -->
+        <el-form-item v-if="!isEdit" label="状态">
           <el-select v-model="form.status" size="large" style="width:100%">
             <el-option label="进行中" value="进行中" />
             <el-option label="已完成" value="已完成" />

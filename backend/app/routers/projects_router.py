@@ -425,15 +425,11 @@ async def update_project(
     p = res.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "项目不存在")
-    # 🆕 #5 生产主管(pm_lead)可在项目目录调整项目状态——仅限"只改状态"，不放开编号/名称/描述/负责人
-    status_only = (data.status is not None and data.code is None and data.name is None
-                   and data.description is None and data.manager_id is None)
     # 🆕 #95 销售主管(sales_lead)可更正项目编号（编号下错）——仅限"只改编号"，不放开名称/状态/描述/负责人
     code_only = (data.code is not None and data.status is None and data.name is None
                  and data.description is None and data.manager_id is None)
     if not await user_can_edit_project(db, current, p):
-        if not ((status_only and current.has_role("pm_lead"))
-                or (code_only and current.has_role("sales_lead"))):
+        if not (code_only and current.has_role("sales_lead")):
             raise HTTPException(403, "无权修改项目")
     code_changed = None
     if data.code is not None:
@@ -453,23 +449,13 @@ async def update_project(
                 raise HTTPException(400, "项目编号已存在")
             code_changed = (p.code, new_code)
             p.code = new_code
+    # 🆕 反馈#452（赵仁辉）：项目状态只能由物流「确认发货」自动置为已完成，
+    #   不允许在项目目录/项目编辑/项目详情里手工改（原来 admin/manager/pm_lead 都能改，
+    #   生产上出现没发货就被标完成）。同值提交放行，避免老客户端编辑名称时连带报错。
+    if data.status is not None and data.status != p.status:
+        raise HTTPException(400, "项目状态由物流确认发货自动更新，不能手工修改")
     if data.name is not None: p.name = data.name
     if data.description is not None: p.description = data.description
-    if data.status is not None:
-        old_status = p.status
-        p.status = data.status
-        # 状态切到「已完成」→ 冻结完成日期（已过时间/剩余制作时间从此不再实时计算）；
-        # 切回非「已完成」→ 清除完成日期，恢复按 TODAY() 实时计算
-        cd_key = f"{OVERVIEW_KEY_PREFIX}完成日期"
-        if data.status == "已完成" and old_status != "已完成":
-            extra = dict(p.extra or {})
-            if not extra.get(cd_key):
-                extra[cd_key] = date.today().strftime("%Y-%m-%d")
-                p.extra = extra
-        elif data.status != "已完成" and old_status == "已完成":
-            extra = dict(p.extra or {})
-            if extra.pop(cd_key, None) is not None:
-                p.extra = extra
     if data.manager_id is not None and current.has_role("admin", "manager"):
         p.manager_id = data.manager_id
     await db.commit()

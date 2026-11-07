@@ -139,9 +139,9 @@ export const salesApi = {
   paymentNote: (id: number, field: 'prepay' | 'before_ship' | 'balance', note: string) =>
     http.put(`/sales/ledger/${id}/payment-note`, { field, note }).then((r) => r.data),
 
-  uploadContract: (id: number, file: File, signDate: string, deliverDate: string) => {
+  uploadContract: (id: number, file: File | null, signDate: string, deliverDate: string) => {
     const fd = new FormData()
-    fd.append('file', file)
+    if (file) fd.append('file', file)
     fd.append('sign_date', signDate)
     fd.append('deliver_date', deliverDate)
     return http.post(`/sales/ledger/${id}/contract`, fd).then((r) => r.data)
