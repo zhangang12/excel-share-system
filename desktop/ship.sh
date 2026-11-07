@@ -166,12 +166,12 @@ bash desktop/release.sh --upload-only "$OUT"
 # ---------- 6. 校验通道（这一步才是「用户真能拿到」的证据）----------
 say "校验通道"
 LATEST=$(curl -s "http://8.141.123.141/desktop/latest.yml" | sed -n 's/^version: *//p' | tr -d '\r')
-[[ "$LATEST" == "$NEW" ]] || { echo "❌ 通道上的 latest.yml 是 $LATEST，不是 $NEW"; exit 1; }
+[[ "$LATEST" == "$NEW" ]] || { echo "❌ 通道上的 latest.yml 是 ${LATEST}，不是 ${NEW}"; exit 1; }
 EXE=$(curl -s "http://8.141.123.141/desktop/latest.yml" | sed -n 's/^path: *//p' | tr -d '\r')
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -r 0-0 \
        "http://8.141.123.141/desktop/$(node -p "encodeURIComponent(process.argv[1])" "$EXE")")
 [[ "$CODE" == "206" || "$CODE" == "200" ]] || { echo "❌ 安装包下不动：HTTP $CODE"; exit 1; }
-echo "  ✅ latest.yml = $NEW，安装包可下载"
+echo "  ✅ latest.yml = ${NEW}，安装包可下载"
 
 # ---------- 7. 强制门槛（必须在上传成功之后）----------
 if [[ $FORCE_LATEST == 1 ]]; then
