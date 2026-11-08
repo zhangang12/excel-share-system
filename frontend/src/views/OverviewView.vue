@@ -438,12 +438,12 @@ function openProject(rowId: number) {
 const createDialogVisible = ref(false)
 const creating = ref(false)
 const createForm = ref({
-  code: '', name: '', qty: '', status: '进行中',
+  code: '', name: '', qty: '',
   sales: '', signDate: '', deliverDate: '', designer: '',
 })
 function openCreateProject() {
   createForm.value = {
-    code: '', name: '', qty: '', status: '进行中',
+    code: '', name: '', qty: '',
     sales: '', signDate: '', deliverDate: '', designer: '',
   }
   createDialogVisible.value = true
@@ -457,7 +457,6 @@ async function submitCreateProject() {
     const p = await projectsApi.create({
       code: f.code.trim(),
       name: f.name.trim(),
-      status: f.status,
     })
     // 其余字段写入一览存储 __o__（is_overview=true），同时按别名同步到项目详情头表
     const metaWrites: [string, string][] = [
@@ -804,12 +803,6 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="数量">
           <el-input v-model="createForm.qty" size="large" placeholder="如 1" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="createForm.status" size="large" style="width:100%">
-            <el-option label="进行中" value="进行中" />
-            <el-option label="已完成" value="已完成" />
-          </el-select>
         </el-form-item>
         <el-form-item label="销售">
           <el-input v-model="createForm.sales" size="large" placeholder="如 赵仁辉" />

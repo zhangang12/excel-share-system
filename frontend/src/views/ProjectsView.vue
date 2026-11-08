@@ -28,7 +28,7 @@ const yearOptions = computed(() => {
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const form = reactive({
-  id: 0, code: '', name: '', description: '', status: '进行中',
+  id: 0, code: '', name: '', description: '',
 })
 
 async function load() {
@@ -39,7 +39,7 @@ async function load() {
 
 function openCreate() {
   isEdit.value = false
-  Object.assign(form, { id: 0, code: '', name: '', description: '', status: '进行中' })
+  Object.assign(form, { id: 0, code: '', name: '', description: '' })
   dialogVisible.value = true
 }
 
@@ -47,7 +47,7 @@ function openEdit(p: Project) {
   isEdit.value = true
   Object.assign(form, {
     id: p.id, code: p.code, name: p.name,
-    description: p.description || '', status: p.status,
+    description: p.description || '',
   })
   dialogVisible.value = true
 }
@@ -62,7 +62,7 @@ async function submit() {
       })
     } else {
       await projectsApi.create({
-        code: form.code, name: form.name, description: form.description, status: form.status,
+        code: form.code, name: form.name, description: form.description,
       })
     }
     dialogVisible.value = false
@@ -156,14 +156,6 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="项目名称 *">
           <el-input v-model="form.name" size="large" />
-        </el-form-item>
-        <!-- 🆕 反馈#452：状态只在新建时给默认值，编辑时由物流确认发货自动更新 -->
-        <el-form-item v-if="!isEdit" label="状态">
-          <el-select v-model="form.status" size="large" style="width:100%">
-            <el-option label="进行中" value="进行中" />
-            <el-option label="已完成" value="已完成" />
-            <el-option label="已归档" value="已归档" />
-          </el-select>
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="form.description" type="textarea" :rows="3" />

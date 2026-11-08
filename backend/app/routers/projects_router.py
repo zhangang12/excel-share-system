@@ -362,6 +362,9 @@ async def create_project(
 ):
     if not current.has_role("admin", "manager"):
         raise HTTPException(403, "无权创建项目")
+    # 反馈#452：新建项目也不能手工设为已完成/已归档；完成状态只能由物流确认发货写入。
+    if data.status not in (None, "进行中"):
+        raise HTTPException(400, "新建项目状态固定为进行中，完成状态由物流确认发货自动更新")
     # 只与活跃项目比较；已软删的项目允许复用其 code
     res = await db.execute(
         select(models.Project).where(
@@ -373,7 +376,7 @@ async def create_project(
         raise HTTPException(400, "项目编号已存在")
     p = models.Project(
         code=data.code, name=data.name, description=data.description,
-        status=data.status or "进行中",
+        status="进行中",
         manager_id=data.manager_id,
     )
     db.add(p)

@@ -131,6 +131,21 @@ async def delete_attachment_file(db: AsyncSession, att: models.Attachment) -> No
     await db.delete(att)
 
 
+async def _authorize_sales_note(db: AsyncSession, user: models.User, biz_id: Optional[int]) -> models.SalesLedger:
+    """销售收款凭证按销售台账行级权限保护；复用销售页面本体谓词。"""
+    if biz_id is None:
+        raise HTTPException(400, "收款批注附件必须关联销售台账")
+    # 延迟导入，避免 sales_router 导入本模块的 save_upload 时形成循环导入。
+    from .sales_router import _all_view, _is_sales, _ledger_or_404
+
+    if not (_is_sales(user) or _all_view(user)):
+        raise HTTPException(403, "无权访问销售收款附件")
+    ledger = await _ledger_or_404(db, biz_id)
+    if not _all_view(user) and ledger.sales_uid != user.id:
+        raise HTTPException(403, "只能访问本人负责台账的收款附件")
+    return ledger
+
+
 @router.post("", response_model=schemas.AttachmentOut)
 async def upload(
     file: UploadFile = File(...),
@@ -141,6 +156,12 @@ async def upload(
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if biz_type == "sales_note":
+        ledger = await _authorize_sales_note(db, current, biz_id)
+        if kind not in {"prepay", "before_ship", "balance"}:
+            raise HTTPException(400, "收款批注附件类型无效")
+        # 不信任客户端传入的 project_id，始终从已授权台账取值。
+        project_id = ledger.project_id
     a = await save_upload(
         db, file, biz_type=biz_type, biz_id=biz_id, kind=kind,
         project_id=project_id, user=current,
@@ -160,6 +181,8 @@ async def list_attachments(
     _: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if biz_type == "sales_note":
+        await _authorize_sales_note(db, _, biz_id)
     q = select(models.Attachment).where(models.Attachment.biz_type == biz_type)
     if biz_id is not None:
         q = q.where(models.Attachment.biz_id == biz_id)
@@ -179,6 +202,8 @@ async def download(
     a = res.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "附件不存在")
+    if a.biz_type == "sales_note":
+        await _authorize_sales_note(db, _, a.biz_id)
     f = Path(settings.files_dir) / a.path
     if not f.is_file():
         raise HTTPException(404, "文件已丢失")
@@ -206,6 +231,9 @@ async def package_attachments(
         raise HTTPException(400, "未选择附件")
     res = await db.execute(select(models.Attachment).where(models.Attachment.id.in_(req.attachment_ids)))
     atts = list(res.scalars().all())
+    for a in atts:
+        if a.biz_type == "sales_note":
+            await _authorize_sales_note(db, _, a.biz_id)
     buf = io.BytesIO()
     used: set = set()
     n = 0
@@ -243,7 +271,13 @@ async def remove(
     a = res.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "附件不存在")
+    if a.biz_type == "sales_note":
+        await _authorize_sales_note(db, current, a.biz_id)
     is_mgr = current.has_role("admin", "manager")
+    if a.biz_type == "sales_note":
+        # 销售主管可管理其可见范围内的收款附件，和批注本身的权限保持一致。
+        from .sales_router import _all_view
+        is_mgr = is_mgr or _all_view(current)
     if not is_mgr and a.uploaded_by != current.id:
         raise HTTPException(403, "仅上传者本人或管理层可删除")
     name = a.name
