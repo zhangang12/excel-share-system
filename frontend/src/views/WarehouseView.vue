@@ -783,7 +783,6 @@ interface DemandRow {
   item_name: string; spec?: string | null; material_id?: number | null; location?: string | null
   demand_qty?: number | null; stock: number; suggest_purchase: number
   purchase_status: string; in_stock: boolean; issued_qty: number
-  stock_project?: number; stock_general?: number; stock_conflict?: boolean
   source?: string   // 清单=标准件清单需求；采购=采购单入库到本项目
 }
 const demandProj = ref<number | undefined>()
@@ -820,26 +819,13 @@ function backToDemandOverview() { demandProj.value = undefined; loadDemandOvervi
 
 // 🆕 需求二：物料需求「领用出库」——按需求把有货物料自动登记出库到项目（计入项目材料成本）
 function demandRemain(r: DemandRow) { return Math.max(0, (r.demand_qty || 0) - (r.issued_qty || 0)) }
-function demandLines(rows: DemandRow[]) {
-  const left = new Map<number, { own: number; general: number }>()
-  return rows.flatMap(row => {
-    if (!row.material_id || row.stock_conflict) return []
-    const available = left.get(row.material_id) ?? { own: row.stock_project || 0, general: row.stock_general || 0 }
-    const qty = Math.min(demandRemain(row), available.own + available.general)
-    if (qty <= 0) return []
-    const own = Math.min(qty, available.own)
-    const general = qty - own
-    left.set(row.material_id, { own: available.own - own, general: available.general - general })
-    return [{ row, material_id: row.material_id, qty, own, general }]
-  })
-}
 async function issueOne(row: DemandRow) {
   if (!row.material_id) { ElMessage.warning('该物料尚未在仓库建档，无法出库'); return }
   const def = Math.min(demandRemain(row) || row.stock, row.stock)
   let qty = def
   try {
     const res = await ElMessageBox.prompt(
-      `领用「${row.item_name}${row.spec ? '·' + row.spec : ''}」出库数量（本项目可用 ${row.stock_project || 0}，通用可用 ${row.stock_general || 0}，未领需求 ${demandRemain(row)}；优先领用本项目库存）：`,
+      `领用「${row.item_name}${row.spec ? '·' + row.spec : ''}」出库数量（现存 ${row.stock}，未领需求 ${demandRemain(row)}）：`,
       '领用出库', { inputValue: String(def), inputPattern: /^\d+(\.\d+)?$/, inputErrorMessage: '请输入数字', confirmButtonText: '出库' })
     qty = Number(res.value)
   } catch { return }
@@ -851,14 +837,22 @@ async function issueOne(row: DemandRow) {
   } catch { /* 拦截器已提示 */ }
 }
 async function issueAll() {
-  const eligible = demandLines(demandRows.value)
+  const remaining = new Map<number, number>()
+  const eligible = demandRows.value.flatMap(row => {
+    if (!row.material_id) return []
+    const avail = remaining.get(row.material_id) ?? row.stock
+    const qty = Math.min(demandRemain(row), avail)
+    if (qty <= 0) return []
+    remaining.set(row.material_id, avail - qty)
+    return [{ row, material_id: row.material_id, qty }]
+  })
   const lines = eligible.map(({ material_id, qty }) => ({ material_id, qty }))
   if (!lines.length) { ElMessage.info('没有可领用出库的物料（需有货且仍有未领用需求）'); return }
   try {
     // 🆕 把到底会出哪几样列出来再确认——原来只说"N 种"，人不知道是哪 N 种，
     //    这正是王利利说的"容易出错"。
     const preview = eligible.slice(0, 12)
-      .map(({ row: r, qty, own, general }) => `${r.item_name}${r.spec ? '·' + r.spec : ''} × ${qty}（本次领用：本项目 ${own}，通用 ${general}）`)
+      .map(({ row: r, qty }) => `${r.item_name}${r.spec ? '·' + r.spec : ''} × ${qty}`)
       .join('<br>')
     const more = lines.length > 12 ? `<br><span style="color:#999">…另有 ${lines.length - 12} 种</span>` : ''
     await ElMessageBox.confirm(
@@ -878,7 +872,9 @@ const demandSel = ref<DemandRow[]>([])
 function demandRowSelectable(r: DemandRow) { return !!r.material_id && r.stock > 0 && demandRemain(r) > 0 }
 function onDemandSelChange(rows: DemandRow[]) { demandSel.value = rows }
 async function issueSelected() {
-  const lines = demandLines(demandSel.value).map(({ material_id, qty }) => ({ material_id, qty }))
+  const lines = demandSel.value
+    .filter(demandRowSelectable)
+    .map(r => ({ material_id: r.material_id!, qty: Math.min(demandRemain(r), r.stock) }))
   if (!lines.length) { ElMessage.warning('请先勾选要领用出库的物料（需有货且仍有未领需求）'); return }
   try {
     await ElMessageBox.confirm(`将把勾选的 ${lines.length} 种物料按未领需求领用出库到本项目？会自动登记出库并计入项目材料成本。`,
@@ -1573,7 +1569,7 @@ function applyPoPick() {
               <el-input v-model="demandOvSearch" placeholder="搜项目编号/名称" :prefix-icon="Search" clearable size="small" style="width:220px" />
               <el-checkbox v-model="demandShowFinished" size="small">显示已发货项目</el-checkbox>
               <span class="muted" style="font-size:12.5px" v-if="demandOvSearch">命中 {{ filteredDemandOverview.length }} / {{ demandOverview.length }}</span>
-              <span class="muted small">默认隐藏已完成项目；勾选后可查看历史记录。待出库按本项目及通用库存计算，不含其他项目专属库存。</span>
+              <span class="muted small">默认隐藏已完成项目，勾选可查看历史。库存按同名称和规格的全仓数量显示，可能包含其他项目的物料；出库前请核对实际归属。</span>
             </div>
             <el-table show-overflow-tooltip :data="filteredDemandOverview" v-loading="demandOverviewLoading" stripe size="small"
                       max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl" :fit="false">
@@ -1612,7 +1608,6 @@ function applyPoPick() {
             <span class="muted" style="font-size:12.5px">显示 {{ filteredDemandRows.length }} / 共 {{ demandRows.length }} 行</span>
             <span class="muted small">合并「材料清单需求(标准件清单/电工采购单/不锈钢原料下料单)」与「采购单入库到本项目的物料」(来源列区分),逐行看 需求量 / 现有库存 / 建议采购量。有货的可勾选后批量领用、或单行领用、或一键全部,缺的走采购。</span>
           </div>
-          <el-alert v-if="demandRows.some(r => r.stock_conflict)" type="warning" :closable="false" title="部分物料的历史流水归属不一致，已暂停领用，请取消“只看现在能出库的”并核对流水。" />
           <el-table show-overflow-tooltip :data="filteredDemandRows" v-loading="demandLoading" stripe size="small"
                     max-height="calc(100vh - 260px)" :scrollbar-always-on="true" class="compact-tbl"
                     @selection-change="onDemandSelChange">
@@ -1623,9 +1618,7 @@ function applyPoPick() {
               <template #default="{ row }"><StatusPill :text="row.source || '清单'" :variant="row.source === '采购' ? 'primary' : 'muted'" /></template>
             </el-table-column>
             <el-table-column label="需求量" width="104" align="right"><template #default="{ row }">{{ row.demand_qty ?? '—' }}</template></el-table-column>
-            <el-table-column label="本项目可用" width="112" align="right"><template #default="{ row }">{{ row.stock_project || 0 }}</template></el-table-column>
-            <el-table-column label="通用可用" width="100" align="right"><template #default="{ row }">{{ row.stock_general || 0 }}</template></el-table-column>
-            <el-table-column label="可领用合计" width="112" align="right">
+            <el-table-column label="现有库存" width="112" align="right">
               <template #default="{ row }"><b :class="{ bad: row.stock <= 0 }">{{ row.stock }}</b></template>
             </el-table-column>
             <el-table-column prop="location" label="库位" min-width="130"><template #default="{ row }">{{ row.location || '—' }}</template></el-table-column>
@@ -1638,8 +1631,7 @@ function applyPoPick() {
                  三个数自相矛盾。改成先看还差不差：领够了就是「已领完」。 -->
             <el-table-column label="库存" width="94" align="center">
               <template #default="{ row }">
-                <StatusPill v-if="row.stock_conflict" text="核对归属" variant="danger" />
-                <StatusPill v-else-if="demandRemain(row) <= 0" text="已领完" variant="muted" />
+                <StatusPill v-if="demandRemain(row) <= 0" text="已领完" variant="muted" />
                 <StatusPill v-else-if="row.in_stock" text="有货可出" variant="success" />
                 <StatusPill v-else text="需采购" variant="warn" />
               </template>

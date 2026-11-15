@@ -1410,10 +1410,7 @@ class WarehouseDemandRow(BaseModel):
     material_id: Optional[int] = None        # 🆕 需求二：命中的物料 id（有则可一键领用出库）
     location: Optional[str] = None           # 🆕 #204 材料库位（命中物料的库位,供各组知道去哪拿）
     demand_qty: Optional[float] = None      # 需求量（清单数量）
-    stock: float = 0                         # 本项目和通用可领用合计
-    stock_project: float = 0                 # 本项目可用
-    stock_general: float = 0                 # 通用库存可用
-    stock_conflict: bool = False            # 历史流水归属冲突，需核对
+    stock: float = 0                         # 现有库存
     suggest_purchase: float = 0              # 建议采购量 = 需求 - 库存
     purchase_status: str = "未下单"          # 未下单 / 已下单 / 已到货
     in_stock: bool = False                   # 是否有货可出
