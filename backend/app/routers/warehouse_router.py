@@ -64,6 +64,51 @@ async def _stock_map(db: AsyncSession, material_ids: Optional[list[int]] = None,
     return stock
 
 
+async def _ownership_balances(db: AsyncSession, material_ids: Optional[list[int]] = None):
+    """有效流水还原项目余额与剩余通用池；历史超领优先消耗通用池。"""
+    mq = select(models.WhMaterial.id, models.WhMaterial.init_stock)
+    tq = select(models.WhTxn.project_id, models.WhTxn.material_id, models.WhTxn.direction,
+                func.sum(models.WhTxn.qty)).where(
+        models.WhTxn.is_reversal == False, models.WhTxn.reversed == False)  # noqa: E712
+    if material_ids is not None:
+        if not material_ids:
+            return {}, {}, {}, set()
+        mq = mq.where(models.WhMaterial.id.in_(material_ids))
+        tq = tq.where(models.WhTxn.material_id.in_(material_ids))
+    general = {mid: float(init or 0) for mid, init in (await db.execute(mq)).all()}
+    total = dict(general)
+    projects = defaultdict(float)
+    for pid, mid, direction, qty in (await db.execute(
+        tq.group_by(models.WhTxn.project_id, models.WhTxn.material_id, models.WhTxn.direction)
+    )).all():
+        delta = float(qty or 0) * (1 if direction == 'in' else -1)
+        total[mid] = total.get(mid, 0.0) + delta
+        if pid is None:
+            general[mid] = general.get(mid, 0.0) + delta
+        else:
+            projects[(pid, mid)] += delta
+    reserved = defaultdict(float)
+    for (pid, mid), balance in projects.items():
+        if balance < 0:
+            general[mid] = general.get(mid, 0.0) + balance
+        else:
+            reserved[mid] += balance
+    conflicts = {mid for mid, qty in total.items()
+                 if qty < -1e-8 or reserved[mid] > max(0.0, qty) + 1e-8}
+    return projects, {mid: max(0.0, qty) for mid, qty in general.items()}, total, conflicts
+
+
+def _available_for_project(balances, project_id: Optional[int], material_id: int):
+    projects, general, totals, conflicts = balances
+    if material_id in conflicts:
+        return 0.0, 0.0, True
+    own = max(0.0, projects.get((project_id, material_id), 0.0)) if project_id else 0.0
+    total = max(0.0, totals.get(material_id, 0.0))
+    own = min(own, total)
+    shared = min(general.get(material_id, 0.0), max(0.0, total - own))
+    return own, shared, False
+
+
 async def _category_path_map(db: AsyncSession) -> dict[int, str]:
     """🆕 编码文字说明:category_id → 「大类/中类/细分」名称路径。给每个物料编码一句人话解释。"""
     cats = {c.id: c for c in (await db.execute(select(models.MaterialCategory))).scalars().all()}
@@ -820,15 +865,18 @@ async def create_txn(
         src = src or "非项目领用"
         party = (f"{party}〔非项目:{reason}〕" if party else f"非项目:{reason}")[:128]
     bd = normalize_date_str(data.biz_date) or date.today().isoformat()
-    r = await db.execute(select(models.WhMaterial).where(models.WhMaterial.id == data.material_id))
+    r = await db.execute(select(models.WhMaterial).where(models.WhMaterial.id == data.material_id).with_for_update())
     m = r.scalar_one_or_none()
     if not m:
         raise HTTPException(404, "物料不存在")
     # 出库超库存拦截
     if data.direction == "out":
-        stock = (await _stock_map(db, [data.material_id])).get(data.material_id, m.init_stock or 0)
+        own, shared, conflict = _available_for_project(await _ownership_balances(db, [data.material_id]), data.project_id, data.material_id)
+        if conflict:
+            raise HTTPException(400, "物料历史库存归属冲突，请先核对流水")
+        stock = own + shared
         if data.qty > stock:
-            raise HTTPException(400, f"出库数量 {data.qty} 超过现存 {stock}")
+            raise HTTPException(400, f"出库数量 {data.qty} 超过本项目与通用可用库存 {stock:g}")
     ref = await _next_ref(db, data.direction, bd)
     amount = round(data.qty * data.unit_price, 4) if data.unit_price is not None else None
     # 🆕 库位：入库=放到哪(选填,默认物料当前库位;填了回写物料当前库位)；出库=从物料当前库位领
@@ -882,8 +930,14 @@ async def batch_out_txns(
     # ---- 全量校验（不落库）：物料存在 / 数量>0 / 累计出库不超现存（同物料多行按剩余量递减校验）
     mids = [ln.material_id for ln in data.lines]
     mrows = {m.id: m for m in (await db.execute(
-        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)))).scalars().all()}
-    remain = await _stock_map(db, mids)
+        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)).order_by(models.WhMaterial.id).with_for_update())).scalars().all()}
+    balances = await _ownership_balances(db, mids)
+    remain = {}
+    for mid in mids:
+        own, shared, conflict = _available_for_project(balances, data.project_id, mid)
+        if conflict:
+            raise HTTPException(400, f"物料 {mid} 历史库存归属冲突，请先核对流水")
+        remain[mid] = own + shared
     for i, ln in enumerate(data.lines, 1):
         m = mrows.get(ln.material_id)
         label = f"第{i}行" + (f"「{m.name}{('·' + m.spec) if m.spec else ''}」" if m else "")
@@ -1152,27 +1206,6 @@ async def _avg_price_map(db: AsyncSession) -> dict:
     return out
 
 
-async def _general_pool_map(db: AsyncSession, material_ids: list[int]) -> dict:
-    """通用池 = 期初 + 无项目入库 − 无项目出库（只算有效流水）。与 `_project_cost_core` 的池子同口径，
-    调拨可用量按它算（见 transfer_to_project）。"""
-    pool: dict = defaultdict(float)
-    if not material_ids:
-        return pool
-    for mid, init in (await db.execute(select(models.WhMaterial.id, models.WhMaterial.init_stock)
-                                       .where(models.WhMaterial.id.in_(material_ids)))).all():
-        pool[mid] += init or 0
-    r = await db.execute(
-        select(models.WhTxn.material_id, models.WhTxn.direction, func.sum(models.WhTxn.qty))
-        .where(models.WhTxn.material_id.in_(material_ids),
-               models.WhTxn.project_id.is_(None),
-               models.WhTxn.is_reversal == False,  # noqa: E712
-               models.WhTxn.reversed == False)     # noqa: E712
-        .group_by(models.WhTxn.material_id, models.WhTxn.direction))
-    for mid, direction, qty in r.all():
-        pool[mid] += (qty or 0) if direction == "in" else -(qty or 0)
-    return pool
-
-
 async def _project_material_ids(db: AsyncSession) -> set[int]:
     """🆕 反馈#373/#374/#388「项目物料 vs 通用物料」二分法的唯一判据。
 
@@ -1363,7 +1396,7 @@ class _DemandCtx:
        和 `name2id`(同名字段)。逐项目版本靠数据库返回顺序决定谁赢，批量版本显式
        按 id 排序来定，这样两台机器/两次请求结果一致——本来就不该靠运气。
     """
-    __slots__ = ("stock", "mat_by_key", "mat_by_id", "sheet_cols",
+    __slots__ = ("balances", "mat_by_key", "mat_by_id", "sheet_cols",
                  "issued", "recv", "sheets_by_pid", "name2id", "pi_by_rec", "recs_by_sheet")
 
 
@@ -1371,7 +1404,7 @@ async def _demand_ctx(db: AsyncSession, project_ids: list[int]) -> _DemandCtx:
     """一次性备齐 project_ids 这批项目算物料需求要用的全部数据（9 条 SQL）。"""
     ctx = _DemandCtx()
     ctx.sheet_cols = _demand_sheet_cols()          # {表名: (名称列, 规格列, 数量列)}
-    ctx.stock = await _stock_map(db)               # 2 条
+    ctx.balances = await _ownership_balances(db)
     mats = (await db.execute(select(models.WhMaterial)
                              .order_by(models.WhMaterial.id))).scalars().all()   # 1 条
     ctx.mat_by_key = {(m.name, m.spec or None): m for m in mats}
@@ -1439,8 +1472,8 @@ def _demand_rows_from_ctx(ctx: _DemandCtx, project_id: int) -> list[schemas.Ware
        (source="清单")——见 _demand_sheet_cols()；
     ② 采购单入库：经采购收货/入库登记**关联到本项目**(WhTxn.project_id) 但不在清单里的物料
        (source="采购")——解决"新建采购单的物料关联了项目号却无法在物料需求里汇总/出库"。"""
-    stock = ctx.stock
     issued_map = ctx.issued.get(project_id, {})
+    remaining_issued = dict(issued_map)
     out: list[schemas.WarehouseDemandRow] = []
     bom_mat_ids: set[int] = set()
 
@@ -1466,11 +1499,15 @@ def _demand_rows_from_ctx(ctx: _DemandCtx, project_id: int) -> list[schemas.Ware
             m = ctx.mat_by_key.get((name, spec or None))
             if m:
                 bom_mat_ids.add(m.id)
-            st = stock.get(m.id, 0) if m else 0
+            own, shared, conflict = _available_for_project(ctx.balances, project_id, m.id) if m else (0, 0, False)
+            st = own + shared
             # 🆕 反馈#393：建议采购要先扣掉**已经领用出库的量**。
             #   原来是 `需求 − 现存`：领完之后现存归 0，就又叫人再买一遍需求量，
             #   而这批料其实已经领到项目上用了。正确口径 = (还没领的需求) − 现存。
-            issued_q = (issued_map.get(m.id, 0) if m else 0)
+            # 同一物料可能在多张清单重复出现，已领用量逐行分配，不能每行都扣一遍。
+            issued_q = min(max(0.0, remaining_issued.get(m.id, 0.0)), max(0.0, demand or 0.0)) if m else 0.0
+            if m:
+                remaining_issued[m.id] = max(0.0, remaining_issued.get(m.id, 0.0) - issued_q)
             remain = max(0, (demand or 0) - issued_q)
             suggest = max(0, remain - st)
             pis = ctx.pi_by_rec.get((sheet.id, rec.id), [])
@@ -1478,7 +1515,7 @@ def _demand_rows_from_ctx(ctx: _DemandCtx, project_id: int) -> list[schemas.Ware
             out.append(schemas.WarehouseDemandRow(
                 item_name=name, spec=spec, material_id=(m.id if m else None),
                 location=(m.location if m else None),
-                demand_qty=demand, stock=st,
+                demand_qty=demand, stock=st, stock_project=own, stock_general=shared, stock_conflict=conflict,
                 suggest_purchase=suggest, purchase_status=status, in_stock=st > 0,
                 issued_qty=issued_q, source="清单"))
 
@@ -1489,11 +1526,12 @@ def _demand_rows_from_ctx(ctx: _DemandCtx, project_id: int) -> list[schemas.Ware
         m = ctx.mat_by_id.get(mid)
         if not m:
             continue
-        st = stock.get(mid, 0)
+        own, shared, conflict = _available_for_project(ctx.balances, project_id, mid)
+        st = own + shared
         # 采购入库到本项目的量当作"需求量"，待出库 = 采购量 - 已领；已买到货，无需再采购
         out.append(schemas.WarehouseDemandRow(
             item_name=m.name, spec=m.spec, material_id=mid, location=m.location,
-            demand_qty=got, stock=st, suggest_purchase=0,
+            demand_qty=got, stock=st, stock_project=own, stock_general=shared, stock_conflict=conflict, suggest_purchase=0,
             purchase_status="已到货", in_stock=st > 0,
             issued_qty=issued_map.get(mid, 0), source="采购"))
     return out
@@ -1555,7 +1593,7 @@ async def demand_overview(
         pending = sum(1 for r in rows if r.in_stock and (r.demand_qty or 0) - (r.issued_qty or 0) > 0)
         issued = sum(1 for r in rows if (r.issued_qty or 0) > 0)
         out.append(schemas.WarehouseDemandOverviewRow(
-            project_id=p.id, code=p.code, name=p.name,
+            project_id=p.id, code=p.code, name=p.name, project_status=p.status,
             total_lines=len(rows), pending_out=pending, issued_out=issued))
     return out
 
@@ -1580,9 +1618,15 @@ async def issue_demand(
         raise HTTPException(400, "没有可领用的物料")
     bd = _cn_today().isoformat()
     mids = [ln.material_id for ln in lines]
-    stock = await _stock_map(db, mids)
     mrows = {m.id: m for m in (await db.execute(
-        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)))).scalars().all()}
+        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)).order_by(models.WhMaterial.id).with_for_update())).scalars().all()}
+    balances = await _ownership_balances(db, mids)
+    stock = {}
+    for mid in mids:
+        own, shared, conflict = _available_for_project(balances, project_id, mid)
+        if conflict:
+            raise HTTPException(400, f"物料 {mid} 历史库存归属冲突，请先核对流水")
+        stock[mid] = own + shared
     issued, skipped = 0, 0
     for ln in lines:
         m = mrows.get(ln.material_id)
@@ -1648,11 +1692,12 @@ async def transfer_to_project(
     if not p:
         raise HTTPException(404, "项目不存在")
     mids = [ln.material_id for ln in lines]
-    stock = await _stock_map(db, mids)
-    pool = await _general_pool_map(db, mids)
-    avg = await _avg_price_map(db)
     mrows = {m.id: m for m in (await db.execute(
-        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)))).scalars().all()}
+        select(models.WhMaterial).where(models.WhMaterial.id.in_(mids)).order_by(models.WhMaterial.id).with_for_update())).scalars().all()}
+    balances = await _ownership_balances(db, mids)
+    stock = balances[2]
+    pool = {mid: _available_for_project(balances, None, mid)[1] for mid in mids}
+    avg = await _avg_price_map(db)
     bd = normalize_date_str(body.biz_date) or _cn_today().isoformat()
     note = (body.note or "").strip()
     moved, skipped = 0, []

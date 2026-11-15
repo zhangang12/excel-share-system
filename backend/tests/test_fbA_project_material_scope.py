@@ -277,10 +277,10 @@ async def main():
         rr = await c.post("/api/wh/txns", headers=H, json={
             "material_id": mE["id"], "biz_date": "2026-08-11", "direction": "out",
             "qty": 3, "project_id": pid["T-002"], "source": "领料出库"})
-        chk(rr.status_code == 200, f"乙项目领走甲的专用料E 3 个: {rr.status_code} {rr.text[:80]}")
+        chk(rr.status_code == 400, f"#455 乙项目不得领走甲的专用料E: {rr.status_code} {rr.text[:80]}")
         now = {r["code"]: r["cost"] for r in (await c.get("/api/wh/project-cost", headers=H)).json()["rows"]}
         chk(near(now.get("T-002"), base.get("T-002")),
-            f"乙领甲的料，通用池是 0 → 不产生新成本（钱已在甲的收货腿里）: "
+            f"跨项目领用被拒，乙项目成本不变: "
             f"{base.get('T-002')} → {now.get('T-002')}")
         chk(near(now.get("T-001"), base.get("T-001")),
             f"甲的成本也不动（料是它收的，钱本来就在它头上）: {base.get('T-001')} → {now.get('T-001')}")
