@@ -165,6 +165,7 @@ export interface GroupProjectRow {
   task_id: number
   worker_name?: string | null        // 派给谁（主管视角）
   group_done: boolean
+  dispatch_date?: string | null       // 本组首次派单日期
   start_date?: string | null         // 生产开始(派发日)
   due_date?: string | null           // 本组预计完成(组员填，填后锁定)
   done_date?: string | null          // 本组完成日期

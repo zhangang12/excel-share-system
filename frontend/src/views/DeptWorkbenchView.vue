@@ -341,18 +341,6 @@ async function toggleGroupDone(row: GroupProjectRow) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   }
 }
-// 🆕 本组各自设置「预计完成」(填后锁定，仅管理层可改)
-async function setGroupDue(row: GroupProjectRow, val: string | null) {
-  if (!val) return
-  try {
-    await produceApi.setGroupDue(row.task_id, val)
-    ElMessage.success('已设置本组预计完成')
-    await load()
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '设置失败')
-    await load()   // 失败回滚显示
-  }
-}
 // 🆕 封板组资料列不再罗列文件：点「打包下载」开抽屉（预览+勾选+打包 zip，同采购部交互，复用 AttachmentPackDialog）
 function openCellPack(row: GroupProjectRow, files: { id: number; name: string }[] | undefined, label: string) {
   const items = (files || []).map(f => ({ id: f.id, name: f.name }))
@@ -1516,16 +1504,13 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            title="预览 / 打包下载" @click="openCellPack(row, row.coldwork_files, '冷作图纸')">打包下载</el-button>
               </template>
             </el-table-column>
-            <el-table-column label="预计完成" min-width="150" align="center">
-              <template #default="{ row }">
-                <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
-                  size="small" placeholder="设置" style="width:132px" :clearable="false"
-                  :disabled="!!row.due_date && !isMgr" @change="(v: string | null) => setGroupDue(row, v)" />
-              </template>
+            <el-table-column label="派单时间" min-width="130" align="center">
+              <template #default="{ row }">{{ row.dispatch_date ? fmtDate(row.dispatch_date) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="钣金完成" min-width="180" align="center">
+            <el-table-column label="钣金完成" min-width="250" align="center">
               <template #default="{ row }">
                 <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'danger'" />
+                <span v-if="row.group_done && row.done_date" class="muted small" style="margin-left:6px">{{ fmtDate(row.done_date) }}</span>
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
                   {{ row.group_done ? '撤销' : '标记完成' }}
                 </el-button>
@@ -1598,16 +1583,13 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            title="预览 / 打包下载" @click="openCellPack(row, row.fitter_files, '钳工图纸')">打包下载</el-button>
               </template>
             </el-table-column>
-            <el-table-column label="预计完成" min-width="150" align="center">
-              <template #default="{ row }">
-                <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
-                  size="small" placeholder="设置" style="width:132px" :clearable="false"
-                  :disabled="!!row.due_date && !isMgr" @change="(v: string | null) => setGroupDue(row, v)" />
-              </template>
+            <el-table-column label="派单时间" min-width="130" align="center">
+              <template #default="{ row }">{{ row.dispatch_date ? fmtDate(row.dispatch_date) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="装配完成" min-width="180" align="center">
+            <el-table-column label="装配完成" min-width="250" align="center">
               <template #default="{ row }">
                 <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'danger'" />
+                <span v-if="row.group_done && row.done_date" class="muted small" style="margin-left:6px">{{ fmtDate(row.done_date) }}</span>
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
                   {{ row.group_done ? '撤销' : '标记完成' }}
                 </el-button>
@@ -1679,16 +1661,13 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            title="预览 / 打包下载" @click="openCellPack(row, row.sealing_files, '机架横梁图')">打包下载</el-button>
               </template>
             </el-table-column>
-            <el-table-column label="预计完成" min-width="150" align="center">
-              <template #default="{ row }">
-                <el-date-picker v-model="row.due_date" type="date" value-format="YYYY-MM-DD"
-                  size="small" placeholder="设置" style="width:132px" :clearable="false"
-                  :disabled="!!row.due_date && !isMgr" @change="(v: string | null) => setGroupDue(row, v)" />
-              </template>
+            <el-table-column label="派单时间" min-width="130" align="center">
+              <template #default="{ row }">{{ row.dispatch_date ? fmtDate(row.dispatch_date) : '—' }}</template>
             </el-table-column>
-            <el-table-column label="封板完成" min-width="180" align="center">
+            <el-table-column label="封板完成" min-width="250" align="center">
               <template #default="{ row }">
                 <StatusPill :text="row.group_done ? '已完成' : '进行中'" :variant="row.group_done ? 'success' : 'danger'" />
+                <span v-if="row.group_done && row.done_date" class="muted small" style="margin-left:6px">{{ fmtDate(row.done_date) }}</span>
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
                   {{ row.group_done ? '撤销' : '标记完成' }}
                 </el-button>
@@ -1768,20 +1747,20 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
         <div class="kpi-grid">
           <div class="kpi is-primary"><div class="kpi-v">{{ report.total }}</div><div class="kpi-l">任务总数</div></div>
           <div class="kpi is-good"><div class="kpi-v">{{ report.done }}</div><div class="kpi-l">已完成</div></div>
-          <div class="kpi" :class="report.overdue ? 'is-bad' : ''"><div class="kpi-v">{{ report.overdue }}</div><div class="kpi-l">逾期</div></div>
-          <div class="kpi"><div class="kpi-v">{{ report.ontime_rate != null ? report.ontime_rate + '%' : '—' }}</div><div class="kpi-l">按时率 · 均效率 {{ report.avg_eff != null ? report.avg_eff + '%' : '—' }}</div></div>
+          <div v-if="!isProduce" class="kpi" :class="report.overdue ? 'is-bad' : ''"><div class="kpi-v">{{ report.overdue }}</div><div class="kpi-l">逾期</div></div>
+          <div v-if="!isProduce" class="kpi"><div class="kpi-v">{{ report.ontime_rate != null ? report.ontime_rate + '%' : '—' }}</div><div class="kpi-l">按时率 · 均效率 {{ report.avg_eff != null ? report.avg_eff + '%' : '—' }}</div></div>
         </div>
         <el-table show-overflow-tooltip :data="report.workers" size="small" stripe style="margin-top:10px" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="worker_name" label="人员" min-width="100" />
           <el-table-column prop="total" label="任务数" width="80" />
           <el-table-column prop="done" label="完成" width="70" />
-          <el-table-column prop="ontime" label="按时" width="70" />
-          <el-table-column label="逾期" width="70"><template #default="{ row }">{{ row.over }}</template></el-table-column>
-          <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate != null ? row.rate + '%' : '—' }}</template></el-table-column>
-          <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff == null ? '' : row.avg_eff >= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff != null ? row.avg_eff + '%' : '—' }}</span></template></el-table-column>
+          <el-table-column v-if="!isProduce" prop="ontime" label="按时" width="70" />
+          <el-table-column v-if="!isProduce" label="逾期" width="70"><template #default="{ row }">{{ row.over }}</template></el-table-column>
+          <el-table-column v-if="!isProduce" label="按时率" width="80"><template #default="{ row }">{{ row.rate != null ? row.rate + '%' : '—' }}</template></el-table-column>
+          <el-table-column v-if="!isProduce" label="平均效率" width="90"><template #default="{ row }"><span :class="row.avg_eff == null ? '' : row.avg_eff >= 100 ? 'eff-good' : 'eff-bad'">{{ row.avg_eff != null ? row.avg_eff + '%' : '—' }}</span></template></el-table-column>
         </el-table>
-        <div class="sec-title" style="margin-top:16px">逾期任务（{{ report.overdue_items.length }}）</div>
-        <el-table show-overflow-tooltip v-if="report.overdue_items.length" :data="report.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
+        <div v-if="!isProduce" class="sec-title" style="margin-top:16px">逾期任务（{{ report.overdue_items.length }}）</div>
+        <el-table show-overflow-tooltip v-if="!isProduce && report.overdue_items.length" :data="report.overdue_items" size="small" max-height="calc(100vh - 240px)" :scrollbar-always-on="true">
           <el-table-column prop="worker_name" label="人员" width="100" />
           <el-table-column prop="code" label="项目编号" width="120" />
           <el-table-column prop="name" label="项目名称" min-width="160" show-overflow-tooltip />
@@ -1791,9 +1770,9 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
           <el-table-column prop="done_date" label="实际" width="110">
             <template #default="{ row }">{{ fmtDate(row.done_date) }}</template>
           </el-table-column>
-          <el-table-column label="逾期" width="90"><template #default="{ row }">超 {{ row.over_days }} 天</template></el-table-column>
+          <el-table-column v-if="!isProduce" label="逾期" width="90"><template #default="{ row }">超 {{ row.over_days }} 天</template></el-table-column>
         </el-table>
-        <EmptyHint v-else text="本月无逾期任务" size="sm" />
+        <EmptyHint v-else-if="!isProduce" text="本月无逾期任务" size="sm" />
       </div>
     </el-dialog>
 

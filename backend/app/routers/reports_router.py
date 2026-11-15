@@ -76,6 +76,8 @@ def _agg_workers(orders: list[models.DeptOrder]) -> tuple[list[WorkerStat], list
         r["total"] += 1
         if _kpi_done(o):
             r["done"] += 1
+            if o.dept == "produce":
+                continue
             eff, on_time, over_days = compute_efficiency(o.start_date, o.due_date, o.done_date)
             if eff is not None:
                 r["effs"].append(eff)
@@ -93,7 +95,7 @@ def _agg_workers(orders: list[models.DeptOrder]) -> tuple[list[WorkerStat], list
         stats.append(WorkerStat(
             dept=r["dept"], dept_name=DEPTS[r["dept"]]["name"], worker_name=r["name"],
             total=r["total"], done=r["done"], ontime=r["ontime"], over=r["over"],
-            rate=round(r["ontime"] / r["done"] * 100) if r["done"] else None,
+            rate=round(r["ontime"] / r["done"] * 100) if r["done"] and r["dept"] != "produce" else None,
             avg_eff=round(sum(effs) / len(effs)) if effs else None,
         ))
     stats.sort(key=lambda s: -s.total)
@@ -103,7 +105,7 @@ def _agg_workers(orders: list[models.DeptOrder]) -> tuple[list[WorkerStat], list
 # ==================== 生产部专用聚合（钣金组 + 装配组分组任务） ====================
 # 生产部不走 DeptOrder.worker_id（父生产单 worker_id 恒为空），实际工人与完成都在
 # ProduceGroupTask（每项目最多 3 条：钣金组 + 装配组 + 🆕封板组）。报表须按分组任务统计，否则
-# 「已完成」永远为 0、人员明细缺失。完成时效以父生产单的 start/due + 本组 done_at 计算。
+# 「已完成」永远为 0、人员明细缺失。生产组不再按预计完成日期考核。
 GROUP_NAMES = {"sheetmetal": "钣金组", "assembly": "装配组", "sealing": "封板组"}  # 🆕 反馈#209
 
 
@@ -149,28 +151,13 @@ def _agg_produce(rows: list, umap: dict, month: Optional[str] = None):
         if gt.status == "done":
             r["done"] += 1
             done_cnt += 1
-            dstr = _china_date_str(gt.done_at)
-            # 🆕 生产部按「本组各自填的预计完成」算效率/逾期（gt.due_date），开始=父单派发日
-            eff, on_time, over_days = compute_efficiency(parent.start_date, gt.due_date, dstr)
-            if eff is not None:
-                r["effs"].append(eff)
-                effs.append(eff)
-            if on_time:
-                r["ontime"] += 1
-                ontime_cnt += 1
-            elif over_days > 0:
-                r["over"] += 1
-                overdue.append(OverdueItem(
-                    dept_name=gname, worker_name=wname,
-                    code=proj.code if proj else "", name=proj.name if proj else "",
-                    due_date=gt.due_date, done_date=dstr, over_days=over_days, eff=eff))
     stats = []
     for r in by.values():
         e = r["effs"]
         stats.append(WorkerStat(
             dept="produce", dept_name=r["gname"], worker_name=r["name"],
             total=r["total"], done=r["done"], ontime=r["ontime"], over=r["over"],
-            rate=round(r["ontime"] / r["done"] * 100) if r["done"] else None,
+            rate=None,
             avg_eff=round(sum(e) / len(e)) if e else None,
         ))
     stats.sort(key=lambda s: -s.total)
@@ -226,7 +213,8 @@ async def monthly(
     done = [o for o in orders if _kpi_done(o)]
     effs = []
     ontime = 0
-    for o in done:
+    assessed_done = [o for o in done if o.dept != "produce"]
+    for o in assessed_done:
         eff, on_time, _ = compute_efficiency(o.start_date, o.due_date, o.done_date)
         if eff is not None:
             effs.append(eff)
@@ -246,7 +234,7 @@ async def monthly(
             dept_cards.append({
                 "dept": dept, "name": cfg["name"], "total": p_total, "done": p_done,
                 "over": len(p_over),
-                "rate": round(p_ontime / p_done * 100) if p_done else None,
+                "rate": None,
                 "avg_eff": round(sum(p_effs) / len(p_effs)) if p_effs else None,
             })
             continue
@@ -274,7 +262,7 @@ async def monthly(
 
     return MonthlyReport(
         month=ym, total=len(orders), done=len(done), overdue=len(overdue_items),
-        ontime_rate=round(ontime / len(done) * 100) if done else None,
+        ontime_rate=round(ontime / len(assessed_done) * 100) if assessed_done else None,
         avg_eff=round(sum(effs) / len(effs)) if effs else None,
         dept_cards=dept_cards, workers=stats, overdue_items=overdue_items,
         sales_order_count=sales_cnt, wh_txn_count=wh_cnt,
@@ -315,7 +303,7 @@ async def dept_report(
         return DeptReport(
             dept="produce", dept_name=cfg["name"], total=total, done=done_cnt,
             overdue=len(overdue_items),
-            ontime_rate=round(ontime_cnt / done_cnt * 100) if done_cnt else None,
+            ontime_rate=None,
             avg_eff=round(sum(effs) / len(effs)) if effs else None,
             workers=stats, overdue_items=overdue_items,
         )

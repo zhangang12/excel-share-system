@@ -105,6 +105,8 @@ async def main():
         # 按人可见：sm 看到派给自己的；sm2(另一钣金组人)看不到；越权看对方组 403
         smrows = (await c.get("/api/produce/sheetmetal-projects", headers=Hsm)).json()
         chk(len(smrows) == 1 and smrows[0]["project_id"] == pid, f"钣金组看到派给自己的项目: {smrows}")
+        chk(bool(smrows[0].get("dispatch_date")) and not smrows[0].get("done_date"), "派单日期存在，未完成时无完成日期")
+        dispatch_date = smrows[0].get("dispatch_date")
         chk(smrows[0]["worker_name"] == "sm", f"派给列=sm: {smrows[0].get('worker_name')}")
         chk((await c.get("/api/produce/sheetmetal-projects", headers=Hsm2)).json() == [], "另一钣金组人看不到非自己的")
         # 主管看本组全部（含派给信息）
@@ -157,8 +159,17 @@ async def main():
 
         # 组完成：先钣金完成→生产单仍未完成；再装配完成→生产单 done
         sm_task = smrows[0]["task_id"]; asm_task = asmrows[0]["task_id"]
+        # 历史预计完成日期保留，但生产组不再用它计算考核。
+        async with SessionLocal() as db:
+            for t in (await db.execute(select(models.ProduceGroupTask).where(models.ProduceGroupTask.order_id == oid))).scalars().all():
+                t.due_date = '2000-01-01'
+            o = (await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))).scalar_one()
+            o.due_date = '2000-01-01'
+            await db.commit()
         r = await c.post(f"/api/produce/group/{sm_task}/done", headers=Hsm, json={"done": True})
         chk(r.status_code == 200, f"钣金标记完成: {r.text[:80]}")
+        sm_done = (await c.get('/api/produce/sheetmetal-projects', headers=Hpm)).json()[0]
+        chk(sm_done.get('dispatch_date') == dispatch_date and bool(sm_done.get('done_date')), '完成后显示完成日期，派单日期不变')
         async with SessionLocal() as db:
             o = (await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))).scalar_one()
             chk(o.status == "in_progress", f"仅钣金完成→生产单未 done: {o.status}")
@@ -167,8 +178,15 @@ async def main():
         async with SessionLocal() as db:
             o = (await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))).scalar_one()
             chk(o.status == "done" and o.done_date, f"两组都完成→生产单 done: {o.status}/{o.done_date}")
+        report = (await c.get('/api/reports/dept/produce', headers=H)).json()
+        chk(report['done'] == 2 and report['ontime_rate'] is None and report['avg_eff'] is None and not report['overdue_items'], f'生产组完成数保留，考核停用: {report}')
+        monthly = (await c.get('/api/reports/monthly', headers=H)).json()
+        card = next(x for x in monthly['dept_cards'] if x['dept'] == 'produce')
+        chk(card['done'] == 2 and card['rate'] is None and card['avg_eff'] is None, f'月报生产组不考核: {card}')
         # 撤销装配完成 → 生产单回 in_progress（发货闸门口径联动）
         await c.post(f"/api/produce/group/{asm_task}/done", headers=Hasm, json={"done": False})
+        asm_undone = (await c.get('/api/produce/assembly-projects', headers=Hpm)).json()[0]
+        chk(not asm_undone.get('done_date'), '撤销完成后不显示完成日期')
         async with SessionLocal() as db:
             o = (await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))).scalar_one()
             chk(o.status == "in_progress" and o.done_date is None, f"撤销一组→生产单回退: {o.status}")

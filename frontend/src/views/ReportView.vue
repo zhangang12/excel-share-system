@@ -57,7 +57,7 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
           <el-card shadow="never" class="dc">
             <div class="dc-h"><span class="dc-dot"></span>{{ d.name }}</div>
             <div class="dc-row"><span>任务 / 完成</span><b>{{ d.total }} / {{ d.done }}</b></div>
-            <div class="dc-row"><span>逾期</span><b :class="{ bad: d.over }">{{ d.over }}</b></div>
+            <div class="dc-row"><span>逾期</span><b :class="{ bad: d.over }">{{ d.dept === 'produce' ? '—' : d.over }}</b></div>
             <div class="dc-row"><span>按时率</span><b>{{ d.rate != null ? d.rate + '%' : '—' }}</b></div>
             <div class="dc-row"><span>平均效率</span><b :class="effClass(d.avg_eff)">{{ d.avg_eff != null ? d.avg_eff + '%' : '—' }}</b></div>
           </el-card>
@@ -80,8 +80,8 @@ function barWidth(v?: number | null) { return v == null ? 8 : Math.max(Math.min(
           <el-table-column prop="worker_name" label="人员" width="100" />
           <el-table-column prop="total" label="任务数" width="80" />
           <el-table-column prop="done" label="完成" width="70" />
-          <el-table-column prop="ontime" label="按时" width="70" />
-          <el-table-column label="逾期" width="70"><template #default="{ row }"><span :class="{ bad: row.over }">{{ row.over }}</span></template></el-table-column>
+          <el-table-column label="按时" width="70"><template #default="{ row }">{{ row.dept === 'produce' ? '—' : row.ontime }}</template></el-table-column>
+          <el-table-column label="逾期" width="70"><template #default="{ row }"><span :class="{ bad: row.over }">{{ row.dept === 'produce' ? '—' : row.over }}</span></template></el-table-column>
           <el-table-column label="按时率" width="80"><template #default="{ row }">{{ row.rate != null ? row.rate + '%' : '—' }}</template></el-table-column>
           <el-table-column label="平均效率" width="90"><template #default="{ row }"><span :class="effClass(row.avg_eff)">{{ row.avg_eff != null ? row.avg_eff + '%' : '—' }}</span></template></el-table-column>
         </el-table>

@@ -9,7 +9,7 @@
 两组都完成时把父生产任务单（dept_orders.dept==produce）置 done，保持发货闸门 D5 /
 部门报表口径不变（它们只看生产单 status==done）。
 """
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +21,7 @@ from ..database import get_db
 from .. import models, schemas
 from ..deps import get_current_user, require_roles
 from ..notify import push_message
+from ..overdue import _cn_date
 from ..utils import write_audit
 
 router = APIRouter(prefix="/api/produce", tags=["生产部分组"])
@@ -298,6 +299,7 @@ class GroupProjectRow(BaseModel):
     task_id: int
     worker_name: Optional[str] = None   # 派给谁（主管/管理层视角展示）
     group_done: bool = False
+    dispatch_date: Optional[str] = None  # 本组首次派单日期（北京时间）
     start_date: Optional[str] = None    # 🆕 生产开始(父单派发日)
     due_date: Optional[str] = None      # 🆕 本组预计完成(组员填，填后锁定)
     done_date: Optional[str] = None     # 🆕 本组完成日期(中国自然日)
@@ -472,8 +474,9 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
             designer=(p.extra or {}).get("__o__设计师") or designer_by_pid.get(p.id),
             task_id=t.id, worker_name=wname_by_id.get(t.worker_id) if t.worker_id else None,
             group_done=(t.status == "done"),
+            dispatch_date=_cn_date(t.created_at) if t.created_at else None,
             start_date=_o.start_date, due_date=t.due_date,
-            done_date=(t.done_at + timedelta(hours=8)).strftime("%Y-%m-%d") if t.done_at else None,
+            done_date=_cn_date(t.done_at) if t.done_at else None,
             sheetmetal_datasheet_id=bj.id if bj else None,
             sheetmetal_done=bool(bj.done_flag) if bj else False,
             material_locations=loc_by_pid.get(p.id, []),
