@@ -234,6 +234,10 @@ function matProjTitle(m: WhMaterial): string {
   if (!cs.length) return ''
   return cs.length === 1 ? `收货时挂的项目：${cs[0]}` : `这个料被这些项目收过货：${cs.join('、')}`
 }
+// 出库多行共用一份选项，虚拟列表只渲染可见项，避免每行挂载全部物料。
+const materialOptions = computed(() => materials.value.map(m => ({
+  value: m.id, label: matLabel(m), title: matProjTitle(m),
+})))
 
 // ===== 流水 =====
 const txns = ref<WhTxn[]>([])
@@ -2049,11 +2053,9 @@ function applyPoPick() {
         <!-- 🆕 #325 出库=多行批量：逐行选物料+数量，消耗品一次出多种；入库保持单行 -->
         <el-form-item v-if="ioForm.direction === 'out'" label="物料（逐行选择，数量填在行内；一次提交每行各生成一张出库单）" required>
           <div v-for="(ln, i) in ioLines" :key="i" style="display:flex;gap:8px;width:100%;margin-bottom:8px">
-            <el-select v-model="ln.material_id" filterable placeholder="选择物料" style="flex:1">
-              <el-option v-for="m in materials" :key="m.id" :label="matLabel(m)" :value="m.id">
-                <span :title="matProjTitle(m)">{{ matLabel(m) }}</span>
-              </el-option>
-            </el-select>
+            <el-select-v2 v-model="ln.material_id" :options="materialOptions" filterable placeholder="选择物料" style="flex:1; min-width:0">
+              <template #default="{ item }"><span :title="item.title">{{ item.label }}</span></template>
+            </el-select-v2>
             <el-input-number v-model="ln.qty" :min="1" :controls="false" placeholder="数量" style="width:110px" />
             <el-button :icon="Delete" circle plain type="danger" :disabled="ioLines.length <= 1" @click="removeIoLine(i)" />
           </div>
