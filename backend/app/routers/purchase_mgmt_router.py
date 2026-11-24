@@ -1,6 +1,7 @@
 """🆕 采购管理模块：供应商档案 / 采购明细 / 账目一览 / 请款流程 / 汇总报表 / 历史导入"""
 from datetime import datetime, timezone, date as _date, datetime as _dt, timedelta as _td
 from io import BytesIO
+from collections.abc import Iterable
 from typing import Optional, List, Dict
 from collections import defaultdict
 from urllib.parse import quote
@@ -8,7 +9,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 import math
-from sqlalchemy import select, func, delete, or_, update as sa_update
+from sqlalchemy import and_, select, func, delete, or_, tuple_, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -580,7 +581,11 @@ async def get_order(
         rows = [x for x in rows if x.buyer_id == current.id]
     if not rows:
         raise HTTPException(404, "采购单不存在")
-    return await _attach_pay_status(db, [_item_out(x) for x in rows])
+    grades = await _order_material_grades(db, rows)
+    outs = [_item_out(row) for row in rows]
+    for out in outs:
+        out.material_grade = grades[out.id]
+    return await _attach_pay_status(db, outs)
 
 
 # ==================== 🆕 采购单 PDF（服务端直出，替代浏览器弹窗打印） ====================
@@ -596,7 +601,9 @@ def _po_pay_label(method: Optional[str], ratio: Optional[float]) -> str:
     return method
 
 
-def _render_po_pdf(po_no: str, supplier_name: str, rows: list) -> bytes:
+def _render_po_pdf(
+    po_no: str, supplier_name: str, rows: list[models.PurchaseItem], grades: dict[int, Optional[str]],
+) -> bytes:
     """用 reportlab 把整单渲染成 A4 PDF（内置 STSong-Light CID 字体，中文无需外部字体文件）。
     版式对齐原打印模板：抬头(需/供方/日期/付款方式/单号) + 明细表 + 合计 + 签字栏。"""
     from reportlab.lib.pagesizes import A4
@@ -616,7 +623,10 @@ def _render_po_pdf(po_no: str, supplier_name: str, rows: list) -> bytes:
     cell = ParagraphStyle("po_cell", parent=styles["Normal"], fontName=FONT, fontSize=8, leading=11)
 
     def P(t):
-        return Paragraph(("" if t is None else str(t)).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), cell)
+        value = "" if t is None else str(t)
+        escaped = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        # 图纸名称和规格之间的中点在部分中文 PDF 字体中缺字。
+        return Paragraph(escaped.replace("·", '<font name="Helvetica">·</font>'), cell)
 
     first = rows[0]
     pay = _po_pay_label(first.payment_method, first.prepay_ratio)
@@ -634,7 +644,13 @@ def _render_po_pdf(po_no: str, supplier_name: str, rows: list) -> bytes:
         ("BACKGROUND", (2, 0), (2, 1), colors.HexColor("#f2f2f2")),
     ]))
 
-    header = ["序号", "订单编号", "名称", "规格型号", "数量", "单价", "合计金额", "备注"]
+    show_material = any(grades.values())
+    header = ["序号", "订单编号", "名称", "规格型号"]
+    if show_material:
+        header.append("材质")
+    qty_col = len(header)
+    header += ["数量", "单价", "合计金额", "备注"]
+    amount_col = qty_col + 2
     data = [[P(h) for h in header]]
     total = 0.0
     for i, x in enumerate(rows, 1):
@@ -642,21 +658,25 @@ def _render_po_pdf(po_no: str, supplier_name: str, rows: list) -> bytes:
         total += amt or 0
         # 🆕 成套：数量显示「N 套」，单价即套单价
         qty_txt = "" if x.qty is None else (f"{x.qty:g} 套" if getattr(x, "is_kit", False) else f"{x.qty:g}")
-        data.append([
-            P(i), P(x.project_code or ""), P(x.item_name or ""), P(x.spec or ""),
+        cells = [P(i), P(x.project_code or ""), P(x.item_name or ""), P(x.spec or "")]
+        if show_material:
+            cells.append(P(grades[x.id]))
+        cells.extend([
             P(qty_txt),
             P("" if x.unit_price is None else f"{x.unit_price:g}"),
             P("" if amt is None else f"{amt:,.2f}"), P(x.notes or ""),
         ])
-    data.append([P("合计"), "", "", "", "", "", P(f"￥{total:,.2f}"), ""])
-    col_w = [10 * mm, 24 * mm, 34 * mm, 30 * mm, 13 * mm, 18 * mm, 24 * mm, 25 * mm]
+        data.append(cells)
+    data.append([P("合计"), *([""] * (amount_col - 1)), P(f"￥{total:,.2f}"), ""])
+    widths = [10, 23, 30, 29, 17, 12, 16, 23, 18] if show_material else [10, 24, 34, 30, 13, 18, 24, 25]
+    col_w = [width * mm for width in widths]
     items_tbl = Table(data, colWidths=col_w, repeatRows=1)
     items_tbl.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8f5ee")),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("SPAN", (0, -1), (5, -1)),
-        ("ALIGN", (4, 1), (6, -1), "RIGHT"),
+        ("SPAN", (0, -1), (amount_col - 1, -1)),
+        ("ALIGN", (qty_col, 1), (amount_col, -1), "RIGHT"),
     ]))
 
     # 🆕 成套：把各成套行的「套内零件清单」附在明细表下方，供供应商核对
@@ -784,7 +804,8 @@ async def download_order_pdf(
     rows = [x for x in rows if x.supplier_id == sid0]
     sup = (await db.execute(select(models.Supplier).where(
         models.Supplier.id == sid0))).scalar_one_or_none()
-    pdf_bytes = _render_po_pdf(po_no, sup.name if sup else "", rows)
+    grades = await _order_material_grades(db, rows)
+    pdf_bytes = _render_po_pdf(po_no, sup.name if sup else "", rows, grades)
     fname = quote(f"采购单_{po_no}.pdf")
     return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf",
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
@@ -875,7 +896,8 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         delivery_date=i.delivery_date, contract_no=i.contract_no,
         project_code=i.project_code, delivery_note_no=i.delivery_note_no,
         arrival_date=i.arrival_date, expected_arrival=i.expected_arrival,
-        item_name=i.item_name, spec=i.spec, brand=i.brand, qty=i.qty, unit_price=i.unit_price,
+        item_name=i.item_name, spec=i.spec, material_grade=i.material_grade or None,
+        brand=i.brand, qty=i.qty, unit_price=i.unit_price,
         received_amount=i.received_amount or 0,
         invoice_date=i.invoice_date, invoice_no=i.invoice_no, tax_rate=i.tax_rate,
         invoice_amount=i.invoice_amount or 0,
@@ -889,6 +911,20 @@ def _item_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
         stock_location=i.stock_location,
         notes=i.notes, created_at=i.created_at,
     )
+
+
+async def _order_material_grades(
+    db: AsyncSession, rows: list[models.PurchaseItem],
+) -> dict[int, Optional[str]]:
+    """预览和 PDF 共用材质，历史明细只在输出时回查现存来源行。"""
+    grades = await _source_material_grades(db, (
+        (row.source_sheet_id, row.source_record_id) for row in rows if row.material_grade is None
+    ))
+    return {
+        row.id: (row.material_grade if row.material_grade is not None else
+                 grades.get((row.source_sheet_id, row.source_record_id))) or None
+        for row in rows
+    }
 
 
 def _maybe_auto_reconcile(item: models.PurchaseItem) -> None:
@@ -1012,6 +1048,32 @@ _ALL_EXPECTED_ARRIVAL_COLS = ("预计到货",)   # 🆕 下单时把预计到货
 async def _sheet_fieldmap(db: AsyncSession, sheet_id: int) -> dict:
     fr = await db.execute(select(models.Field).where(models.Field.datasheet_id == sheet_id))
     return {f.name: str(f.id) for f in fr.scalars().all()}
+
+
+async def _source_material_grades(
+    db: AsyncSession, links: Iterable[tuple[Optional[int], Optional[int]]],
+) -> dict[tuple[Optional[int], Optional[int]], str]:
+    pairs = {(sid, rid) for sid, rid in links if sid is not None and rid is not None}
+    if not pairs:
+        return {}
+    record, sheet, field = models.Record, models.Datasheet, models.Field
+    rows = await db.execute(
+        select(record.datasheet_id, record.id, record.values, field.id)
+        .join(sheet, record.datasheet_id == sheet.id)
+        .outerjoin(field, and_(field.datasheet_id == sheet.id, field.name == "材质"))
+        .where(tuple_(record.datasheet_id, record.id).in_(pairs),
+               sheet.name.in_([conf[0] for conf in _PURCHASABLE_SHEETS.values()]))
+        .order_by(field.id)
+    )
+    grades = {}
+    for sid, rid, values, field_id in rows:
+        value = (values or {}).get(str(field_id)) if field_id is not None else None
+        if isinstance(value, list):
+            value = "、".join(str(part) for part in value)
+        elif isinstance(value, float) and value.is_integer():
+            value = int(value)
+        grades[sid, rid] = "" if value is None else str(value).strip()
+    return grades
 
 
 async def _ensure_expected_arrival_field(db: AsyncSession, sheet_id: int, name2id: dict) -> Optional[str]:
@@ -1384,6 +1446,7 @@ async def create_order_from_list(
                                       .where(models.Project.id.in_(set(pmap.values()))))
                 cbp = {pid: code for pid, code in pr.all()}
                 sheet_code_map = {sid: cbp.get(pid) for sid, pid in pmap.items()}
+    grades = await _source_material_grades(db, ((l.source_sheet_id, l.source_record_id) for l in lines))
     for l in lines:
         recv = None
         if l.qty and l.unit_price:
@@ -1395,7 +1458,9 @@ async def create_order_from_list(
             supplier_id=body.supplier_id, delivery_date=body.delivery_date,
             expected_arrival=line_ea,
             project_code=(body.project_code or sheet_code_map.get(l.source_sheet_id)),
-            item_name=l.item_name.strip(), spec=l.spec, brand=l.brand, qty=l.qty, unit_price=l.unit_price,
+            item_name=l.item_name.strip(), spec=l.spec,
+            material_grade=grades.get((l.source_sheet_id, l.source_record_id)),
+            brand=l.brand, qty=l.qty, unit_price=l.unit_price,
             received_amount=recv or 0, payment_method=(l.payment_method or body.payment_method),
             prepay_ratio=(l.prepay_ratio if l.prepay_ratio is not None else body.prepay_ratio),
             notes=l.notes, buyer_id=current.id,   # is_stock 已废弃:收货一律只入库(默认True)
@@ -1456,6 +1521,7 @@ async def append_order_items(
     first = rows[0]
     today = _date.today().isoformat()
     uname = current.full_name or current.username
+    grades = await _source_material_grades(db, ((ln.source_sheet_id, ln.source_record_id) for ln in lines))
     for ln in lines:
         recv = ln.received_amount
         if not recv and ln.qty and ln.unit_price:
@@ -1472,7 +1538,8 @@ async def append_order_items(
             contract_no=first.contract_no,
             project_code=(ln.project_code or first.project_code),
             item_name=ln.item_name.strip(),
-            spec=ln.spec, brand=ln.brand, qty=ln.qty, unit_price=ln.unit_price,
+            spec=ln.spec, material_grade=grades.get((ln.source_sheet_id, ln.source_record_id)),
+            brand=ln.brand, qty=ln.qty, unit_price=ln.unit_price,
             received_amount=recv or 0,
             tax_rate=ln.tax_rate, notes=ln.notes,
             payment_method=first.payment_method, prepay_ratio=first.prepay_ratio,

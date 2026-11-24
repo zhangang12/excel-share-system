@@ -133,6 +133,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("source_sheet_id", "INTEGER"),            # 🆕 来源数据表（清单→采购单）
         ("source_record_id", "INTEGER"),           # 🆕 来源行
         ("brand", "VARCHAR(64)"),                  # 🆕 品牌（下单时逐行选/填）
+        ("material_grade", "TEXT"),                # #463 下单时的材质
         ("custom_values", "JSON"),                 # 🆕 R6 自定义字段值（存量行为空）
         ("invoice_no", "VARCHAR(64)"),             # 🆕 需求十三 开票号
         # ⚠️ 下面三列原来另起了一个 "purchase_items" 键——dict 字面量里重复的键

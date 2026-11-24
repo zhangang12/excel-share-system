@@ -707,6 +707,7 @@ class PurchaseItem(Base):
     expected_arrival: Mapped[Optional[str]] = mapped_column(String(10))    # 🆕 预计到货日期（采购下单填，选填；到期未到货每日提醒）
     item_name: Mapped[str] = mapped_column(String(128))
     spec: Mapped[Optional[str]] = mapped_column(String(255))
+    material_grade: Mapped[Optional[str]] = mapped_column(Text)  # 下单时保存来源清单材质；NULL 为尚无存档的明细
     brand: Mapped[Optional[str]] = mapped_column(String(64))  # 🆕 品牌（下单时逐行选/填，自由输入）
     qty: Mapped[Optional[float]] = mapped_column()
     unit_price: Mapped[Optional[float]] = mapped_column()

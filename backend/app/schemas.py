@@ -1541,6 +1541,7 @@ class PurchaseItemOut(BaseModel):
     expected_arrival: Optional[str] = None   # 🆕 预计到货日期
     item_name: str
     spec: Optional[str] = None
+    material_grade: Optional[str] = None
     brand: Optional[str] = None
     qty: Optional[float] = None
     unit_price: Optional[float] = None

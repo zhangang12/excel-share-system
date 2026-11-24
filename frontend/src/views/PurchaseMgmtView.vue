@@ -168,6 +168,7 @@ interface PurchaseItemOut {
   expected_arrival?: string | null   // 🆕 预计到货日期（选填；到期未到货每日提醒）
   project_code?: string | null; delivery_note_no?: string | null
   item_name: string; spec?: string | null; brand?: string | null; qty?: number | null; unit_price?: number | null
+  material_grade?: string | null
   received_amount: number; invoice_date?: string | null; invoice_no?: string | null; tax_rate?: string | null
   invoice_amount: number; paid_amount: number; paid_date?: string | null
   payment_method?: string | null; prepay_ratio?: number | null; pay_status?: string
@@ -844,16 +845,21 @@ async function saveOrder() {
 // ===== 打印采购单（保存前预览打印 / 保存后按单号补打印共用一套模板）=====
 interface POLine {
   project_code?: string | null; item_name: string; spec?: string | null
+  material_grade?: string | null
   qty?: number | null; unit_price?: number | null; amount?: number | null; notes?: string | null
 }
 function renderPOHtml(o: { poNo?: string; supplierName: string; orderDate: string; payMethod: string; defaultProject?: string; lines: POLine[] }): string {
   const esc = (v: unknown) => String(v ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))
+  const showMaterial = o.lines.some(l => Boolean(l.material_grade))
+  const materialColumns = [7, 14, 15, 18, 10, 7, 9, 11, 9]
+    .map(width => `<col style="width:${width}%">`).join('')
   const total = o.lines.reduce((s, l) =>
     s + (l.amount ?? ((l.qty || 0) * (l.unit_price || 0))), 0)
   const rows = o.lines.map((l, i) => `<tr>
     <td class="c">${i + 1}</td>
     <td class="c">${esc(l.project_code || o.defaultProject || '')}</td>
     <td>${esc(l.item_name)}</td><td>${esc(l.spec)}</td>
+    ${showMaterial ? `<td>${esc(l.material_grade)}</td>` : ''}
     <td class="r">${l.qty ?? ''}</td><td class="r">${l.unit_price ?? ''}</td>
     <td class="r">${l.amount ?? (l.qty != null && l.unit_price != null ? (l.qty * l.unit_price).toFixed(2) : '')}</td>
     <td>${esc(l.notes)}</td></tr>`).join('')
@@ -863,7 +869,10 @@ function renderPOHtml(o: { poNo?: string; supplierName: string; orderDate: strin
     table{width:100%;border-collapse:collapse}
     table.meta td{border:1px solid #333;padding:7px 10px}
     table.items{margin-top:-1px}
+    table.items.with-material{table-layout:fixed;overflow-wrap:anywhere}
     table.items th,table.items td{border:1px solid #333;padding:6px 8px}
+    table.items.with-material th,table.items.with-material td{padding-left:6px;padding-right:6px}
+    table.items.with-material th:first-child{white-space:nowrap}
     table.items th{background:#e8f5ee}.r{text-align:right}.c{text-align:center}
     .foot{margin-top:22px;display:flex;justify-content:space-between}.sign{margin-top:36px}
     /* 🆕 下载PDF入口：屏幕上常驻显示，真正打印/另存为PDF时(@media print)自动隐藏，不会印到纸上/PDF里 */
@@ -886,11 +895,14 @@ function renderPOHtml(o: { poNo?: string; supplierName: string; orderDate: strin
           <td><b>付款方式</b></td><td>${esc(o.payMethod)}</td></tr>
       ${o.poNo ? `<tr><td><b>采购单号</b></td><td colspan="3">${esc(o.poNo)}</td></tr>` : ''}
     </table>
-    <table class="items"><thead><tr>
+    <table class="items${showMaterial ? ' with-material' : ''}">
+    ${showMaterial ? `<colgroup>${materialColumns}</colgroup>` : ''}
+    <thead><tr>
       <th style="width:40px">序号</th><th style="width:100px">订单编号</th><th>名称</th><th>规格型号</th>
+      ${showMaterial ? '<th>材质</th>' : ''}
       <th style="width:60px">数量</th><th style="width:82px">单价</th><th style="width:104px">合计金额</th><th style="width:120px">备注</th>
     </tr></thead><tbody>${rows}
-      <tr><td class="c" colspan="6"><b>合计</b></td>
+      <tr><td class="c" colspan="${showMaterial ? 7 : 6}"><b>合计</b></td>
       <td class="r"><b>￥${total.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></td><td></td></tr>
     </tbody></table>
     <div class="foot"><div class="sign">采购（签字）：____________</div><div class="sign">供方（盖章）：____________</div></div>
@@ -935,7 +947,7 @@ async function printPO(poNo?: string | null) {
       poNo, supplierName: rows[0].supplier_name, orderDate: rows[0].delivery_date || '',
       payMethod: payMethodLabel(rows[0].payment_method, rows[0].prepay_ratio),
       lines: rows.map(x => ({
-        project_code: x.project_code, item_name: x.item_name, spec: x.spec,
+        project_code: x.project_code, item_name: x.item_name, spec: x.spec, material_grade: x.material_grade,
         qty: x.qty, unit_price: x.unit_price, amount: x.received_amount, notes: x.notes,
       })),
     })
