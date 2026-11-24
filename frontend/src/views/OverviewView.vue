@@ -32,7 +32,6 @@ const pageSize = ref(20)
 const currentPage = ref(1)
 
 const isAdmin = computed(() => auth.hasRole('admin', 'manager'))
-// 🆕 反馈#452：项目状态只由物流「确认发货」自动置为已完成，项目目录不再提供手工改状态的入口
 const visibleFields = computed(() =>
   fields.value.filter(f => myPerms.value[String(f.id)]?.can_view !== false)
 )
@@ -55,7 +54,7 @@ function tplFieldId(label: string): number | null {
 // 一览的数据与项目详情完全独立——meta 列存 row.extra['__o__<label>']。
 type OverviewTplCol = {
   label: string
-  source: 'code' | 'name' | 'status' | 'meta' | 'derived'
+  source: 'code' | 'name' | 'production_status' | 'shipment_status' | 'meta' | 'derived'
   derived?: 'duration' | 'elapsed' | 'remaining' | 'design_days'
   // fallbackDerived: source='meta' 但 meta 无值时，按这个派生公式算
   // 即"可编辑但有默认公式"——用户填了就用填的，没填就显示算出的值
@@ -71,7 +70,8 @@ const OVERVIEW_FIELDS: OverviewTplCol[] = [
   { label: '项目编号',     source: 'code',    editable: false, widthPct: 7 },
   { label: '项目名称',     source: 'name',    editable: true,  widthPct: 12 },
   { label: '数量',         source: 'meta',    editable: true,  widthPct: 5 },
-  { label: '状态',         source: 'status',  editable: true,  widthPct: 7 },
+  { label: '生产状态',     source: 'production_status', editable: false, widthPct: 7 },
+  { label: '发货状态',     source: 'shipment_status', editable: false, widthPct: 7 },
   { label: '销售',         source: 'meta',    editable: true,  widthPct: 6 },
   { label: '签订日期',     source: 'meta',    editable: true,  widthPct: 7 },
   { label: '交货日期',     source: 'meta',    editable: true,  widthPct: 7 },
@@ -92,7 +92,8 @@ function overviewColMinWidth(col: OverviewTplCol): number {
     switch (col.label) {
       case '项目编号': return 80
       case '项目名称': return 140
-      case '状态':     return 78
+      case '生产状态':
+      case '发货状态': return 80
       case '销售':     return 58
       case '设计师':   return 60
       case '电工':     return 50
@@ -123,14 +124,19 @@ function overviewColMinWidth(col: OverviewTplCol): number {
   }
 }
 
-// 整列着色：状态列的 td 按 row.status 直接染色
 function cellClassName({ row, column }: any): string {
   const label = column?.label || ''
-  if (label === '状态') {
-    if (row.status === '已完成') return 'cell-row-done'
-    if (row.status === '进行中') return 'cell-row-doing'
+  if (label === '生产状态') {
+    if (row.production_status === '已完成') return 'cell-row-done'
+    if (row.production_status === '进行中') return 'cell-row-doing'
   }
   return ''
+}
+
+function statusTagType(status: string) {
+  if (status === '已完成' || status === '已发货') return 'success'
+  if (status === '待质检') return 'warning'
+  return 'info'
 }
 
 // 日期解析与天数差（与 DatasheetGrid 一致）
@@ -222,7 +228,7 @@ function computeDerived(row: OverviewRow, kind: string): string {
 function templateCellValue(row: OverviewRow, col: OverviewTplCol): string {
   if (col.source === 'code') return row.code || ''
   if (col.source === 'name') return row.name || ''
-  if (col.source === 'status') return row.status || ''
+  if (col.source === 'production_status' || col.source === 'shipment_status') return row[col.source]
   if (col.source === 'meta') {
     // 剩余制作时间：仅「已完成」用管理层手填的覆盖值；进行中始终实时派生
     if (col.label === '剩余制作时间' && row.status !== '已完成') {
@@ -373,7 +379,9 @@ const STATUS_OPTIONS = ['进行中', '已完成', '已归档']
 
 // 导出项目一览为 Excel（🆕 M16：经导出审批闸，403 引导申请）
 async function onExport() {
-  await fetchExport('/api/overview/export', '项目目录.xlsx', '项目目录导出')
+  const name = projectKind.value === 'spare' ? '备机目录' : '项目目录'
+  const params = new URLSearchParams({ project_kind: projectKind.value, year: yearFilter.value })
+  await fetchExport(`/api/overview/export?${params}`, `${name}.xlsx`, `${name}导出`)
 }
 
 // 年份筛选
@@ -397,19 +405,23 @@ async function load() {
   } finally { loading.value = false }
 }
 
-// 状态筛选（'' = 全部；'进行中' / '已完成'）
-// 每次进入一览都默认「进行中」（不记忆上次选择）；本次会话内可自由切换。
-const statusFilter = ref<string>('进行中')
-function onStatusFilterChange() { currentPage.value = 1 }
+const projectKind = ref<'project' | 'spare'>('project')
+const productionFilter = ref('')
+const shipmentFilter = ref('未发货')
+const tabRows = computed(() => rows.value.filter(row => Boolean(row.is_spare) === (projectKind.value === 'spare')))
+function resetPage() { currentPage.value = 1 }
 
 // 项目编号筛选（包含匹配，不区分大小写）
 const codeFilter = ref<string>('')
 
-// 过滤 + 分页：状态 → 编号 → 关键词
+// 两个页签共享一年内的可见项目，再分别应用筛选和分页。
 const filteredRows = computed(() => {
-  let result = rows.value
-  if (statusFilter.value) {
-    result = result.filter(r => r.status === statusFilter.value)
+  let result = tabRows.value
+  if (productionFilter.value) {
+    result = result.filter(r => r.production_status === productionFilter.value)
+  }
+  if (shipmentFilter.value) {
+    result = result.filter(r => r.shipment_status === shipmentFilter.value)
   }
   const cf = codeFilter.value.trim().toLowerCase()
   if (cf) {
@@ -418,7 +430,7 @@ const filteredRows = computed(() => {
   const k = keyword.value.trim().toLowerCase()
   if (!k) return result
   return result.filter(r => {
-    const hay = (r.code + ' ' + r.name + ' ' + (r.status || '') + ' ' +
+    const hay = (r.code + ' ' + r.name + ' ' + r.production_status + ' ' + r.shipment_status + ' ' +
       Object.values(r.extra || {}).map(v => Array.isArray(v) ? v.join(',') : String(v ?? '')).join(' ')
     ).toLowerCase()
     return hay.includes(k)
@@ -657,7 +669,7 @@ onMounted(load)
     <div class="page-header">
       <div>
         <h1>项目目录</h1>
-        <div class="desc">共 {{ rows.length }} 个项目 · {{ fields.length }} 个自定义列</div>
+        <div class="desc">当前列表 {{ filteredRows.length }} 条</div>
       </div>
       <div class="spacer"></div>
       <el-tooltip :content="rtConnected ? '实时同步已连接 · ' + rtOnlineCount + ' 人在线' : '实时同步已断开（5 秒后自动重连）'">
@@ -672,17 +684,19 @@ onMounted(load)
       <el-select v-model="yearFilter" size="large" style="width: 100px" @change="load">
         <el-option v-for="y in yearOptions" :key="y" :label="y + '年'" :value="y" />
       </el-select>
-      <el-select v-model="statusFilter" placeholder="全部状态" size="large"
-                 style="width: 130px" @change="onStatusFilterChange">
-        <el-option label="全部" value="">
-          <span class="status-dot status-dot-all"></span> 全部
-        </el-option>
-        <el-option label="进行中" value="进行中">
-          <span class="status-dot status-dot-doing"></span> 进行中
-        </el-option>
-        <el-option label="已完成" value="已完成">
-          <span class="status-dot status-dot-done"></span> 已完成
-        </el-option>
+      <el-select v-model="productionFilter" aria-label="生产状态筛选" placeholder="全部生产状态" size="large"
+                 style="width: 136px" @change="resetPage">
+        <el-option label="全部生产状态" value="" />
+        <el-option label="进行中" value="进行中" />
+        <el-option label="待质检" value="待质检" />
+        <el-option label="已完成" value="已完成" />
+        <el-option label="质检未记录" value="未记录" />
+      </el-select>
+      <el-select v-model="shipmentFilter" aria-label="发货状态筛选" placeholder="全部发货状态" size="large"
+                 style="width: 136px" @change="resetPage">
+        <el-option label="全部发货状态" value="" />
+        <el-option label="未发货" value="未发货" />
+        <el-option label="已发货" value="已发货" />
       </el-select>
       <el-input v-model="codeFilter" placeholder="项目编号筛选（如 2026）"
                 style="width: 200px" size="large" clearable
@@ -690,7 +704,7 @@ onMounted(load)
       <el-input v-model="keyword" placeholder="搜索任意列..." style="width: 200px"
                 size="large" clearable :prefix-icon="Search" @input="currentPage = 1" />
       <!-- 一览列名已固定为 Excel 模板（与"2026 项目倒计时"对齐），"添加列"已下线 -->
-      <el-button :icon="Download" size="large" @click="onExport">导出</el-button>
+      <el-button :icon="Download" size="large" @click="onExport">{{ projectKind === 'spare' ? '导出备机' : '导出项目' }}</el-button>
       <el-button v-if="isAdmin" type="primary" :icon="Plus" size="large" @click="openCreateProject">
         新建项目
       </el-button>
@@ -704,6 +718,10 @@ onMounted(load)
       <PageRefresh :load="load" />
     </div>
 
+    <el-tabs v-model="projectKind" @tab-change="resetPage">
+      <el-tab-pane label="项目" name="project" />
+      <el-tab-pane label="备机" name="spare" />
+    </el-tabs>
     <el-card v-loading="loading">
       <el-table ref="tableRef" :data="pagedRows" border stripe :size="fitScreen ? 'small' : 'default'"
                 style="width: 100%" :height="tableHeight"
@@ -712,7 +730,7 @@ onMounted(load)
                 :cell-class-name="cellClassName">
         <el-table-column type="index" label="#" :width="fitScreen ? 38 : 55" align="center" fixed="left"
                          :index="(i: number) => (currentPage - 1) * pageSize + i + 1" />
-        <!-- 14 列固定模板（项目编号/项目名称/状态/签订日期/...），所有列居中 -->
+        <!-- 固定目录模板，所有列居中 -->
         <el-table-column v-for="col in visibleTplCols" :key="col.label"
                          :label="col.label"
                          :min-width="overviewColMinWidth(col)"
@@ -721,16 +739,10 @@ onMounted(load)
                          header-align="center"
                          show-overflow-tooltip>
           <template #default="{ row, $index }">
-            <!-- 状态列：只读展示。🆕 反馈#452：只能由物流确认发货自动改为已完成 -->
-            <template v-if="col.source === 'status'">
-              <el-tooltip content="项目状态由物流确认发货自动更新，不能手工修改" placement="top">
-                <el-tag
-                        :type="row.status === '已完成' ? 'success' : (row.status === '进行中' ? 'danger' : 'info')"
-                        effect="dark" size="small">
-                  {{ row.status }}
-                </el-tag>
-              </el-tooltip>
-            </template>
+            <el-tag v-if="col.source === 'production_status' || col.source === 'shipment_status'"
+                    :type="statusTagType(row[col.source])" effect="light" size="small">
+              {{ row[col.source] }}
+            </el-tag>
             <!-- meta 编辑态 -->
             <el-input v-else-if="isEditingTpl(row, col)"
                       v-model="editingTplValue" autofocus size="small"
@@ -925,37 +937,6 @@ onMounted(load)
 :deep(.el-table .el-table__row--striped td.el-table__cell.cell-row-doing) {
   background: #fee2e2 !important;  /* 红 */
 }
-/* el-select 在状态格内：让 wrapper 透明，文字按状态色加深加粗 */
-:deep(.cell-row-done .el-select__wrapper),
-:deep(.cell-row-doing .el-select__wrapper) {
-  background: rgba(255, 255, 255, 0.55) !important;
-  box-shadow: none !important;
-  border: 1px solid rgba(0, 0, 0, .15) !important;
-}
-:deep(.cell-row-done .el-select__wrapper .el-select__selected-item),
-:deep(.cell-row-done .el-select__wrapper input) {
-  color: #065f46 !important;
-  font-weight: 700 !important;
-}
-:deep(.cell-row-doing .el-select__wrapper .el-select__selected-item),
-:deep(.cell-row-doing .el-select__wrapper input) {
-  color: #991b1b !important;
-  font-weight: 700 !important;
-}
-
-/* 状态筛选 dropdown 里的小圆点 */
-.status-dot {
-  display: inline-block;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-.status-dot-doing { background: #ef4444; }
-.status-dot-done { background: #10b981; }
-.status-dot-archived { background: #94a3b8; }
-.status-dot-all { background: #94a3b8; }
-
 /* ===== 表格底色 + 加粗边框 + 圆角（v2: 加重视觉分量） ===== */
 :deep(.el-table) {
   --el-table-border-color: #94a3b8;

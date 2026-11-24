@@ -3,7 +3,7 @@ import json
 import tempfile
 from datetime import datetime, date
 from pathlib import Path
-from typing import List, Any, Optional
+from typing import List, Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -12,10 +12,12 @@ from sqlalchemy import select, func
 
 from ..database import get_db
 from .. import models, schemas
+from ..data_migration import _is_spare
+from ..production_quality import quality_queue_conditions
 from .ws_router import broadcast_cell_changed
 from ..deps import (
     get_current_user, require_admin, require_admin_or_manager, require_not_viewer,
-    user_can_view_project, user_can_edit_project,
+    restricted_dir_pids, user_can_view_project, user_can_edit_project,
 )
 from ..sheet_templates import OVERVIEW_FIELDS, OVERVIEW_HEADER_ALIAS
 from .projects_router import OVERVIEW_KEY_PREFIX, HEADER_KEY_PREFIX
@@ -41,16 +43,42 @@ def _field_to_out(f: models.OverviewField) -> schemas.OverviewFieldOut:
     )
 
 
-def _project_row(p: models.Project) -> schemas.OverviewProjectRow:
-    manager_name = None
-    if p.manager:
-        manager_name = p.manager.full_name or p.manager.username
-    return schemas.OverviewProjectRow(
-        id=p.id, code=p.code, name=p.name, status=p.status,
-        description=p.description,
-        manager_id=p.manager_id, manager_name=manager_name,
-        extra=p.extra or {}, updated_at=p.updated_at,
-    )
+async def _directory_rows(db: AsyncSession, projects: list[models.Project]) -> list[schemas.OverviewProjectRow]:
+    if not projects:
+        return []
+    pids = [p.id for p in projects]
+    shipment = models.Shipment
+    shipped = set(await db.scalars(select(shipment.project_id).where(
+        shipment.project_id.in_(pids), shipment.status == "shipped",
+    )))
+    task = models.ProduceGroupTask
+    checks = await db.execute(select(task.project_id, task.quality_done_at).where(
+        task.project_id.in_(pids), *quality_queue_conditions(),
+    ))
+    # 若一个项目有多条装配交接，所有已交接任务通过质检后才显示已完成。
+    pending, inspected = set(), set()
+    for pid, done_at in checks:
+        (pending if done_at is None else inspected).add(pid)
+
+    rows = []
+    for p in projects:
+        production = "进行中"
+        if p.id in pending:
+            production = "待质检"
+        elif p.id in inspected:
+            production = "已完成"
+        elif p.id in shipped:
+            production = "未记录"
+        rows.append(schemas.OverviewProjectRow(
+            id=p.id, code=p.code, name=p.name, status=p.status,
+            production_status=production,
+            shipment_status="已发货" if p.id in shipped else "未发货",
+            is_spare=_is_spare(p),
+            description=p.description, manager_id=p.manager_id,
+            manager_name=(p.manager.full_name or p.manager.username) if p.manager else None,
+            extra=p.extra or {}, updated_at=p.updated_at,
+        ))
+    return rows
 
 
 # ==================== 字段管理 ====================
@@ -128,6 +156,27 @@ async def delete_field(
 
 
 # ==================== 一览数据 ====================
+async def _visible_directory_projects(
+    db: AsyncSession, current: models.User, year: str | None, *, exclude_delivery_orders: bool,
+) -> list[models.Project]:
+    stmt = select(models.Project).where(models.Project.is_deleted.is_(False)).order_by(models.Project.code)
+    if exclude_delivery_orders:
+        delivery_pids = select(models.SalesLedger.project_id).where(models.SalesLedger.order_type == "调货订单")
+        stmt = stmt.where(models.Project.id.not_in(delivery_pids))
+    if year:
+        stmt = stmt.where(models.Project.code.like(f"{year}-%"))
+
+    projects = list(await db.scalars(stmt))
+    if current.has_role("admin", "manager"):
+        return projects
+    restricted, my_pids = await restricted_dir_pids(db, current)
+    if restricted:
+        return [p for p in projects if p.id in my_pids or current.id in ((p.extra or {}).get("__viz_uids__") or [])]
+    member_pids = set(await db.scalars(
+        select(models.ProjectMember.project_id).where(models.ProjectMember.user_id == current.id)))
+    return [p for p in projects if p.id in member_pids]
+
+
 @router.get("", response_model=schemas.OverviewBundle)
 async def get_overview(
     year: Optional[str] = None,
@@ -144,53 +193,17 @@ async def get_overview(
     fields = [_field_to_out(f) for f in fres.scalars().all()]
     t1 = time.perf_counter()
 
-    delivery_pids = select(models.SalesLedger.project_id).where(
-        models.SalesLedger.order_type == "调货订单"
-    )
-    proj_q = select(models.Project).where(
-        models.Project.is_deleted == False,
-        models.Project.id.not_in(delivery_pids),
-    )
-    if year:
-        proj_q = proj_q.where(models.Project.code.like(f"{year}-%"))
-    pres = await db.execute(proj_q.order_by(models.Project.code))
-    all_projects = pres.scalars().all()
-    t2 = time.perf_counter()
-
-    # admin / manager 免权限校验
-    is_super = current.has_role("admin", "manager")
-    # 🆕 行级可见性：纯设计师/电工/装配/销售只看自己经手的项目（与项目目录 list_projects 同源）；
-    # 部门负责人/管理层看全部（口径 2026-06-19：负责人仍看全部）。其余角色按项目成员可见。
-    from ..deps import restricted_dir_pids
-    restricted, my_pids = await restricted_dir_pids(db, current)
-    if is_super:
-        visible_rows = [_project_row(p) for p in all_projects]
-    elif restricted:
-        visible_rows = [
-            _project_row(p) for p in all_projects
-            if p.id in my_pids or current.id in ((p.extra or {}).get("__viz_uids__") or [])
-        ]
-    else:
-        # 一次性查所有成员关系，避免 N+1
-        mres = await db.execute(
-            select(models.ProjectMember.project_id).where(
-                models.ProjectMember.user_id == current.id
-            )
-        )
-        member_pids = {row[0] for row in mres.all()}
-        visible_rows = [
-            _project_row(p) for p in all_projects if p.id in member_pids
-        ]
-
-    t3 = time.perf_counter()
-    log.info("overview: fields=%d total=%d visible=%d  | t_fields=%.2fms t_proj=%.2fms t_filter=%.2fms",
-             len(fields), len(all_projects), len(visible_rows),
-             (t1-t0)*1000, (t2-t1)*1000, (t3-t2)*1000)
+    projects = await _visible_directory_projects(db, current, year, exclude_delivery_orders=True)
+    visible_rows = await _directory_rows(db, projects)
+    log.info("overview: fields=%d visible=%d | t_fields=%.2fms t_rows=%.2fms",
+             len(fields), len(visible_rows), (t1-t0)*1000, (time.perf_counter()-t1)*1000)
     return schemas.OverviewBundle(fields=fields, rows=visible_rows)
 
 
 @router.get("/export")
 async def export_overview(
+    project_kind: Literal["project", "spare"] | None = None,
+    year: str | None = None,
     current: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -208,43 +221,22 @@ async def export_overview(
     from ..sheet_templates import HIDDEN_OVERVIEW_LABELS
     fields = [f for f in fres.scalars().all() if f.name not in HIDDEN_OVERVIEW_LABELS]
 
-    pres = await db.execute(
-        select(models.Project)
-        .where(models.Project.is_deleted == False)
-        .order_by(models.Project.code)
-    )
-    all_projects = pres.scalars().all()
-
-    is_super = current.has_role("admin", "manager")
-    # 🆕 导出与一览同口径行级可见性
-    from ..deps import restricted_dir_pids
-    restricted, my_pids = await restricted_dir_pids(db, current)
-    if is_super:
-        visible = list(all_projects)
-    elif restricted:
-        visible = [p for p in all_projects
-                   if p.id in my_pids or current.id in ((p.extra or {}).get("__viz_uids__") or [])]
-    else:
-        mres = await db.execute(
-            select(models.ProjectMember.project_id).where(
-                models.ProjectMember.user_id == current.id
-            )
-        )
-        member_pids = {row[0] for row in mres.all()}
-        visible = [p for p in all_projects if p.id in member_pids]
+    projects = await _visible_directory_projects(db, current, year, exclude_delivery_orders=project_kind is not None)
+    if project_kind:
+        projects = [p for p in projects if _is_spare(p) == (project_kind == "spare")]
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "项目目录"
-    ws.append(["项目编号", "项目名称", "状态", "项目经理"] + [f.name for f in fields])
-    for p in visible:
-        manager_name = ""
-        if p.manager:
-            manager_name = p.manager.full_name or p.manager.username
-        row = [p.code, p.name, p.status, manager_name]
-        extra = p.extra or {}
+    ws.title = "备机目录" if project_kind == "spare" else "项目目录"
+    status_headers = ["生产状态", "发货状态"] if project_kind else ["状态"]
+    ws.append(["项目编号", "项目名称", *status_headers, "项目经理"] + [f.name for f in fields])
+    for p in await _directory_rows(db, projects):
+        statuses = [p.production_status, p.shipment_status] if project_kind else [p.status]
+        row = [p.code, p.name, *statuses, p.manager_name or ""]
         for f in fields:
-            v = extra.get(str(f.id))
+            v = p.extra.get(str(f.id))
+            if project_kind:
+                v = p.extra.get(f"{OVERVIEW_KEY_PREFIX}{f.name}", v)
             if isinstance(v, list):
                 v = "、".join(str(x) for x in v)
             row.append(v)
@@ -253,7 +245,7 @@ async def export_overview(
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    fname = "项目目录.xlsx"
+    fname = f"{ws.title}.xlsx"
     return StreamingResponse(
         bio,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -300,7 +292,7 @@ async def update_overview_cell(
         record_id=None, project_id=p.id,
         field_id=data.field_id, value=data.value, by_user_id=current.id,
     )
-    return _project_row(p)
+    return (await _directory_rows(db, [p]))[0]
 
 
 # ==================== 导入 ====================

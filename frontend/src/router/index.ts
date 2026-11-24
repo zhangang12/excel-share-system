@@ -78,6 +78,12 @@ const router = createRouter({
           meta: { menuKey: key },
         })),
         {
+          path: 'dept/quality',
+          name: 'quality',
+          component: () => import('@/views/QualityView.vue'),
+          meta: { menuKey: 'quality' },
+        },
+        {
           path: 'sales',
           name: 'sales',
           component: () => import('@/views/SalesView.vue'),

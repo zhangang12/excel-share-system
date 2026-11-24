@@ -21,7 +21,8 @@ from ..database import get_db
 from .. import models, schemas
 from ..deps import get_current_user, require_roles
 from ..notify import push_message
-from ..overdue import _cn_date
+from ..overdue import _cn_date, _CN_TZ
+from ..sheet_templates import normalize_date_str
 from ..utils import write_audit
 
 router = APIRouter(prefix="/api/produce", tags=["生产部分组"])
@@ -45,8 +46,11 @@ def _uname(u: Optional[models.User]) -> str:
     return u.full_name or u.username
 
 
-async def _produce_order(db: AsyncSession, order_id: int) -> models.DeptOrder:
-    res = await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == order_id))
+async def _produce_order(db: AsyncSession, order_id: int, *, lock: bool = False) -> models.DeptOrder:
+    stmt = select(models.DeptOrder).where(models.DeptOrder.id == order_id)
+    if lock:
+        stmt = stmt.with_for_update(of=models.DeptOrder)
+    res = await db.execute(stmt)
     o = res.scalar_one_or_none()
     if not o:
         raise HTTPException(404, "任务单不存在")
@@ -102,7 +106,7 @@ async def dispatch_produce(
     db: AsyncSession = Depends(get_db),
 ):
     """生产部主管派发：钣金组、装配组各自可选，至少选一组。"""
-    o = await _produce_order(db, order_id)
+    o = await _produce_order(db, order_id, lock=True)
     if o.status in ("done", "voided"):
         raise HTTPException(400, "已完成/已作废的任务单不可派发")
 
@@ -162,21 +166,36 @@ async def group_mark_done(
     db: AsyncSession = Depends(get_db),
 ):
     """钣金组/装配组组员（或主管/管理层）标记本组完成；两组都完成 → 父生产单 done。"""
-    res = await db.execute(select(models.ProduceGroupTask).where(
-        models.ProduceGroupTask.id == task_id))
-    t = res.scalar_one_or_none()
+    task = models.ProduceGroupTask
+    target = (await db.execute(select(task.order_id, task.group).where(task.id == task_id))).one_or_none()
+    if not target:
+        raise HTTPException(404, "分组任务不存在")
+    order_id, group = target
+    # 权限：本组角色 或 生产主管/管理层
+    if not current.has_role(GROUP_ROLE[group], "pm_lead", "admin", "manager"):
+        raise HTTPException(403, f"仅{GROUP_NAME[group]}或生产主管/管理层可标记")
+
+    # 同一父单的分组完成串行重算，质检与装配撤销也在同一任务行上互斥。
+    o = await _produce_order(db, order_id, lock=True)
+    if o.status == "voided" or o.project.is_deleted:
+        raise HTTPException(409, "已作废的任务单不可操作")
+    t = (await db.execute(select(task).where(task.id == task_id).with_for_update(of=task))).scalar_one_or_none()
     if not t:
         raise HTTPException(404, "分组任务不存在")
-    # 权限：本组角色 或 生产主管/管理层
-    if not current.has_role(GROUP_ROLE[t.group], "pm_lead", "admin", "manager"):
-        raise HTTPException(403, f"仅{GROUP_NAME[t.group]}或生产主管/管理层可标记")
+    if (t.status == "done") == data.done:
+        return schemas.Msg(message="本组已完成" if data.done else "本组尚未完成")
 
+    notify_quality = group == "assembly" and data.done
+    reopened_quality = group == "assembly" and t.quality_done_at is not None
     t.status = "done" if data.done else "dispatched"
     t.done_by = current.id if data.done else None
     t.done_at = datetime.now(timezone.utc) if data.done else None
+    if group == "assembly":
+        t.quality_queued = data.done
+        t.quality_done_at = None
+        t.quality_done_by = None
 
     # 重算父生产单：两组都 done → done；否则回 in_progress
-    o = await _produce_order(db, t.order_id)
     res = await db.execute(select(models.ProduceGroupTask).where(
         models.ProduceGroupTask.order_id == o.id))
     tasks = list(res.scalars().all())
@@ -188,21 +207,30 @@ async def group_mark_done(
     notify_done = False
     if all_done and o.status != "done":
         o.status = "done"
-        o.done_date = date.today().isoformat()
+        o.done_date = _cn_date(t.done_at) if t.done_at else datetime.now(_CN_TZ).date().isoformat()
         notify_done = True
     elif not all_done and o.status == "done":
         o.status = "in_progress"
         o.done_date = None
     await db.commit()
 
+    p = o.project
+    if notify_quality:
+        await push_message(db, to_role="quality", kind="info",
+                           text=f"【待质检】{p.code} {p.name} 已完成装配，请在质检部确认。",
+                           biz_type="quality_task", biz_id=t.id)
     if notify_done:
-        p = o.project
         await push_message(db, to_role="logistics", kind="info",
                            text=f"【生产完成】{p.code if p else ''} {p.name if p else ''} "
                                 f"钣金/装配两组均已完成，可安排发货。",
                            biz_type="project", biz_id=o.project_id)
     await write_audit(db, user=current, action="produce_group_done", target_type="produce_group_task",
-                      target_id=t.id, detail=f"{GROUP_NAME[t.group]}={'完成' if data.done else '撤销完成'}")
+                      target_id=t.id, detail=f"{GROUP_NAME[group]}={'完成' if data.done else '撤销完成'}"
+                      + ("，同时撤销质检结果" if reopened_quality else ""))
+    if notify_quality:
+        return schemas.Msg(message="装配已完成，已转入质检部")
+    if reopened_quality:
+        return schemas.Msg(message="已撤销装配完成，质检结果已一同撤销")
     return schemas.Msg(message="已标记完成" if data.done else "已撤销完成")
 
 
@@ -303,6 +331,9 @@ class GroupProjectRow(BaseModel):
     start_date: Optional[str] = None    # 🆕 生产开始(父单派发日)
     due_date: Optional[str] = None      # 🆕 本组预计完成(组员填，填后锁定)
     done_date: Optional[str] = None     # 🆕 本组完成日期(中国自然日)
+    drawing_uploaded_at: Optional[datetime] = None
+    delivery_date: Optional[str] = None
+    device_countdown_days: Optional[int] = None
     sheetmetal_datasheet_id: Optional[int] = None   # 钣金装配表（只读引用）
     sheetmetal_done: bool = False
     # 仅装配组用：标准件清单/外协加工 是否已备齐
@@ -383,8 +414,18 @@ async def _laser_files_by_pid(db: AsyncSession, pids: list[int], kind: str = "sh
     for a in ar.scalars().all():
         pid = oid2pid.get(a.biz_id)
         if pid:
-            out.setdefault(pid, []).append({"id": a.id, "name": a.name})
+            uploaded_at = a.created_at
+            if uploaded_at and uploaded_at.tzinfo is None:
+                uploaded_at = uploaded_at.replace(tzinfo=timezone.utc)
+            out.setdefault(pid, []).append({"id": a.id, "name": a.name, "uploaded_at": uploaded_at})
     return out
+
+
+def _overview_date(extra: dict, label: str) -> Optional[date]:
+    try:
+        return date.fromisoformat(normalize_date_str(extra.get(f"__o__{label}")))
+    except ValueError:
+        return None
 
 
 async def _project_loc_map(db: AsyncSession, pids: list[int]) -> dict[int, list[str]]:
@@ -463,20 +504,26 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
         laser_files_by_pid = await _laser_files_by_pid(db, pids)
         sealing_files_by_pid = await _laser_files_by_pid(db, pids, "sealing_pkg")
 
+    today = datetime.now(_CN_TZ).date()
     rows: List[GroupProjectRow] = []
     for t, _o in pairs:
         p = proj_by_id.get(t.project_id)
         if not p:
             continue
         bj = bj_by_pid.get(p.id, {}).get("钣金装配")
+        extra = p.extra or {}
+        delivery = _overview_date(extra, "交货日期")
+        completed = _overview_date(extra, "完成日期") if p.status == "已完成" else None
         row = GroupProjectRow(
             project_id=p.id, code=p.code, name=p.name,
-            designer=(p.extra or {}).get("__o__设计师") or designer_by_pid.get(p.id),
+            designer=extra.get("__o__设计师") or designer_by_pid.get(p.id),
             task_id=t.id, worker_name=wname_by_id.get(t.worker_id) if t.worker_id else None,
             group_done=(t.status == "done"),
             dispatch_date=_cn_date(t.created_at) if t.created_at else None,
             start_date=_o.start_date, due_date=t.due_date,
             done_date=_cn_date(t.done_at) if t.done_at else None,
+            delivery_date=delivery.isoformat() if delivery else None,
+            device_countdown_days=(delivery - (completed or today)).days if delivery else None,
             sheetmetal_datasheet_id=bj.id if bj else None,
             sheetmetal_done=bool(bj.done_flag) if bj else False,
             material_locations=loc_by_pid.get(p.id, []),
@@ -497,6 +544,8 @@ async def _group_rows(db: AsyncSession, current: models.User, group: str,
             row.sealing_files = sealing_files_by_pid.get(p.id, [])
         if group == "sheetmetal":
             row.coldwork_files = coldwork_files_by_pid.get(p.id, [])   # 🆕 #269 冷作图纸
+        drawings = row.coldwork_files + row.fitter_files + row.laser_files + row.sealing_files
+        row.drawing_uploaded_at = max((a["uploaded_at"] for a in drawings if a["uploaded_at"]), default=None)
         rows.append(row)
     rows.sort(key=lambda x: x.code, reverse=True)
     return rows

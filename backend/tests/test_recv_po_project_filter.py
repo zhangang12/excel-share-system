@@ -1,13 +1,4 @@
-"""🆕 #315 收货筛选框：一个框同时模糊匹配 采购单号(po_no)/订单编号(project_code)。
-
-修复方式：过滤从后端 po_no 参数挪到前端（WarehouseView.vue 的 filteredRecv）——
-后端 po_no 参数只按采购单号过滤，输项目编号(如 2026-053)会搜不到。
-本测试锁定前端所依赖的数据契约：
-1. GET /purchase-mgmt/receiving（不带 po_no 参数）返回行带 po_no + project_code；
-2. 用与 filteredRecv 相同的谓词（去空格、忽略大小写、po_no/project_code 任一子串命中），
-   项目编号「2026-053」与采购单号片段都能命中目标行；
-3. 后端旧 po_no 参数行为不变（仍只按采购单号过滤）——老桌面客户端契约不受影响（API 只增不改）。
-"""
+"""采购收货的单号、项目号、物料和规格搜索，以及旧 po_no 参数兼容。"""
 import asyncio, os, sys, tempfile, shutil
 
 tmp = tempfile.mkdtemp(prefix="recvfilter")
@@ -28,14 +19,6 @@ def chk(c, m):
     if not c: FAIL.append(m); print("FAIL:", m)
 
 
-def frontend_hit(row: dict, q: str) -> bool:
-    """与 WarehouseView.vue filteredRecv 中 #315 谓词保持一致（忽略大小写子串，po_no/project_code 任一命中）。"""
-    q = q.strip().lower()
-    return (not q
-            or q in (row.get("po_no") or "").lower()
-            or q in (row.get("project_code") or "").lower())
-
-
 async def main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -52,6 +35,14 @@ async def main():
                                 project_code="2026-077", item_name="电机"),
             models.PurchaseItem(po_no=None, supplier_id=sup.id,
                                 project_code="2026-053", item_name="散件"),
+            models.PurchaseItem(po_no="PO20260701-001", supplier_id=sup.id,
+                                item_name="气控阀", arrival_date="2026-07-02"),
+            models.PurchaseItem(po_no="PO20260701-002", supplier_id=sup.id,
+                                item_name="外购", spec="304气控阀", arrival_date="2026-07-03"),
+            models.PurchaseItem(po_no="PO20260801-001", supplier_id=sup.id,
+                                item_name="新的已收货物料", arrival_date="2026-08-02"),
+            models.PurchaseItem(po_no="PO20260801-002", supplier_id=sup.id,
+                                item_name="新的已收货物料", arrival_date="2026-08-02"),
         ])
         await db.commit()
 
@@ -69,19 +60,24 @@ async def main():
         chk(r.status_code == 200, f"收货清单 200: {r.status_code} {r.text[:200]}")
         rows = r.json()
         chk(len(rows) == 3, f"3 条待收货: {len(rows)}")
-        by_name = {x["item_name"]: x for x in rows}
         if rows:
             chk("po_no" in rows[0] and "project_code" in rows[0], "行内含 po_no/project_code 字段")
 
-        # ===== 2. 前端谓词：项目编号 / 采购单号都能命中 =====
-        hit_053 = sorted(x["item_name"] for x in rows if frontend_hit(x, "2026-053"))
-        chk(hit_053 == ["散件", "轴承"], f"输项目编号 2026-053 命中 轴承+散件: {hit_053}")
-        hit_po = [x["item_name"] for x in rows if frontend_hit(x, "PO20260728-001")]
-        chk(hit_po == ["轴承"], f"输采购单号 PO20260728-001 命中 轴承: {hit_po}")
-        hit_low = [x["item_name"] for x in rows if frontend_hit(x, "po20260728-002")]
-        chk(hit_low == ["电机"], f"小写采购单号也命中(忽略大小写): {hit_low}")
-        hit_none = [x["item_name"] for x in rows if frontend_hit(x, "2026-999")]
-        chk(hit_none == [], f"不存在的编号不命中: {hit_none}")
+        # 项目编号和采购单号都走接口查询。
+        for keyword, expected in [(" 2026-053 ", ["散件", "轴承"]), ("PO20260728-001", ["轴承"]),
+                                  ("po20260728-002", ["电机"]), ("2026-999", [])]:
+            r = await c.get("/api/purchase-mgmt/receiving", params={"keyword": keyword}, headers=Hw)
+            chk(r.status_code == 200 and sorted(x["item_name"] for x in r.json()) == expected,
+                f"匹配 {keyword!r}: {r.text}")
+
+        # 旧已收货明细位于首批加载范围外，按名称或规格仍能查到。
+        path = "/api/purchase-mgmt/receiving"
+        r = await c.get(path, params={"received": True, "limit": 2}, headers=Hw)
+        chk(r.status_code == 200 and all(x["po_no"].startswith("PO202608") for x in r.json()),
+            "初始列表的两条都是较新的明细")
+        r = await c.get(path, params={"received": True, "limit": 2, "item_name": " 气控阀 "}, headers=Hw)
+        chk(r.status_code == 200 and {x["item_name"] for x in r.json()} == {"气控阀", "外购"},
+            "按名称和规格查到两条较旧的明细")
 
         # ===== 3. 后端旧 po_no 参数行为不变（只按采购单号过滤；项目编号搜不到——正是 #315 根源） =====
         r = await c.get("/api/purchase-mgmt/receiving",

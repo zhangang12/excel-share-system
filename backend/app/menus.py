@@ -24,6 +24,7 @@ MENU_DEFS: list[dict] = [
     {"key": "design",     "label": "设计部"},
     {"key": "electric",   "label": "电工部"},
     {"key": "produce",    "label": "生产部"},
+    {"key": "quality",    "label": "质检部"},
     # 🆕 2026-06-19 「钣金组」菜单并入「生产部」(以 tab 呈现)，不再单列菜单 key=sheet
     # 🆕 采购部 tab 已合并入采购管理视图，不再单列 key=purchase
     {"key": "purchase_mgmt", "label": "采购管理"},   # 含采购部/明细/账目/请款/报表
@@ -87,6 +88,7 @@ ROLE_DEFAULT_MENUS: dict[str, list[str]] = {
     "electric_lead":    ["catalog", "electric"],              # 无详单（与 design_lead 不对称是有意口径）
     "assembler":        ["catalog", "produce"],               # 无详单；装配组 tab 在生产部菜单内
     "pm_lead":          ["catalog", "list", "produce"],
+    "quality":          ["quality"],
     "sheetmetal":       ["catalog", "produce"],                 # 🆕 钣金组并入生产部菜单(tab)；无详单（同 assembler 口径）
     "sealing":          ["catalog", "produce"],                 # 🆕 反馈#209 封板组并入生产部菜单(tab)；无详单（同装配/钣金口径）
     # 🆕 反馈#304 更正：撤掉 fitter 角色（钳工并入装配组），不再有其默认菜单键

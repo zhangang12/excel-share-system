@@ -24,7 +24,7 @@ import StockQueryDialog from '@/components/StockQueryDialog.vue'
 import ProjectFlowButton from '@/components/ProjectFlowButton.vue'   // 🆕 #385 全流程进度同步到各部门
 import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
-import { fmtDate } from '@/utils/format'
+import { fmtDate, fmtDateTime } from '@/utils/format'
 import { reportsApi, type DeptReport } from '@/api/reports'
 import { salesApi } from '@/api/sales'   // 复用建议编号
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
@@ -334,12 +334,18 @@ async function submitGroupReassign() {
 
 async function toggleGroupDone(row: GroupProjectRow) {
   try {
-    await produceApi.groupDone(row.task_id, !row.group_done)
-    ElMessage.success(!row.group_done ? '已标记本组完成' : '已撤销完成')
+    const result = await produceApi.groupDone(row.task_id, !row.group_done)
+    ElMessage.success(result.message)
     await load()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   }
+}
+
+function deviceCountdown(days: GroupProjectRow['device_countdown_days']) {
+  if (days == null) return '—'
+  if (days < 0) return `超期 ${-days} 天`
+  return days === 0 ? '今日到期' : `剩 ${days} 天`
 }
 // 🆕 封板组资料列不再罗列文件：点「打包下载」开抽屉（预览+勾选+打包 zip，同采购部交互，复用 AttachmentPackDialog）
 function openCellPack(row: GroupProjectRow, files: { id: number; name: string }[] | undefined, label: string) {
@@ -1504,6 +1510,11 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            title="预览 / 打包下载" @click="openCellPack(row, row.coldwork_files, '冷作图纸')">打包下载</el-button>
               </template>
             </el-table-column>
+            <el-table-column label="图纸上传时间" min-width="164" align="center">
+              <template #default="{ row }">
+                <span title="最近一份已推送图纸的上传时间（北京时间）">{{ fmtDateTime(row.drawing_uploaded_at, '—', 'Asia/Shanghai') }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="派单时间" min-width="130" align="center">
               <template #default="{ row }">{{ row.dispatch_date ? fmtDate(row.dispatch_date) : '—' }}</template>
             </el-table-column>
@@ -1514,6 +1525,14 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
                   {{ row.group_done ? '撤销' : '标记完成' }}
                 </el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="设备倒计时" min-width="112" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'eff-bad': row.device_countdown_days < 0 }"
+                      :title="row.delivery_date ? '交货日期 ' + row.delivery_date : '尚未填写交货日期'">
+                  {{ deviceCountdown(row.device_countdown_days) }}
+                </span>
               </template>
             </el-table-column>
           </el-table>
@@ -1583,6 +1602,11 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            title="预览 / 打包下载" @click="openCellPack(row, row.fitter_files, '钳工图纸')">打包下载</el-button>
               </template>
             </el-table-column>
+            <el-table-column label="图纸上传时间" min-width="164" align="center">
+              <template #default="{ row }">
+                <span title="最近一份已推送图纸的上传时间（北京时间）">{{ fmtDateTime(row.drawing_uploaded_at, '—', 'Asia/Shanghai') }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="派单时间" min-width="130" align="center">
               <template #default="{ row }">{{ row.dispatch_date ? fmtDate(row.dispatch_date) : '—' }}</template>
             </el-table-column>
@@ -1593,6 +1617,14 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
                   {{ row.group_done ? '撤销' : '标记完成' }}
                 </el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="设备倒计时" min-width="112" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'eff-bad': row.device_countdown_days < 0 }"
+                      :title="row.delivery_date ? '交货日期 ' + row.delivery_date : '尚未填写交货日期'">
+                  {{ deviceCountdown(row.device_countdown_days) }}
+                </span>
               </template>
             </el-table-column>
           </el-table>
@@ -1661,6 +1693,11 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                            title="预览 / 打包下载" @click="openCellPack(row, row.sealing_files, '机架横梁图')">打包下载</el-button>
               </template>
             </el-table-column>
+            <el-table-column label="图纸上传时间" min-width="164" align="center">
+              <template #default="{ row }">
+                <span title="最近一份已推送图纸的上传时间（北京时间）">{{ fmtDateTime(row.drawing_uploaded_at, '—', 'Asia/Shanghai') }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="派单时间" min-width="130" align="center">
               <template #default="{ row }">{{ row.dispatch_date ? fmtDate(row.dispatch_date) : '—' }}</template>
             </el-table-column>
@@ -1671,6 +1708,14 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
                 <el-button size="small" :type="row.group_done ? 'default' : 'success'" link style="margin-left:8px" @click="toggleGroupDone(row)">
                   {{ row.group_done ? '撤销' : '标记完成' }}
                 </el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="设备倒计时" min-width="112" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'eff-bad': row.device_countdown_days < 0 }"
+                      :title="row.delivery_date ? '交货日期 ' + row.delivery_date : '尚未填写交货日期'">
+                  {{ deviceCountdown(row.device_countdown_days) }}
+                </span>
               </template>
             </el-table-column>
           </el-table>

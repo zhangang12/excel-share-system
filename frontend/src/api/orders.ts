@@ -169,6 +169,9 @@ export interface GroupProjectRow {
   start_date?: string | null         // 生产开始(派发日)
   due_date?: string | null           // 本组预计完成(组员填，填后锁定)
   done_date?: string | null          // 本组完成日期
+  drawing_uploaded_at?: string | null
+  delivery_date?: string | null
+  device_countdown_days?: number | null
   sheetmetal_datasheet_id?: number | null
   sheetmetal_done: boolean
   standard_ready?: boolean | null    // 仅装配组

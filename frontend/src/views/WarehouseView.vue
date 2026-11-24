@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 🆕 v3 M07 仓库组：总览/出入库/收发存/流水/物料主数据/发货清单 六 tab
-import { ref, onMounted, reactive, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Lock, View, Download, Printer, Setting, Delete, ArrowLeft, ArrowRight, QuestionFilled, Upload, Sort } from '@element-plus/icons-vue'
 import { http } from '@/api'
@@ -432,13 +432,13 @@ const recvItems = ref<RecvItem[]>([])
 const recvLoading = ref(false)
 const recvReceived = ref(false)        // false=待收货 / true=已收货
 const recvSupplier = ref<number | ''>('')
-const recvPo = ref('')                   // 🆕 #315 采购单号/项目编号关键字（前端模糊过滤）
+const recvPo = ref('')
 // 🆕 #321 合并组默认收起（自动合并、手动展开），「全部展开/收起」靠 key 强制重渲染
 const recvExpandAll = ref(false)
 const recvExpandKey = ref(0)
 function toggleRecvExpandAll() { recvExpandAll.value = !recvExpandAll.value; recvExpandKey.value++ }
-const recvName = ref('')               // 🆕 #286 物料名称关键字（前端模糊过滤）
-const recvOrderMonth = ref('')         // 🆕 #290 下单时间筛选（月份，前端过滤）
+const recvName = ref('')
+const recvOrderMonth = ref('')
 // 🆕 #330 供应商下拉、徽标条数改用后端 /receiving/meta：此前两者都是从「已加载的那 300 条」里
 //   算出来的，长周期供应商压根不在选项里、徽标永远显示 300，仓库连"按供应商查"这条自救路都被堵死。
 interface RecvSupOpt { id: number; name: string }
@@ -457,20 +457,6 @@ const recvSupplierOptions = computed<RecvSupOpt[]>(() => {
 // 🆕 #330 命中上限提示：列表被截断时明说，别让人以为"数据没了"
 const recvTruncated = computed(() => recvItems.value.length >= recvMeta.value.limit)
 
-// 🆕 #330 三个搜索框全部下沉后端（见 loadReceiving），这里的本地过滤只保留「边打字边缩小」的即时反馈，
-//   与后端同口径，回车/点查询后拿到的就是全库匹配结果。
-// 🆕 #286 物料名称模糊过滤 + #290 下单时间(月份)过滤
-// 🆕 #315 单号框一个框同时模糊匹配 采购单号(po_no)/订单编号(project_code)
-const filteredRecv = computed(() => {
-  const p = recvPo.value.trim().toLowerCase()
-  const k = recvName.value.trim().toLowerCase()
-  const m = recvOrderMonth.value
-  return recvItems.value.filter(i =>
-    (!p || (i.po_no || '').toLowerCase().includes(p) || (i.project_code || '').toLowerCase().includes(p)) &&
-    (!k || (i.item_name || '').toLowerCase().includes(k)) &&
-    (!m || (i.delivery_date || '').startsWith(m)))
-})
-
 // 🆕 需求二：采购收货列表也按采购单号(po_no)合并——同一采购单(≥2行)收成一个可展开的主汇总父行，
 //   收货/送货单号、到货日期在父行上体现并在父行统一维护（合并收货写整批各行）。单行/无采购单号散单平铺。
 const recvRowKey = (row: any) => (row._isGroup ? row._key : 'i' + row.id)
@@ -479,7 +465,7 @@ const grpRowClass = ({ row }: { row: any }) => (row._isGroup ? 'grp-row' : '')
 const groupedRecv = computed<any[]>(() => {
   const groups = new Map<string, any>()
   const out: any[] = []
-  for (const it of filteredRecv.value) {
+  for (const it of recvItems.value) {
     const po = it.po_no
     if (!po) { out.push(it); continue }
     let g = groups.get(po)
@@ -533,24 +519,46 @@ const pagedRecv = computed(() => {
   const s = (recvPage.value - 1) * recvPageSize.value
   return groupedRecv.value.slice(s, s + recvPageSize.value)
 })
-// 换页签 / 改筛选后行数会变，停在第 5 页会看到空白表——回到第 1 页
+let recvSearchTimer: ReturnType<typeof setTimeout> | undefined
+let recvRequestId = 0
+const recvLoadFailed = ref(false)
+
+// 打字时延迟全库查询，过期请求的结果不能覆盖当前筛选。
+watch([recvPo, recvName], () => {
+  clearTimeout(recvSearchTimer)
+  recvRequestId++
+  recvLoading.value = true
+  recvSearchTimer = setTimeout(() => { void loadReceiving().catch(() => {}) }, 300)
+})
+onUnmounted(() => { clearTimeout(recvSearchTimer) })
 watch([() => groupedRecv.value.length, recvReceived, recvPo, recvName, recvOrderMonth, recvSupplier],
       () => { recvPage.value = 1 })
+
 async function loadReceiving() {
+  clearTimeout(recvSearchTimer)
+  const requestId = ++recvRequestId
   recvLoading.value = true
+  recvLoadFailed.value = false
   try {
     const r = await http.get<RecvItem[]>('/purchase-mgmt/receiving', {
       params: {
         received: recvReceived.value,
         supplier_id: recvSupplier.value || undefined,
-        // 🆕 #330 关键字/物料名/下单月份下沉后端：只在已加载的那批里过滤，超出上限的老单永远搜不到
         keyword: recvPo.value.trim() || undefined,
         item_name: recvName.value.trim() || undefined,
         order_month: recvOrderMonth.value || undefined,
       },
     })
-    recvItems.value = r.data
-  } finally { recvLoading.value = false }
+    if (requestId === recvRequestId) recvItems.value = r.data
+  } catch (e) {
+    if (requestId === recvRequestId) {
+      recvItems.value = []
+      recvLoadFailed.value = true
+    }
+    throw e
+  } finally {
+    if (requestId === recvRequestId) recvLoading.value = false
+  }
 }
 // 🆕 #330 供应商下拉/徽标条数的真实来源（与列表 limit 无关），切页签、收完货都刷
 async function loadRecvMeta() {
@@ -1170,9 +1178,6 @@ const filteredDemandRows = computed(() =>
     .filter(r => kwHit(r, demandSearch.value,
       ['item_name', 'spec', 'location', 'source', 'purchase_status'])))
 
-// 采购收货**不在这里加**：它本来就有三个搜索框且已下沉到后端（见 #330 的 filteredRecv），
-// 能搜到上限之外的老单，比我再叠一层本地过滤强。重复造只会两套口径打架。
-
 const shipSearch = ref('')
 const filteredShipPending = computed(() =>
   shipPending.value.filter((r: any) => kwHit(r, shipSearch.value, ['code', 'name'])))
@@ -1675,10 +1680,9 @@ function applyPoPick() {
               </el-select>
               <!-- 🆕 #315 一个框同时模糊匹配采购单号/订单编号(项目编号)；🆕 #330 改为回车/查询走后端全库搜 -->
               <el-input v-model="recvPo" placeholder="采购单号/项目编号" clearable style="width:170px"
-                        @keyup.enter="loadReceiving" @clear="loadReceiving" />
-              <!-- 🆕 #286 物料名称关键字 + #290 下单月份；🆕 #330 同样下沉后端，搜得到上限之外的老单 -->
-              <el-input v-model="recvName" placeholder="物料名称" clearable style="width:140px"
-                        @keyup.enter="loadReceiving" @clear="loadReceiving" />
+                        @keyup.enter="loadReceiving" />
+              <el-input v-model="recvName" placeholder="物料名称/规格" clearable style="width:150px"
+                        @keyup.enter="loadReceiving" />
               <el-date-picker v-model="recvOrderMonth" type="month" value-format="YYYY-MM" placeholder="下单月份" clearable
                               style="width:130px" @change="loadReceiving" />
               <el-button :icon="Search" @click="loadReceiving">查询</el-button>
@@ -1689,8 +1693,8 @@ function applyPoPick() {
               <el-button v-if="recvSelected.length" type="primary" @click="openBatchReceive">合并收货 ({{ recvSelected.length }})</el-button>
               <span class="muted small">采购下单的物料到货后，在这里核对规格、填送货单号/到货日期；单价未填的（后填价格）在此补上。合并零件可勾选多条「合并收货」只填总价。</span>
               <!-- 🆕 #330 命中上限时明说是被截断了，并指路用搜索框（关键字/物料名走后端，能搜到上限之外的老单） -->
-              <el-alert v-if="recvTruncated" type="warning" show-icon :closable="false" style="width:100%"
-                        :title="`当前${recvReceived ? '已收货' : '待收货'}共 ${recvReceived ? recvMeta.received_count : recvMeta.pending_count} 条，本页最多显示 ${recvMeta.limit} 条。用上面的供应商/单号/物料名筛选可搜全部（含更早的长周期订单）。`" />
+              <el-alert v-if="recvTruncated && !recvLoading" type="warning" show-icon :closable="false" style="width:100%"
+                        :title="`已显示 ${recvItems.length} 条明细。可按供应商、单号、物料名称/规格或下单月份搜索更早的订单。`" />
             </div>
             <el-table show-overflow-tooltip :data="pagedRecv" v-loading="recvLoading" stripe size="small" @selection-change="onRecvSelect"
                       :key="recvExpandKey" :row-key="recvRowKey" :tree-props="{ children: 'children' }" :default-expand-all="recvExpandAll"
@@ -1780,7 +1784,9 @@ function applyPoPick() {
                            :page-sizes="[50, 100, 200, 500]" :total="groupedRecv.length"
                            layout="total, sizes, prev, pager, next, jumper" size="small"
                            style="margin-top:10px;justify-content:flex-end" />
-            <EmptyHint v-if="!recvLoading && !filteredRecv.length" :text="recvReceived ? '暂无已收货记录' : '暂无待收货物料'" size="sm" />
+            <EmptyHint v-if="!recvLoading && !recvItems.length"
+                       :text="recvLoadFailed ? '查询失败，请重试' : (recvReceived ? '暂无匹配的已收货记录' : '暂无匹配的待收货物料')"
+                       size="sm" />
           </template>
         </el-tab-pane>
 

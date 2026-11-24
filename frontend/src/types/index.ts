@@ -91,6 +91,9 @@ export interface OverviewRow {
   code: string
   name: string
   status: string
+  production_status: string
+  shipment_status: string
+  is_spare: boolean
   description?: string | null
   manager_id?: number | null
   manager_name?: string | null

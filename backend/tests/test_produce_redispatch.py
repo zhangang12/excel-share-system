@@ -14,6 +14,7 @@
   5. 接口要带出每组当前是谁（前端预填要用，缺了就没法区分"没派"和"派了但不知道给谁"）
 """
 import asyncio, os, sys, tempfile
+from datetime import date, timedelta
 
 tmp = tempfile.mkdtemp(prefix="redisp")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp}/test.db"
@@ -82,8 +83,9 @@ async def main():
             f"复刻线上状态：装配组确实没有 → 装配组页签找不到这个项目: {sorted(g)}")
 
         # 给钣金组填个预计完成 + 让封板组完成，验证补派不能冲掉这些
+        due_date = (date.today() + timedelta(days=7)).isoformat()
         r = await c.post(f"/api/produce/group/{g['sheetmetal'].id}/due", headers=HP,
-                         json={"due_date": "2026-09-01"})
+                         json={"due_date": due_date})
         chk(r.status_code == 200, f"钣金组填预计完成: {r.status_code} {r.text[:80]}")
         HS = {"Authorization": f"Bearer {(await c.post('/api/auth/login', json={'username': 'sl1', 'password': 'pass123'})).json()['access_token']}"}
         r = await c.post(f"/api/produce/group/{g['sealing'].id}/done", headers=HS, json={"done": True})
@@ -99,7 +101,7 @@ async def main():
         chk(g["assembly"].worker_id == uid["装配高"], "1) 装配组派给了装配高")
 
         # ---- 3) 补派不能冲掉已有数据 ----
-        chk(g["sheetmetal"].due_date == "2026-09-01",
+        chk(g["sheetmetal"].due_date == due_date,
             f"3) 钣金组的预计完成没被冲掉: {g['sheetmetal'].due_date}")
         chk(g["sealing"].status == "done",
             f"3) 封板组的完成状态没被冲掉: {g['sealing'].status}")

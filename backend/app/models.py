@@ -1,7 +1,7 @@
 """ORM 模型 - SQLAlchemy 2.0"""
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Text, ForeignKey, DateTime, UniqueConstraint, Boolean, func
+from sqlalchemy import String, Text, ForeignKey, DateTime, UniqueConstraint, Boolean, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON as _BaseJSON
 from sqlalchemy.dialects.postgresql import JSONB
@@ -282,6 +282,9 @@ class ProduceGroupTask(Base):
     dispatched_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     done_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     done_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    quality_queued: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    quality_done_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    quality_done_by: Mapped[Optional[int]] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     project: Mapped["Project"] = relationship(lazy="joined")

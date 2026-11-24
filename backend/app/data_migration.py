@@ -10,6 +10,7 @@ from sqlalchemy import func, select, inspect, text, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine
 
 from . import models
+from .production_quality import completed_assembly_conditions
 
 log = logging.getLogger("data_migration")
 
@@ -57,7 +58,11 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
                      ("unit_price", "FLOAT"),   # 🆕 材质（字典管理）+ 自定义字段值 + 需求三 参考单价
                      # ⚠️ 同上：category_id 原来另起了一个 "wh_materials" 键，被覆盖掉了
                      ("category_id", "INTEGER")],               # 🆕 物料编码分类(细分类叶子)
-    "produce_group_tasks": [("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)")],  # 🆕 派给具体人 + 本组预计完成
+    "produce_group_tasks": [
+        ("worker_id", "INTEGER"), ("due_date", "VARCHAR(10)"),
+        ("quality_queued", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("quality_done_at", "TIMESTAMPTZ"), ("quality_done_by", "INTEGER"),
+    ],
     "dept_orders": [
         ("design_done_flag",   "BOOLEAN DEFAULT FALSE"),  # 🆕 设计完成第一步标记
         ("electric_done_flag", "BOOLEAN DEFAULT FALSE"),  # 电工三步流第二步：电路完成
@@ -1376,6 +1381,20 @@ async def backfill_datasheet_imported_at(db: AsyncSession) -> dict:
     return {"filled": filled}
 
 
+async def backfill_quality_queue(db: AsyncSession) -> None:
+    """已装配、未发货的存量项目进入待质检，历史发货单保留真实质检记录。"""
+    task = models.ProduceGroupTask
+    shipped = select(models.Shipment.project_id).where(models.Shipment.status == "shipped")
+    await db.execute(
+        sa_update(task).where(
+            *completed_assembly_conditions(),
+            task.quality_queued.is_(False),
+            task.project_id.not_in(shipped),
+        ).values(quality_queued=True)
+    )
+    await db.commit()
+
+
 def _is_spare(p) -> bool:
     """这个项目是不是备机。
 
@@ -2591,6 +2610,11 @@ async def run_all(db: AsyncSession) -> None:
         await backfill_shipments(db)
     except Exception as e:
         log.warning("backfill_shipments failed: %s", e)
+    try:
+        await backfill_quality_queue(db)
+    except Exception as e:
+        await db.rollback()
+        log.warning("backfill_quality_queue failed: %s", e)
     try:
         await dedupe_elec_po_sheets(db)   # 先去重,再补建
     except Exception as e:

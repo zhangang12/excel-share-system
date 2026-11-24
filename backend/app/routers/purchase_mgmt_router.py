@@ -2213,7 +2213,7 @@ async def list_receiving(
     supplier_id: Optional[int] = Query(None),
     po_no: Optional[str] = Query(None),
     keyword: Optional[str] = Query(None, description="🆕 #330 采购单号/项目编号 模糊匹配（后端过滤，穿透 limit）"),
-    item_name: Optional[str] = Query(None, description="🆕 #330 物料名称 模糊匹配（后端过滤，穿透 limit）"),
+    item_name: Optional[str] = Query(None, description="物料名称或规格（过滤后再分页）"),
     order_month: Optional[str] = Query(None, description="🆕 #330 下单月份 YYYY-MM"),
     received: bool = Query(False, description="False=待收货(默认) / True=已收货"),
     limit: int = Query(_RECV_LIMIT_DEFAULT, ge=1, le=_RECV_LIMIT_MAX),
@@ -2245,7 +2245,9 @@ async def list_receiving(
                               models.PurchaseItem.project_code.ilike(kw),
                               models.PurchaseItem.source_sheet_id.in_(from_sheet)))
     if item_name and item_name.strip():
-        stmt = stmt.where(models.PurchaseItem.item_name.ilike(f"%{item_name.strip()}%"))
+        material_kw = f"%{item_name.strip()}%"
+        stmt = stmt.where(or_(models.PurchaseItem.item_name.ilike(material_kw),
+                              models.PurchaseItem.spec.ilike(material_kw)))
     if order_month and order_month.strip():
         stmt = stmt.where(models.PurchaseItem.delivery_date.startswith(order_month.strip()))
     r = await db.execute(stmt.limit(limit))

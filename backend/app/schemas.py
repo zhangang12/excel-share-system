@@ -993,6 +993,9 @@ class OverviewProjectRow(BaseModel):
     code: str
     name: str
     status: str
+    production_status: str = "进行中"
+    shipment_status: str = "未发货"
+    is_spare: bool = False
     description: Optional[str] = None
     manager_id: Optional[int] = None
     manager_name: Optional[str] = None
