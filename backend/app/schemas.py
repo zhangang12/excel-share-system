@@ -332,7 +332,7 @@ class SalesOrderOut(BaseModel):
 
 
 class SpareOrderCreate(BaseModel):
-    """🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账。"""
+    """备机下单（设计部/管理层）：建项目+派各部门，不建销售台账。"""
     code: str = ""
     name: str = Field(min_length=1, max_length=255)
     qty: int = 1

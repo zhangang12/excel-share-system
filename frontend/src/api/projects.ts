@@ -16,6 +16,8 @@ export const projectsApi = {
     http.put<Project>(`/projects/${id}`, data).then(r => r.data),
   remove: (id: number) =>
     http.delete<{ message: string }>(`/projects/${id}`).then(r => r.data),
+  voidSpare: (id: number) =>
+    http.post<{ message: string }>(`/projects/${id}/void-spare`).then(r => r.data),
 
   // 更新项目头表单个字段（数量 / 销售 / 设计师 / 电器 / 下单日期 / 交货日期 / 制表日期）
   // is_overview=true → 写到 __o__<key>（一览独立存储），与项目详情完全解耦

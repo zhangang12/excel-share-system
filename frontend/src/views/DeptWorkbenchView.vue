@@ -26,7 +26,6 @@ import EmptyHint from '@/components/EmptyHint.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { fmtDate, fmtDateTime } from '@/utils/format'
 import { reportsApi, type DeptReport } from '@/api/reports'
-import { salesApi } from '@/api/sales'   // 复用建议编号
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 
 // el-tag type → StatusPill variant 映射（ORDER_STATUS_TAG 用）
@@ -52,8 +51,8 @@ const isAssembler = computed(() => auth.hasRole('assembler'))
 const isSealing = computed(() => auth.hasRole('sealing'))   // 🆕 反馈#209 封板组
 const isProduce = computed(() => dept.value === 'produce')
 
-// 🆕 备机下单：仅设计部工作台、且 设计部负责人/管理层 可见
-const canSpare = computed(() => dept.value === 'design' && (isLead.value || auth.hasRole('admin', 'manager')))
+// 设计部成员和管理层可在设计工作台下备机单。
+const canSpare = computed(() => dept.value === 'design' && (isWorker.value || isLead.value || isMgr.value))
 const spareVisible = ref(false)
 const spareSubmitting = ref(false)
 // 🆕 反馈#433（赵仁辉）：加「下单时间」（默认今天）和「交付时间」，回写项目一览的签订日期/交货日期
@@ -66,7 +65,7 @@ const spareForm = ref({ code: '', name: '', qty: 1, unit: '台', depts: ['produc
 const spareFiles = ref<File[]>([])   // 🆕 #5 备机下单的合同技术资料
 async function openSpare() {
   let suggested = ''
-  try { suggested = await salesApi.nextCode() } catch { /* 留空人工填 */ }
+  try { suggested = await ordersApi.nextSpareCode() } catch { /* 留空人工填 */ }
   spareForm.value = { code: suggested, name: '', qty: 1, unit: '台', depts: ['produce', 'electric'], req_text: '',
     sign_date: todayStr(), deliver_date: '' }
   spareFiles.value = []
@@ -945,7 +944,7 @@ watch(activeTab, (v) => { if (v === 'preq') loadPurchReqs() })
       <PageRefresh :load="load" />
     </div>
 
-    <!-- ===== 🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账 ===== -->
+    <!-- ===== 备机下单（设计部/管理层） ===== -->
     <el-dialog v-model="spareVisible" title="备机下单" width="560px" :close-on-click-modal="false">
       <el-alert type="info" :closable="false" style="margin-bottom: 12px"
                 title="备机不走销售台账；下单后建项目并推送所选部门待分派，同样进入项目目录/详单。" />

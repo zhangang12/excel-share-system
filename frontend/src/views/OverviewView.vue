@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Edit, Delete, Upload, Setting, Search, Download } from '@element-plus/icons-vue'
+import { Edit, Delete, Upload, Setting, Search, Download } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { overviewApi } from '@/api/overview'
 import { projectsApi } from '@/api/projects'
@@ -446,49 +446,29 @@ function openProject(rowId: number) {
   router.push({ name: 'project-detail', params: { id: rowId } })
 }
 
-// ===== 新建项目（一览页主入口） =====
-const createDialogVisible = ref(false)
-const creating = ref(false)
-const createForm = ref({
-  code: '', name: '', qty: '',
-  sales: '', signDate: '', deliverDate: '', designer: '',
-})
-function openCreateProject() {
-  createForm.value = {
-    code: '', name: '', qty: '',
-    sales: '', signDate: '', deliverDate: '', designer: '',
-  }
-  createDialogVisible.value = true
-}
-async function submitCreateProject() {
-  const f = createForm.value
-  if (!f.code.trim()) { ElMessage.warning('请填写项目编号'); return }
-  if (!f.name.trim()) { ElMessage.warning('请填写项目名称'); return }
-  creating.value = true
+const voidingSpareId = ref<number | null>(null)
+async function voidSpare(row: OverviewRow) {
   try {
-    const p = await projectsApi.create({
-      code: f.code.trim(),
-      name: f.name.trim(),
-    })
-    // 其余字段写入一览存储 __o__（is_overview=true），同时按别名同步到项目详情头表
-    const metaWrites: [string, string][] = [
-      ['数量', f.qty],
-      ['销售', f.sales],
-      ['签订日期', f.signDate],
-      ['交货日期', f.deliverDate],
-      ['设计师', f.designer],
-    ]
-    for (const [key, val] of metaWrites) {
-      const v = (val ?? '').toString().trim()
-      if (v) await projectsApi.updateHeaderCell(p.id, key, v, true)
-    }
-    createDialogVisible.value = false
-    ElMessage.success(`已新建项目 ${p.code} · ${p.name}`)
-    await load()
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || e?.message || '新建失败')
+    await ElMessageBox.confirm(
+      `作废 ${row.code} · ${row.name}？各部门未完成的任务将关闭，备机将从目录移除。`,
+      '整单作废备机',
+      { type: 'warning', confirmButtonText: '确认作废', confirmButtonClass: 'el-button--danger' },
+    )
+  } catch {
+    return
+  }
+  voidingSpareId.value = row.id
+  try {
+    const result = await projectsApi.voidSpare(row.id)
+    rows.value = rows.value.filter(item => item.id !== row.id)
+    const lastPage = Math.max(1, Math.ceil(filteredRows.value.length / pageSize.value))
+    currentPage.value = Math.min(currentPage.value, lastPage)
+    ElMessage.success(result.message)
+  } catch (e) {
+    const detail = axios.isAxiosError(e) ? e.response?.data?.detail : undefined
+    ElMessage.error(detail || '整单作废失败')
   } finally {
-    creating.value = false
+    voidingSpareId.value = null
   }
 }
 
@@ -705,9 +685,6 @@ onMounted(load)
                 size="large" clearable :prefix-icon="Search" @input="currentPage = 1" />
       <!-- 一览列名已固定为 Excel 模板（与"2026 项目倒计时"对齐），"添加列"已下线 -->
       <el-button :icon="Download" size="large" @click="onExport">{{ projectKind === 'spare' ? '导出备机' : '导出项目' }}</el-button>
-      <el-button v-if="isAdmin" type="primary" :icon="Plus" size="large" @click="openCreateProject">
-        新建项目
-      </el-button>
       <!-- 导入汇总表已隐藏（仍保留 onImportFile 函数和路由，可恢复）
       <label v-if="isAdmin" class="el-button el-button--primary el-button--large" style="margin: 0">
         <el-icon style="margin-right:6px"><Upload /></el-icon>
@@ -772,6 +749,15 @@ onMounted(load)
             </span>
           </template>
         </el-table-column>
+        <el-table-column v-if="projectKind === 'spare' && isAdmin" label="操作" width="96" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button v-if="row.shipment_status !== '已发货'" link type="danger"
+                       :loading="voidingSpareId === row.id" :disabled="voidingSpareId !== null"
+                       @click="voidSpare(row)">
+              整单作废
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
 
       <!-- 分页 -->
@@ -797,47 +783,6 @@ onMounted(load)
       <template #footer>
         <el-button @click="fieldDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submitField">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 新建项目对话框（与项目列表共享同一后端接口）-->
-    <el-dialog v-model="createDialogVisible" title="新建项目" width="500px"
-               :close-on-click-modal="false">
-      <el-form label-position="top">
-        <el-form-item label="项目编号 *">
-          <el-input v-model="createForm.code" size="large" placeholder="如 2026-040"
-                    @keyup.enter="submitCreateProject" />
-        </el-form-item>
-        <el-form-item label="项目名称 *">
-          <el-input v-model="createForm.name" size="large"
-                    placeholder="如 500ML 双行星混合机"
-                    @keyup.enter="submitCreateProject" />
-        </el-form-item>
-        <el-form-item label="数量">
-          <el-input v-model="createForm.qty" size="large" placeholder="如 1" />
-        </el-form-item>
-        <el-form-item label="销售">
-          <el-input v-model="createForm.sales" size="large" placeholder="如 赵仁辉" />
-        </el-form-item>
-        <el-form-item label="签订日期">
-          <el-date-picker v-model="createForm.signDate" type="date" size="large"
-                          style="width:100%" placeholder="选择签订日期"
-                          value-format="YYYY-MM-DD" format="YYYY-MM-DD" />
-        </el-form-item>
-        <el-form-item label="交货日期">
-          <el-date-picker v-model="createForm.deliverDate" type="date" size="large"
-                          style="width:100%" placeholder="选择交货日期"
-                          value-format="YYYY-MM-DD" format="YYYY-MM-DD" />
-        </el-form-item>
-        <el-form-item label="设计师">
-          <el-input v-model="createForm.designer" size="large" placeholder="如 陈立新" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="createDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="creating" @click="submitCreateProject">
-          新建并跳转
-        </el-button>
       </template>
     </el-dialog>
 

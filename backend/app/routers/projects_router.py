@@ -143,6 +143,16 @@ async def _purge_project_derived_data(db: AsyncSession, project_ids: list[int]) 
     return counts
 
 
+async def void_open_dept_orders(db: AsyncSession, project_id: int) -> int:
+    result = await db.execute(
+        sql_update(models.DeptOrder)
+        .where(models.DeptOrder.project_id == project_id,
+               models.DeptOrder.status.notin_(("done", "voided")))
+        .values(status="voided")
+    )
+    return result.rowcount or 0
+
+
 async def soft_delete_project(db: AsyncSession, p: models.Project, *,
                               void_dept_orders: bool = True) -> dict:
     """软删项目并清理派生数据（详单/字段/行/权限/成员），可选把各部门任务单置作废。
@@ -152,19 +162,10 @@ async def soft_delete_project(db: AsyncSession, p: models.Project, *,
     返回清理计数（含 dept_orders_voided）。
     """
     counts = await _purge_project_derived_data(db, [p.id])
-    voided = 0
-    if void_dept_orders:
-        res = await db.execute(
-            sql_update(models.DeptOrder)
-            .where(models.DeptOrder.project_id == p.id,
-                   models.DeptOrder.status.notin_(("done", "voided")))
-            .values(status="voided")
-        )
-        voided = res.rowcount or 0
+    counts["dept_orders_voided"] = await void_open_dept_orders(db, p.id) if void_dept_orders else 0
     p.is_deleted = True
     if not p.code.startswith("_deleted_"):
         p.code = f"_deleted_{p.id}_{p.code}"[:64]
-    counts["dept_orders_voided"] = voided
     return counts
 
 
@@ -538,6 +539,50 @@ async def update_project_header_cell(
         detail=f"{key}={val}",
     )
     return schemas.Msg(message="ok")
+
+
+@router.post("/{pid}/void-spare", response_model=schemas.Msg)
+async def void_spare_project(
+    pid: int,
+    current: models.User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """作废整台备机，停止未完成的部门任务，保留编号、详单和历史记录。"""
+    from ..data_migration import _is_spare
+
+    p = await db.scalar(
+        select(models.Project).where(models.Project.id == pid).with_for_update(of=models.Project)
+    )
+    if p is None or (p.is_deleted and p.status != "已作废"):
+        raise HTTPException(404, "项目不存在")
+    if not _is_spare(p):
+        raise HTTPException(400, "仅备机可使用整单作废")
+    if p.is_deleted:
+        return schemas.Msg(message="备机已作废")
+
+    shipped = await db.scalar(select(models.Shipment.id).where(
+        models.Shipment.project_id == pid, models.Shipment.status == "shipped",
+    ))
+    if shipped is not None:
+        raise HTTPException(409, "该备机已发货，不可整单作废")
+    ledger = models.SalesLedger
+    sales_record = await db.scalar(select(ledger.id).where(
+        ledger.project_id == pid,
+        or_(ledger.order_state.is_not(None), ledger.invoice_state.is_not(None),
+            ledger.customer.is_not(None), ledger.contract_file_id.is_not(None), ledger.amount != 0),
+    ))
+    if sales_record is not None:
+        raise HTTPException(409, "该项目有销售业务记录，请从销售部办理订单作废")
+
+    voided = await void_open_dept_orders(db, pid)
+    p.status = "已作废"
+    p.is_deleted = True
+    db.add(models.AuditLog(
+        user_id=current.id, username=current.username, action="void_spare",
+        target_type="project", target_id=pid, detail=f"{p.code} · {voided} 张部门任务单作废",
+    ))
+    await db.commit()
+    return schemas.Msg(message="备机已作废")
 
 
 @router.delete("/{pid}", response_model=schemas.Msg)

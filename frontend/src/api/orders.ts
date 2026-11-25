@@ -141,7 +141,9 @@ export const ordersApi = {
   editDue: (id: number, dueDate: string) =>
     http.post(`/orders/${id}/edit-due`, { due_date: dueDate }).then((r) => r.data),
 
-  // 🆕 备机下单（设计部负责人/管理层）：建项目+派各部门，不建销售台账
+  // 备机下单（设计部/管理层）：建项目+派各部门，不建销售台账
+  nextSpareCode: () =>
+    http.get<{ code: string }>('/orders/spare/next-code').then(r => r.data.code),
   // 🆕 #433 sign_date=下单时间 / deliver_date=交付时间（选填，YYYY-MM-DD）
   spareOrder: (data: { code: string; name: string; qty: number; unit: string; depts: string[]; req_text: string;
                        sign_date?: string; deliver_date?: string }) =>

@@ -18,6 +18,7 @@ import type { DataField, DataRecord, Project } from '@/types'
 
 const props = defineProps<{
   datasheetId: number
+  datasheetName: string
   canEdit: boolean
   headerLines?: string[][] | null
   // 项目级元数据：项目头表的所有 sheet 共享同一份数据
@@ -398,27 +399,25 @@ function onDatePickerMount(el: any) {
   setTimeout(() => { try { el.focus?.() } catch { /* */ } }, 0)
 }
 
-// 🆕 #270 工艺列：字段名恰为「工艺1」「工艺2」的列，编辑时用带历史值提示的
-// el-autocomplete——已填过的工艺自动"存储"下来，输入时下拉可再选，也可手输新值
-// （实现思路与 SheetmetalGrid.vue 的 columnValues/fetchColumnSuggestions 一致）
 const CRAFT_FIELD_NAMES = new Set(['工艺1', '工艺2'])
-function isCraftField(f: DataField): boolean {
-  return CRAFT_FIELD_NAMES.has((f.name || '').trim())
+const OUTSOURCE_HISTORY_FIELDS = new Set(['采购负责人', '供应商'])
+function usesColumnSuggestions(f: DataField): boolean {
+  const name = f.name.trim()
+  return CRAFT_FIELD_NAMES.has(name) ||
+    (props.datasheetName === '外协加工' && OUTSOURCE_HISTORY_FIELDS.has(name))
 }
-// 该列已填过的去重非空值（下拉提示用，最多 20 条）
-function columnValues(f: DataField): { value: string }[] {
-  const seen = new Set<string>()
-  for (const r of records.value) {
-    const v = String(getCellValue(r, f) ?? '').trim()
-    if (v) seen.add(v)
-    if (seen.size >= 20) break
-  }
-  return Array.from(seen).map(v => ({ value: v }))
-}
+// 从整张表的该列查已填写的值，最多显示 20 条去重结果。
 function fetchColumnSuggestions(f: DataField) {
   return (query: string, cb: (list: { value: string }[]) => void) => {
-    const all = columnValues(f)
-    cb(query ? all.filter(x => x.value.toLowerCase().includes(query.toLowerCase())) : all)
+    const keyword = query.trim().toLowerCase()
+    const matches = new Set<string>()
+    for (const record of records.value) {
+      const value = String(getCellValue(record, f) ?? '').trim()
+      if (!value || !value.toLowerCase().includes(keyword)) continue
+      matches.add(value)
+      if (matches.size >= 20) break
+    }
+    cb(Array.from(matches, value => ({ value })))
   }
 }
 
@@ -503,12 +502,15 @@ function colWidth(f: DataField): number {
 }
 
 // 单元格编辑
-const editingCell = ref<{ rowId: number; fieldId: number } | null>(null)
+const editingCell = ref<{ record: DataRecord; field: DataField } | null>(null)
 const editingValue = ref<any>(null)
+let lastCellSave = Promise.resolve()
 
 function startEdit(r: DataRecord, f: DataField) {
-  if (!fieldEditable(f)) return
-  editingCell.value = { rowId: r.id, fieldId: f.id }
+  if (!fieldEditable(f) || isEditing(r, f)) return
+  const previous = editingCell.value
+  if (previous) void saveEdit(previous.record, previous.field)
+  editingCell.value = { record: r, field: f }
   const v = getCellValue(r, f)
   if (v == null) {
     editingValue.value = ''
@@ -529,29 +531,19 @@ function startEdit(r: DataRecord, f: DataField) {
 }
 
 function isEditing(r: DataRecord, f: DataField) {
-  return editingCell.value?.rowId === r.id && editingCell.value?.fieldId === f.id
+  return editingCell.value?.record.id === r.id && editingCell.value?.field.id === f.id
 }
 
 async function saveEdit(r: DataRecord, f: DataField) {
+  if (!isEditing(r, f)) return
   const newVal = editingValue.value
-  const oldVal = getCellValue(r, f)
   editingCell.value = null
-  if (JSON.stringify(newVal) === JSON.stringify(oldVal)) return
-  try {
-    await datasheetsApi.updateCell(r.id, f.id, newVal)
-    const idx = records.value.findIndex(x => x.id === r.id)
-    if (idx >= 0) {
-      const newValues = { ...records.value[idx].values }
-      const fid = String(f.id)
-      if (newVal === null || newVal === '') delete newValues[fid]
-      else newValues[fid] = newVal
-      records.value[idx] = { ...records.value[idx], values: newValues }
-    }
-  } catch {
-    // 这里刻意不弹提示：api/index.ts 的全局响应拦截器已经对每一次失败弹过错误了
-    // （401 则清 token 跳登录）。在这里再弹一次，用户会连着看到两条内容重复的提示。
-    // 保存失败时 records 不更新，格子会立刻显示回原值——人看得见没写进去。
-  }
+  // 连续切换单元格时按编辑顺序写入，以免同一行的两次保存覆盖彼此。
+  lastCellSave = lastCellSave.then(async () => {
+    const record = records.value.find(item => item.id === r.id)
+    if (record) await applyCellValue(record, f, newVal)
+  }).catch(() => { /* 失败由全局响应拦截器提示，单元格仍显示原值 */ })
+  await lastCellSave
 }
 
 function cancelEdit() { editingCell.value = null }
@@ -803,16 +795,17 @@ async function addRow() {
                             @change="saveEdit(row, f)"
                             @blur="saveEdit(row, f)"
                             @keyup.escape="cancelEdit" />
-            <!-- 🆕 #270 工艺列（工艺1/工艺2）：输入时下拉提示本列已填过的值，可手输新值 -->
-            <el-autocomplete v-else-if="isCraftField(f)"
+            <!-- 工艺及外协加工的采购负责人、供应商：提示本列已填过的值，可手输新值 -->
+            <el-autocomplete v-else-if="usesColumnSuggestions(f)"
                              v-model="editingValue" size="small"
                              :fetch-suggestions="fetchColumnSuggestions(f)"
                              :trigger-on-focus="true"
-                             placeholder="输入或下拉选已有工艺"
+                             select-when-unmatched
+                             :aria-label="f.name"
+                             placeholder="输入或选择已有值"
                              class="cell-edit-input" autofocus
                              @select="saveEdit(row, f)"
                              @blur="saveEdit(row, f)"
-                             @keyup.enter="saveEdit(row, f)"
                              @keyup.escape="cancelEdit" />
             <!-- 🆕 #289 名称列：联想全系统物料主数据（走接口，选中带出同行「规格型号」），可手输新值 -->
             <el-autocomplete v-else-if="isMaterialNameField(f)"

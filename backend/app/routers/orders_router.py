@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, or_, delete, func
+from sqlalchemy.orm import contains_eager
 
 from ..database import get_db
 from .. import models, schemas
@@ -168,10 +169,18 @@ def _dept_or_400(dept: str) -> dict:
 
 
 async def _order_or_404(db: AsyncSession, oid: int) -> models.DeptOrder:
-    res = await db.execute(select(models.DeptOrder).where(models.DeptOrder.id == oid))
+    # 部门任务的写操作与整台备机作废按项目串行。
+    res = await db.execute(
+        select(models.DeptOrder).join(models.DeptOrder.project)
+        .options(contains_eager(models.DeptOrder.project))
+        .where(models.DeptOrder.id == oid)
+        .with_for_update(of=models.Project)
+    )
     o = res.scalar_one_or_none()
     if not o:
         raise HTTPException(404, "任务单不存在")
+    if o.project.is_deleted and o.project.status == "已作废":
+        raise HTTPException(409, "备机已整单作废，任务单不可操作")
     return o
 
 
@@ -504,7 +513,8 @@ async def create_order(
     cfg = _dept_or_400(data.dept)
 
     res = await db.execute(select(models.Project).where(
-        models.Project.id == data.project_id, models.Project.is_deleted == False))  # noqa: E712
+        models.Project.id == data.project_id, models.Project.is_deleted.is_(False),
+    ).with_for_update(of=models.Project))
     p = res.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "项目不存在")
@@ -554,13 +564,26 @@ async def create_order_internal(
     return o
 
 
+require_spare_order_access = require_roles(DEPTS["design"]["worker_role"], DEPTS["design"]["lead_role"])
+
+
+@router.get("/spare/next-code", response_model=schemas.NextCodeOut)
+async def next_spare_code(
+    _: models.User = Depends(require_spare_order_access),
+    db: AsyncSession = Depends(get_db),
+):
+    from .sales_router import _compute_next_code
+
+    return schemas.NextCodeOut(code=await _compute_next_code(db))
+
+
 @router.post("/spare", response_model=schemas.SalesOrderOut)
 async def create_spare_order(
     data: schemas.SpareOrderCreate,
-    current: models.User = Depends(require_roles("admin", "manager", "design_lead")),
+    current: models.User = Depends(require_spare_order_access),
     db: AsyncSession = Depends(get_db),
 ):
-    """🆕 备机下单（设计部负责人/管理层）：建项目(进项目目录/详单)+派各部门任务，
+    """备机下单（设计部/管理层）：建项目(进项目目录/详单)+派各部门任务，
     复用下单派单/推送逻辑，但不建销售台账(不在销售部管理)。直接生效、无需审批。"""
     from .projects_router import create_default_template_sheets, _add_all_active_users_as_members
     name = data.name.strip()

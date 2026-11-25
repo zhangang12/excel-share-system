@@ -333,9 +333,10 @@ onMounted(reloadAll)
         </div>
 
         <DatasheetGrid
-          v-if="activeSheetId"
-          :key="activeSheetId"
-          :datasheet-id="activeSheetId"
+          v-if="activeSheet"
+          :key="activeSheet.id"
+          :datasheet-id="activeSheet.id"
+          :datasheet-name="activeSheet.name"
           :can-edit="canEdit"
           :header-lines="activeSheetHeaderLines"
           :project="project"

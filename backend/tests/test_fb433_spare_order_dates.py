@@ -3,6 +3,7 @@
 口径：两个日期选填；填了回写项目一览「签订日期」「交货日期」（与销售下单同一列，
 alias 自动双写详单表头「下单日期」）；格式不对 400；交付早于下单 400；不填不写。
 #432（反馈面板四个带数量的页签）是纯前端，数据仍走 /feedbacks?include_done=true，不在这里测。
+#465：普通设计师和设计部负责人均可取建议编号并下备机单。
 """
 import asyncio, os, sys, tempfile
 
@@ -49,8 +50,8 @@ async def main():
         r = await c.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
         H = {"Authorization": f"Bearer {r.json()['access_token']}"}
 
-        async def spare(code, **kw):
-            return await c.post("/api/orders/spare", headers=H, json={
+        async def spare(code, *, headers=H, **kw):
+            return await c.post("/api/orders/spare", headers=headers, json={
                 "code": code, "name": "100L真空乳化机(备机)", "depts": ["electric"], **kw})
 
         r = await spare("SP-433-A", sign_date="2026-09-16", deliver_date="2026/10/20")
@@ -74,6 +75,25 @@ async def main():
         async with SessionLocal() as db:
             n = (await db.execute(select(models.Project).where(models.Project.code.in_(["SP-433-C", "SP-433-D"])))).scalars().all()
         chk(not n, "被拒的单没有建出项目")
+
+        roles = {role["code"]: role["id"] for role in (await c.get("/api/admin/roles", headers=H)).json()}
+        for role, expected in (("designer", 200), ("design_lead", 200), ("electrician", 403)):
+            credentials = {"username": f"qa-{role}", "password": "test1234"}
+            user = await c.post("/api/admin/users", headers=H, json={**credentials, "role_id": roles[role]})
+            user.raise_for_status()
+            login = await c.post("/api/auth/login", json=credentials)
+            login.raise_for_status()
+            headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+            code = await c.get("/api/orders/spare/next-code", headers=headers)
+            chk(code.status_code == expected, f"{role} 取备机建议编号 -> {code.status_code}")
+            order = await spare(f"SP-465-{role}", headers=headers)
+            chk(order.status_code == expected, f"{role} 备机下单 -> {order.status_code}")
+            if order.is_success:
+                pid = order.json()["project_id"]
+                async with SessionLocal() as db:
+                    task = await db.scalar(select(models.DeptOrder).where(models.DeptOrder.project_id == pid))
+                    chk(task is not None and task.created_by == user.json()["id"] and task.status == "pending_assign",
+                        f"{role} 创建本人的待分派任务")
 
     print()
     if FAIL:

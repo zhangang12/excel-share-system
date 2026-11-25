@@ -1,4 +1,4 @@
-"""生产三组的图纸与倒计时、装配交接质检、项目/备机目录及导出。"""
+"""生产三组的图纸与倒计时、装配交接质检、项目/备机目录及整单作废。"""
 import asyncio
 import os
 import sys
@@ -172,6 +172,46 @@ async def main():
             data = list(load_workbook(BytesIO(result.content), read_only=True).active.values)
             assert data[0][2:4] == ("生产状态", "发货状态")
             assert {r[0] for r in data[1:]} == expected
+
+        # 单独作废设计任务后，生产和电气仍待分派，备机仍应出现在目录。
+        orders = {}
+        for dept in ("design", "produce", "electric"):
+            order = await request("POST", "/orders", headers=admin, json={"project_id": spare.id, "dept": dept})
+            orders[dept] = order.json()["id"]
+        await request("POST", f"/orders/{orders['design']}/void", headers=admin)
+        await request("DELETE", f"/orders/{orders['design']}", headers=admin)
+        assert (await overview())[spare.code]["production_status"] == "进行中"
+        async with SessionLocal() as db:
+            sheet = models.Datasheet(project_id=spare.id, name="外协加工")
+            db.add_all([sheet, models.Shipment(project_id=old_spare.id, status="shipped")])
+            await db.flush()
+            record = models.Record(datasheet_id=sheet.id, values={})
+            db.add(record)
+            await db.commit()
+
+        void_path = f"/projects/{spare.id}/void-spare"
+        assert (await client.post(f"/api{void_path}", headers=assembler)).status_code == 403
+        assert (await client.post(f"/api/projects/{project.id}/void-spare", headers=admin)).status_code == 400
+        assert (await client.post(f"/api/projects/{old_spare.id}/void-spare", headers=admin)).status_code == 409
+        await request("POST", void_path, headers=admin)
+        await request("POST", void_path, headers=admin)
+        assert set(await overview()) >= {project.code, old_spare.code}
+        assert spare.code not in await overview()
+        for dept in ("produce", "electric"):
+            queue = (await request("GET", "/orders", headers=admin, params={"dept": dept})).json()
+            assert orders[dept] not in {o["id"] for o in queue}
+            stale = await client.post(f"/api/orders/{orders[dept]}/void", headers=admin)
+            assert stale.status_code == 409
+        async with SessionLocal() as db:
+            archived = await db.get(models.Project, spare.id)
+            assert (archived.code, archived.status, archived.is_deleted) == (spare.code, "已作废", True)
+            assert await db.get(models.Record, record.id) is not None
+            for dept in ("produce", "electric"):
+                assert (await db.get(models.DeptOrder, orders[dept])).status == "voided"
+            audit_count = await db.scalar(select(func.count(models.AuditLog.id)).where(
+                models.AuditLog.action == "void_spare", models.AuditLog.target_id == spare.id,
+            ))
+            assert audit_count == 1
 
     await engine.dispose()
     print(f"PASSED ({engine.dialect.name})")
