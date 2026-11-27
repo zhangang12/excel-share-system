@@ -15,6 +15,7 @@ import LineChart from '@/components/LineChart.vue'
 import AttachmentPreview from '@/components/AttachmentPreview.vue'   // 🆕 反馈#296 凭证/回执在线预览
 import PageRefresh from '@/components/PageRefresh.vue'   // 反馈#359：每个页面都有刷新
 import PayablesDueTab from '@/components/PayablesDueTab.vue'   // 🆕 2026-09-29 应付到期（按账期算哪天该付）
+import PurchaseBatchMaintenance from '@/components/PurchaseBatchMaintenance.vue'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasRole('buyer', 'buyer_lead', 'buyer_standard', 'buyer_outsource', 'admin', 'manager'))
@@ -387,11 +388,39 @@ const items = ref<PurchaseItemOut[]>([])
 const itemSummary = ref<ItemSummary | null>(null)
 const selectedItems = ref<PurchaseItemOut[]>([])
 const itemsTableRef = ref<{ clearSelection: () => void; toggleRowSelection: (row: any, selected?: boolean) => void }>()
+const maintenanceDialog = ref<InstanceType<typeof PurchaseBatchMaintenance>>()
+const explicitlySelectedOrders = new Set<string>()
 // #2 勾父(汇总)行 → 自动全选/取消其下全部零件（可视化联动，避免只勾父行时零件不打勾的困惑）
 function onItemSelect(selection: any[], row: any) {
-  if (!row?._isGroup || !row.children?.length) return
+  const key = orderSelectionKey(row)
+  if (!row._isGroup) {
+    // 手选零件仅维护勾选明细，即使恰好勾完了当前页的所有零件。
+    explicitlySelectedOrders.delete(key)
+    return
+  }
   const checked = selection.includes(row)
+  if (checked) explicitlySelectedOrders.add(key)
+  else explicitlySelectedOrders.delete(key)
   nextTick(() => { for (const c of row.children) itemsTableRef.value?.toggleRowSelection(c, checked) })
+}
+function onItemSelectionChange(selection: PurchaseItemOut[]) {
+  selectedItems.value = selection
+  if (!selection.length) explicitlySelectedOrders.clear()
+}
+function orderSelectionKey(row: Pick<PurchaseItemOut, 'supplier_id' | 'po_no'>) {
+  return JSON.stringify([row.supplier_id, row.po_no])
+}
+function openMaintenance(mode: 'reconcile' | 'invoice') {
+  const orders = (selectedItems.value as Array<PurchaseItemOut & { _isGroup?: boolean }>)
+    .filter(row => row._isGroup && row.po_no && explicitlySelectedOrders.has(orderSelectionKey(row)))
+    .map(row => ({ supplier_id: row.supplier_id, po_no: row.po_no! }))
+  const wholeOrderKeys = new Set(orders.map(orderSelectionKey))
+  const item_ids = selLeaves.value.filter(row => !wholeOrderKeys.has(orderSelectionKey(row))).map(row => row.id)
+  maintenanceDialog.value?.open(mode, { orders, item_ids })
+}
+async function onMaintenanceSaved() {
+  clearSelection()
+  await loadItems()
 }
 const filterSupplierId = ref<number | ''>('')
 const filterProjectCode = ref('')
@@ -488,10 +517,11 @@ const groupedItems = computed<any[]>(() => {
   for (const it of items.value) {
     const po = it.po_no
     if (!po) { out.push(it); continue }
-    let g = groups.get(po)
+    const key = orderSelectionKey(it)
+    let g = groups.get(key)
     if (!g) {
       g = {
-        _isGroup: true, _key: 'g:' + po, po_no: po,
+        _isGroup: true, _key: 'g:' + key, po_no: po,
         supplier_name: it.supplier_name, supplier_id: it.supplier_id, delivery_date: it.delivery_date,
         received_amount: 0, invoice_amount: 0, paid_amount: 0,
         _codes: new Set<string>(), _dnotes: new Set<string>(), _arrivals: new Set<string>(),
@@ -499,7 +529,7 @@ const groupedItems = computed<any[]>(() => {
         _expects: new Set<string>(),   // 🆕 预计到货(整单一个,合并行沿用)
         children: [] as PurchaseItemOut[],
       }
-      groups.set(po, g); out.push(g)
+      groups.set(key, g); out.push(g)
     }
     g.children.push(it)
     g.received_amount += it.received_amount || 0
@@ -2577,11 +2607,15 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
           <div v-if="selectedItems.length" class="sel-bar">
             <span>已选 <b>{{ selLeaves.length }}</b> 条明细</span>
             <span>未付合计 <b class="amt">{{ fmtMoney(selUnpaidTotal) }}</b></span>
-            <span v-if="!selSameSupplier" class="warn">跨供应商不能一起请款/维护开票号，请选择同一供应商的明细</span>
             <el-button size="small" type="warning" :disabled="!selSameSupplier" @click="openPaymentRequest">发起请款</el-button>
-            <el-button size="small" type="primary" plain :disabled="!selSameSupplier" @click="openBatchInvoiceNo">维护开票号</el-button>
+            <el-button size="small" type="primary" @click="openMaintenance('reconcile')">批量对账</el-button>
+            <el-button size="small" type="primary" plain @click="openMaintenance('invoice')">批量维护发票</el-button>
+            <el-tooltip content="同一供应商的多条明细合并登记一张发票" placement="top">
+              <span><el-button size="small" plain :disabled="!selSameSupplier" @click="openBatchInvoiceNo">维护开票号</el-button></span>
+            </el-tooltip>
             <el-button size="small" type="primary" plain @click="openBatchEa">批量修改预计到货</el-button>
             <el-button size="small" link @click="clearSelection">取消选择</el-button>
+            <span v-if="!selSameSupplier" class="warn">请款、合并登记一张发票需选择同一供应商</span>
           </div>
 
           <!-- 🆕 ④ 按清单类型分二级 tab（列标签随类型变；散单=无来源清单）-->
@@ -2597,7 +2631,8 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
             :row-key="rowKey" :tree-props="{ children: 'children' }"
             :row-class-name="grpRowClass"
             @select="onItemSelect"
-            @selection-change="(v: PurchaseItemOut[]) => selectedItems = v"
+            @select-all="explicitlySelectedOrders.clear()"
+            @selection-change="onItemSelectionChange"
             max-height="max(320px, calc(100vh - 340px))"
             :scrollbar-always-on="true"
             class="compact-tbl"
@@ -3453,6 +3488,7 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
       </template>
     </el-dialog>
 
+    <PurchaseBatchMaintenance ref="maintenanceDialog" @saved="onMaintenanceSaved" />
     <!-- ==================== 采购明细弹窗 ==================== -->
     <el-dialog v-model="itemDialogVisible" :title="editingItem ? '编辑采购明细' : '新增采购明细'" width="860px" top="5vh" class="v3-scroll-dialog" :close-on-click-modal="false" @closed="itemFormRef?.clearValidate()">
       <el-form ref="itemFormRef" :model="itemForm" :rules="itemRules" label-position="top" class="item-form">
@@ -4210,11 +4246,12 @@ const PR_STATUS_LABEL: Record<string, string> = { pending: '待审', approved: '
 .flex-spacer { flex: 1; min-width: 8px; }
 /* 勾选后浮出的批量操作条 */
 .sel-bar {
-  display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap;
   padding: 8px 14px; margin-bottom: 10px; font-size: 13.5px;
   background: var(--el-color-warning-light-9); border: 1px solid var(--el-color-warning-light-7);
   border-radius: 6px;
 }
+.sel-bar :deep(.el-button + .el-button) { margin-left: 0; }
 .summary-bar { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 16px; background: var(--el-fill-color-light); border-radius: 6px; margin-top: 12px; font-size: 14px; }
 .report-section { margin-bottom: 16px; }
 /* 🆕 需求十一：供应商账目分类卡片 */

@@ -1,5 +1,6 @@
 """Pydantic 模型：API 请求 / 响应"""
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing_extensions import Annotated
@@ -1670,6 +1671,35 @@ class SetInvoiceNoIn(BaseModel):
     invoice_no: str = Field(min_length=1, max_length=64)
     invoice_date: Optional[str] = None
     invoice_amount: Optional[float] = None   # 合并开票金额(发票总额)，用于与Σ收货金额比对
+
+
+class PurchaseOrderSelection(BaseModel):
+    supplier_id: int
+    po_no: str = Field(min_length=1, max_length=32)
+
+
+class PurchaseMaintenanceSelection(BaseModel):
+    item_ids: list[int] = Field(default_factory=list)
+    orders: list[PurchaseOrderSelection] = Field(default_factory=list)
+
+
+class PurchaseMaintenanceGroup(BaseModel):
+    item_ids: list[int] = Field(min_length=1)
+    revision: str = Field(min_length=1, max_length=65)
+
+
+class PurchaseBatchReconcileIn(BaseModel):
+    groups: list[PurchaseMaintenanceGroup] = Field(min_length=1)
+
+
+class PurchaseInvoiceGroup(PurchaseMaintenanceGroup):
+    invoice_no: str = Field(min_length=1, max_length=64)
+    invoice_date: date
+    invoice_amount: Decimal = Field(ge=0, max_digits=15, decimal_places=2)
+
+
+class PurchaseBatchMaintainInvoicesIn(BaseModel):
+    groups: list[PurchaseInvoiceGroup] = Field(min_length=1)
 
 
 # ---------- 期初余额 ----------

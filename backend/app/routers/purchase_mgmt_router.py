@@ -1,5 +1,7 @@
 """🆕 采购管理模块：供应商档案 / 采购明细 / 账目一览 / 请款流程 / 汇总报表 / 历史导入"""
 from datetime import datetime, timezone, date as _date, datetime as _dt, timedelta as _td
+from decimal import Decimal
+from hashlib import sha256
 from io import BytesIO
 from collections.abc import Iterable
 from typing import Optional, List, Dict
@@ -9,6 +11,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 import math
+import json
 from sqlalchemy import and_, select, func, delete, or_, tuple_, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2640,27 +2643,7 @@ async def set_group_summary(
     return {"updated": len(items)}
 
 
-@router.post("/items/set-invoice-no")
-async def set_invoice_no(
-    body: schemas.SetInvoiceNoIn,
-    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
-    db: AsyncSession = Depends(get_db),
-):
-    """🆕 需求十三：对多个零件统一维护同一开票号；每行开票金额=该行收货金额，置「已开票」。"""
-    ino = body.invoice_no.strip()
-    if not ino:
-        raise HTTPException(400, "请填写开票号")
-    if not body.item_ids:
-        raise HTTPException(400, "请至少选择一条采购明细")
-    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids)))
-    items = r.scalars().all()
-    if _buyer_restricted(current):
-        items = [i for i in items if i.buyer_id == current.id]
-    if not items:
-        raise HTTPException(404, "明细不存在或无权限")
-    # #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（前端也拦，这里兜底）
-    if len({i.supplier_id for i in items}) > 1:
-        raise HTTPException(400, "跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商）")
+def _check_invoice_receipts(items: list[models.PurchaseItem]) -> None:
     # #2：收货金额为 0 的零件不能参与合并开票（发票总额必须 = Σ收货金额）。
     # 🆕 反馈#407：老文案说「尚未收货」，但生产上更常见的是**已到货、只是没填金额**
     #    （全库 156 条，其中 155 条连单价都没有），提出人签收过、看到"尚未收货"只会觉得系统在胡说。
@@ -2700,6 +2683,30 @@ async def set_invoice_no(
                         + "、".join(_label(i) for i in not_arrived[:8])
                         + (f" 等 {len(not_arrived)} 项" if len(not_arrived) > 8 else ""))
         raise HTTPException(400, "；".join(segs))
+
+
+@router.post("/items/set-invoice-no")
+async def set_invoice_no(
+    body: schemas.SetInvoiceNoIn,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """🆕 需求十三：对多个零件统一维护同一开票号；每行开票金额=该行收货金额，置「已开票」。"""
+    ino = body.invoice_no.strip()
+    if not ino:
+        raise HTTPException(400, "请填写开票号")
+    if not body.item_ids:
+        raise HTTPException(400, "请至少选择一条采购明细")
+    r = await db.execute(select(models.PurchaseItem).where(models.PurchaseItem.id.in_(body.item_ids)))
+    items = r.scalars().all()
+    if _buyer_restricted(current):
+        items = [i for i in items if i.buyer_id == current.id]
+    if not items:
+        raise HTTPException(404, "明细不存在或无权限")
+    # #170：一个开票号=一张发票=一个供应商，禁止跨供应商批量盖同号（前端也拦，这里兜底）
+    if len({i.supplier_id for i in items}) > 1:
+        raise HTTPException(400, "跨供应商不能一起维护开票号（一个开票号=一张发票=一个供应商）")
+    _check_invoice_receipts(items)
     # #2：合并开票金额(发票总额)必须与Σ勾选零件收货金额一致（≤1分误差）才放行
     recv_total = round(sum(i.received_amount or 0 for i in items), 2)
     if body.invoice_amount is not None and abs(round(body.invoice_amount, 2) - recv_total) > 0.01:
@@ -2715,6 +2722,186 @@ async def set_invoice_no(
     await write_audit(db, user=current, action="set_invoice_no", target_type="purchase_item",
                       target_id=None, detail=f"开票号 {ino} → {len(items)} 条明细")
     return {"updated": len(items), "invoice_no": ino}
+
+
+# ==================== 多单对账、发票维护（#468） ====================
+
+def _maintenance_query(current: models.User, *columns):
+    item = models.PurchaseItem
+    stmt = select(*columns)
+    if _buyer_restricted(current):
+        stmt = stmt.where(item.buyer_id == current.id)
+    return stmt
+
+
+def _maintenance_group_key(it: models.PurchaseItem):
+    # 无单号的历史明细各自成组；同单已有多票、或同票存在不同日期时分别预填。
+    po = it.po_no if (it.po_no or "").strip() else it.id
+    return it.supplier_id, po, (it.invoice_no or "").strip(), (it.invoice_date or "").strip()
+
+
+def _maintenance_revision(rows: list[models.PurchaseItem], order_ids: Optional[list[int]] = None) -> str:
+    # 明细按主键排序。整单选择还核对可见成员，预览之后追加或移出零件须重新确认。
+    snapshot = [(it.id, it.supplier_id, it.po_no, it.item_name, it.received_amount, it.arrival_date,
+                 it.invoice_status, it.invoice_no, it.invoice_date, it.invoice_amount) for it in rows]
+    digest = sha256(json.dumps([order_ids, snapshot], separators=(",", ":")).encode()).hexdigest()
+    return ("o" if order_ids is not None else "i") + digest
+
+
+def _maintenance_total(amounts: Iterable[float]) -> Decimal:
+    return round(sum((Decimal(str(amount or 0)) for amount in amounts), Decimal(0)), 2)
+
+
+@router.post("/items/batch-maintenance-preview")
+async def batch_maintenance_preview(
+    body: schemas.PurchaseMaintenanceSelection,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    item = models.PurchaseItem
+    ids = set(body.item_ids)
+    orders = {(order.supplier_id, order.po_no) for order in body.orders}
+    if not ids and not orders:
+        raise HTTPException(400, "请先勾选采购单或明细")
+    if any(not po.strip() for _, po in orders):
+        raise HTTPException(400, "无采购单号的明细请逐行勾选")
+    criteria = []
+    if ids:
+        criteria.append(item.id.in_(ids))
+    if orders:
+        criteria.append(tuple_(item.supplier_id, item.po_no).in_(orders))
+    stmt = _maintenance_query(current, item).where(or_(*criteria)).order_by(item.id)
+    rows = (await db.scalars(stmt)).all()
+    if not ids.issubset({it.id for it in rows}):
+        raise HTTPException(404, "所选采购明细不存在或无权维护，请重新选择")
+    groups = defaultdict(list)
+    order_ids = defaultdict(list)
+    for it in rows:
+        groups[_maintenance_group_key(it)].append(it)
+        order_ids[(it.supplier_id, it.po_no)].append(it.id)
+    if not orders.issubset(order_ids):
+        raise HTTPException(404, "所选采购单不存在或无权维护，请重新选择")
+
+    preview = []
+    for (_, _, invoice_no, invoice_date), members in groups.items():
+        first = members[0]
+        order_key = (first.supplier_id, first.po_no)
+        whole_order = order_key in orders
+        preview.append({
+            "supplier_id": first.supplier_id, "supplier_name": first.supplier.name if first.supplier else "",
+            "po_no": first.po_no if (first.po_no or "").strip() else None,
+            "item_ids": [it.id for it in members], "item_names": [it.item_name for it in members],
+            "received_amount": float(_maintenance_total(it.received_amount for it in members)),
+            "invoice_amount": float(_maintenance_total(it.invoice_amount for it in members)),
+            "invoice_no": invoice_no or None, "invoice_date": invoice_date or None,
+            "pending_count": sum(it.invoice_status == "待对账" for it in members),
+            "whole_order": whole_order,
+            "revision": _maintenance_revision(members, order_ids[order_key] if whole_order else None),
+        })
+    return {"groups": preview}
+
+
+async def _locked_maintenance_groups(
+    db: AsyncSession, current: models.User, groups: list[schemas.PurchaseMaintenanceGroup],
+) -> list[list[models.PurchaseItem]]:
+    item = models.PurchaseItem
+    ids = [iid for group in groups for iid in group.item_ids]
+    if len(ids) != len(set(ids)):
+        raise HTTPException(400, "同一条采购明细被重复提交，请重新选择")
+    # PurchaseItem 默认外连接供应商和采购员。PG 只锁定待维护的明细，按主键排序避免交叉锁。
+    stmt = _maintenance_query(current, item).where(item.id.in_(ids)).order_by(item.id).with_for_update(of=item)
+    rows = {it.id: it for it in (await db.scalars(stmt)).all()}
+    if len(rows) != len(ids):
+        raise HTTPException(404, "所选采购明细不存在或无权维护，请重新选择")
+
+    selected = [[rows[iid] for iid in sorted(group.item_ids)] for group in groups]
+    orders = {(members[0].supplier_id, members[0].po_no)
+              for group, members in zip(groups, selected) if group.revision.startswith("o")}
+    order_ids = defaultdict(list)
+    if orders:
+        stmt = _maintenance_query(current, item.supplier_id, item.po_no, item.id).where(
+            tuple_(item.supplier_id, item.po_no).in_(orders)).order_by(item.id)
+        for supplier_id, po_no, iid in (await db.execute(stmt)).all():
+            order_ids[(supplier_id, po_no)].append(iid)
+
+    for group, members in zip(groups, selected):
+        if len({_maintenance_group_key(it) for it in members}) != 1:
+            raise HTTPException(409, "所选明细的采购单或发票已变化，请重新打开核对")
+        order_key = (members[0].supplier_id, members[0].po_no)
+        member_ids = order_ids[order_key] if group.revision.startswith("o") else None
+        if group.revision != _maintenance_revision(members, member_ids):
+            raise HTTPException(409, "采购明细在预览后已变化，请重新打开核对")
+    return selected
+
+
+@router.post("/items/batch-reconcile")
+async def batch_reconcile(
+    body: schemas.PurchaseBatchReconcileIn,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    selected = await _locked_maintenance_groups(db, current, body.groups)
+    updated_ids = []
+    for members in selected:
+        for it in members:
+            if it.invoice_status == "待对账":
+                it.invoice_status = "已对账"
+                updated_ids.append(it.id)
+    if updated_ids:
+        db.add(models.AuditLog(user_id=current.id, username=current.username, action="batch_reconcile",
+                               target_type="purchase_item", detail=f"批量对账：明细 {updated_ids}"))
+    await db.commit()
+    return {"updated": len(updated_ids), "skipped": sum(map(len, selected)) - len(updated_ids)}
+
+
+@router.post("/items/batch-maintain-invoices")
+async def batch_maintain_invoices(
+    body: schemas.PurchaseBatchMaintainInvoicesIn,
+    current: models.User = Depends(require_roles(*_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    selected = await _locked_maintenance_groups(db, current, body.groups)
+    suppliers_by_invoice = {}
+    updated = 0
+    audit_details = []
+    for group, members in zip(body.groups, selected):
+        invoice_no = group.invoice_no.strip()
+        if not invoice_no:
+            raise HTTPException(400, "请填写开票号")
+        first = members[0]
+        if suppliers_by_invoice.setdefault(invoice_no, first.supplier_id) != first.supplier_id:
+            raise HTTPException(400, f"开票号 {invoice_no} 被用于不同供应商，请核对")
+
+        amount = group.invoice_amount
+        old_amounts = [it.invoice_amount or 0 for it in members]
+        amounts = old_amounts
+        amount_changed = amount != _maintenance_total(old_amounts)
+        # 已有发票仅更正票号、日期，保留历史单据的各行原额（包括整单金额只记首行的情况）。
+        if not (first.invoice_no or "").strip() or amount_changed:
+            _check_invoice_receipts(members)
+        if amount_changed:
+            received = [it.received_amount or 0 for it in members]
+            # 票面与实收相符逐行登实收；有税费等差额时沿用整单维护，总额只计一次。
+            if amount == _maintenance_total(received):
+                amounts = received
+            else:
+                amounts = [float(amount)] + [0] * (len(members) - 1)
+        invoice_date = group.invoice_date.isoformat()
+        changed_ids = []
+        for it, line_amount in zip(members, amounts):
+            values = invoice_no, invoice_date, line_amount, "已开票"
+            if (it.invoice_no, it.invoice_date, it.invoice_amount, it.invoice_status) != values:
+                it.invoice_no, it.invoice_date, it.invoice_amount, it.invoice_status = values
+                changed_ids.append(it.id)
+        if changed_ids:
+            audit_details.append(f"{first.po_no or '无单号'} 明细 {changed_ids}，"
+                                 f"票号 {invoice_no}，日期 {invoice_date}，本组金额 {amount:.2f}")
+            updated += len(changed_ids)
+    if audit_details:
+        db.add(models.AuditLog(user_id=current.id, username=current.username, action="batch_maintain_invoices",
+                               target_type="purchase_item", detail="；".join(audit_details)))
+    await db.commit()
+    return {"updated": updated, "skipped": sum(map(len, selected)) - updated}
 
 
 # ==================== 供应商账目一览 ====================
